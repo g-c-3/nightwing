@@ -31,12 +31,22 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [ ] Move ordering: TT move, MVV-LVA captures, killer moves, history heuristic
 - [ ] Aspiration windows
 - [ ] Quiescence search (captures + checks, with SEE pruning)
+- [ ] Internal Iterative Reduction (IIR) — reduce depth on nodes with no TT move (modern replacement for IID)
+- [ ] Mate distance pruning
+- [ ] Repetition detection (threefold) and 50-move rule handling integrated into search, not just board state
+- [ ] Pawn hash table (small separate TT keyed on pawn structure only, for pawn eval reuse)
+- [ ] Pondering — search side: handle `go ponder`, continue as real search on `ponderhit`, discard and restart on `stop`+actual move
 
 ## Phase 4 — Pruning & Extensions
 - [ ] Null-move pruning
 - [ ] Late move reductions (LMR)
+- [ ] Late move pruning (LMP) / move-count based pruning at low depth
 - [ ] Futility pruning
 - [ ] Razoring
+- [ ] History pruning (skip quiet moves with poor history score at low depth)
+- [ ] Continuation history (1-ply and 2-ply "counter-move history" for move ordering + pruning decisions)
+- [ ] ProbCut / multi-cut pruning
+- [ ] Delta pruning in quiescence search
 - [ ] Check extensions
 - [ ] Singular extensions
 - [ ] Regression bench: node-count/strength tracked in SESSION_LOG.md per change
@@ -45,7 +55,15 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [ ] Mobility eval
 - [ ] King safety (pawn shield, open files near king, attacker weighting)
 - [ ] Pawn structure (passed, isolated, doubled, backward, connected)
-- [ ] Bishop pair, rook on open/semi-open file, other standard positional terms
+- [ ] Bishop pair, rook on open/semi-open file, rook on 7th rank
+- [ ] Knight outposts
+- [ ] Space evaluation
+- [ ] Threats evaluation (hanging/attacked pieces, pieces attacked by pawns)
+- [ ] King tropism (piece proximity to enemy king in the attack)
+- [ ] Trapped piece penalties
+- [ ] Tempo bonus (small fixed bonus for side to move)
+- [ ] Material imbalance table (e.g. bishop pair / knight pair value shifts with pawn count, per Stockfish-classic style)
+- [ ] Eval cache (optional performance optimization, separate from TT)
 - [ ] All terms as named tunable constants (per DECISIONS.md)
 - [ ] Texel/SPSA tuner module (self-play data generation + gradient descent)
 - [ ] Tuned weights committed, before/after strength comparison logged
@@ -62,11 +80,20 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [ ] Verify no strength regression vs. single-threaded at equal single-thread depth
 
 ## Phase 8 — Polish & Tournament Readiness
-- [ ] Full UCI option set (Hash size, Threads, MultiPV, etc.)
-- [ ] Time management (search time allocation per move, increment handling)
+- [ ] Full UCI option set (Hash size, Threads, MultiPV, Ponder, Move Overhead, etc.)
+- [ ] Pondering — protocol side: `Ponder` UCI option exposed, verified working against GUIs that ponder (Arena, CuteChess, etc.)
+- [ ] Time management (search time allocation per move, increment handling, best-move-stability-based extension)
+- [ ] `bench` command — fixed-position node/time benchmark for fishtest/OpenBench-style regression testing
 - [ ] SPRT testing setup/process for validating future changes
+- [ ] Skill level / strength limiting (optional, for practice/handicap play)
+- [ ] Contempt / draw score adjustment (optional)
 - [ ] README, build instructions, engine info (name/author via `uci`)
 - [ ] wasm build or GUI packaging (optional, revisit if wanted)
+
+## Phase 9 — Advanced / Stretch Goals (beyond great-engine baseline)
+- [ ] NUMA-aware thread/memory allocation (large multi-socket hardware only)
+- [ ] Distributed/cluster search (very advanced, likely out of practical scope)
+- [ ] Self-generated small (3-4-5 man) endgame tablebases — explicitly optional per DECISIONS.md, not a dependency of core engine strength
 
 ---
 **Current phase: 0 — Project Setup.** Next task: CMake project skeleton.
