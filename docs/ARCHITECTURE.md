@@ -10,14 +10,14 @@ Standard chess engine, C++20, classical (non-NNUE, non-Syzygy) design philosophy
 | Build | CMake (min 3.20) |
 | CI | GitHub Actions — build + test on every push, all platforms via matrix (Linux/macOS/Windows) |
 | Test framework | Catch2 (header-only, easy single-file include, good for perft-style parametrized tests) |
-| Board representation | Bitboards (uint64_t), magic bitboards for sliding piece attacks (rook/bishop) |
+| Board representation | Bitboards (uint64_t). Sliding attacks via BMI2 PEXT bitboards on hardware that supports it (Haswell+/Zen3+), with magic bitboards as the portable fallback (compile-time or runtime CPU feature detection) |
 | Move generation | Fully legal move gen (no pseudo-legal + filter) via pin/check masks, to keep search code simple |
 | Search | PVS (Principal Variation Search) over alpha-beta, iterative deepening, aspiration windows |
 | Pruning/extensions | Null-move pruning, late move reductions (LMR), futility pruning, razoring, check extensions, singular extensions (later phase) |
 | Move ordering | TT move → captures (MVV-LVA + SEE) → killers → history heuristic → counter-moves |
 | Eval | Hand-crafted eval (HCE): material, piece-square tables (tapered mg/eg), mobility, king safety, pawn structure (passed/isolated/doubled/backward), hand-built endgame heuristics |
 | Eval tuning | Texel tuning (gradient descent on eval weights vs. game outcomes) — added once eval has enough terms (Phase 5) |
-| Transposition table | Single global TT, power-of-2 sized, Zobrist hashing, age + depth replacement scheme; lock-free once multithreaded |
+| Transposition table | Single global TT, power-of-2 sized, Zobrist hashing, age + depth replacement scheme; cache-line-aligned entries (16 bytes, 4 entries per 64-byte line), explicit prefetch on probe; lock-free once multithreaded |
 | Multithreading | Lazy SMP (Phase 7) — deferred until single-threaded search is perft/bench verified stable |
 | Protocol | UCI (Universal Chess Interface) |
 | No NNUE | Hard constraint — do not add |
@@ -55,6 +55,38 @@ tests/
 ## Startup Sequence (mandatory order)
 
 `init_masks() → init_magic_bitboards() → init_zobrist_keys()`
+
+## Performance Engineering
+
+Speed (nodes/sec) and search efficiency (useful nodes/sec — good pruning/ordering) are both first-class goals. Node count reduction from smart search beats raw NPS, but both compound, so neither is sacrificed for the other.
+
+### Build & Compiler
+- Release builds: `-O3`, LTO (link-time optimization) enabled
+- Profile-Guided Optimization (PGO): generate profile via `bench`/self-play data, rebuild with `-fprofile-use` — added once the engine is feature-complete enough to have a stable hot path worth profiling (Phase 8)
+- CPU feature detection at build/runtime: separate build targets (or runtime dispatch) for BMI2 (PEXT/PDEP), POPCNT, and a portable baseline — never assume BMI2 is present without a fallback
+- No exceptions or RTTI in hot search/eval/movegen paths (`-fno-exceptions -fno-rtti` where practical) — error handling in UCI/IO layers only
+- Avoid `std::vector` allocation in the search hot path — move lists and search stack use fixed-size arrays (max legal moves in a chess position is bounded, ~218) sized at compile time
+
+### Hot-Path Code Practices
+- Search, movegen, and eval functions marked for inlining where it helps (small helpers), profiled rather than guessed
+- No virtual dispatch / polymorphism in search or eval — direct calls only, resolved at compile time via templates where behavior needs to vary (e.g., templated search function on node type: PV/non-PV, in-check/not)
+- Branch-heavy logic (move ordering scores, pruning conditions) prefers lookup tables and branchless bit tricks over chained conditionals where it's a measurable win — not a blanket rule, verified per case
+- Move generation is staged where it helps ordering + pruning cut nodes early: captures/promotions first, then killers, then quiets — avoids generating and scoring moves that get pruned anyway
+
+### Incremental Updates
+- Zobrist hash updated incrementally on make/unmake, never recomputed from scratch
+- Material and PSQT eval terms updated incrementally on make/unmake (standard "eval on the fly" accumulator pattern), not recomputed from the full board each node
+- Pawn structure eval reuses the pawn hash table (see Tech Stack) so unchanged pawn structure across nodes isn't re-evaluated
+
+### Memory & Cache
+- TT and pawn hash table sized as power-of-2 for fast index masking (no modulo)
+- TT entries cache-line aligned; explicit prefetch of the TT entry for a position issued as early as possible in the search node (overlaps memory latency with move generation/ordering work)
+- Search stack (per-ply state: killers, static eval, etc.) is a flat pre-allocated array indexed by ply, not heap-allocated per node
+
+### Benchmarking Discipline
+- `bench` command (Phase 8) is the standard fixed-position, fixed-depth benchmark — every performance-sensitive change is checked against it for both NPS and node count before merging
+- Node-count regressions on `bench` require justification in DECISIONS.md (per Testing Policy below) — a "faster but searches worse" change is not automatically an improvement, and vice versa
+- Multithreaded (Lazy SMP, Phase 7) scaling is validated against single-threaded `bench` node counts to catch thread contention or TT synchronization overhead early
 
 ## Attribution Policy
 

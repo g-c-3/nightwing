@@ -4,19 +4,24 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 
 ## Phase 0 — Project Setup
 - [ ] CMake project skeleton, C++20, builds empty `main.cpp`
+- [ ] Release build config: `-O3` + LTO enabled; separate Debug config with sanitizers (ASan/UBSan) for dev/CI correctness testing
+- [ ] CPU feature detection scaffolding (BMI2/POPCNT) with portable fallback build target
 - [ ] GitHub Actions CI: build matrix (Linux/macOS/Windows), runs `ctest`
 - [ ] Catch2 integrated as test framework
 - [ ] `docs/` seeded (this file, DECISIONS.md, SESSION_LOG.md, ARCHITECTURE.md)
 
 ## Phase 1 — Board Representation & Move Generation
-- [ ] Bitboard primitives (set/clear/pop bit, popcount, bitscan)
-- [ ] Magic bitboard generation for rook/bishop attacks
-- [ ] Board state struct (piece bitboards, side to move, castling rights, en passant, halfmove clock)
-- [ ] Zobrist hashing
+- [ ] Bitboard primitives (set/clear/pop bit, popcount, bitscan) — using compiler intrinsics, not manual loops
+- [ ] Magic bitboard generation for rook/bishop attacks (portable path)
+- [ ] BMI2 PEXT bitboard attack generation (fast path, runtime/build-time dispatched)
+- [ ] Board state struct (piece bitboards, side to move, castling rights, en passant, halfmove clock) — kept compact, cache-friendly (fits in a small number of cache lines)
+- [ ] Zobrist hashing, incremental update on make/unmake (never recomputed from scratch)
 - [ ] `init_masks() → init_magic_bitboards() → init_zobrist_keys()` startup sequence wired up
 - [ ] Fully legal move generation (pins, checks, castling, en passant, promotions)
+- [ ] Move list as fixed-size stack array (no heap allocation)
 - [ ] Make/unmake move
 - [ ] Perft test suite passing to standard reference depths (startpos, Kiwipete, etc.)
+- [ ] Perft bulk-counting mode benchmarked as an early NPS sanity check (movegen throughput baseline)
 
 ## Phase 2 — Minimal Search + Eval (get something playing)
 - [ ] Material-only + PSQT eval (tapered mg/eg)
@@ -84,6 +89,8 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [ ] Pondering — protocol side: `Ponder` UCI option exposed, verified working against GUIs that ponder (Arena, CuteChess, etc.)
 - [ ] Time management (search time allocation per move, increment handling, best-move-stability-based extension)
 - [ ] `bench` command — fixed-position node/time benchmark for fishtest/OpenBench-style regression testing
+- [ ] Profile-Guided Optimization (PGO) build pipeline (generate profile via `bench`/self-play, rebuild optimized)
+- [ ] TT prefetch verified to actually overlap memory latency with useful work (profiled, not assumed)
 - [ ] SPRT testing setup/process for validating future changes
 - [ ] Skill level / strength limiting (optional, for practice/handicap play)
 - [ ] Contempt / draw score adjustment (optional)

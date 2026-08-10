@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+## 2026-08-11 — Performance engineering formalized: BMI2 fast path, incremental updates, PGO, cache-conscious data layout
+
+**Decision:** ARCHITECTURE.md now specifies concrete performance practices as project standards, not just aspirations: BMI2 PEXT bitboards with a magic-bitboard portable fallback; no heap allocation in the search hot path (fixed-size move lists/search stack); incremental Zobrist/material/PSQT updates on make/unmake instead of full recomputation; cache-line-aligned, prefetched TT entries; PGO build added once the hot path is stable (Phase 8); a `bench` command as the standard NPS/node-count regression check for every performance-sensitive change.
+
+**Rationale:** "Smartest and fastest" requires both search efficiency (fewer, better-chosen nodes — covered by the search/pruning roadmap) and raw throughput (more nodes/sec at equal search quality). Naming concrete techniques now, before code exists, means the codebase is built cache-conscious and allocation-free from the start rather than retrofitted later, which is far more disruptive once search/eval code is in place.
+
+**Alternatives considered:**
+- Treat performance as a late-stage optimization pass after correctness/strength are done — rejected; data layout and allocation patterns (fixed-size arrays vs. heap, incremental vs. full eval recompute) are foundational choices that are expensive to change after the fact, unlike compiler flags or PGO which genuinely can be deferred (and are, to Phase 8).
+- Full BMI2-only build (no fallback) — rejected; would break on older/non-BMI2 hardware (and some cloud CI runners), and a portable fallback is cheap to maintain alongside the fast path.
+
+---
+
 ## 2026-08-11 — Roadmap expanded to full "great classical engine" feature set, including pondering
 
 **Decision:** ROADMAP.md expanded across Phases 3-9 to include the full feature set found in elite pre-NNUE engines (Stockfish 11, Ethereal, Komodo classical): pondering (search + protocol side), IIR, mate distance pruning, repetition/50-move handling in search, pawn hash table, LMP, history pruning, continuation history, ProbCut/multi-cut, delta pruning, knight outposts, space, threats, king tropism, trapped pieces, tempo bonus, material imbalance table, eval cache, `bench` command, skill level, contempt, and a new Phase 9 for advanced/stretch items (NUMA, distributed search, optional self-generated tablebases).
