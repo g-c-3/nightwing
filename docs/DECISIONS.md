@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+## 2026-08-11 — Endgame strategy: algorithmic theory only, no self-generated exact bitbases
+
+**Decision:** Phase 6 (Endgame Knowledge) is built entirely on algorithmic/generalizing endgame theory — opposition, key/corresponding squares, Lucena/Philidor recognition, fortress detection, zugzwang-aware search shaping, material-signature routing. No exact in-memory bitbases (KPK et al.) are generated, even though that option was technically compatible with the no-external-tablebase constraint (self-generated, no files). This closes out the brainstorm on a "Syzygy-beating" endgame system.
+
+**Rationale:** The differentiator worth investing in is generalization: algorithmic theory plays correctly across *any* matching material configuration, including ones far beyond any tablebase's piece-count ceiling, whereas exact bitbases (even small, self-generated ones) only cover the specific configurations computed — a narrower, more tablebase-like approach that duplicates effort without adding the generalization advantage. Full commitment to the algorithmic approach keeps the codebase and testing surface focused on one coherent strategy rather than maintaining two overlapping endgame systems.
+
+**Alternatives considered:**
+- Small curated exact bitbases (KPK, KBNK, KRKP, ~4-man) alongside algorithmic theory — rejected; adds real engineering (retrograde generation, storage format, integration/testing) for coverage that algorithmic rules already handle adequately, without the generalization benefit that's the actual point of this approach.
+- Pushing further to ~5-man bitbases — rejected for the same reason, more strongly (diminishing returns, more engineering, same lack of generalization).
+
+---
+
 ## 2026-08-11 — Performance engineering formalized: BMI2 fast path, incremental updates, PGO, cache-conscious data layout
 
 **Decision:** ARCHITECTURE.md now specifies concrete performance practices as project standards, not just aspirations: BMI2 PEXT bitboards with a magic-bitboard portable fallback; no heap allocation in the search hot path (fixed-size move lists/search stack); incremental Zobrist/material/PSQT updates on make/unmake instead of full recomputation; cache-line-aligned, prefetched TT entries; PGO build added once the hot path is stable (Phase 8); a `bench` command as the standard NPS/node-count regression check for every performance-sensitive change.

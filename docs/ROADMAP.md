@@ -73,9 +73,17 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [ ] Texel/SPSA tuner module (self-play data generation + gradient descent)
 - [ ] Tuned weights committed, before/after strength comparison logged
 
-## Phase 6 — Endgame Knowledge
-- [ ] Hand-built endgame heuristics: KPK, KRK, KBNK, opposition, wrong-bishop-corner
-- [ ] Draw detection refinement (insufficient material, fortress patterns where feasible)
+## Phase 6 — Endgame Knowledge (algorithmic theory, no tablebases)
+
+Goal: exact-feeling play in common endgames and graceful, generalizing play everywhere else — never a blind cliff the way tablebases have one past their piece-count ceiling. No self-generated bitbases (decision: algorithmic generalization only, see DECISIONS.md).
+
+- [ ] Material-signature classifier: detect endgame material buckets at each node, route to specialized endgame reasoning when matched
+- [ ] King+pawn theory: opposition, key squares, corresponding squares, the rule of the square, generalized to any K+P configuration (not case-tabulated)
+- [ ] Rook endgame patterns: Lucena position recognition (winning technique), Philidor position recognition (drawing technique), Vancura position, rook behind passed pawn heuristic
+- [ ] Minor piece endgames: wrong-bishop-corner draw detection, opposite-colored bishop fortress/drawish-tendency eval adjustment, knight vs. bishop endings weighted by pawn structure (open vs. closed)
+- [ ] Fortress pattern detection (structural, not tabulated) — recognize blocked/closed positions where material advantage can't be converted
+- [ ] Zugzwang-aware search shaping: bias search (e.g. reduce/skip null-move pruning) in positions flagged as zugzwang-prone by material signature, so the search doesn't miss zugzwang the way naive null-move can
+- [ ] Hand-built base heuristics carried over: KPK, KRK, KBNK exact-play rules (algorithmic, not lookup-table), draw detection refinement (insufficient material)
 - [ ] (Optional, low priority) small curated opening book
 
 ## Phase 7 — Multithreading
@@ -100,7 +108,7 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 ## Phase 9 — Advanced / Stretch Goals (beyond great-engine baseline)
 - [ ] NUMA-aware thread/memory allocation (large multi-socket hardware only)
 - [ ] Distributed/cluster search (very advanced, likely out of practical scope)
-- [ ] Self-generated small (3-4-5 man) endgame tablebases — explicitly optional per DECISIONS.md, not a dependency of core engine strength
+- [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
 **Current phase: 0 — Project Setup.** Next task: CMake project skeleton.
