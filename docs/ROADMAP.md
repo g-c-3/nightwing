@@ -8,7 +8,7 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [ ] CPU feature detection scaffolding (BMI2/POPCNT) with portable fallback build target
 - [ ] GitHub Actions CI: build matrix (Linux/macOS/Windows), runs `ctest`
 - [ ] Catch2 integrated as test framework
-- [ ] `docs/` seeded (this file, DECISIONS.md, SESSION_LOG.md, ARCHITECTURE.md)
+- [ ] `docs/` seeded (this file, DECISIONS.md, SESSIONS.md, ARCHITECTURE.md)
 
 ## Phase 1 — Board Representation & Move Generation
 - [ ] Bitboard primitives (set/clear/pop bit, popcount, bitscan) — using compiler intrinsics, not manual loops
@@ -54,7 +54,7 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [ ] Delta pruning in quiescence search
 - [ ] Check extensions
 - [ ] Singular extensions
-- [ ] Regression bench: node-count/strength tracked in SESSION_LOG.md per change
+- [ ] Regression bench: node-count/strength tracked in SESSIONS.md per change
 
 ## Phase 5 — Eval Expansion & Tuning
 - [ ] Mobility eval
@@ -84,6 +84,7 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
 - [ ] Fortress pattern detection (structural, not tabulated) — recognize blocked/closed positions where material advantage can't be converted
 - [ ] Zugzwang-aware search shaping: bias search (e.g. reduce/skip null-move pruning) in positions flagged as zugzwang-prone by material signature, so the search doesn't miss zugzwang the way naive null-move can
 - [ ] Hand-built base heuristics carried over: KPK, KRK, KBNK exact-play rules (algorithmic, not lookup-table), draw detection refinement (insufficient material)
+- [ ] Dedicated endgame test suite: curated known-tricky K+P and rook-ending positions (canonical sources e.g. Fine's *Basic Chess Endings*) with known-correct results, run in CI to catch algorithmic-rule misjudgments that pure perft/search regression tests wouldn't surface. Kept as its own test file, separate from perft/search/eval regression tests (per Testing Policy in ARCHITECTURE.md)
 - [ ] (Optional, low priority) small curated opening book
 
 ## Phase 7 — Multithreading

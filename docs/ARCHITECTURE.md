@@ -49,7 +49,8 @@ src/
 tests/
 ├── perft_tests.cpp
 ├── eval_tests.cpp
-└── search_tests.cpp
+├── search_tests.cpp
+└── endgame_tests.cpp     # curated known-result K+P/rook-ending positions, Phase 6
 ```
 
 ## Startup Sequence (mandatory order)
@@ -96,4 +97,5 @@ Since this project deliberately avoids NNUE/tablebases and leans on classical te
 
 - Every movegen change must pass perft to known depth/node-count references (standard perft suite: startpos, Kiwipete, etc.)
 - Every search change must pass existing search regression tests (no more than X% node count regression without justification — track in DECISIONS.md when this happens)
+- Every Phase 6 endgame-theory change must pass the dedicated endgame test suite (`endgame_tests.cpp`) — curated known-correct K+P and rook-ending positions, kept separate from perft/search/eval regression tests since it validates correctness of algorithmic judgment, not node counts or bulk legality
 - `ctest` must be fully green before any file is considered committable
