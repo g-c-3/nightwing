@@ -4,6 +4,17 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+## 2026-08-11 — Zobrist en passant hashing: simplified file-only scheme
+
+**Decision:** `compute_hash()` XORs an en-passant-file key whenever `Position::en_passant_square` is set, based purely on that square's file — it does not check whether a pawn is actually present and legally able to make the capture.
+
+**Rationale:** This is the classic/simplified scheme used historically by engines including early Stockfish and Crafty, and it's simple to implement and verify (a pure function of file, no board-scanning). The alternative (only hash the ep key when a capture is genuinely available) is more precise — two positions differing only in an ep square that no pawn can actually capture on would otherwise hash differently even though they're arguably "the same" for repetition purposes — but that precision requires checking adjacent squares for an enemy pawn of the right color, which is board-scanning logic that fits more naturally into move generation (which will already be computing exactly this) than into a hashing utility that should stay a pure function of the four state components (placement, side to move, castling, ep square).
+
+**Alternatives considered:**
+- Precise scheme (only hash ep key when a capture is actually available) — rejected for now; adds board-scanning coupling to what should be a simple utility. Revisit if/when this actually causes an observed repetition-detection correctness issue (Phase 3, "Repetition detection... integrated into search, not just board state") — the fix at that point would be to compute the check once during move generation and pass a "does this ep square matter" flag through, not to duplicate scanning logic inside compute_hash() itself.
+
+---
+
 ## 2026-08-11 — Endgame strategy: algorithmic theory only, no self-generated exact bitbases
 
 **Decision:** Phase 6 (Endgame Knowledge) is built entirely on algorithmic/generalizing endgame theory — opposition, key/corresponding squares, Lucena/Philidor recognition, fortress detection, zugzwang-aware search shaping, material-signature routing. No exact in-memory bitbases (KPK et al.) are generated, even though that option was technically compatible with the no-external-tablebase constraint (self-generated, no files). This closes out the brainstorm on a "Syzygy-beating" endgame system.
