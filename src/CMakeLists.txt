@@ -11,7 +11,10 @@ target_compile_features(nightwing_lib PUBLIC cxx_std_20)
 
 if(NIGHTWING_ENABLE_BMI2)
     target_compile_definitions(nightwing_lib PUBLIC NIGHTWING_ENABLE_BMI2=1)
-    if(NOT MSVC)
+    # -mbmi2/-mpopcnt are x86 ISA extensions — meaningless (and rejected by
+    # the compiler) on non-x86 targets such as Apple Silicon (arm64) macOS
+    # runners. Only apply them when actually building for x86/x86_64.
+    if(NOT MSVC AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64|i[3-6]86|x86)$")
         # Configure with -DNIGHTWING_ENABLE_BMI2=OFF for a portable build
         # that never emits BMI2/POPCNT instructions (e.g. older hardware).
         # This is compile-time gating; support/cpu_features.h additionally
