@@ -11,12 +11,12 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [x] `docs/` seeded (this file, DECISIONS.md, SESSIONS.md, ARCHITECTURE.md)
 
 ## Phase 1 — Board Representation & Move Generation
-- [ ] Bitboard primitives (set/clear/pop bit, popcount, bitscan) — using compiler intrinsics, not manual loops
-- [ ] Magic bitboard generation for rook/bishop attacks (portable path)
-- [ ] BMI2 PEXT bitboard attack generation (fast path, runtime/build-time dispatched)
-- [ ] Board state struct (piece bitboards, side to move, castling rights, en passant, halfmove clock) — kept compact, cache-friendly (fits in a small number of cache lines)
-- [ ] Zobrist hashing, incremental update on make/unmake (never recomputed from scratch)
-- [ ] `init_masks() → init_magic_bitboards() → init_zobrist_keys()` startup sequence wired up
+- [x] Bitboard primitives (set/clear/pop bit, popcount, bitscan) — using compiler intrinsics, not manual loops
+- [x] Magic bitboard generation for rook/bishop attacks (portable path)
+- [x] BMI2 PEXT bitboard attack generation (fast path, runtime/build-time dispatched)
+- [x] Board state struct (piece bitboards, side to move, castling rights, en passant, halfmove clock) — kept compact, cache-friendly (fits in a small number of cache lines)
+- [x] Zobrist hashing (key generation, from-scratch compute_hash()) — *incremental* XOR-update on make/unmake specifically is still pending, tracked under the Make/unmake move item below
+- [x] `init_masks() → init_magic_bitboards() → init_zobrist_keys()` startup sequence wired up
 - [ ] Fully legal move generation (pins, checks, castling, en passant, promotions)
 - [ ] Move list as fixed-size stack array (no heap allocation)
 - [ ] Make/unmake move
@@ -112,4 +112,4 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Current phase: 1 — Board Representation & Move Generation.** Next task: bitboard primitives (set/clear/pop bit, popcount, bitscan) via compiler intrinsics.
+**Current phase: 1 — Board Representation & Move Generation.** Next task: fully legal move generation (pins, checks, castling, en passant, promotions).
