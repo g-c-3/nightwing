@@ -7,6 +7,7 @@ add_library(nightwing_lib STATIC
     board/attacks.cpp
     board/board.cpp
     board/zobrist.cpp
+    board/masks.cpp
 )
 
 target_include_directories(nightwing_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
