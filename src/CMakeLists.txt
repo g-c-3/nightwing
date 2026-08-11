@@ -5,6 +5,7 @@ add_library(nightwing_lib STATIC
     support/cpu_features.cpp
     board/bitboard.cpp
     board/attacks.cpp
+    board/board.cpp
 )
 
 target_include_directories(nightwing_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
