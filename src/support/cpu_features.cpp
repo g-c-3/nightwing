@@ -52,13 +52,16 @@ void detect_cpu_features() {
         __cpuidex(info7, 7, 0);
         g_has_bmi2 = (info7[1] & (1 << 8)) != 0; // EBX bit 8
     }
-#elif defined(__GNUC__) || defined(__clang__)
+#elif (defined(__GNUC__) || defined(__clang__)) && \
+      (defined(__x86_64__) || defined(__i386__))
     __builtin_cpu_init();
     g_has_bmi2 = __builtin_cpu_supports("bmi2");
     g_has_popcnt = __builtin_cpu_supports("popcnt");
 #else
-    // Unknown compiler/platform: assume nothing present, fall back to the
-    // portable path rather than risk emitting/using unsupported instructions.
+    // Non-x86 target (e.g. ARM/Apple Silicon) or unknown compiler: BMI2 and
+    // POPCNT are x86 ISA extensions and simply don't apply here — reporting
+    // them absent is correct, not a fallback compromise. __builtin_cpu_supports
+    // is itself an x86-only GCC/Clang builtin, so it must not be called here.
     g_has_bmi2 = false;
     g_has_popcnt = false;
 #endif
