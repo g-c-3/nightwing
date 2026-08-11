@@ -12,6 +12,7 @@
 
 #include "board/attacks.h"
 #include "board/bitboard.h"
+#include "support/cpu_features.h"
 
 using namespace nightwing::board;
 
@@ -121,3 +122,57 @@ TEST_CASE("rook attack ray stops at and includes the first blocker", "[attacks]"
     REQUIRE_FALSE(test_bit(attacks, make_square(0, 4))); // a5 - beyond blocker
     REQUIRE(test_bit(attacks, make_square(7, 0)));  // h1 - rank 1 unobstructed
 }
+
+#if defined(NIGHTWING_ENABLE_BMI2)
+TEST_CASE("PEXT attack path matches brute force, when the host CPU supports BMI2",
+          "[attacks][pext]") {
+    // Compiled in (x86/x86_64 build), but the *running* CPU might still
+    // lack BMI2 (e.g. an older machine using a BMI2-enabled binary) — the
+    // whole point of the runtime dispatch this is testing the other half
+    // of. Calling the real _pext_u64 intrinsic without this check risks
+    // SIGILL on such hardware, so skip rather than assume.
+    nightwing::support::detect_cpu_features();
+    if (!nightwing::support::cpu_has_bmi2()) {
+        SUCCEED("Host CPU lacks BMI2 - PEXT path not exercised on this runner; "
+                 "the magic path above already covers correctness, and "
+                 "rook_attacks()/bishop_attacks() would themselves fall back "
+                 "to it here too.");
+        return;
+    }
+
+    init_magic_bitboards();
+    std::mt19937_64 rng(0xFEEDFACEULL);
+
+    for (Square sq = 0; sq < kNumSquares; ++sq) {
+        for (int trial = 0; trial < 200; ++trial) {
+            const Bitboard occ = rng();
+            REQUIRE(rook_attacks_pext_for_testing(sq, occ) ==
+                    brute_force_attacks(sq, kRookDeltas, occ));
+            REQUIRE(bishop_attacks_pext_for_testing(sq, occ) ==
+                    brute_force_attacks(sq, kBishopDeltas, occ));
+        }
+    }
+}
+
+TEST_CASE("PEXT and magic paths agree with each other, when the host CPU supports BMI2",
+          "[attacks][pext]") {
+    nightwing::support::detect_cpu_features();
+    if (!nightwing::support::cpu_has_bmi2()) {
+        SUCCEED("Host CPU lacks BMI2 - nothing to cross-check on this runner.");
+        return;
+    }
+
+    init_magic_bitboards();
+    std::mt19937_64 rng(0xABADCAFEULL);
+
+    for (Square sq = 0; sq < kNumSquares; ++sq) {
+        const Bitboard occ = rng();
+        // rook_attacks()/bishop_attacks() will themselves be using PEXT
+        // here (this host supports it), so this also implicitly confirms
+        // the runtime dispatch picked the fast path rather than silently
+        // falling back.
+        REQUIRE(rook_attacks(sq, occ) == rook_attacks_pext_for_testing(sq, occ));
+        REQUIRE(bishop_attacks(sq, occ) == bishop_attacks_pext_for_testing(sq, occ));
+    }
+}
+#endif
