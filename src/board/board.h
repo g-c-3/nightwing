@@ -158,6 +158,14 @@ struct Position {
     /// Black's move.
     std::uint16_t fullmove_number = 1;
 
+    /// Zobrist hash of this position (see board/zobrist.h). Defaults to 0
+    /// (not a valid hash for any real position with keys initialized —
+    /// see compute_hash()'s precondition) until explicitly set; factories
+    /// like start_position() set it correctly. Whatever mutates a Position
+    /// (make/unmake move, a later roadmap item) is responsible for
+    /// updating this incrementally rather than leaving it stale.
+    std::uint64_t zobrist_hash = 0;
+
     /// Returns the union of both colors' occupancy — every occupied square.
     [[nodiscard]] constexpr Bitboard occupied() const noexcept {
         return occupancy[static_cast<std::size_t>(Color::White)] |
@@ -205,14 +213,15 @@ struct Position {
 /// pawns as 'P'/'p'). Debug/test tool only — not used in the hot path.
 [[nodiscard]] std::string to_string(const Position& pos);
 
-// A Position currently comes to a bit under three 64-byte cache lines
-// (measured: sizeof(Position) == 184 on a typical x86-64/ARM64 LP64
+// A Position currently comes to exactly three 64-byte cache lines
+// (measured: sizeof(Position) == 192 on a typical x86-64/ARM64 LP64
 // target with default alignment — 12 piece bitboards + 2 occupancy
-// bitboards = 112 bytes, 64-byte mailbox, a handful of state bytes). If a
-// future change pushes this meaningfully higher, that's worth a deliberate
-// look (ARCHITECTURE.md "Memory & Cache") rather than an accidental
-// regression — this assert exists to make that change visible, not to
-// forbid it outright.
+// bitboards = 112 bytes, 64-byte mailbox, a handful of state bytes, plus
+// the 8-byte zobrist_hash). This is exactly at the assert's current
+// ceiling — the next addition needs either a deliberate look at trimming
+// something (ARCHITECTURE.md "Memory & Cache") or a deliberate, documented
+// decision to raise the ceiling; this assert exists to make that choice
+// visible rather than let it happen by accident.
 static_assert(sizeof(Position) <= 192,
               "Position has grown beyond ~3 cache lines - if intentional, "
               "update this assert and note the tradeoff in DECISIONS.md");

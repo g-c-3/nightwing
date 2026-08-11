@@ -6,6 +6,8 @@
 
 #include "board/board.h"
 
+#include "board/zobrist.h"
+
 namespace nightwing::board {
 
 Position start_position() {
@@ -40,6 +42,12 @@ Position start_position() {
         pos.place_piece(make_square(entry.file, 0), entry.white);
         pos.place_piece(make_square(entry.file, 7), entry.black);
     }
+
+    // init_zobrist_keys() is idempotent, so calling it here rather than
+    // requiring callers to remember to do so first guarantees this
+    // factory always returns a Position with a correct, non-stale hash.
+    init_zobrist_keys();
+    pos.zobrist_hash = compute_hash(pos);
 
     return pos;
 }

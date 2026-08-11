@@ -34,6 +34,7 @@
 #include <vector>
 
 #include "support/cpu_features.h"
+#include "support/rng.h"
 
 #if defined(NIGHTWING_ENABLE_BMI2)
 #include <immintrin.h>
@@ -49,29 +50,10 @@ using Deltas = std::array<std::pair<int, int>, 4>;
 constexpr Deltas kRookDeltas = {{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}};
 constexpr Deltas kBishopDeltas = {{{1, 1}, {1, -1}, {-1, 1}, {-1, -1}}};
 
-/// Small, fast, deterministic PRNG (xorshift64*) used only for the magic
-/// search below. Determinism (fixed seed) is intentional: magics — and
-/// therefore attack table contents — must be identical across runs and
-/// platforms so behavior is reproducible and testable.
-class Xorshift64Star {
-public:
-    explicit Xorshift64Star(std::uint64_t seed) : state_(seed != 0 ? seed : 1) {}
-
-    std::uint64_t next() {
-        state_ ^= state_ >> 12;
-        state_ ^= state_ << 25;
-        state_ ^= state_ >> 27;
-        return state_ * 0x2545F4914F6CDD1DULL;
-    }
-
-private:
-    std::uint64_t state_;
-};
-
 /// Returns a sparse random 64-bit candidate (AND of three random draws —
 /// magics with fewer set bits are more likely to work and are found
 /// faster this way; standard trick for this kind of search).
-std::uint64_t sparse_random_u64(Xorshift64Star& rng) {
+std::uint64_t sparse_random_u64(nightwing::support::Xorshift64Star& rng) {
     return rng.next() & rng.next() & rng.next();
 }
 
@@ -167,7 +149,8 @@ SubsetData enumerate_subsets(Square sq, Bitboard mask, const Deltas& deltas) {
 /// different occupancies mapping to the same index are fine as long as
 /// they'd produce the same attack set — which happens naturally for many
 /// subsets, and is why the table can be far smaller than 2^64).
-std::uint64_t find_magic_for_square(Bitboard mask, const SubsetData& data, Xorshift64Star& rng,
+std::uint64_t find_magic_for_square(Bitboard mask, const SubsetData& data,
+                                     nightwing::support::Xorshift64Star& rng,
                                      std::vector<Bitboard>& table_out) {
     const int bits = popcount(mask);
     const int size = 1 << bits;
@@ -255,7 +238,7 @@ void init_magic_bitboards() {
     nightwing::support::detect_cpu_features();
 
     // Fixed seed: reproducible magics/tables across every run and platform.
-    Xorshift64Star rng(0x9E3779B97F4A7C15ULL);
+    nightwing::support::Xorshift64Star rng(0x9E3779B97F4A7C15ULL);
 
     for (Square sq = 0; sq < kNumSquares; ++sq) {
         g_rook_mask[sq] = relevant_occupancy_mask(sq, kRookDeltas);
