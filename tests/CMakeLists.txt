@@ -10,6 +10,7 @@ add_executable(nightwing_tests
     test_smoke.cpp
     bitboard_tests.cpp
     attacks_tests.cpp
+    board_tests.cpp
 )
 target_link_libraries(nightwing_tests PRIVATE nightwing_lib Catch2::Catch2WithMain)
 
