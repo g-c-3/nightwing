@@ -26,6 +26,34 @@ using Square = int;
 inline constexpr Bitboard kEmptyBitboard = 0ULL;
 inline constexpr Bitboard kFullBitboard = ~0ULL;
 inline constexpr int kNumSquares = 64;
+inline constexpr int kNumFiles = 8;
+inline constexpr int kNumRanks = 8;
+
+/// Returns the file (0=a .. 7=h) of `sq`.
+[[nodiscard]] constexpr int file_of(Square sq) noexcept {
+    assert(sq >= 0 && sq < kNumSquares);
+    return sq & 7;
+}
+
+/// Returns the rank (0=rank1 .. 7=rank8) of `sq`.
+[[nodiscard]] constexpr int rank_of(Square sq) noexcept {
+    assert(sq >= 0 && sq < kNumSquares);
+    return sq >> 3;
+}
+
+/// Returns the square index for a given file (0..7) and rank (0..7).
+[[nodiscard]] constexpr Square make_square(int file, int rank) noexcept {
+    assert(file >= 0 && file < kNumFiles);
+    assert(rank >= 0 && rank < kNumRanks);
+    return rank * 8 + file;
+}
+
+/// Returns true if (file, rank) is within the board — useful when walking
+/// rays outward from a square, since off-board coordinates go negative or
+/// exceed 7 well before wrapping in the packed `Square` representation.
+[[nodiscard]] constexpr bool on_board(int file, int rank) noexcept {
+    return file >= 0 && file < kNumFiles && rank >= 0 && rank < kNumRanks;
+}
 
 /// Returns the bitboard with only `sq` set.
 [[nodiscard]] constexpr Bitboard square_bb(Square sq) noexcept {
