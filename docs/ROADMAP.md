@@ -3,12 +3,12 @@
 Phases are sequential unless noted. Check off tasks as completed; add new ones as they're discovered. Each session works from the top incomplete item unless told otherwise.
 
 ## Phase 0 — Project Setup
-- [ ] CMake project skeleton, C++20, builds empty `main.cpp`
-- [ ] Release build config: `-O3` + LTO enabled; separate Debug config with sanitizers (ASan/UBSan) for dev/CI correctness testing
-- [ ] CPU feature detection scaffolding (BMI2/POPCNT) with portable fallback build target
-- [ ] GitHub Actions CI: build matrix (Linux/macOS/Windows), runs `ctest`
-- [ ] Catch2 integrated as test framework
-- [ ] `docs/` seeded (this file, DECISIONS.md, SESSIONS.md, ARCHITECTURE.md)
+- [x] CMake project skeleton, C++20, builds empty `main.cpp`
+- [x] Release build config: `-O3` + LTO enabled; separate Debug config with sanitizers (ASan/UBSan) for dev/CI correctness testing
+- [x] CPU feature detection scaffolding (BMI2/POPCNT) with portable fallback build target
+- [x] GitHub Actions CI: build matrix (Linux/macOS/Windows), runs `ctest`
+- [x] Catch2 integrated as test framework
+- [x] `docs/` seeded (this file, DECISIONS.md, SESSIONS.md, ARCHITECTURE.md)
 
 ## Phase 1 — Board Representation & Move Generation
 - [ ] Bitboard primitives (set/clear/pop bit, popcount, bitscan) — using compiler intrinsics, not manual loops
@@ -112,4 +112,4 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Current phase: 0 — Project Setup.** Next task: CMake project skeleton.
+**Current phase: 1 — Board Representation & Move Generation.** Next task: bitboard primitives (set/clear/pop bit, popcount, bitscan) via compiler intrinsics.
