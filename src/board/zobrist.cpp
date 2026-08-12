@@ -97,4 +97,24 @@ std::uint64_t compute_hash(const Position& pos) {
     return hash;
 }
 
+std::uint64_t piece_square_key(Piece p, Square sq) noexcept {
+    return g_piece_square_keys[static_cast<std::size_t>(p)][static_cast<std::size_t>(sq)];
+}
+
+std::uint64_t side_to_move_key() noexcept { return g_side_to_move_key; }
+
+std::uint64_t castling_right_key(std::uint8_t right) noexcept {
+    switch (right) {
+        case castling::kWhiteKingside: return g_castling_keys[0];
+        case castling::kWhiteQueenside: return g_castling_keys[1];
+        case castling::kBlackKingside: return g_castling_keys[2];
+        case castling::kBlackQueenside: return g_castling_keys[3];
+        default: return 0; // precondition violated: not a single castling::k* flag
+    }
+}
+
+std::uint64_t en_passant_file_key(int file) noexcept {
+    return g_en_passant_file_keys[static_cast<std::size_t>(file)];
+}
+
 } // namespace nightwing::board

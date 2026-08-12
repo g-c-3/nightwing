@@ -9,13 +9,12 @@
 // fixed seed — no borrowed key tables.
 //
 // Incremental XOR-update on make/unmake (never a full recompute per
-// search node, per ARCHITECTURE.md "Incremental Updates") is a later
-// roadmap item, once make/unmake move exists. What's here — the key
-// tables and compute_hash() — is what that update logic will XOR against
-// per move; for now it's used to give a freshly-built Position (e.g.
-// start_position()) a correct initial hash, and in tests to verify future
-// incremental updates stay correct by cross-checking against a full
-// recompute.
+// search node, per ARCHITECTURE.md "Incremental Updates") is implemented
+// in board.cpp's make_move()/unmake_move(), using the per-key accessors
+// below. compute_hash() itself remains O(64) and is used to give a
+// freshly-built Position (e.g. start_position()) its correct initial
+// hash, and in tests to cross-check that the incremental update in
+// make_move() stays correct against a full recompute.
 
 #include <cstdint>
 
@@ -38,4 +37,28 @@ void init_zobrist_keys();
 /// Precondition: init_zobrist_keys() has been called.
 [[nodiscard]] std::uint64_t compute_hash(const Position& pos);
 
+/// Returns the Zobrist key for a single (piece, square) pair — the XOR
+/// term make_move()/unmake_move() use to incrementally update
+/// Position::zobrist_hash without a full recompute. Precondition:
+/// init_zobrist_keys() called, p != Piece::None.
+[[nodiscard]] std::uint64_t piece_square_key(Piece p, Square sq) noexcept;
+
+/// Returns the Zobrist key XORed into the hash whenever it's Black to
+/// move. Toggle this unconditionally on every side-to-move flip in
+/// make_move()/unmake_move() — XOR is its own inverse, so applying the
+/// same key again on unmake exactly removes what make_move added.
+/// Precondition: init_zobrist_keys() called.
+[[nodiscard]] std::uint64_t side_to_move_key() noexcept;
+
+/// Returns the Zobrist key for a single castling-rights flag (exactly one
+/// of the castling::k* constants — not a combined mask). Precondition:
+/// init_zobrist_keys() called, `right` is one of the four castling::k*
+/// values.
+[[nodiscard]] std::uint64_t castling_right_key(std::uint8_t right) noexcept;
+
+/// Returns the Zobrist key for en passant file `file` (0 = a-file .. 7 =
+/// h-file). Precondition: init_zobrist_keys() called, 0 <= file < 8.
+[[nodiscard]] std::uint64_t en_passant_file_key(int file) noexcept;
+
 } // namespace nightwing::board
+

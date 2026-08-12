@@ -2,17 +2,19 @@
 // src/board/board.h
 //
 // The board state struct (`Position`) and its supporting piece/color
-// enums. Holds exactly the state needed to fully describe a chess
-// position: piece placement (bitboards + mailbox), side to move, castling
-// rights, en passant target, and the two move counters. Deliberately
-// minimal and dense — kept to a small number of cache lines (see the
-// static_assert at the bottom of this file) since Position is read and
-// copied constantly throughout search/movegen (ARCHITECTURE.md,
-// "Memory & Cache").
+// enums, plus make/unmake move. Holds exactly the state needed to fully
+// describe a chess position: piece placement (bitboards + mailbox), side
+// to move, castling rights, en passant target, and the two move
+// counters. Deliberately minimal and dense — kept to a small number of
+// cache lines (see the static_assert at the bottom of this file) since
+// Position is read and copied constantly throughout search/movegen
+// (ARCHITECTURE.md, "Memory & Cache").
 //
-// Make/unmake move and legal move generation are separate, later roadmap
-// items and are not implemented here — this file only defines the data
-// and the handful of accessors/factory needed to construct and query it.
+// Legal move generation (movegen.h) is a separate module built on top of
+// this one; it doesn't need make/unmake (see movegen.h's header comment
+// for why: legality is resolved via pin/check masks instead), so there's
+// no include-order dependency between the two beyond movegen depending
+// on Position's read-only query surface.
 
 #include <array>
 #include <cstdint>
@@ -21,6 +23,12 @@
 #include "board/bitboard.h"
 
 namespace nightwing::board {
+
+/// Forward declaration only — full definition is move.h. board.h can't
+/// include move.h itself (move.h includes board.h, for Square/PieceType/
+/// etc., so that direction would be circular); only board.cpp, which
+/// implements make_move()/unmake_move(), needs the full Move definition.
+class Move;
 
 /// A side to move / piece color.
 enum class Color : std::uint8_t {
@@ -200,7 +208,71 @@ struct Position {
         set_bit(occupancy[static_cast<std::size_t>(color_of(piece))], sq);
         piece_on[static_cast<std::size_t>(sq)] = piece;
     }
+
+    /// Removes whatever piece is on `sq`, updating both piece_bb and the
+    /// mailbox, and returns the piece that was removed. Precondition:
+    /// `sq` is occupied.
+    constexpr Piece remove_piece(Square sq) noexcept {
+        const Piece p = piece_on[static_cast<std::size_t>(sq)];
+        clear_bit(piece_bb[static_cast<std::size_t>(color_of(p))]
+                          [static_cast<std::size_t>(piece_type_of(p))],
+                  sq);
+        clear_bit(occupancy[static_cast<std::size_t>(color_of(p))], sq);
+        piece_on[static_cast<std::size_t>(sq)] = Piece::None;
+        return p;
+    }
+
+    /// Moves whatever piece is on `from` to `to`, updating both piece_bb
+    /// and the mailbox. Precondition: `from` is occupied, `to` is empty
+    /// (this is a relocation helper, not a capture — callers that need to
+    /// overwrite an occupied `to` square must remove_piece() it first;
+    /// make_move() in board.cpp does this explicitly for captures rather
+    /// than folding it in here, so this stays a simple, precondition-safe
+    /// primitive).
+    constexpr void move_piece(Square from, Square to) noexcept {
+        const Piece p = remove_piece(from);
+        place_piece(to, p);
+    }
 };
+
+/// Saved state needed to exactly reverse one make_move() call. Move
+/// itself already encodes from/to/flag/promotion, so the only extra
+/// state make_move() needs to hand back is whatever it would otherwise
+/// have destroyed or couldn't re-derive: the captured piece (if any) and
+/// the pre-move "history" fields that don't follow mechanically from the
+/// move alone (castling rights, en passant target, halfmove clock, and
+/// the Zobrist hash — restored verbatim on unmake rather than re-derived
+/// by reversing the incremental XOR steps, which is simpler and equally
+/// O(1), the same pattern used by e.g. Stockfish's state stack).
+///
+/// Intended usage is a fixed-size stack of these indexed by search ply
+/// (ARCHITECTURE.md "Memory & Cache": no heap allocation in the search
+/// hot path) — callers own that storage; UndoInfo itself is just a plain
+/// value type.
+struct UndoInfo {
+    Piece captured_piece = Piece::None; // Piece::None if the move wasn't a capture
+    std::uint8_t castling_rights = 0;   // pre-move value
+    std::int8_t en_passant_square = kNoEnPassantSquare; // pre-move value
+    std::uint8_t halfmove_clock = 0;    // pre-move value
+    std::uint64_t zobrist_hash = 0;     // pre-move value
+};
+
+/// Applies `move` (assumed pseudo-legal/legal — this function does not
+/// re-validate legality) to `pos` in place: moves the piece, resolves
+/// captures (including en passant), promotions, and castling rook
+/// movement, updates castling rights/en passant target/halfmove/fullmove
+/// counters, and incrementally updates `pos.zobrist_hash` (never a full
+/// recompute — ARCHITECTURE.md "Incremental Updates"). Saves everything
+/// needed to reverse the move into `undo`. Precondition:
+/// init_zobrist_keys() has been called.
+void make_move(Position& pos, const Move& move, UndoInfo& undo) noexcept;
+
+/// Exactly reverses the most recent make_move(pos, move, undo) call.
+/// Precondition: `move` and `undo` are the same arguments/output from
+/// the matching make_move() call, and no other move has been made on
+/// `pos` since (this is a strict stack discipline — make/unmake calls
+/// must nest, like the search tree they're driving).
+void unmake_move(Position& pos, const Move& move, const UndoInfo& undo) noexcept;
 
 /// Returns the standard chess starting position: full initial piece
 /// placement, White to move, all castling rights available, no en
