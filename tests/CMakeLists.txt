@@ -15,6 +15,8 @@ add_executable(nightwing_tests
     masks_tests.cpp
     movegen_tests.cpp
     makemove_tests.cpp
+    fen_tests.cpp
+    perft_tests.cpp
 )
 target_link_libraries(nightwing_tests PRIVATE nightwing_lib Catch2::Catch2WithMain)
 
