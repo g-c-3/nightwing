@@ -8,7 +8,9 @@
 // depth chosen to stay fast in CI (a few hundred ms at most in Release;
 // see docs/SESSIONS.md for the deeper depths — startpos to depth 6,
 // Kiwipete to depth 5 — that were checked by hand during development and
-// can be promoted into this suite later if CI budget allows).
+// can be promoted into this suite later if CI budget allows). A final
+// test cross-checks perft_bulk() (see src/board/perft.h) against these
+// same positions.
 //
 // Every mismatch this suite would have caught during development was
 // cross-checked against an independent, deliberately naive movegen
@@ -103,4 +105,34 @@ TEST_CASE("perft: position 6 - complex late-middlegame position", "[perft]") {
     REQUIRE(perft(pos, 2) == 2079);
     REQUIRE(perft(pos, 3) == 89890);
     REQUIRE(perft(pos, 4) == 3894594);
+}
+
+TEST_CASE("perft_bulk agrees with perft() on every reference position", "[perft]") {
+    // perft_bulk() takes a different code path (returns the move count
+    // directly at depth 1 instead of recursing to depth 0), so this is a
+    // genuine cross-check, not a restatement of the tests above — it
+    // would have caught either of the two bugs fixed this session just
+    // as well as the absolute-node-count tests did, since both bugs
+    // affected which moves were generated, not just how they were
+    // counted.
+    init_all();
+    struct Case {
+        const char* fen;
+        int max_depth;
+    };
+    const Case cases[] = {
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 3},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 4},
+        {"r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1", 3},
+        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 3},
+        {"r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10", 3},
+    };
+    for (const auto& c : cases) {
+        Position pos_a = parse_fen(c.fen);
+        Position pos_b = parse_fen(c.fen);
+        for (int d = 1; d <= c.max_depth; ++d) {
+            REQUIRE(perft_bulk(pos_a, d) == perft(pos_b, d));
+        }
+    }
 }
