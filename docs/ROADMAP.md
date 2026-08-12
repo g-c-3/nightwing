@@ -21,7 +21,7 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [x] Move list as fixed-size stack array (no heap allocation)
 - [x] Make/unmake move
 - [x] Perft test suite passing to standard reference depths (startpos, Kiwipete, and the other 4 standard CPW reference positions — see docs/SESSIONS.md for the deeper depths checked by hand)
-- [ ] Perft bulk-counting mode benchmarked as an early NPS sanity check (movegen throughput baseline)
+- [x] Perft bulk-counting mode benchmarked as an early NPS sanity check (movegen throughput baseline) — `perft_bulk()` + `src/bench.cpp`; ~3.8-4.9x faster than plain `perft()` on this dev machine (startpos ~120 Mnps, Kiwipete ~174 Mnps at Release+BMI2 — see docs/SESSIONS.md; not CI-asserted, since NPS is machine-dependent, but `perft_bulk()`'s node counts are cross-checked against `perft()`'s in tests/perft_tests.cpp)
 - [x] Minimal FEN parser (`src/board/fen.h/.cpp`) — done ahead of schedule this session, as a perft-position-building prerequisite; kept here, checked off, as a marker that it exists and is tested (tests/fen_tests.cpp) even though it was originally slated for Phase 2's UCI work
 
 ## Phase 2 — Minimal Search + Eval (get something playing)
@@ -113,4 +113,4 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Current phase: 1 — Board Representation & Move Generation.** Next task: perft bulk-counting mode (movegen throughput/NPS baseline) — the last Phase 1 item before Phase 2's eval/search work begins.
+**Phase 1 complete.** **Current phase: 2 — Minimal Search + Eval.** Next task: material-only + PSQT eval (tapered mg/eg).

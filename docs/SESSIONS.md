@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+## 2026-08-13 — Session 7: Perft bulk-counting + NPS bench — Phase 1 complete
+
+**What was built:** The last Phase 1 item. Phase 1 (Board Representation & Move Generation) is now fully checked off; next session starts Phase 2 (eval + search).
+
+- `src/board/perft.h/.cpp` — added `perft_bulk()` alongside the existing `perft()`: the standard bulk-counting optimization (returns the legal move count directly at depth 1 instead of recursing to depth 0 for each leaf). Kept as a separate function rather than a flag on `perft()` — see DECISIONS.md.
+- `src/bench.cpp` + a new `nightwing_bench` executable target (src/CMakeLists.txt) — runs `perft_bulk()` against startpos (depth 6) and Kiwipete (depth 5), printing nodes/time/Mnps. Informational only, not CI-asserted (NPS is machine-dependent) — correctness is what tests/perft_tests.cpp's new equivalence test covers instead.
+- `tests/perft_tests.cpp` — added a cross-check test asserting `perft_bulk()` and `perft()` produce identical node counts across all six reference positions and their tested depths.
+- Sample bench output on this dev machine (Release, BMI2 enabled): **startpos depth 6: 119,060,324 nodes in 0.995s (119.66 Mnps)**, **Kiwipete depth 5: 193,690,690 nodes in 1.115s (173.65 Mnps)** — roughly 3.8-4.9x faster than the equivalent plain `perft()` calls (3.75s/5.43s for the same node counts, from session 6's manual verification). A reasonable movegen throughput baseline to compare against once search-side move ordering and pruning start interacting with movegen call patterns in Phase 3+.
+- Test suite grew from 84 to 85 (Release run, all green); Debug+ASan/UBSan build compiled with zero warnings, and the new bulk-vs-plain equivalence test ran clean under sanitizers.
+
+**Bugs fixed:** None — new-function work built on an already-correct, perft-verified movegen/make-unmake layer.
+
+**Decisions made:** Logged in DECISIONS.md — `perft_bulk()` as a separate function rather than a flag/template parameter on `perft()`.
+
+**Next session start point:** Phase 2 begins: material-only + PSQT (piece-square table) evaluation, tapered between middlegame and endgame values. This is the first eval work, so it's a good point to also decide (and log in DECISIONS.md) the PSQT source/attribution — ARCHITECTURE.md and the system prompt both require crediting any borrowed values (e.g. if starting from a well-known public PSQT set like PeSTO's or Ethereal's as a baseline to tune from later, rather than hand-guessing values from scratch) rather than presenting them as original. Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-13 — Session 6: Perft suite, FEN parser, and two real movegen bugs found + fixed
 
 **What was built:** The perft test suite (the last correctness gate before Phase 2's eval/search work), plus the FEN parser it needed, verified against the standard published reference node counts — and, in the process of getting there, two genuine movegen bugs were found and fixed (not hypothetical — perft mismatches don't lie). Full details on both bugs, root cause, and fix are in DECISIONS.md.

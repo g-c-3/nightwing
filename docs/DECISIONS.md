@@ -4,7 +4,19 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
-## 2026-08-13 — Two movegen bugs found via perft cross-checking, and the cross-check method itself
+## 2026-08-13 — Bulk-counting perft: a separate function, not a flag on `perft()`
+
+**Decision:** `perft_bulk()` is a distinct function in perft.h/.cpp, not `perft(pos, depth, bool bulk)` or a template parameter on a single implementation.
+
+**Rationale:** The two are used for different purposes that want to stay independently readable: `perft()` is the reference/correctness implementation (every node genuinely visited via make/unmake, so it's the one to trust if the two ever disagree), while `perft_bulk()` is the throughput baseline `src/bench.cpp` measures against. A boolean flag would make both purposes harder to reason about at each call site ("is this call site's `true` argument obviously about speed, or could someone mistake it for something else") for essentially zero code-sharing benefit — the two functions differ only in what happens at depth 1, so the "duplication" is two lines, not a maintenance burden. `tests/perft_tests.cpp` cross-checks them against each other directly (same node counts for every reference position/depth), which is a more direct and legible test than trying to test a flag's two branches through one shared function.
+
+**Alternatives considered:**
+- Single function with a runtime `bool bulk` parameter — rejected; no real code-sharing win, and the two call sites (correctness tests vs. bench) become slightly less self-documenting about which mode they're in.
+- Single function templated on `bool Bulk` for zero-overhead dispatch — rejected as premature; perft/perft_bulk aren't on the actual search hot path (that's the eventual move generator inside alpha-beta, a separate concern), so there's no performance case for the extra complexity yet.
+
+---
+
+
 
 **Decision:** While building the perft suite, two real correctness bugs in `movegen.cpp` were found — not via review, but by writing a second, deliberately independent legal-move generator (pseudo-legal generation with no pin/check optimization at all, filtered by actually making each move and checking whether the mover's king ended up attacked) and bisecting the game tree for the first position where the fast and slow generators' move sets diverged. Both bugs are now fixed; the independent generator was scratch/debug-only tooling and isn't part of the committed codebase (see "Alternatives considered" for why it wasn't kept).
 
