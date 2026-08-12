@@ -4,7 +4,23 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
-## 2026-08-12 — Move generation: mask-based legality (pins/checks) + full-simulation for en passant
+## 2026-08-12 — Make/unmake: full-hash restore on unmake, revoke-castling-rights-by-square, and exposing Zobrist keys from board.h
+
+**Decision:** Three related choices made together while implementing `make_move()`/`unmake_move()` (board.h/.cpp):
+1. `UndoInfo` stores the pre-move `zobrist_hash` verbatim, and `unmake_move()` restores it directly rather than reversing the incremental XOR steps make_move() applied. Still O(1), still "incremental" in the sense ARCHITECTURE.md means (no O(64) recompute), just restore-from-saved-value instead of undo-by-replaying-XORs.
+2. Castling-rights revocation is computed by comparing the move's `from`/`to` squares against the four corner squares (a1/h1/a8/h8), not by checking whether the moving/captured piece is actually a rook. This is safe because rights only ever get revoked, never re-granted — once a corner's right is cleared, any later, unrelated piece occupying that square is a no-op against an already-clear bit.
+3. `zobrist.h` gained four new public accessors (`piece_square_key()`, `side_to_move_key()`, `castling_right_key()`, `en_passant_file_key()`) so `board.cpp`'s incremental hash update can XOR against the same key tables `compute_hash()` uses, without board.cpp reaching into zobrist.cpp's previously-file-local key arrays.
+
+**Rationale:** (1) Storing the previous hash is simpler and less error-prone than writing a second "undo the XOR sequence" code path that has to exactly mirror make_move()'s order of operations — any drift between the two would be a silent, hard-to-catch bug, whereas a saved value can't drift. This is the same pattern Stockfish's state stack uses. (2) The by-square check is the standard technique (used by essentially every classical engine) precisely because it avoids "was this actually the original rook" bookkeeping — a single square-based check handles rook moves, rook captures, and (via the king branch) king moves uniformly. (3) The alternative — duplicating key generation/storage in board.cpp, or making board.cpp befriend zobrist.cpp's internals — would violate the existing module boundary (zobrist.h/.cpp owns the keys; board.h/.cpp owns state mutation) for no benefit.
+
+**Alternatives considered:**
+- Reversing the XOR sequence on unmake instead of restoring a saved hash — rejected; more code, same asymptotic cost, and a second place for the hash-update logic to go subtly wrong.
+- Tracking "does the moving/captured piece equal Rook and start on a corner" explicitly for castling-rights revocation — rejected; more conditions to get right for identical behavior, since the by-square check already handles every real case safely (see rationale above).
+- Making the Zobrist key tables `extern`-visible globals instead of adding accessor functions — rejected; accessor functions keep the tables themselves private to zobrist.cpp (encapsulation) while still giving board.cpp exactly the per-key lookups it needs.
+
+---
+
+
 
 **Decision:** `generate_legal_moves()` produces fully legal moves directly (no separate pseudo-legal-then-filter pass), using three techniques: (1) a `target_mask` bitboard restricting non-king moves to check-resolving squares (capture the sole checker, or block the ray to it — computed once per call from a `checkers` bitboard); (2) a per-square "sniper" pin detection pass (enemy sliders that would reach the king if own pieces were transparent, checked against actual occupancy for exactly-one-own-piece-in-between) producing a `pin_allowed` ray per pinned piece; (3) en passant legality resolved by direct occupancy simulation (remove both pawns, add the mover on the target square, re-run the king-attacked check) rather than reasoned about via the pin/target masks, since it's the one move whose discovered-check risk (the "horizontal en passant pin") isn't captured by either mask on its own.
 
