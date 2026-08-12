@@ -37,3 +37,6 @@ endif()
 
 add_executable(nightwing main.cpp)
 target_link_libraries(nightwing PRIVATE nightwing_lib)
+
+add_executable(nightwing_bench bench.cpp)
+target_link_libraries(nightwing_bench PRIVATE nightwing_lib)
