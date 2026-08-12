@@ -4,6 +4,30 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+## 2026-08-12 — Move generation: mask-based legality (pins/checks) + full-simulation for en passant
+
+**Decision:** `generate_legal_moves()` produces fully legal moves directly (no separate pseudo-legal-then-filter pass), using three techniques: (1) a `target_mask` bitboard restricting non-king moves to check-resolving squares (capture the sole checker, or block the ray to it — computed once per call from a `checkers` bitboard); (2) a per-square "sniper" pin detection pass (enemy sliders that would reach the king if own pieces were transparent, checked against actual occupancy for exactly-one-own-piece-in-between) producing a `pin_allowed` ray per pinned piece; (3) en passant legality resolved by direct occupancy simulation (remove both pawns, add the mover on the target square, re-run the king-attacked check) rather than reasoned about via the pin/target masks, since it's the one move whose discovered-check risk (the "horizontal en passant pin") isn't captured by either mask on its own.
+
+**Rationale:** Make/unmake move doesn't exist yet (next roadmap item), so a "generate pseudo-legal, then make each move and check if the king is attacked" filter — the simplest-to-reason-about approach — isn't available yet without generating that machinery first, out of order. The mask-based approach is also what ARCHITECTURE.md already committed to at the Phase 1 planning stage ("fully legal move gen ... via pin/check masks, to keep search code simple") and avoids the wasted work of generating and then discarding illegal moves. Simulating en passant specifically (rather than folding it into the pin-ray/target-mask reasoning) was chosen because that reasoning genuinely doesn't cover the horizontal-pin case without extra special-casing that the simulation gets for free and provably-correctly.
+
+**Alternatives considered:**
+- Pseudo-legal generation + make/unmake + king-attacked filter — rejected for now; cleanest long-term but requires make/unmake to exist first (next item), and would mean revisiting movegen's legality layer twice. Worth reconsidering once make/unmake lands, if the mask-based approach shows any correctness gaps beyond en passant.
+- Extending the pin-ray logic to also cover the horizontal-en-passant case algebraically (checking if the two pawns being removed are both on the pin ray) — rejected; more special-case reasoning to get right and verify than a direct occupancy simulation, for a move type that's already rare enough that the simulation's cost is negligible.
+
+---
+
+## 2026-08-12 — Move encoding: 16-bit packed move (CPW "Encoding Moves" convention)
+
+**Decision:** `Move` (src/board/move.h) packs from-square (6 bits), to-square (6 bits), and a 4-bit flag into a single `uint16_t`, using the flag-value table documented on the Chess Programming Wiki's "Encoding Moves" page (quiet/double-push/castle-kingside/castle-queenside/capture/en-passant/four promotion-piece values x plain-or-capture).
+
+**Rationale:** A `uint16_t` move is cheap to copy, store in TT entries, killer-move slots, and history tables — all upcoming Phase 3/4 needs — without the padding or larger footprint a struct-of-fields (separate from/to/piece/captured/promotion members) would carry. The specific flag table is a widely-used, well-tested public convention, so adopting it (from-scratch implementation, no code copied) avoids reinventing a scheme with the same edge cases (e.g. distinguishing promotion-with-capture from promotion) that public engines have already shaken out.
+
+**Alternatives considered:**
+- Wider (32-bit) move encoding carrying the moved/captured piece type inline — rejected for now; those are one mailbox lookup away from a `Position` given from/to, and the extra bits aren't needed yet. Revisit only if profiling later shows the mailbox lookup is a hot-path cost worth trading memory for.
+- A plain struct with named fields (from, to, piece, flags as separate members) — rejected; larger, and the packed encoding's bit-twiddling is fully encapsulated behind accessors (`from()`, `to()`, `flag()`, `is_capture()`, etc.), so callers never see raw bit manipulation.
+
+---
+
 ## 2026-08-11 — Zobrist en passant hashing: simplified file-only scheme
 
 **Decision:** `compute_hash()` XORs an en-passant-file key whenever `Position::en_passant_square` is set, based purely on that square's file — it does not check whether a pawn is actually present and legally able to make the capture.

@@ -4,6 +4,23 @@ Newest entry at top.
 
 ---
 
+## 2026-08-12 — Session 4: Fully legal move generation + packed move encoding
+
+**What was built:** The two remaining Phase 1 items short of make/unmake, verified with a real g++13/CMake/Catch2 build+ctest run (Release, Release+BMI2, and Debug+ASan/UBSan configurations) rather than only reasoned about.
+
+- `src/board/move.h/.cpp` — `Move`: a `uint16_t`-packed move (6-bit from, 6-bit to, 4-bit flag), flag encoding per the standard CPW "Encoding Moves" table (quiet, double push, king/queen castle, capture, en passant, four promotion kinds x plain-or-capture). Accessors (`from()`, `to()`, `flag()`, `is_capture()`, `is_promotion()`, `promotion_piece_type()`, `is_castle()`, `is_en_passant()`, `is_double_pawn_push()`, `is_null()`) plus `to_uci()` for debug/UCI-I-O. `MoveList`: fixed-size stack array (`kMaxMoves` = 218, the theoretical maximum), no heap allocation, iterator support for range-for.
+- `src/board/movegen.h/.cpp` — `generate_legal_moves()`: fully legal move generation with no separate pseudo-legal-then-filter pass. Checkers/pin detection via the "sniper" bitboard technique (enemy sliders that would reach the king through transparent own pieces, cross-checked against real occupancy for a single blocker); single check restricts non-king moves to a capture-or-block `target_mask`, double check allows only king moves; king moves are checked with the king itself removed from occupancy (avoids the "hide behind itself" bug when stepping back along a check ray); castling checks rights, empty/unattacked transit squares, and not-currently-in-check; en passant legality is resolved by direct occupancy simulation to correctly catch the horizontal-discovered-check edge case. `is_square_attacked()` exposed publicly for future king-safety eval reuse. See DECISIONS.md for the two logged technique decisions (move encoding, mask-based legality approach).
+- `tests/movegen_tests.cpp` — 11 new focused unit tests (not a perft suite — that's next): start-position move count (20) and move-set spot checks, pinned-piece restriction (both the "pinned piece can't move at all" and "pinned piece can still slide within the pin ray" cases), single-check block/capture restriction, the king-step-back-along-check-ray regression case, en passant both illegal (horizontal discovered check) and legal (no discovery) cases, castling generated/blocked-by-attacked-square, and double check allowing only king moves.
+- Test suite grew from 49 to 60 (portable) / 62 (BMI2) test cases.
+
+**Bugs fixed:** None — this was new-file work, not a fix to existing code. One `-Wunused-parameter` warning caught locally before commit (`generate_king_moves` took an unused `us` parameter after refactoring) and fixed by dropping the parameter rather than shipping it.
+
+**Decisions made:** Logged in DECISIONS.md — (1) 16-bit packed move encoding following the CPW convention, and (2) mask-based legality (pin/check masks + full-simulation for en passant) chosen over pseudo-legal-generation-then-make/unmake-filter, since make/unmake doesn't exist yet.
+
+**Next session start point:** Make/unmake move, the last Phase 1 item before the perft test suite. This needs: incremental Zobrist hash updates on make/unmake (the "still pending" note from Session 3 — `compute_hash()` exists but incremental XOR-update doesn't yet), incremental handling of castling-rights changes (king/rook moves or rook captures revoking rights), en passant square set/clear, halfmove clock reset-on-pawn-move-or-capture, and a full unmake path (either a `Position` copy-based approach or explicit undo-info struct — worth a DECISIONS.md note on which, since ARCHITECTURE.md's "avoid heap allocation" standard argues for a fixed-size undo stack rather than a `Position` copy per ply once search is in the picture, but a straightforward copy is simplest to get right first and can be revisited before Phase 3's search loop actually needs the performance). Say "Continue" or "Start" to proceed. The perft test suite (`tests/perft_tests.cpp`) is the natural follow-on once make/unmake exists — it needs both movegen (done) and make/unmake to actually walk the tree.
+
+---
+
 ## 2026-08-11 — Session 3: Phase 1 board representation complete (bitboards → Zobrist → startup wiring)
 
 **What was built:** Full board-representation layer, verified locally end-to-end with a real C++20 toolchain (g++ 13, real BMI2 hardware) at every step rather than only reasoned about.

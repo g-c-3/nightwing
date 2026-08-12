@@ -17,8 +17,8 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [x] Board state struct (piece bitboards, side to move, castling rights, en passant, halfmove clock) — kept compact, cache-friendly (fits in a small number of cache lines)
 - [x] Zobrist hashing (key generation, from-scratch compute_hash()) — *incremental* XOR-update on make/unmake specifically is still pending, tracked under the Make/unmake move item below
 - [x] `init_masks() → init_magic_bitboards() → init_zobrist_keys()` startup sequence wired up
-- [ ] Fully legal move generation (pins, checks, castling, en passant, promotions)
-- [ ] Move list as fixed-size stack array (no heap allocation)
+- [x] Fully legal move generation (pins, checks, castling, en passant, promotions)
+- [x] Move list as fixed-size stack array (no heap allocation)
 - [ ] Make/unmake move
 - [ ] Perft test suite passing to standard reference depths (startpos, Kiwipete, etc.)
 - [ ] Perft bulk-counting mode benchmarked as an early NPS sanity check (movegen throughput baseline)
@@ -112,4 +112,4 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Current phase: 1 — Board Representation & Move Generation.** Next task: fully legal move generation (pins, checks, castling, en passant, promotions).
+**Current phase: 1 — Board Representation & Move Generation.** Next task: make/unmake move.
