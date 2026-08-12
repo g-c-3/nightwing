@@ -5,6 +5,7 @@
 #include "board/movegen.h"
 
 #include <array>
+#include <cstdlib>
 
 #include "board/attacks.h"
 #include "board/masks.h"
@@ -33,16 +34,36 @@ namespace {
 }
 
 /// Returns the squares strictly between `a` and `b` if they lie on a
-/// common rank, file, or diagonal; otherwise an empty bitboard. Standard
-/// bitboard trick: attacking from `a` with the board occupied by nothing
-/// but `b`, intersected with attacking from `b` with the board occupied
-/// by nothing but `a`, leaves exactly the in-between squares on whichever
-/// line (if any) connects them. Precondition: a != b, magics initialized.
+/// common rank, file, or diagonal; otherwise an empty bitboard.
+///
+/// Standard bitboard trick, but with an alignment guard that's easy to
+/// miss (and was missed in an earlier version of this function, caught
+/// by perft cross-checking against startpos — see docs/DECISIONS.md):
+/// attacking from `a` with the board occupied by nothing but `b`,
+/// intersected with attacking from `b` with the board occupied by
+/// nothing but `a`, only isolates the in-between squares when `a` and
+/// `b` are actually aligned on that piece's line. When they're NOT
+/// aligned, neither call's ray is obstructed at all (the lone blocker
+/// isn't on the ray), so each returns a full unobstructed cross/diagonal
+/// from its own square — and intersecting two unrelated full rays can
+/// spuriously share a square (e.g. a1 and e5 both appear in the rook-ray
+/// intersection for a=e1, b=a5, despite e1 and a5 sharing neither a rank
+/// nor a file) even though nothing is actually "between" two unaligned
+/// squares. Computing only the term for the alignment that actually
+/// holds avoids this entirely.
 [[nodiscard]] Bitboard between(Square a, Square b) noexcept {
-    const Bitboard a_bb = square_bb(a);
-    const Bitboard b_bb = square_bb(b);
-    return (rook_attacks(a, b_bb) & rook_attacks(b, a_bb)) |
-           (bishop_attacks(a, b_bb) & bishop_attacks(b, a_bb));
+    const int file_a = file_of(a);
+    const int rank_a = rank_of(a);
+    const int file_b = file_of(b);
+    const int rank_b = rank_of(b);
+
+    if (file_a == file_b || rank_a == rank_b) {
+        return rook_attacks(a, square_bb(b)) & rook_attacks(b, square_bb(a));
+    }
+    if (std::abs(file_a - file_b) == std::abs(rank_a - rank_b)) {
+        return bishop_attacks(a, square_bb(b)) & bishop_attacks(b, square_bb(a));
+    }
+    return kEmptyBitboard;
 }
 
 /// Finds pieces of `us` that are pinned to their king by an enemy slider,
@@ -134,19 +155,29 @@ void generate_pawn_moves(const Position& pos, Color us, Color them, Bitboard occ
             add_pawn_move(moves, from, to, promo_rank, /*capture=*/true);
         }
 
-        // En passant — legality is resolved by direct occupancy
-        // simulation rather than the pin/target masks above; see
-        // movegen.h's header comment for why (the horizontal-pin edge
-        // case that neither mask captures on its own).
+        // En passant — legality is resolved by playing the capture on a
+        // scratch copy of the position via the real make_move() and
+        // re-checking king safety there, rather than by hand-rolling a
+        // modified-occupancy simulation. This isn't just simpler: a
+        // hand-rolled occupancy tweak was tried first and had a real bug
+        // (caught by perft cross-checking — see docs/DECISIONS.md) —
+        // is_square_attacked()'s non-sliding-piece terms (pawn/knight/
+        // king) look up attackers via the real Position's per-piece-type
+        // bitboards, which a bitboard-only occupancy edit never touches,
+        // so a "removed" pawn was still found by the pawn-attacker check
+        // even though it had been cleared from the occupancy bitboard
+        // used for slider ray-blocking. Actually removing the captured
+        // pawn from a real Position (via make_move on a throwaway copy)
+        // sidesteps that mismatch entirely, and ties en passant
+        // legality's correctness directly to make_move()'s correctness,
+        // which the perft suite already exercises heavily.
         if (pos.en_passant_square != kNoEnPassantSquare) {
             const Square ep_sq = pos.en_passant_square;
             if (test_bit(pawn_attacks(us, from), ep_sq)) {
-                const Square captured_sq = static_cast<Square>(ep_sq - push);
-                Bitboard occ_after = occ;
-                clear_bit(occ_after, from);
-                clear_bit(occ_after, captured_sq);
-                set_bit(occ_after, ep_sq);
-                if (!is_square_attacked(pos, king_sq, them, occ_after)) {
+                Position after = pos;
+                UndoInfo undo;
+                make_move(after, Move(from, ep_sq, MoveFlag::EnPassant), undo);
+                if (!is_square_attacked(after, king_sq, them)) {
                     moves.push_back(Move(from, ep_sq, MoveFlag::EnPassant));
                 }
             }
