@@ -14,6 +14,7 @@ add_library(nightwing_lib STATIC
     board/perft.cpp
     eval/psqt.cpp
     eval/eval.cpp
+    search/search.cpp
 )
 
 target_include_directories(nightwing_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
