@@ -40,11 +40,21 @@ if(NIGHTWING_ENABLE_LTO)
     endif()
 endif()
 
-# --- Debug: sanitizers (ASan/UBSan). MSVC uses a different sanitizer model
-#     and different flag syntax, so it is skipped here rather than faked. ---
+# --- Debug: sanitizers. ASan+UBSan on non-MSVC; MSVC gets ASan only via
+#     its own native /fsanitize=address (MSVC has no UBSan equivalent).
+#     MSVC's default Debug flags include /RTC1 (runtime checks), which is
+#     documented as incompatible with /fsanitize=address, so -- like the
+#     non-MSVC branch below -- this is a full override, not an append:
+#     /RTC1 is deliberately dropped rather than left alongside the
+#     sanitizer. Incremental linking is also documented as incompatible,
+#     so it's explicitly disabled on the linker flags. See
+#     docs/DECISIONS.md for the coverage tradeoffs this leaves. ---
 if(NOT MSVC)
     set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer")
     set(CMAKE_EXE_LINKER_FLAGS_DEBUG "-fsanitize=address,undefined")
+else()
+    set(CMAKE_CXX_FLAGS_DEBUG "/MDd /Zi /Ob0 /Od /fsanitize=address")
+    set(CMAKE_EXE_LINKER_FLAGS_DEBUG "/DEBUG /INCREMENTAL:NO")
 endif()
 
 add_subdirectory(src)
