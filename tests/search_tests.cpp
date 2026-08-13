@@ -1,0 +1,75 @@
+// tests/search_tests.cpp
+//
+// Unit tests for src/search/search.h — Phase 2's fixed-depth alpha-beta
+// search. Positions are built via FEN (fen.h), matching the style of
+// movegen_tests.cpp / eval_tests.cpp.
+
+#include <catch2/catch_test_macros.hpp>
+
+#include "board/board.h"
+#include "board/fen.h"
+#include "board/movegen.h"
+#include "search/search.h"
+
+using namespace nightwing::board;
+using namespace nightwing::search;
+
+TEST_CASE("search_fixed_depth: depth 1 node count matches the root's legal move count", "[search]") {
+    // At depth 1, negamax() is called once per root move and immediately
+    // hits its depth<=0 base case (no further move generation), so total
+    // nodes visited should equal exactly the number of legal root moves —
+    // 20 from the starting position.
+    Position pos = start_position();
+    const SearchResult result = search_fixed_depth(pos, 1);
+    REQUIRE(result.nodes == 20);
+}
+
+TEST_CASE("search_fixed_depth: leaves the position unmodified", "[search]") {
+    Position pos = start_position();
+    const std::uint64_t hash_before = pos.zobrist_hash;
+    search_fixed_depth(pos, 3);
+    REQUIRE(pos.zobrist_hash == hash_before);
+}
+
+TEST_CASE("search_fixed_depth: picks a move from the actual legal move list", "[search]") {
+    Position pos = start_position();
+    MoveList legal;
+    generate_legal_moves(pos, legal);
+    const SearchResult result = search_fixed_depth(pos, 3);
+    REQUIRE_FALSE(result.best_move.is_null());
+    REQUIRE(legal.contains(result.best_move));
+}
+
+TEST_CASE("search_fixed_depth: an already-checkmated position returns a null move and -mate", "[search]") {
+    // Fool's mate final position (1. f3 e5 2. g4 Qh4#) -- White to move,
+    // no legal moves, in check.
+    Position pos = parse_fen(
+        "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3");
+    const SearchResult result = search_fixed_depth(pos, 2);
+    REQUIRE(result.best_move.is_null());
+    REQUIRE(result.score == -kMateScore);
+}
+
+TEST_CASE("search_fixed_depth: an already-stalemated position returns a null move and a draw score", "[search]") {
+    // Classic K+Q vs K stalemate: Black to move, no legal moves, not in
+    // check.
+    Position pos = parse_fen("7k/5Q2/7K/8/8/8/8/8 b - - 0 1");
+    const SearchResult result = search_fixed_depth(pos, 2);
+    REQUIRE(result.best_move.is_null());
+    REQUIRE(result.score == kDrawScore);
+}
+
+TEST_CASE("search_fixed_depth: finds a back-rank mate in 1", "[search]") {
+    // White to move: Ra1-a8# is mate (Black king g8 boxed in by its own
+    // f7/g7/h7 pawns, rook covers the entire back rank once the king
+    // steps off it). Depth 2 is required (not 1) for the search to
+    // actually discover the resulting position has no legal replies --
+    // see search.h's header comment on why a mate exactly at the search
+    // horizon isn't detected as a mate score.
+    Position pos = parse_fen("6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1");
+    const SearchResult result = search_fixed_depth(pos, 2);
+    REQUIRE_FALSE(result.best_move.is_null());
+    REQUIRE(result.best_move.from() == make_square(0, 0)); // a1
+    REQUIRE(result.best_move.to() == make_square(0, 7));   // a8
+    REQUIRE(result.score >= kMateThreshold);
+}
