@@ -12,6 +12,8 @@ add_library(nightwing_lib STATIC
     board/movegen.cpp
     board/fen.cpp
     board/perft.cpp
+    eval/psqt.cpp
+    eval/eval.cpp
 )
 
 target_include_directories(nightwing_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
