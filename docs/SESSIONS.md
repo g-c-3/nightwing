@@ -4,6 +4,25 @@ Newest entry at top.
 
 ---
 
+## 2026-08-13 — Session 8: Material + tapered PSQT eval — Phase 2 begins
+
+**What was built:** Phase 2's first item: `src/eval/` (new module), material + piece-square-table evaluation with tapered mg/eg blending infrastructure, built on Tomasz Michniewski's "Simplified Evaluation Function" (CPW) as the PSQT source — see DECISIONS.md for full attribution/rationale and a correction of two transcription bugs found in one cross-checked source along the way.
+
+- `src/eval/score.h` — `Score` (plain `{mg, eg}` int pair, not packed), the CPW "Tapered Eval" game-phase weighting (`kKnightPhase`/`kBishopPhase`/`kRookPhase`/`kQueenPhase`, `kMaxPhase = 24`), and `taper()` (clamped, defensive against out-of-range phase).
+- `src/eval/psqt.h/.cpp` — `material_value()` and `psqt_value()`. Tables are Michniewski's values (pawn/knight/bishop/rook/queen/king-mg/king-eg), LERF-indexed directly (his published array order turned out to already match our `a1=0..h8=63` convention — no reindexing needed), Black derived via a vertical mirror (`sq ^ 56`) rather than duplicated tables, since every mirrored table's rows are left-right palindromes. Knight and queen use one shared table for both colors, matching the source. Only the king has a real mg/eg split for now; the other five piece types reuse one table for both phases (per DECISIONS.md, deferred to Phase 5's tuner).
+- `src/eval/eval.h/.cpp` — `evaluate()`: full board scan, White-perspective centipawn score, tapered by a from-scratch `compute_phase()` each call (not yet incrementally accumulated — see DECISIONS.md).
+- `tests/eval_tests.cpp` — starting position balances to exactly 0 (mirror-symmetry check), lone extra pawn favors the right side, a lone extra queen dominates king/psqt noise, `taper()` boundary/clamp behavior, PSQT mirror-equality between White/Black on mirrored squares, king mg-vs-eg centralization direction, and a bare-kings sanity bound.
+- `src/CMakeLists.txt` / `tests/CMakeLists.txt` — wired `eval/psqt.cpp`, `eval/eval.cpp` into `nightwing_lib`, and `eval_tests.cpp` into the test binary.
+- Verified locally (this session, ahead of a real CI run): compiled `src/eval/{psqt,eval}.cpp` at `-O3 -Wall -Wextra -Wpedantic` with zero warnings, and ran the `eval_tests.cpp` assertions against the real `board`/`fen` code (g++ 13, `-fsanitize=address,undefined`) via a standalone harness mirroring every Catch2 case — all passed, including the exact expected numeric outputs (e.g. `evaluate(start_position()) == 0`, extra-pawn = 120, extra-queen = 905, `kMaxPhase == 24`). Not a substitute for the real CI matrix run (Catch2/CMake weren't available to actually drive in this sandbox), but a strong correctness signal ahead of it — flagged here as this session's one test-risk item: **confirm `ctest` is fully green on the actual CI run after committing**, since this was checked by an equivalent hand-built harness, not the committed `nightwing_tests` binary itself.
+
+**Bugs fixed:** None in existing code — new module built on the already-correct board layer. (Two transcription bugs were caught and avoided in an *external source* consulted while transcribing PSQT values — see DECISIONS.md; not a Nightwing bug.)
+
+**Decisions made:** Logged in DECISIONS.md — (1) PSQT source (Michniewski's Simplified Evaluation Function, king-only tapered initially, mirror-derived Black tables, transcription cross-check); (2) `Score` as a plain struct rather than packed-int, and full-recompute `evaluate()` rather than an incremental make/unmake accumulator, both scoped as deliberate Phase 2 simplifications to revisit once search exists and there's a hot path worth profiling.
+
+**Next session start point:** Phase 2 continues: plain alpha-beta search, fixed depth (`src/search/search.h/.cpp`, new module) — the next unchecked ROADMAP.md item. This will be the first thing to actually call `eval::evaluate()` from a real search loop, so it's also the natural point to double check `evaluate()`'s call cost is unremarkable before anything fancier gets layered on. **Before writing search code, confirm the real CI run (GitHub Actions) came back green on `eval_tests.cpp` and the rest of the suite** — this session's testing was a sandboxed hand-harness stand-in for the actual `ctest` run (see "What was built" above), not a replacement for it. Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-13 — Session 7: Perft bulk-counting + NPS bench — Phase 1 complete
 
 **What was built:** The last Phase 1 item. Phase 1 (Board Representation & Move Generation) is now fully checked off; next session starts Phase 2 (eval + search).

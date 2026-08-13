@@ -4,6 +4,30 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+## 2026-08-13 — PSQT source: Michniewski's Simplified Evaluation Function, king-only tapered initially
+
+**Decision:** `src/eval/psqt.cpp`'s material values and piece-square tables are Tomasz Michniewski's "Simplified Evaluation Function," published on the Chess Programming Wiki (https://www.chessprogramming.org/Simplified_Evaluation_Function), used as-is as a starting baseline per ARCHITECTURE.md's Attribution Policy — full credit in psqt.cpp's header comment, not presented as original. Only the king gets a genuinely distinct middlegame/endgame table pair (Michniewski's own design); the other five piece types reuse one table for both `mg` and `eg` in `Score` until Phase 5's Texel tuner has enough terms to learn real per-phase splits instead of hand-guessing them. Black's values are derived from White's tables via a vertical mirror (`sq ^ 56`) rather than a second stored table, since every relevant row (pawn/bishop/rook/king) is left-right symmetric; knight and queen use one identical table for both colors, matching Michniewski's original (he doesn't differentiate those two by color either).
+
+**Rationale:** A well-known, freely published baseline (rather than hand-guessed values) is exactly what SESSIONS.md's session-6→7 handoff flagged as the right call for the first eval pass — it gives correctly-shaped positional knowledge (pawn advancement, knight centralization, king safety vs. centralization by phase, etc.) from day one, and gives Phase 5's tuner real starting weights to refine rather than noise. Michniewski's set (rather than PeSTO's more heavily fine-tuned values) was chosen specifically because it's small, round-numbered, and easy to transcribe and cross-check correctly by hand — accuracy of the literal numbers matters here (a chess engine silently playing on subtly wrong constants is a hard-to-notice bug class), and PeSTO's fuller 768-entry tuned table set is a better target for the *tuner* to reproduce/exceed later than for hand-transcription now. During transcription, two independent published sources (the CPW page's own inline excerpts, and a from-scratch C# port by Adam Berent) were cross-checked against a third (an unrelated public GitHub Python port), which turned up two sign-flip typos in that third source's king mg/eg tables (the a1-file corner entries on rank 1/rank 8 shown as positive instead of negative); the corrected values are what's actually in `psqt.cpp`, with the cross-check documented in its header comment.
+
+**Alternatives considered:**
+- PeSTO's tables — rejected for now; more values (768 vs. essentially six 64-entry tables plus one extra king table), tuned via gradient descent rather than a small number of principled round numbers, so higher transcription-error risk for a first pass with no tuner yet in place to catch a wrong constant. Worth reconsidering as a Phase 5 tuner *starting point* if Michniewski's baseline turns out to converge slowly.
+- Tapering every piece type immediately (inventing separate mg/eg values for pawn/knight/bishop/rook/queen now) — rejected; Michniewski's source doesn't provide these, so any values beyond his king mg/eg pair would be hand-guessed, which is exactly what "start from a well-known public PSQT set" was meant to avoid. The `Score`/`taper()` infrastructure (score.h) is fully general and already blends all six piece types correctly; only the *data* for five of them is currently mg==eg, and that's a data update (Phase 5), not an infrastructure change.
+
+---
+
+## 2026-08-13 — Eval: plain `{mg, eg}` Score struct, full recompute per call (not incremental) for Phase 2
+
+**Decision:** `src/eval/score.h`'s `Score` is a plain `struct { int mg; int eg; }` with ordinary arithmetic operators, not a single packed 32-bit integer (the classic Stockfish `make_score`/`mg_value`/`eg_value` bit-packing trick). `evaluate()` (`src/eval/eval.cpp`) scans all 64 squares and recomputes material+PSQT from scratch on every call; it does not use an incremental accumulator updated inside `make_move()`/`unmake_move()`.
+
+**Rationale:** Phase 2's stated goal is "get something playing" — correctness and a working UCI loop, not peak throughput. A plain two-`int` struct is trivially readable and impossible to get the sign-extension/rounding details of packed encoding wrong on, which matters more right now than the (real, but not yet relevant) memory/perf win packing would give once eval and search are both hot paths. Likewise, full recomputation is the correct scope for a five-term eval (12 piece-bitboard scans, negligible cost) — ARCHITECTURE.md's "eval on the fly" accumulator pattern is a real commitment, but wiring it into `make_move()`/`unmake_move()` now, before Phase 2's alpha-beta search even exists to call `evaluate()` from a hot loop, would be optimizing code whose call frequency and profile aren't known yet.
+
+**Alternatives considered:**
+- Packed `int32_t` Score (Stockfish-style) — rejected for now; real technique, correctly attributable to Stockfish/CPW's "Tapered Eval" page if adopted, but premature before profiling shows eval-term addition is a measurable cost next to search-tree size. Revisit alongside the incremental-accumulator work once search exists and `bench` (Phase 8, or informally earlier) can measure it.
+- Incremental material/PSQT accumulator wired into make_move()/unmake_move() now — rejected for Phase 2 specifically; correctly identified in ARCHITECTURE.md as the long-term design, but doing it before alpha-beta search exists means guessing at the access pattern it needs to optimize for. Revisit once Phase 2's search loop is in place and `evaluate()` is actually being called at real node-count volume — this is a performance pass, not a correctness requirement, so deferring it doesn't block "engine can play a full legal game via UCI."
+
+---
+
 ## 2026-08-13 — Bulk-counting perft: a separate function, not a flag on `perft()`
 
 **Decision:** `perft_bulk()` is a distinct function in perft.h/.cpp, not `perft(pos, depth, bool bulk)` or a template parameter on a single implementation.

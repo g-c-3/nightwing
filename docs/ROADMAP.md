@@ -25,7 +25,7 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [x] Minimal FEN parser (`src/board/fen.h/.cpp`) — done ahead of schedule this session, as a perft-position-building prerequisite; kept here, checked off, as a marker that it exists and is tested (tests/fen_tests.cpp) even though it was originally slated for Phase 2's UCI work
 
 ## Phase 2 — Minimal Search + Eval (get something playing)
-- [ ] Material-only + PSQT eval (tapered mg/eg)
+- [x] Material-only + PSQT eval (tapered mg/eg)
 - [ ] Plain alpha-beta search, fixed depth
 - [ ] Iterative deepening
 - [ ] Basic UCI loop (`uci`, `isready`, `position`, `go depth N`, `stop`)
@@ -113,4 +113,4 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 1 complete.** **Current phase: 2 — Minimal Search + Eval.** Next task: material-only + PSQT eval (tapered mg/eg).
+**Phase 1 complete.** **Current phase: 2 — Minimal Search + Eval.** Next task: plain alpha-beta search, fixed depth.
