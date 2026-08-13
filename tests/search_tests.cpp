@@ -6,15 +6,33 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "board/attacks.h"
 #include "board/board.h"
 #include "board/fen.h"
+#include "board/masks.h"
 #include "board/movegen.h"
+#include "board/zobrist.h"
 #include "search/search.h"
 
 using namespace nightwing::board;
 using namespace nightwing::search;
 
+namespace {
+/// Every Catch2 TEST_CASE below runs as its own separate process
+/// invocation (catch_discover_tests registers each one as an individual
+/// CTest test), so magic-bitboard/attack tables aren't shared across
+/// cases the way they'd be in a single long-lived process — each case
+/// must initialize them itself. Matches perft_tests.cpp's convention
+/// exactly (see that file for why).
+void init_all() {
+    init_masks();
+    init_magic_bitboards();
+    init_zobrist_keys();
+}
+} // namespace
+
 TEST_CASE("search_fixed_depth: depth 1 node count matches the root's legal move count", "[search]") {
+    init_all();
     // At depth 1, negamax() is called once per root move and immediately
     // hits its depth<=0 base case (no further move generation), so total
     // nodes visited should equal exactly the number of legal root moves —
@@ -25,6 +43,7 @@ TEST_CASE("search_fixed_depth: depth 1 node count matches the root's legal move 
 }
 
 TEST_CASE("search_fixed_depth: leaves the position unmodified", "[search]") {
+    init_all();
     Position pos = start_position();
     const std::uint64_t hash_before = pos.zobrist_hash;
     search_fixed_depth(pos, 3);
@@ -32,6 +51,7 @@ TEST_CASE("search_fixed_depth: leaves the position unmodified", "[search]") {
 }
 
 TEST_CASE("search_fixed_depth: picks a move from the actual legal move list", "[search]") {
+    init_all();
     Position pos = start_position();
     MoveList legal;
     generate_legal_moves(pos, legal);
@@ -41,6 +61,7 @@ TEST_CASE("search_fixed_depth: picks a move from the actual legal move list", "[
 }
 
 TEST_CASE("search_fixed_depth: an already-checkmated position returns a null move and -mate", "[search]") {
+    init_all();
     // Fool's mate final position (1. f3 e5 2. g4 Qh4#) -- White to move,
     // no legal moves, in check.
     Position pos = parse_fen(
@@ -51,6 +72,7 @@ TEST_CASE("search_fixed_depth: an already-checkmated position returns a null mov
 }
 
 TEST_CASE("search_fixed_depth: an already-stalemated position returns a null move and a draw score", "[search]") {
+    init_all();
     // Classic K+Q vs K stalemate: Black to move, no legal moves, not in
     // check.
     Position pos = parse_fen("7k/5Q2/7K/8/8/8/8/8 b - - 0 1");
@@ -60,6 +82,7 @@ TEST_CASE("search_fixed_depth: an already-stalemated position returns a null mov
 }
 
 TEST_CASE("search_fixed_depth: finds a back-rank mate in 1", "[search]") {
+    init_all();
     // White to move: Ra1-a8# is mate (Black king g8 boxed in by its own
     // f7/g7/h7 pawns, rook covers the entire back rank once the king
     // steps off it). Depth 2 is required (not 1) for the search to
