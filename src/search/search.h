@@ -1,11 +1,13 @@
 #pragma once
 // src/search/search.h
 //
-// Plain fixed-depth alpha-beta (negamax form) search — Phase 2's second
-// ROADMAP.md item. Iterative deepening, aspiration windows, and all
-// pruning/extensions are later ROADMAP.md items layered on top of this;
-// this file is deliberately just "does the tree search return a legal
-// best move, correctly," per ARCHITECTURE.md's phase-by-phase build order.
+// Plain fixed-depth alpha-beta (negamax form) search, plus iterative
+// deepening on top of it — Phase 2's second and third ROADMAP.md items.
+// Aspiration windows and all pruning/extensions are later ROADMAP.md
+// items layered on top of this; this file is deliberately just "does
+// the tree search return a legal best move, correctly, and can it be
+// asked to deepen incrementally under a time budget," per
+// ARCHITECTURE.md's phase-by-phase build order.
 
 #include <cstdint>
 
@@ -31,7 +33,8 @@ inline constexpr int kDrawScore = 0;
 /// thousands even with several extra queens on the board).
 inline constexpr int kMateThreshold = kMateScore - 1000;
 
-/// Result of a fixed-depth root search.
+/// Result of a search — either a single fixed-depth call or a full
+/// iterative-deepening run.
 struct SearchResult {
     /// The best move found. Null (Move::is_null() == true) if `pos` had
     /// no legal moves at all (checkmate or stalemate at the root).
@@ -43,12 +46,23 @@ struct SearchResult {
     /// kMateScore above).
     int score = 0;
 
-    /// Total nodes visited (leaf + internal calls into negamax()), for
-    /// later `bench`/NPS reporting (ROADMAP.md Phase 8) — tracked from
-    /// day one since it's free to count and immediately useful for
-    /// sanity-checking search behavior (e.g. depth-1 node count should
-    /// exactly match the root's legal move count).
+    /// Nodes visited (leaf + internal calls into negamax()). For
+    /// search_fixed_depth(), this is that one call's node count. For
+    /// search_iterative_deepening(), this is the *total* across every
+    /// completed iteration (depth 1, 2, 3, ... up to whatever finished),
+    /// since all of that work genuinely happened and took real wall-clock
+    /// time — the right denominator for later `bench`/NPS reporting
+    /// (ROADMAP.md Phase 8), not just the deepest iteration's count.
     std::uint64_t nodes = 0;
+
+    /// The search depth actually completed. For search_fixed_depth(),
+    /// this always equals the requested `depth` — except when `pos` had
+    /// no legal moves at all, where it stays 0 (nothing was meaningfully
+    /// "searched" beyond confirming the position is already over; see
+    /// best_move above). For search_iterative_deepening(), this is the
+    /// deepest iteration that finished before the loop stopped (by
+    /// reaching `max_depth` or running out of its time budget).
+    int depth_completed = 0;
 };
 
 /// Runs a plain fixed-depth alpha-beta search from `pos` and returns the
@@ -59,5 +73,26 @@ struct SearchResult {
 /// have been called (movegen's precondition, transitively — see
 /// board/movegen.h).
 [[nodiscard]] SearchResult search_fixed_depth(board::Position& pos, int depth);
+
+/// Runs iterative deepening: calls search_fixed_depth() at depth = 1,
+/// 2, 3, ... up to `max_depth`, keeping the most recently *completed*
+/// iteration's result. If `time_limit_ms` is positive, the loop also
+/// stops (before starting the next iteration, not mid-iteration — see
+/// search.cpp's header comment on why true mid-search interruption is
+/// deferred) once that many milliseconds of wall-clock time have
+/// elapsed since the call began; pass 0 (the default) for no time limit,
+/// i.e. always search all the way to `max_depth`.
+///
+/// Depth 1 always runs unconditionally before any time check, so the
+/// result always has a legal best_move (when `pos` has one at all) even
+/// under an extremely tight time budget. If `pos` has no legal moves at
+/// all, returns immediately after the depth-1 call (see
+/// SearchResult::depth_completed) rather than wastefully repeating the
+/// same terminal result at deeper depths.
+///
+/// Precondition: same as search_fixed_depth() — `max_depth >= 1`, and
+/// init_masks()/init_magic_bitboards() must already have been called.
+[[nodiscard]] SearchResult search_iterative_deepening(
+    board::Position& pos, int max_depth, int time_limit_ms = 0);
 
 } // namespace nightwing::search

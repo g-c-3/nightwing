@@ -3,6 +3,7 @@
 #include "search/search.h"
 
 #include <cassert>
+#include <chrono>
 
 #include "board/movegen.h"
 #include "eval/eval.h"
@@ -22,6 +23,20 @@ using board::UndoInfo;
 /// generous constant rather than std::numeric_limits<int>::max(), whose
 /// negation is undefined behavior.
 constexpr int kInfinity = 1'000'000;
+
+// search_iterative_deepening() (below) only checks its time budget
+// *between* full-depth search_fixed_depth() calls, not mid-search --
+// negamax() itself has no clock/stop-flag awareness. True mid-search
+// interruption (checking a stop condition every N nodes inside
+// negamax() and unwinding cleanly without corrupting alpha/best-move
+// bookkeeping) is a real, standard technique, but it's more machinery
+// than Phase 2's "get something playing" scope needs: without it, the
+// worst case is simply that one already-started iteration finishes
+// before the time budget is enforced, which is a minor, boundable
+// overrun (bounded by how long a single depth takes) rather than a
+// correctness problem. Revisit once real time controls (UCI `go
+// wtime`/`movetime`, the very next ROADMAP.md item) make that overrun
+// large enough to matter in practice.
 
 /// Returns true if `pos.side_to_move`'s king is currently attacked —
 /// used to distinguish checkmate from stalemate when
@@ -121,6 +136,45 @@ SearchResult search_fixed_depth(Position& pos, int depth) {
 
     result.best_move = best_move;
     result.score = alpha;
+    result.depth_completed = depth;
+    return result;
+}
+
+SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_limit_ms) {
+    assert(max_depth >= 1 && "search_iterative_deepening: max_depth must be at least 1");
+
+    const auto start_time = std::chrono::steady_clock::now();
+
+    // Depth 1 always runs unconditionally, before any time check, so
+    // there's always a legal best_move to fall back on (see search.h's
+    // header comment).
+    SearchResult result = search_fixed_depth(pos, 1);
+    std::uint64_t total_nodes = result.nodes;
+
+    // Position already over (checkmate/stalemate at the root): every
+    // deeper iteration would just regenerate the same empty move list
+    // and return the same terminal result, so stop immediately instead
+    // of wastefully repeating it.
+    if (result.best_move.is_null()) {
+        return result;
+    }
+
+    for (int depth = 2; depth <= max_depth; ++depth) {
+        if (time_limit_ms > 0) {
+            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::steady_clock::now() - start_time)
+                                         .count();
+            if (elapsed_ms >= time_limit_ms) {
+                break;
+            }
+        }
+
+        SearchResult next = search_fixed_depth(pos, depth);
+        total_nodes += next.nodes;
+        result = next;
+    }
+
+    result.nodes = total_nodes;
     return result;
 }
 
