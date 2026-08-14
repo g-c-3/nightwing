@@ -1,39 +1,30 @@
 // src/main.cpp
 //
-// Nightwing entry point. Phase 0/1: enough to prove the build/CI pipeline
-// works end-to-end and that the board subsystem's mandatory startup
-// sequence (ARCHITECTURE.md "Startup Sequence") is wired up correctly.
-// The body of main() is replaced by the UCI loop (uci/uci.cpp) in Phase 2.
+// Nightwing entry point. Runs the mandatory board-subsystem startup
+// sequence (ARCHITECTURE.md "Startup Sequence"), then hands off to the
+// UCI loop (uci/uci.cpp) on stdin/stdout — this is what a GUI or a
+// self-play script actually talks to. The Phase 0/1 startup-sequence
+// smoke-test printout this replaced now lives in test_smoke.cpp's CPU-
+// feature-detection test instead.
 
-#include <cstdio>
+#include <iostream>
 
 #include "board/attacks.h"
 #include "board/board.h"
 #include "board/masks.h"
 #include "board/zobrist.h"
-#include "support/cpu_features.h"
+#include "uci/uci.h"
 
 int main() {
-    nightwing::support::detect_cpu_features();
-
     // Mandatory order per ARCHITECTURE.md: init_masks() ->
-    // init_magic_bitboards() -> init_zobrist_keys(). init_magic_bitboards()
-    // also runs CPU feature detection itself (see board/attacks.cpp), so
-    // the explicit call above isn't strictly required for correctness,
-    // but keeping it first and explicit here means the feature summary
-    // below is guaranteed accurate regardless of internal implementation
-    // details of the steps that follow.
+    // init_magic_bitboards() -> init_zobrist_keys(). Required before
+    // uci::run()'s "position"/"go" commands can touch movegen/search
+    // (see board/movegen.h's precondition).
     nightwing::board::init_masks();
     nightwing::board::init_magic_bitboards();
     nightwing::board::init_zobrist_keys();
 
-    const nightwing::board::Position pos = nightwing::board::start_position();
-
-    std::printf("Nightwing (dev build) - CPU features: %s\n",
-                nightwing::support::cpu_feature_summary());
-    std::printf("Startup sequence OK - start position zobrist hash: 0x%016llx\n",
-                static_cast<unsigned long long>(pos.zobrist_hash));
-    std::printf("%s", nightwing::board::to_string(pos).c_str());
+    nightwing::uci::run(std::cin, std::cout);
 
     return 0;
 }
