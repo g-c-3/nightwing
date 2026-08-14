@@ -1,8 +1,8 @@
 // tests/search_tests.cpp
 //
 // Unit tests for src/search/search.h — Phase 2's fixed-depth alpha-beta
-// search. Positions are built via FEN (fen.h), matching the style of
-// movegen_tests.cpp / eval_tests.cpp.
+// search and iterative deepening. Positions are built via FEN (fen.h),
+// matching the style of movegen_tests.cpp / eval_tests.cpp.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -95,4 +95,91 @@ TEST_CASE("search_fixed_depth: finds a back-rank mate in 1", "[search]") {
     REQUIRE(result.best_move.from() == make_square(0, 0)); // a1
     REQUIRE(result.best_move.to() == make_square(0, 7));   // a8
     REQUIRE(result.score >= kMateThreshold);
+}
+
+TEST_CASE("search_fixed_depth: depth_completed matches the requested depth", "[search]") {
+    init_all();
+    Position pos = start_position();
+    const SearchResult result = search_fixed_depth(pos, 3);
+    REQUIRE(result.depth_completed == 3);
+}
+
+TEST_CASE("search_fixed_depth: depth_completed stays 0 for an already-terminal position", "[search]") {
+    init_all();
+    Position pos = parse_fen(
+        "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3");
+    const SearchResult result = search_fixed_depth(pos, 2);
+    REQUIRE(result.depth_completed == 0);
+}
+
+TEST_CASE("search_iterative_deepening: max_depth 1 matches search_fixed_depth(pos, 1) exactly", "[search][id]") {
+    init_all();
+    Position pos = start_position();
+    const SearchResult fixed = search_fixed_depth(pos, 1);
+    const SearchResult id = search_iterative_deepening(pos, 1);
+    REQUIRE(id.best_move == fixed.best_move);
+    REQUIRE(id.score == fixed.score);
+    REQUIRE(id.nodes == fixed.nodes);
+    REQUIRE(id.depth_completed == 1);
+}
+
+TEST_CASE("search_iterative_deepening: unlimited time reaches max_depth with the same best move/score as a direct search", "[search][id]") {
+    init_all();
+    // No TT/move-ordering shared between iterations yet (Phase 2), so the
+    // deepest iteration's best_move/score should be bit-for-bit identical
+    // to calling search_fixed_depth() directly at that same depth --
+    // search_iterative_deepening() is just repeated calls to it.
+    Position pos = start_position();
+    const SearchResult direct = search_fixed_depth(pos, 3);
+    const SearchResult id = search_iterative_deepening(pos, 3);
+    REQUIRE(id.best_move == direct.best_move);
+    REQUIRE(id.score == direct.score);
+    REQUIRE(id.depth_completed == 3);
+    // id.nodes accumulates depth 1 + depth 2 + depth 3's work, so it must
+    // be strictly more than depth 3 alone.
+    REQUIRE(id.nodes > direct.nodes);
+}
+
+TEST_CASE("search_iterative_deepening: an already-checkmated position returns a null move and -mate", "[search][id]") {
+    init_all();
+    Position pos = parse_fen(
+        "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3");
+    const SearchResult result = search_iterative_deepening(pos, 5);
+    REQUIRE(result.best_move.is_null());
+    REQUIRE(result.score == -kMateScore);
+    REQUIRE(result.depth_completed == 0);
+    REQUIRE(result.nodes == 1);
+}
+
+TEST_CASE("search_iterative_deepening: a tiny time budget stops before max_depth", "[search][id]") {
+    init_all();
+    // Depth 6 unpruned from the starting position is far more work than
+    // any real machine finishes in ~1ms, so this is a safe, non-flaky
+    // assertion regardless of how fast or slow the CI runner is -- it
+    // deliberately does NOT assert which exact depth was reached (that
+    // would be timing-dependent), only that the time budget actually cut
+    // the search off short of max_depth.
+    Position pos = start_position();
+    const SearchResult result = search_iterative_deepening(pos, 6, 1);
+    REQUIRE(result.depth_completed >= 1);
+    REQUIRE(result.depth_completed < 6);
+    REQUIRE_FALSE(result.best_move.is_null());
+}
+
+TEST_CASE("search_iterative_deepening: leaves the position unmodified", "[search][id]") {
+    init_all();
+    Position pos = start_position();
+    const std::uint64_t hash_before = pos.zobrist_hash;
+    search_iterative_deepening(pos, 3);
+    REQUIRE(pos.zobrist_hash == hash_before);
+}
+
+TEST_CASE("search_iterative_deepening: picks a move from the actual legal move list", "[search][id]") {
+    init_all();
+    Position pos = start_position();
+    MoveList legal;
+    generate_legal_moves(pos, legal);
+    const SearchResult result = search_iterative_deepening(pos, 3);
+    REQUIRE_FALSE(result.best_move.is_null());
+    REQUIRE(legal.contains(result.best_move));
 }
