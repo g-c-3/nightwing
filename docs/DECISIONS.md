@@ -4,6 +4,19 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+## 2026-08-13 — Iterative deepening: between-iteration time checks only, extended search.cpp in place
+
+**Decision:** `search_iterative_deepening()` was added to the existing `src/search/search.{h,cpp}` (not a new `iterative_deepening.h/.cpp` file), and it implements time-budget stopping by checking a `std::chrono::steady_clock` deadline *between* successive `search_fixed_depth()` calls, not mid-search inside `negamax()`. Depth 1 always runs unconditionally before the first time check. `SearchResult` gained a `depth_completed` field (set by both `search_fixed_depth()` and `search_iterative_deepening()`) and its `nodes` field, for the iterative-deepening path, now means the *total* across every completed iteration rather than just the deepest one.
+
+**Rationale:** Extending the existing file rather than adding a new one avoids either duplicating `negamax()`/`in_check()` or exposing them outside their current anonymous-namespace scope purely to share them across translation units — `search_iterative_deepening()` doesn't need them directly, it only calls the already-public `search_fixed_depth()` repeatedly, so there was no real reason to split files. Checking the clock only between iterations (not every N nodes inside `negamax()`) is a deliberate scope cut for Phase 2: true mid-search interruption is a real, standard technique, but it requires threading a stop condition through the recursion and unwinding without corrupting the alpha/best-move bookkeeping — meaningfully more machinery than "get something playing" needs before real UCI time controls (`go movetime`/`wtime`, the very next ROADMAP.md item) exist to actually exercise it. The failure mode without it is bounded and mild: at most one already-started iteration overruns the budget by however long that one depth takes, not an unbounded hang. Accumulating `nodes` across all completed iterations (rather than just reporting the deepest one) was chosen because that's the number that actually corresponds to wall-clock time spent — the right basis for NPS once `bench` exists (Phase 8), not merely the final iteration's count.
+
+**Alternatives considered:**
+- Mid-search interruption via a node-count-checked stop flag inside `negamax()` — rejected for now, for the reasons above; the natural point to add this is alongside real time-control parsing in the UCI loop, where a tight `movetime` budget would make the current between-iteration granularity's worst case (one full extra depth) actually matter. Revisit then.
+- Reporting only the deepest iteration's node count (ignoring the "wasted" shallower iterations) — rejected; those nodes were real work that took real wall-clock time, and a `bench` command computing NPS from an undercounted total would report a misleadingly high number.
+- A separate `src/search/iterative_deepening.h/.cpp` file — considered per the prior session's SESSIONS.md note flagging this as an open question; rejected once it became clear the function has no need to touch `negamax()`/`in_check()` directly, making a same-file extension simpler with no real separation-of-concerns benefit lost.
+
+---
+
 ## 2026-08-13 — CMake: MSVC native ASan tried on Windows Debug, reverted same day — hung CI
 
 **Decision:** Reverted. `CMakeLists.txt`'s MSVC Debug branch is back to skipping sanitizers entirely (the original behavior), not the `/fsanitize=address` override added earlier this session.
