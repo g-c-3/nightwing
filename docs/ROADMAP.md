@@ -28,6 +28,8 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [x] Material-only + PSQT eval (tapered mg/eg)
 - [x] Plain alpha-beta search, fixed depth
 - [x] Iterative deepening
+- [x] Basic UCI loop
+- [x] Engine can play a full legal game against itself via UCI
 - [ ] Iterative deepening
 - [ ] Basic UCI loop (`uci`, `isready`, `position`, `go depth N`, `stop`)
 - [ ] Engine can play a full legal game against itself via UCI
@@ -114,4 +116,4 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 1 complete.** **Current phase: 2 — Minimal Search + Eval.** Next task: basic UCI loop.
+**Phase 2 complete.** **Current phase: 3 — Core Search Strengthening.** Next task: PVS (Principal Variation Search).
