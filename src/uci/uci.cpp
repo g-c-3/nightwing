@@ -1,0 +1,282 @@
+// src/uci/uci.cpp
+//
+// Deliberately out of scope for Phase 2's "basic UCI loop" (revisit
+// later phases, tracked informally here rather than duplicated across
+// every function that touches it):
+//   - setoption / Hash / Threads / any engine options: no options exist
+//     yet (no TT, single-threaded) — nothing to configure.
+//   - True asynchronous `go infinite` + `stop`: would need a background
+//     search thread and a stop flag negamax() checks periodically, which
+//     doesn't exist (consistent with the previous session's decision to
+//     defer mid-search interruption for iterative deepening's time
+//     checks — see DECISIONS.md). `go` always runs synchronously to
+//     completion before this loop reads its next line; `stop` is parsed
+//     but has no effect, since by the time it could arrive on `in`,
+//     `go` has already finished and printed `bestmove`.
+//   - Pondering (`go ponder`, `ponderhit`): needs the same async
+//     machinery as `stop`, plus its own logic on top; not attempted.
+
+#include "uci/uci.h"
+
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include "board/board.h"
+#include "board/fen.h"
+#include "board/movegen.h"
+#include "board/move.h"
+#include "search/search.h"
+
+namespace nightwing::uci {
+namespace {
+
+using board::Move;
+using board::MoveList;
+using board::Position;
+
+/// Splits a whitespace-separated command line into tokens.
+[[nodiscard]] std::vector<std::string> tokenize(const std::string& line) {
+    std::istringstream iss(line);
+    std::vector<std::string> tokens;
+    std::string tok;
+    while (iss >> tok) {
+        tokens.push_back(tok);
+    }
+    return tokens;
+}
+
+/// Applies each UCI long-algebraic move string in `move_tokens` (e.g.
+/// "e2e4", "e7e8q") to `pos` in order, by generating the legal move list
+/// at each step and matching by Move::to_uci() string — this is how
+/// promotion/castling/en-passant flags end up set correctly without
+/// duplicating Move's own encoding logic here. Stops silently at the
+/// first token that doesn't match any legal move (rather than throwing)
+/// — a GUI or script sending a slightly malformed move list shouldn't
+/// crash the engine, per the UCI spec's general robustness expectation.
+void apply_uci_moves(Position& pos, const std::vector<std::string>& move_tokens) {
+    for (const std::string& token : move_tokens) {
+        MoveList legal;
+        board::generate_legal_moves(pos, legal);
+
+        bool matched = false;
+        for (int i = 0; i < legal.size(); ++i) {
+            if (legal[i].to_uci() == token) {
+                board::UndoInfo undo; // discarded — the position isn't unwound afterward.
+                board::make_move(pos, legal[i], undo);
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) {
+            break;
+        }
+    }
+}
+
+/// Handles `position [startpos | fen <fen>] [moves <m1> <m2> ...]`.
+/// Malformed input (missing startpos/fen, an unparseable FEN) is
+/// ignored, leaving `pos` unchanged, rather than throwing — same
+/// robustness rationale as apply_uci_moves() above.
+void handle_position(Position& pos, const std::vector<std::string>& tokens) {
+    if (tokens.size() < 2) {
+        return;
+    }
+
+    std::size_t idx = 1;
+    if (tokens[idx] == "startpos") {
+        pos = board::start_position();
+        ++idx;
+    } else if (tokens[idx] == "fen") {
+        ++idx;
+        std::string fen;
+        while (idx < tokens.size() && tokens[idx] != "moves") {
+            if (!fen.empty()) {
+                fen += ' ';
+            }
+            fen += tokens[idx];
+            ++idx;
+        }
+        try {
+            pos = board::parse_fen(fen);
+        } catch (const std::invalid_argument&) {
+            return;
+        }
+    } else {
+        return;
+    }
+
+    if (idx < tokens.size() && tokens[idx] == "moves") {
+        ++idx;
+        const std::vector<std::string> move_tokens(tokens.begin() + static_cast<long>(idx),
+                                                     tokens.end());
+        apply_uci_moves(pos, move_tokens);
+    }
+}
+
+/// Search-depth ceiling used only when a real time budget (movetime, or
+/// wtime/btime) is what's actually expected to stop the search — high
+/// enough that Phase 2's un-pruned negamax will never realistically
+/// reach it (branching factor ~35 with no move ordering means each
+/// additional ply is roughly an order of magnitude slower — see
+/// DECISIONS.md's empirical timings), so this is a safety ceiling, not
+/// a target.
+constexpr int kTimedSearchMaxDepth = 64;
+
+/// Fallback search depth when `go` specifies neither an explicit depth
+/// nor any usable time control (bare `go`, `go infinite`, or anything
+/// else this loop doesn't recognize) — deliberately small and fixed
+/// rather than kTimedSearchMaxDepth, precisely because nothing would
+/// otherwise stop the search: Phase 2 has no pruning yet, so an
+/// unbounded depth ceiling with no time limit backing it up would hang
+/// the engine on a bare `go`. Empirically ~127ms in a Release build on
+/// the starting position (see DECISIONS.md) — fast enough to never be
+/// the bottleneck in practice, and low enough to stay fast even under a
+/// much slower Debug/sanitizer build.
+constexpr int kNoTimeControlDepth = 5;
+
+/// Simple time allocation for `go wtime/btime/winc/binc` — no
+/// movestogo-aware tuning yet (see DECISIONS.md): budgets
+/// remaining_ms / 20 plus the increment, capped at remaining_ms / 2 so
+/// a single move can never claim more than half of what's left (a
+/// guard against starving later moves when remaining_ms is already
+/// low).
+[[nodiscard]] int allocate_time_ms(int remaining_ms, int increment_ms) noexcept {
+    if (remaining_ms <= 0) {
+        return 50; // Effectively "as little as possible, but not zero."
+    }
+    int budget = remaining_ms / 20 + increment_ms;
+    const int cap = remaining_ms / 2;
+    if (budget > cap) {
+        budget = cap;
+    }
+    if (budget < 1) {
+        budget = 1;
+    }
+    return budget;
+}
+
+/// Handles `go [depth N] [movetime N] [wtime W btime B [winc I] [binc I]]`
+/// (any combination; unrecognized sub-options like `movestogo`/
+/// `infinite`/`ponder`/`mate`/`nodes` are accepted but ignored — see
+/// this file's header comment): runs the search and writes
+/// `bestmove <uci>` to `out`.
+void handle_go(Position& pos, const std::vector<std::string>& tokens, std::ostream& out) {
+    int max_depth = 0;
+    int time_limit_ms = 0;
+    bool have_depth = false;
+    bool have_movetime = false;
+    int wtime = -1;
+    int btime = -1;
+    int winc = 0;
+    int binc = 0;
+
+    for (std::size_t i = 1; i < tokens.size(); ++i) {
+        const std::string& tok = tokens[i];
+
+        auto next_int = [&]() -> int {
+            if (i + 1 < tokens.size()) {
+                try {
+                    return std::stoi(tokens[++i]);
+                } catch (const std::exception&) {
+                    return 0;
+                }
+            }
+            return 0;
+        };
+
+        if (tok == "depth") {
+            max_depth = next_int();
+            have_depth = true;
+        } else if (tok == "movetime") {
+            time_limit_ms = next_int();
+            have_movetime = true;
+        } else if (tok == "wtime") {
+            wtime = next_int();
+        } else if (tok == "btime") {
+            btime = next_int();
+        } else if (tok == "winc") {
+            winc = next_int();
+        } else if (tok == "binc") {
+            binc = next_int();
+        }
+    }
+
+    if (have_depth) {
+        if (max_depth < 1) {
+            max_depth = kNoTimeControlDepth; // Guard against a malformed "depth 0" or negative value.
+        }
+        // time_limit_ms is whatever movetime gave (possibly 0, i.e. no limit).
+    } else if (have_movetime) {
+        max_depth = kTimedSearchMaxDepth;
+        // time_limit_ms is already set from movetime above.
+    } else {
+        const bool white_to_move = pos.side_to_move == board::Color::White;
+        const int remaining = white_to_move ? wtime : btime;
+        if (remaining >= 0) {
+            const int increment = white_to_move ? winc : binc;
+            time_limit_ms = allocate_time_ms(remaining, increment);
+            max_depth = kTimedSearchMaxDepth;
+        } else {
+            max_depth = kNoTimeControlDepth;
+            time_limit_ms = 0;
+        }
+    }
+
+    const search::SearchResult result =
+        search::search_iterative_deepening(pos, max_depth, time_limit_ms);
+
+    out << "bestmove ";
+    if (result.best_move.is_null()) {
+        // No legal move (checkmate/stalemate at the root) -- "0000" is
+        // the conventional UCI null-move token GUIs recognize; there's
+        // no other clean way to say "no move" via bestmove.
+        out << "0000";
+    } else {
+        out << result.best_move.to_uci();
+    }
+    out << '\n';
+    out.flush();
+}
+
+} // namespace
+
+void run(std::istream& in, std::ostream& out) {
+    Position pos = board::start_position();
+    std::string line;
+
+    while (std::getline(in, line)) {
+        const std::vector<std::string> tokens = tokenize(line);
+        if (tokens.empty()) {
+            continue;
+        }
+        const std::string& cmd = tokens[0];
+
+        if (cmd == "uci") {
+            out << "id name Nightwing\n";
+            out << "id author g-c-3\n";
+            out << "uciok\n";
+            out.flush();
+        } else if (cmd == "isready") {
+            out << "readyok\n";
+            out.flush();
+        } else if (cmd == "ucinewgame") {
+            pos = board::start_position();
+        } else if (cmd == "position") {
+            handle_position(pos, tokens);
+        } else if (cmd == "go") {
+            handle_go(pos, tokens, out);
+        } else if (cmd == "quit") {
+            break;
+        }
+        // stop, ponderhit, setoption, debug, register, and anything else
+        // unrecognized: silently ignored, per the UCI spec's expectation
+        // that engines ignore commands they don't understand — required
+        // for robustness against a GUI/script sending commands ahead of
+        // what this phase supports (see this file's header comment).
+    }
+}
+
+} // namespace nightwing::uci
