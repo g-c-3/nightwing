@@ -30,9 +30,6 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [x] Iterative deepening
 - [x] Basic UCI loop
 - [x] Engine can play a full legal game against itself via UCI
-- [ ] Iterative deepening
-- [ ] Basic UCI loop (`uci`, `isready`, `position`, `go depth N`, `stop`)
-- [ ] Engine can play a full legal game against itself via UCI
 
 ## Phase 3 — Core Search Strengthening
 - [ ] PVS (Principal Variation Search)

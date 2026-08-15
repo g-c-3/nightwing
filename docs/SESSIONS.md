@@ -4,6 +4,26 @@ Newest entry at top.
 
 ---
 
+## 2026-08-14 — Session 9: CI build-failure bugfix (uci_tests.cpp) + ROADMAP.md duplicate-entry fix
+
+**What was built:** No new features — a CI build failure from the end of Session 8 was fixed and, this time, verified against a real `cmake`+Catch2 build rather than a scratch harness; a documentation bug in `docs/ROADMAP.md` was also found and fixed.
+
+- `tests/uci_tests.cpp` — added the missing `#include "board/attacks.h"` that was causing all 6 CI configs to fail to *build* (`'init_magic_bitboards' was not declared in this scope`). See DECISIONS.md for full cause/fix/why-correct.
+- `tests/search_tests.cpp` — fixed two pre-existing, non-fatal `-Wunused-result` warnings (discarded `[[nodiscard]]` return values in two "leaves the position unmodified" tests), found incidentally during this session's real-build verification pass.
+- `docs/ROADMAP.md` — removed three duplicate, stale unchecked lines in Phase 2 (a documentation bug from earlier sessions' editing process — see DECISIONS.md).
+- **Verification, done properly this time:** installed `cmake` in the sandbox (previously unavailable), fetched the actual current `main`-branch repo fresh via `codeload.github.com` (not a locally-cached copy), reproduced the exact CI compile failure with real CMake + FetchContent'd Catch2, applied the fix, and rebuilt: Release config compiled with zero warnings and **all 122 tests passed via the real `ctest`** (not a stand-in). Debug (ASan+UBSan) config also compiled with zero warnings after the two `search_tests.cpp` fixes; a partial `ctest -R "uci:"` run under that config passed the cases it completed before the sandbox's own command-timeout was hit (ASan process-launch overhead was unusually high in this particular sandbox run — far higher than real CI's per-test times for the same configs — so the full Debug suite wasn't run to completion here, but the fix itself is a compile-time issue, already unambiguously confirmed by the clean build in both configs).
+
+**Bugs fixed:**
+1. `uci_tests.cpp` missing `board/attacks.h` — see above and DECISIONS.md.
+2. Two discarded-`[[nodiscard]]` warnings in `search_tests.cpp` — see above and DECISIONS.md.
+3. `ROADMAP.md` Phase 2 duplicate task lines — a documentation bug, not a code bug, but real and worth recording; see DECISIONS.md for the root cause (editing a locally-cached copy of the docs file across turns let drift go unnoticed) and the process change adopted to prevent recurrence.
+
+**Decisions made:** Logged in DECISIONS.md — this session's entry covers all three fixes above, plus the process change: `ROADMAP.md` gets re-fetched fresh before editing whenever drift is plausible, not treated as "known for the session" the way Tier 2 source reading is.
+
+**Next session start point:** Phase 3 — Core Search Strengthening — starts with PVS (Principal Variation Search), the first unchecked ROADMAP.md item. Push this session's three fixed files (`tests/uci_tests.cpp`, `tests/search_tests.cpp`, `docs/ROADMAP.md`) and confirm all 6 CI configs are green — this is the second time in a row CI has needed to actually catch a mistake before it was fixed, so don't start PVS until that real green run is confirmed, not just this session's local (partial, in the Debug/ASan case) verification. Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-13 — Session 8: Eval + search + iterative deepening + UCI loop — Phase 2 complete
 
 **What was built:** All five Phase 2 ROADMAP.md items, in one session.

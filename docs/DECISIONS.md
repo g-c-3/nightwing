@@ -4,6 +4,26 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+## 2026-08-14 — Bugfix: uci_tests.cpp missing attacks.h include; ROADMAP.md Phase 2 duplicate entries; verification process tightened
+
+**Cause 1 (build failure, all 6 CI configs):** `tests/uci_tests.cpp` calls `init_magic_bitboards()` in its `init_all()` helper but never included `board/attacks.h`, the header that declares it — a real compile error (`'init_magic_bitboards' was not declared in this scope`), not a runtime one. It slipped through the previous session's verification because that session validated the test *logic* with a hand-written scratch harness (`check_uci.cpp`) that had its own, correct includes — not the literal `uci_tests.cpp` file that was actually delivered and committed. The two were logically equivalent but not textually identical, and only the committed file had the missing include.
+
+**Fix 1:** Added `#include "board/attacks.h"` to `tests/uci_tests.cpp`.
+
+**Why correct:** This time, verification didn't stop at an equivalent scratch harness. `cmake`/real Catch2 weren't available in earlier sessions' sandbox, so this session installed `cmake` and did a full real build: fetched the actual current `main`-branch repo fresh (not a locally-cached copy), reproduced the exact CI compile error with real CMake + FetchContent'd Catch2, applied the include fix, rebuilt clean (Release: zero warnings; Debug/ASan+UBSan: zero warnings after also fixing two more `[[nodiscard]]` warnings found in the same pass — see below), and ran the real `nightwing_tests` binary via real `ctest`: 122/122 passed in Release. This closes the gap the previous entry (`search_tests.cpp`'s missing-init bugfix) already flagged as a known blind spot — verifying the *committed* file, not a stand-in for it.
+
+**Cause 2 (minor, non-fatal):** The same real-build pass surfaced two pre-existing `-Wunused-result` warnings in `tests/search_tests.cpp` ("leaves the position unmodified" tests for both `search_fixed_depth()` and `search_iterative_deepening()`), from discarding a `[[nodiscard]]`-marked return value. Not a build failure (no `-Werror` in this project's CI), but real, previously-unnoticed noise.
+
+**Fix 2:** Wrapped both discarded calls in `(void)`.
+
+**Cause 3 (documentation bug, unrelated to CI):** `docs/ROADMAP.md`'s Phase 2 section had three duplicate task lines — "Iterative deepening," "Basic UCI loop," and "Engine can play a full legal game against itself via UCI" each appeared twice: once correctly checked off, once still unchecked. Root cause: across the session(s) that checked these items off, each `str_replace` edit matched only the *already-checked* preceding lines as an anchor and appended a new checked line after them, rather than matching and converting the item's own actual unchecked line further down the file. Because these edits operated on a locally-cached copy of `ROADMAP.md` rather than a freshly-fetched one each time, the drift was self-consistent and invisible from inside that session — every subsequent edit looked correct relative to the already-wrong local copy.
+
+**Fix 3:** Fetched the real, currently-pushed `docs/ROADMAP.md` fresh (not the locally-cached copy) and removed the three stale unchecked duplicate lines. Scanned the entire file afterward for any other duplicate task text (case-insensitive-agnostic exact match across all phases) — none found; this was isolated to Phase 2's three most recently-touched items.
+
+**Process change going forward:** Documentation files (`ROADMAP.md` especially, since it's edited almost every session) get re-fetched fresh before editing when there's any reason to suspect drift — not just treated as "already known for the session" the way Tier 2 source-reading is. A locally-cached copy that's silently wrong is worse than re-fetching a few extra kilobytes of markdown.
+
+---
+
 ## 2026-08-13 — UCI loop: move matching by to_uci() string, safe no-time-control depth fallback, synchronous `go`
 
 **Decision:** `src/uci/uci.cpp`'s `run()` takes `std::istream&`/`std::ostream&` explicitly (not hardcoded `std::cin`/`std::cout`) so `tests/uci_tests.cpp` can drive it with string streams. `apply_uci_moves()` handles `position ... moves ...` by generating the real legal move list at each step and matching each UCI token (e.g. `"e7e8q"`) against `Move::to_uci()`, rather than hand-decoding the UCI move-string grammar (promotion suffix, etc.) independently — this way promotion/castling/en-passant flags are set exactly as `generate_legal_moves()` already produces them, with zero duplicated encoding logic. `go` always runs `search_iterative_deepening()` synchronously to completion before the loop reads its next input line — there is no background search thread, and `stop`/`go infinite` are accepted as tokens but have no real effect (see this decision's "deferred" note below). When neither an explicit `depth` nor any time control (`movetime`, or `wtime`/`btime`) is given at all, `go` falls back to a small fixed `kNoTimeControlDepth = 5`, not the much larger `kTimedSearchMaxDepth = 64` ceiling used when a real time budget is what's actually expected to stop the search.
