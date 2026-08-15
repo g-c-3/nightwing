@@ -33,7 +33,7 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 
 ## Phase 3 — Core Search Strengthening
 - [x] PVS (Principal Variation Search)
-- [ ] Transposition table (Zobrist-keyed, depth/age replacement)
+- [x] Transposition table (Zobrist-keyed, depth/age replacement)
 - [ ] Move ordering: TT move, MVV-LVA captures, killer moves, history heuristic
 - [ ] Aspiration windows
 - [ ] Quiescence search (captures + checks, with SEE pruning)
@@ -105,7 +105,21 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
 - [ ] Skill level / strength limiting (optional, for practice/handicap play)
 - [ ] Contempt / draw score adjustment (optional)
 - [ ] README, build instructions, engine info (name/author via `uci`)
-- [ ] wasm build or GUI packaging (optional, revisit if wanted)
+- [ ] wasm build / GUI packaging — superseded by the "Release & Packaging Infrastructure" section below (2026-08-15); tracked there instead of here.
+
+## Release & Packaging Infrastructure (parallel track — not phase-gated, pick up whenever)
+Added 2026-08-15 at Gokul's request. Not part of the sequential phase order above — can be
+picked up in any session without waiting for Phase 8. Decisions/rationale in DECISIONS.md,
+2026-08-15 entry.
+
+- [ ] `ci.yml`: add a `release` job gated with `needs:` on all 6 existing build+test matrix jobs, running only on push to `main` (not PRs), with `contents: write` permission
+- [ ] Release job re-tags/re-publishes a single rolling `latest` GitHub Release on every green run of the 6 jobs (no per-run version tags; release body auto-includes commit SHA + date so "which commit is this" is still answerable)
+- [ ] Publish the 3 **Release**-config native binaries (Linux/macOS/Windows) as release assets, consistently named (e.g. `nightwing-linux`, `nightwing-macos`, `nightwing-windows.exe`) — the 3 **Debug** (ASan/UBSan-instrumented) jobs stay CI/test-only and gate the release without publishing their own binaries, since a sanitizer-instrumented build isn't something an end user should run
+- [ ] Emscripten toolchain integration in CMake: new `NIGHTWING_BUILD_WASM` option, separate build directory/job, producing `nightwing.wasm` + `nightwing.js` glue
+- [ ] WASM JS surface: full UCI loop over stdin/stdout (via Emscripten's stdin support), so Node can drive it exactly like a native UCI engine binary — no bespoke JS API to design/maintain in parallel with UCI itself
+- [ ] Standalone `nightwing.min.js`: single self-contained minified bundle (wasm binary inlined as base64, not a separate `.wasm` file to host/serve) for drop-in use without asset-path configuration
+- [ ] Both wasm artifacts (`nightwing.wasm`+`nightwing.js`, and `nightwing.min.js`) published as release assets alongside the 3 native binaries on the same rolling `latest` release
+- [ ] Verify the wasm build against the existing UCI test suite (or an equivalent subset runnable under Node) before it's trusted as a real release asset, not just "compiles"
 
 ## Phase 9 — Advanced / Stretch Goals (beyond great-engine baseline)
 - [ ] NUMA-aware thread/memory allocation (large multi-socket hardware only)
@@ -113,4 +127,4 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 2 complete.** **Current phase: 3 — Core Search Strengthening.** Next task: Transposition table (Zobrist-keyed, depth/age replacement).
+**Phase 2 complete.** **Current phase: 3 — Core Search Strengthening.** Next task: Move ordering (TT move, MVV-LVA captures, killer moves, history heuristic).
