@@ -1,10 +1,11 @@
 #pragma once
 // src/search/search.h
 //
-// Fixed-depth alpha-beta search (negamax form, now using PVS --
-// Principal Variation Search -- null-window probes on later moves with
-// full-window re-search on a fail-high; see search.cpp's negamax()
-// comments for the exact rule), plus iterative deepening on top of it.
+// Fixed-depth alpha-beta search (negamax form, using PVS -- Principal
+// Variation Search -- null-window probes on later moves with full-
+// window re-search on a fail-high, now backed by a transposition table
+// for cutoffs on repeated/transposed positions; see search.cpp's
+// negamax() comments for both), plus iterative deepening on top of it.
 // Aspiration windows and remaining pruning/extensions are later
 // ROADMAP.md items layered on top of this; this file is deliberately
 // just "does the tree search return a legal best move, correctly, and
@@ -13,7 +14,10 @@
 // best move/score as plain alpha-beta) -- it only changes which nodes
 // get a cheap probe vs. a full search, so its node-count savings won't
 // be fully realized until real move ordering (the next ROADMAP.md
-// item) puts strong moves first.
+// item) puts strong moves first. The transposition table (search/tt.h)
+// is likewise exact when used correctly (proven bounds only, correct
+// mate-distance handling) -- see tt.h's header comment on its current
+// per-call (not yet persistent-global) lifetime.
 
 #include <cstdint>
 

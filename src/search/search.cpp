@@ -7,6 +7,7 @@
 
 #include "board/movegen.h"
 #include "eval/eval.h"
+#include "search/tt.h"
 
 namespace nightwing::search {
 namespace {
@@ -23,6 +24,13 @@ using board::UndoInfo;
 /// generous constant rather than std::numeric_limits<int>::max(), whose
 /// negation is undefined behavior.
 constexpr int kInfinity = 1'000'000;
+
+/// Placeholder default table size until the UCI `Hash` option
+/// (ROADMAP.md Phase 8) makes this configurable. Modest on purpose: each
+/// top-level search call currently constructs its own fresh table (see
+/// tt.h's header comment on lifetime), so this gets allocated/freed
+/// often rather than once for the engine's lifetime.
+constexpr std::size_t kDefaultTTSizeMB = 16;
 
 // search_iterative_deepening() (below) only checks its time budget
 // *between* full-depth search_fixed_depth() calls, not mid-search --
@@ -62,8 +70,28 @@ constexpr int kInfinity = 1'000'000;
 /// looks less attractive to a side searching for the *fastest* mate, or
 /// less bad to a side merely trying to survive as long as possible —
 /// the deeper the forced mate lies. Standard CPW "Mate Scores"
-/// convention; from-scratch implementation here.
-int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_t& nodes) {
+/// convention; from-scratch implementation here. `tt` (search/tt.h) is
+/// also keyed and mate-distance-adjusted around this same `ply`
+/// convention — see tt.cpp's adjustment functions.
+///
+/// Transposition table integration deliberately stays simple for this
+/// first pass (see docs/DECISIONS.md, 2026-08-15 TT entry): a probe
+/// that doesn't immediately resolve the window (an Exact hit, or a
+/// Lower/Upper bound that already fails high/low against the CALLER's
+/// actual alpha/beta) is discarded rather than used to narrow alpha/
+/// beta for the search that follows. Narrowing from a non-cutoff
+/// bound is a real, standard optimization, but it complicates how the
+/// eventual store() at the bottom of this function should classify its
+/// own Exact/Lower/Upper result (that classification needs to be
+/// relative to whatever window was actually searched) — skipping it
+/// keeps that classification unambiguous. TT interaction only happens
+/// for depth >= 1 nodes: a depth <= 0 leaf's score is a pure
+/// eval::evaluate() call that never consults alpha/beta at all (see
+/// the branch immediately below), so there is nothing for the TT to
+/// usefully cache there yet (no quiescence search exists as of this
+/// commit — ROADMAP.md's separate "Quiescence search" item).
+int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_t& nodes,
+            TranspositionTable& tt) {
     ++nodes;
 
     if (depth <= 0) {
@@ -71,14 +99,38 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         return pos.side_to_move == Color::White ? white_relative_score : -white_relative_score;
     }
 
+    const int alpha_orig = alpha;
+    const std::uint64_t key = pos.zobrist_hash;
+    tt.prefetch(key); // ARCHITECTURE.md: issued as early as possible, to overlap with movegen below.
+
+    const TTProbeResult probe = tt.probe(key, ply);
+    if (probe.hit && probe.depth >= depth) {
+        if (probe.bound == Bound::Exact) {
+            return probe.score;
+        }
+        if (probe.bound == Bound::Lower && probe.score >= beta) {
+            return probe.score;
+        }
+        if (probe.bound == Bound::Upper && probe.score <= alpha) {
+            return probe.score;
+        }
+        // Bound doesn't resolve this window: fall through to a normal
+        // search using the untouched alpha/beta (see this function's
+        // header comment on why this deliberately doesn't narrow them).
+    }
+
     MoveList moves;
     board::generate_legal_moves(pos, moves);
 
     if (moves.empty()) {
+        // Terminal position: not stored in the TT (see this function's
+        // header comment) — movegen already paid the cost of detecting
+        // this, and there's no move-loop result left to cache.
         return in_check(pos) ? -(kMateScore - ply) : kDrawScore;
     }
 
     int best = -kInfinity;
+    Move best_move; // Move() default (null) unless overwritten below — every real position has >=1 move here.
     for (int i = 0; i < moves.size(); ++i) {
         const Move move = moves[i];
         UndoInfo undo;
@@ -92,7 +144,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // move-generation order for now, same as the pre-PVS code):
             // search it with the full alpha-beta window to establish a
             // real score to compare everything else against.
-            score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes);
+            score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt);
         } else if (depth == 1) {
             // This move's child is a leaf (depth - 1 == 0):
             // eval::evaluate() at a leaf doesn't consult alpha/beta at
@@ -101,7 +153,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // a pointless re-search that doubles that leaf's node count
             // for an identical score. Go straight to a normal search
             // instead of paying for the PVS trick where it can't help.
-            score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes);
+            score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt);
         } else {
             // PVS: probe every later move with a null (zero-width)
             // window first -- cheap, since it only needs to prove
@@ -110,9 +162,9 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // actually beat alpha (a fail-high on the null window that's
             // still below beta) is it worth paying for a full-window
             // re-search to get its real score.
-            score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, nodes);
+            score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, nodes, tt);
             if (score > alpha && score < beta) {
-                score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes);
+                score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt);
             }
         }
 
@@ -120,6 +172,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 
         if (score > best) {
             best = score;
+            best_move = move;
         }
         if (score > alpha) {
             alpha = score;
@@ -128,14 +181,27 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             break; // Beta cutoff: the opponent won't let us reach this line.
         }
     }
+
+    // Classify against alpha_orig/beta (the window this call was
+    // actually asked to resolve), not any narrowed value — see this
+    // function's header comment. CPW "Node Types": every move tried and
+    // none reached alpha_orig -> only an upper bound was proven; a
+    // cutoff -> only a lower bound was proven; otherwise the search
+    // ran to completion within the window and best is exact.
+    const Bound bound_type = best <= alpha_orig ? Bound::Upper
+                            : best >= beta       ? Bound::Lower
+                                                  : Bound::Exact;
+    tt.store(key, depth, best, bound_type, best_move, ply);
+
     return best;
 }
 
-} // namespace
-
-SearchResult search_fixed_depth(Position& pos, int depth) {
-    assert(depth >= 1 && "search_fixed_depth: depth must be at least 1");
-
+/// Core root-move-loop logic shared by both public entry points below.
+/// Kept as a private, TT-taking function rather than exposed directly:
+/// each public entry point is responsible for deciding *which*
+/// TranspositionTable instance to pass in (see tt.h's header comment on
+/// the current per-call lifetime), not this function.
+SearchResult search_root(Position& pos, int depth, TranspositionTable& tt) {
     SearchResult result;
 
     MoveList moves;
@@ -164,14 +230,19 @@ SearchResult search_fixed_depth(Position& pos, int depth) {
         // search (their children are leaves -- a null-window probe can't
         // prune there), and later moves at depth >= 2 get a null-window
         // probe first, re-searched with the full window only on a
-        // fail-high that's still below beta.
+        // fail-high that's still below beta. No TT probe/store for the
+        // root position itself in this pass -- see docs/DECISIONS.md,
+        // 2026-08-15 TT entry: without move ordering (a separate,
+        // still-unchecked ROADMAP.md item) yet using a TT-move hint,
+        // root-level TT interaction has no payoff to justify its own
+        // complexity today.
         int score;
         if (i == 0 || depth == 1) {
-            score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes);
+            score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt);
         } else {
-            score = -negamax(pos, depth - 1, -alpha - 1, -alpha, 1, result.nodes);
+            score = -negamax(pos, depth - 1, -alpha - 1, -alpha, 1, result.nodes, tt);
             if (score > alpha && score < beta) {
-                score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes);
+                score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt);
             }
         }
 
@@ -189,15 +260,35 @@ SearchResult search_fixed_depth(Position& pos, int depth) {
     return result;
 }
 
+} // namespace
+
+SearchResult search_fixed_depth(Position& pos, int depth) {
+    assert(depth >= 1 && "search_fixed_depth: depth must be at least 1");
+
+    // A fresh, private table for this one call (see tt.h's header
+    // comment) -- kDefaultTTSizeMB is a placeholder until the UCI `Hash`
+    // option (ROADMAP.md Phase 8) makes this configurable and the table
+    // itself persistent across calls.
+    TranspositionTable tt(kDefaultTTSizeMB);
+    return search_root(pos, depth, tt);
+}
+
 SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_limit_ms) {
     assert(max_depth >= 1 && "search_iterative_deepening: max_depth must be at least 1");
 
     const auto start_time = std::chrono::steady_clock::now();
 
+    // One table shared across every iteration of THIS call (see tt.h's
+    // header comment) -- this is where the TT's cross-iteration value
+    // actually comes from right now, since search_fixed_depth() on its
+    // own always starts from an empty table.
+    TranspositionTable tt(kDefaultTTSizeMB);
+
     // Depth 1 always runs unconditionally, before any time check, so
     // there's always a legal best_move to fall back on (see search.h's
     // header comment).
-    SearchResult result = search_fixed_depth(pos, 1);
+    tt.new_search();
+    SearchResult result = search_root(pos, 1, tt);
     std::uint64_t total_nodes = result.nodes;
 
     // Position already over (checkmate/stalemate at the root): every
@@ -218,7 +309,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             }
         }
 
-        SearchResult next = search_fixed_depth(pos, depth);
+        tt.new_search();
+        SearchResult next = search_root(pos, depth, tt);
         total_nodes += next.nodes;
         result = next;
     }
