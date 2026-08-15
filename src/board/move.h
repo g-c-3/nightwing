@@ -75,6 +75,17 @@ public:
     /// Raw packed bits — for TT storage / equality / hashing convenience.
     [[nodiscard]] constexpr std::uint16_t raw() const noexcept { return data_; }
 
+    /// Reconstructs a Move from its raw() packed bits — e.g. restoring a
+    /// move from compact storage like a transposition table entry
+    /// (search/tt.h). No validation: `raw` is trusted to be a value that
+    /// was itself produced by some real Move's raw() (or 0, the null-
+    /// move sentinel — see is_null() below).
+    [[nodiscard]] static constexpr Move from_raw(std::uint16_t raw) noexcept {
+        Move m;
+        m.data_ = raw;
+        return m;
+    }
+
     [[nodiscard]] constexpr bool is_capture() const noexcept {
         switch (flag()) {
             case MoveFlag::Capture:
