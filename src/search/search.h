@@ -1,13 +1,19 @@
 #pragma once
 // src/search/search.h
 //
-// Plain fixed-depth alpha-beta (negamax form) search, plus iterative
-// deepening on top of it — Phase 2's second and third ROADMAP.md items.
-// Aspiration windows and all pruning/extensions are later ROADMAP.md
-// items layered on top of this; this file is deliberately just "does
-// the tree search return a legal best move, correctly, and can it be
-// asked to deepen incrementally under a time budget," per
-// ARCHITECTURE.md's phase-by-phase build order.
+// Fixed-depth alpha-beta search (negamax form, now using PVS --
+// Principal Variation Search -- null-window probes on later moves with
+// full-window re-search on a fail-high; see search.cpp's negamax()
+// comments for the exact rule), plus iterative deepening on top of it.
+// Aspiration windows and remaining pruning/extensions are later
+// ROADMAP.md items layered on top of this; this file is deliberately
+// just "does the tree search return a legal best move, correctly, and
+// can it be asked to deepen incrementally under a time budget," per
+// ARCHITECTURE.md's phase-by-phase build order. PVS is exact (same
+// best move/score as plain alpha-beta) -- it only changes which nodes
+// get a cheap probe vs. a full search, so its node-count savings won't
+// be fully realized until real move ordering (the next ROADMAP.md
+// item) puts strong moves first.
 
 #include <cstdint>
 

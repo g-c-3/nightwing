@@ -83,7 +83,39 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         const Move move = moves[i];
         UndoInfo undo;
         board::make_move(pos, move, undo);
-        const int score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes);
+
+        int score;
+        if (i == 0) {
+            // First move (assumed most-promising, per PVS's usual pairing
+            // with move ordering -- ordering itself is a separate,
+            // still-unchecked ROADMAP.md item, so "first" here is simply
+            // move-generation order for now, same as the pre-PVS code):
+            // search it with the full alpha-beta window to establish a
+            // real score to compare everything else against.
+            score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes);
+        } else if (depth == 1) {
+            // This move's child is a leaf (depth - 1 == 0):
+            // eval::evaluate() at a leaf doesn't consult alpha/beta at
+            // all (see the depth <= 0 branch above), so a null-window
+            // probe here can never prune anything -- it would just risk
+            // a pointless re-search that doubles that leaf's node count
+            // for an identical score. Go straight to a normal search
+            // instead of paying for the PVS trick where it can't help.
+            score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes);
+        } else {
+            // PVS: probe every later move with a null (zero-width)
+            // window first -- cheap, since it only needs to prove
+            // "fails low against alpha" or "fails high," not compute an
+            // exact score. Only if the probe suggests this move might
+            // actually beat alpha (a fail-high on the null window that's
+            // still below beta) is it worth paying for a full-window
+            // re-search to get its real score.
+            score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, nodes);
+            if (score > alpha && score < beta) {
+                score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes);
+            }
+        }
+
         board::unmake_move(pos, move, undo);
 
         if (score > best) {
@@ -125,7 +157,24 @@ SearchResult search_fixed_depth(Position& pos, int depth) {
         const Move move = moves[i];
         UndoInfo undo;
         board::make_move(pos, move, undo);
-        const int score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes);
+
+        // Root-level PVS, mirroring negamax()'s move loop exactly (see
+        // its comments for the full rationale): first move gets the full
+        // window, later moves at depth 1 skip straight to a normal
+        // search (their children are leaves -- a null-window probe can't
+        // prune there), and later moves at depth >= 2 get a null-window
+        // probe first, re-searched with the full window only on a
+        // fail-high that's still below beta.
+        int score;
+        if (i == 0 || depth == 1) {
+            score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes);
+        } else {
+            score = -negamax(pos, depth - 1, -alpha - 1, -alpha, 1, result.nodes);
+            if (score > alpha && score < beta) {
+                score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes);
+            }
+        }
+
         board::unmake_move(pos, move, undo);
 
         if (score > alpha) {
