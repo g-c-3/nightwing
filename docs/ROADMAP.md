@@ -32,7 +32,7 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [x] Engine can play a full legal game against itself via UCI
 
 ## Phase 3 — Core Search Strengthening
-- [ ] PVS (Principal Variation Search)
+- [x] PVS (Principal Variation Search)
 - [ ] Transposition table (Zobrist-keyed, depth/age replacement)
 - [ ] Move ordering: TT move, MVV-LVA captures, killer moves, history heuristic
 - [ ] Aspiration windows
@@ -113,4 +113,4 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 2 complete.** **Current phase: 3 — Core Search Strengthening.** Next task: PVS (Principal Variation Search).
+**Phase 2 complete.** **Current phase: 3 — Core Search Strengthening.** Next task: Transposition table (Zobrist-keyed, depth/age replacement).

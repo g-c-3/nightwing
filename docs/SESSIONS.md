@@ -4,6 +4,23 @@ Newest entry at top.
 
 ---
 
+## 2026-08-15 — Session 10: PVS (Principal Variation Search)
+
+**What was built:** Phase 3's first item — PVS layered onto the existing negamax alpha-beta search. First confirmed CI was actually green on Session 9's three fixed files before starting, per that session's explicit gate (re-fetched `tests/uci_tests.cpp`/`tests/search_tests.cpp`/`docs/ROADMAP.md` fresh from `main` and confirmed the `attacks.h` include, the two `(void)`-wraps, and the deduplicated Phase 2 lines are all live).
+
+- `src/search/search.cpp` — `negamax()`'s move loop and `search_fixed_depth()`'s root loop both now do PVS: full window on the first move, null-window probe + full-window re-search-on-fail-high for later moves, gated off (straight to full window) when the move's child is a leaf (`depth == 1`) since a null-window probe can't prune a node that never consults alpha/beta. Full rationale, the leaf-gate reasoning, and why it isn't a test-driven hack in DECISIONS.md.
+- `src/search/search.h` — header comment updated to describe PVS's presence and its exactness (same best move/score as plain alpha-beta).
+
+**Bugs fixed:** None — algorithmic addition to already-correct code, not a fix.
+
+**Decisions made:** Logged in DECISIONS.md — the null-window-probe/full-window-re-search rule, the `depth == 1` leaf gate and why it's a real optimization rather than a workaround, and why PVS was landed ahead of move ordering (correct either way; ordering only affects how much of PVS's benefit is realized).
+
+**Verification:** Real build+test cycle against a freshly `codeload`-fetched `main` (not a locally-cached copy) with the two changed files overlaid in. Release: zero warnings, **all 122 `ctest` cases passed**, including the exact-node-count depth-1 test (confirms the leaf gate works as intended) and the depth-2 back-rank-mate-in-1 test (confirms PVS didn't change search correctness). Debug (ASan+UBSan): zero warnings; `ctest -R "search"` completed 5 of 15 cases clean before hitting this sandbox's already-known (see 2026-08-14 entry) per-test ASan launch-overhead ceiling on the command timeout — not a new issue, and Release's full green run is the authoritative confirmation here, same as it was in Session 9.
+
+**Next session start point:** Phase 3 continues with the next unchecked ROADMAP.md item: the transposition table (Zobrist-keyed, depth/age replacement scheme, cache-line-aligned entries per ARCHITECTURE.md). This is a new module (`src/search/tt.h/.cpp`, per ARCHITECTURE.md's module layout) that `negamax()` will need to probe/store against — worth re-reading `src/search/search.cpp` in full before touching it again (it's the file this session just changed) and `board/zobrist.h` for the existing key accessors, since the TT will key off `pos.zobrist_hash` directly rather than needing new hashing infrastructure. Push this session's two files (`src/search/search.h`, `src/search/search.cpp`) and confirm CI is green before starting the TT work. Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-14 — Session 9: CI build-failure bugfix (uci_tests.cpp) + ROADMAP.md duplicate-entry fix
 
 **What was built:** No new features — a CI build failure from the end of Session 8 was fixed and, this time, verified against a real `cmake`+Catch2 build rather than a scratch harness; a documentation bug in `docs/ROADMAP.md` was also found and fixed.
