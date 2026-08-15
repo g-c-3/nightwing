@@ -46,7 +46,7 @@ TEST_CASE("search_fixed_depth: leaves the position unmodified", "[search]") {
     init_all();
     Position pos = start_position();
     const std::uint64_t hash_before = pos.zobrist_hash;
-    search_fixed_depth(pos, 3);
+    (void)search_fixed_depth(pos, 3);
     REQUIRE(pos.zobrist_hash == hash_before);
 }
 
@@ -170,7 +170,7 @@ TEST_CASE("search_iterative_deepening: leaves the position unmodified", "[search
     init_all();
     Position pos = start_position();
     const std::uint64_t hash_before = pos.zobrist_hash;
-    search_iterative_deepening(pos, 3);
+    (void)search_iterative_deepening(pos, 3);
     REQUIRE(pos.zobrist_hash == hash_before);
 }
 

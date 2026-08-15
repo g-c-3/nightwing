@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "board/attacks.h"
 #include "board/board.h"
 #include "board/fen.h"
 #include "board/masks.h"
