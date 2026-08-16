@@ -125,19 +125,41 @@ TEST_CASE("search_iterative_deepening: max_depth 1 matches search_fixed_depth(po
 
 TEST_CASE("search_iterative_deepening: unlimited time reaches max_depth with the same best move/score as a direct search", "[search][id]") {
     init_all();
-    // No TT/move-ordering shared between iterations yet (Phase 2), so the
-    // deepest iteration's best_move/score should be bit-for-bit identical
-    // to calling search_fixed_depth() directly at that same depth --
-    // search_iterative_deepening() is just repeated calls to it.
+    // Correctness (best_move/score/depth_completed) must still match a
+    // direct search at the same depth exactly: PVS, the transposition
+    // table, and move ordering (see docs/DECISIONS.md, 2026-08-15 TT and
+    // move-ordering entries) are all exact techniques -- none of them
+    // are allowed to change the final best move or score, only how
+    // quickly/cheaply the search gets there.
+    //
+    // Node count is a different story. This test's comment used to
+    // assert id.nodes > direct.nodes on the theory that id necessarily
+    // does strictly more total work (depth 1 + depth 2 + depth 3, vs.
+    // depth 3 alone). That was true back when nothing was shared between
+    // iterative-deepening's own iterations (Phase 2). As of this
+    // session, search_iterative_deepening() deliberately shares one
+    // TranspositionTable/KillerTable/HistoryTable across all of its own
+    // depth iterations (search.cpp) specifically so each deeper
+    // iteration benefits from the previous one's TT-move hints, killers,
+    // and history -- which is real, working, and can make id's total
+    // node count LOWER than a single cold-start direct search at the
+    // final depth, exactly as seen here. That's the intended payoff of
+    // this session's work, not a regression -- see docs/DECISIONS.md,
+    // 2026-08-15 move-ordering entry, for the specific numbers observed
+    // and the reasoning for updating this assertion instead of chasing a
+    // fixed inequality that a working optimization is expected to break.
     Position pos = start_position();
     const SearchResult direct = search_fixed_depth(pos, 3);
     const SearchResult id = search_iterative_deepening(pos, 3);
     REQUIRE(id.best_move == direct.best_move);
     REQUIRE(id.score == direct.score);
     REQUIRE(id.depth_completed == 3);
-    // id.nodes accumulates depth 1 + depth 2 + depth 3's work, so it must
-    // be strictly more than depth 3 alone.
-    REQUIRE(id.nodes > direct.nodes);
+    // Sanity bound only: id must have visited at least as many nodes as
+    // its own depth-1 pass alone (a fixed, always-unpruned 20 for the
+    // start position -- see the depth-1 exact-node-count test above),
+    // since that pass always runs in full before any deeper iteration
+    // begins.
+    REQUIRE(id.nodes >= 20);
 }
 
 TEST_CASE("search_iterative_deepening: an already-checkmated position returns a null move and -mate", "[search][id]") {

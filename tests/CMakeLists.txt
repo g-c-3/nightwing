@@ -18,6 +18,7 @@ add_executable(nightwing_tests
     fen_tests.cpp
     perft_tests.cpp
     eval_tests.cpp
+    ordering_tests.cpp
     search_tests.cpp
     tt_tests.cpp
     uci_tests.cpp
