@@ -4,6 +4,19 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+## 2026-08-16 — CI: actions/checkout bumped v4 → v7 (Node 20 deprecation warnings)
+
+**Decision:** `.github/workflows/ci.yml`'s `actions/checkout@v4` bumped to `actions/checkout@v7` (currently latest, v7.0.1). No other change to the workflow.
+
+**Rationale:** all 6 green CI jobs were carrying a "Node.js 20 is deprecated" annotation — `actions/checkout@v4` ships a Node 20 runtime, and GitHub Actions runners are now force-running it on Node 24 instead (with a warning) ahead of Node 20's full removal. `actions/checkout` v5+ was rebuilt to run on Node 24 natively, so this is a straight version bump with no workflow-behavior change: this job uses only the default checkout (no `with:` inputs), and neither v5's, v6's, nor v7's breaking changes (credential-persistence file location; `pull_request_target` checkout-safety defaults) apply here — this workflow only triggers on `push`/`pull_request`, never `pull_request_target`, and never persists/uses git credentials for anything beyond the checkout itself.
+
+**Verification:** YAML re-validated (`python3 -c "import yaml; yaml.safe_load(...)"`) after the edit. GitHub Actions workflow files can't be fully exercised outside GitHub itself, so the real confirmation is the next push's Annotations panel showing 0 warnings — flagged to Gokul to check after this push.
+
+**Alternatives considered:**
+- v5 (the first Node-24 release) instead of v7 — rejected; no reason to pin behind the latest stable major when nothing in this simple workflow is sensitive to the intervening versions' changes, and staying current avoids needing to revisit this again soon.
+
+---
+
 ## 2026-08-15 (4) — Move ordering: scoring bands, root-level TT interaction added, and a node-count test assertion updated
 
 **Decision:** New `src/search/ordering.{h,cpp}` implements ROADMAP.md's Phase 3 "Move ordering" item exactly: TT move, MVV-LVA captures, killer moves, history heuristic (SEE and counter-moves are ARCHITECTURE.md's fuller eventual scheme but not this item). `negamax()` in `search.cpp` now calls `order_moves()` on the generated move list before its own loop, using the earlier TT probe's move as a hint (even one too shallow to trigger a cutoff — still useful for ordering), and records killer/history updates on a beta cutoff caused by a quiet, non-promotion move. `search_root()` does the same for the root's own move list. Three notable decisions:

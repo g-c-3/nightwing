@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+## 2026-08-16 — CI fix: actions/checkout Node 20 deprecation warnings
+
+**What was built:** Gokul flagged (via a screenshot of the Actions run) that all 6 green CI jobs carried a "Node.js 20 is deprecated" annotation. `.github/workflows/ci.yml` — **modified**: `actions/checkout@v4` → `actions/checkout@v7` (current latest), which runs on Node 24 natively. No other workflow change; full rationale in DECISIONS.md's 2026-08-16 entry. Not a ROADMAP.md item — a standalone infra fix, doesn't affect Phase 3 progress or the next session's starting point below.
+
+**Bugs fixed:** The Node 20 deprecation warnings themselves (cosmetic/future-proofing — CI was green throughout, this doesn't fix a failure, it clears an annotation and avoids a harder break once Node 20 is fully removed).
+
+**Decisions made:** Logged in DECISIONS.md, 2026-08-16 — why v7 specifically (current latest, no breaking changes relevant to this simple workflow) rather than the minimum v5 needed to clear the warning.
+
+**Verification:** YAML re-validated after the edit. Workflow files can't be fully exercised outside GitHub — real confirmation is the next push's Annotations panel; flagged to Gokul to check.
+
+**Next session start point:** Unchanged from Session 11 — Phase 3 continues with Aspiration windows (see that entry below for the specific starting notes on `src/search/search.cpp`).
+
+---
+
 ## 2026-08-15 (2) — Session 11: Transposition table + Move ordering + Release Infrastructure planning
 
 **What was built:** Three threads this session, in order. (1) Gokul asked how to auto-publish a GitHub Release on every green CI run, covering the 6 build/test jobs plus a WASM+JS build; scoped via 3 clarifying questions (rolling `latest` tag, full UCI-over-stdin/stdout WASM surface, tracked as a new parallel ROADMAP.md section rather than interrupting Phase 3) and logged as a plan only — no `ci.yml`/wasm code written yet, see ROADMAP.md's new "Release & Packaging Infrastructure" section and DECISIONS.md's 2026-08-15 (2) entry. (2) Phase 3's transposition table. (3) Phase 3's move ordering, done immediately after in the same session ("Start"), since it's exactly what the TT work's own deferred root-interaction decision was waiting on.
