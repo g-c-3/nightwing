@@ -108,7 +108,7 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
 - [ ] wasm build / GUI packaging — superseded by the "Release & Packaging Infrastructure" section below (2026-08-15); tracked there instead of here.
 
 ## Release & Packaging Infrastructure (parallel track — not phase-gated, pick up whenever)
-Added 2026-08-15 at Gokul's request. Not part of the sequential phase order above — can be
+Added 2026-08-15. Not part of the sequential phase order above — can be
 picked up in any session without waiting for Phase 8. Decisions/rationale in DECISIONS.md,
 2026-08-15 entry.
 
