@@ -34,7 +34,7 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 ## Phase 3 — Core Search Strengthening
 - [x] PVS (Principal Variation Search)
 - [x] Transposition table (Zobrist-keyed, depth/age replacement)
-- [ ] Move ordering: TT move, MVV-LVA captures, killer moves, history heuristic
+- [x] Move ordering: TT move, MVV-LVA captures, killer moves, history heuristic
 - [ ] Aspiration windows
 - [ ] Quiescence search (captures + checks, with SEE pruning)
 - [ ] Internal Iterative Reduction (IIR) — reduce depth on nodes with no TT move (modern replacement for IID)
@@ -127,4 +127,4 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 2 complete.** **Current phase: 3 — Core Search Strengthening.** Next task: Move ordering (TT move, MVV-LVA captures, killer moves, history heuristic).
+**Phase 2 complete.** **Current phase: 3 — Core Search Strengthening.** Next task: Aspiration windows.
