@@ -4,23 +4,26 @@
 // Fixed-depth alpha-beta search (negamax form, using PVS -- Principal
 // Variation Search -- null-window probes on later moves with full-
 // window re-search on a fail-high, backed by a transposition table for
-// cutoffs on repeated/transposed positions, and now also reordering
-// each node's move list (search/ordering.h: TT move, MVV-LVA captures,
-// promotions, killer moves, history heuristic) before searching it, so
-// PVS/TT cutoffs actually happen early rather than by luck; see
-// search.cpp's negamax() comments for all of the above), plus iterative
-// deepening on top of it. Aspiration windows and remaining pruning/
-// extensions are later ROADMAP.md items layered on top of this; this
-// file is deliberately just "does the tree search return a legal best
-// move, correctly, and can it be asked to deepen incrementally under a
-// time budget," per ARCHITECTURE.md's phase-by-phase build order. PVS
-// is exact (same best move/score as plain alpha-beta) regardless of
-// ordering quality -- ordering only changes how QUICKLY cutoffs are
-// found, not whether the final result is correct. The transposition
-// table (search/tt.h) is likewise exact when used correctly (proven
-// bounds only, correct mate-distance handling) -- see tt.h's header
-// comment on its current per-call (not yet persistent-global) lifetime,
-// which KillerTable/HistoryTable (search/ordering.h) now share too.
+// cutoffs on repeated/transposed positions, and reordering each node's
+// move list (search/ordering.h: TT move, MVV-LVA captures, promotions,
+// killer moves, history heuristic) before searching it, so PVS/TT
+// cutoffs actually happen early rather than by luck; see search.cpp's
+// negamax() comments for all of the above), plus iterative deepening on
+// top of it, which for depth >= 2 now searches each iteration through a
+// narrow aspiration window centered on the previous iteration's score
+// (CPW "Aspiration Windows"), widening and re-searching on a fail-high/
+// fail-low -- see search.cpp's search_iterative_deepening() comments.
+// Remaining pruning/extensions are later ROADMAP.md items layered on
+// top of this; this file is deliberately just "does the tree search
+// return a legal best move, correctly, and can it be asked to deepen
+// incrementally under a time budget," per ARCHITECTURE.md's phase-by-
+// phase build order. PVS, the transposition table, and aspiration
+// windows are all exact techniques (same best move/score as plain
+// full-window alpha-beta) regardless of ordering quality or window
+// width -- they only change how QUICKLY/CHEAPLY the correct result is
+// reached, never whether it's correct. See tt.h's header comment on the
+// TT's (and KillerTable/HistoryTable's, search/ordering.h) current
+// per-call, not yet persistent-global, lifetime.
 
 #include <cstdint>
 

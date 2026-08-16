@@ -33,6 +33,18 @@ constexpr int kInfinity = 1'000'000;
 /// often rather than once for the engine's lifetime.
 constexpr std::size_t kDefaultTTSizeMB = 16;
 
+/// Starting half-width (centipawns) of the aspiration window
+/// search_iterative_deepening() centers on the previous iteration's
+/// score for depth >= 2 (CPW "Aspiration Windows"; see that function's
+/// comments for the full scheme). Doubled on each fail-high/fail-low
+/// retry. 25 centipawns is a common, reasonable starting point in
+/// other engines' implementations of this technique -- not yet tuned
+/// for Nightwing specifically (ROADMAP.md's Texel/SPSA tuner, once it
+/// exists, targets eval terms first; a search constant like this one
+/// is a plausible later tuning target, not a claim that 25 is already
+/// verified optimal here).
+constexpr int kAspirationInitialDelta = 25;
+
 // search_iterative_deepening() (below) only checks its time budget
 // *between* full-depth search_fixed_depth() calls, not mid-search --
 // negamax() itself has no clock/stop-flag awareness. True mid-search
@@ -230,8 +242,22 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 /// TranspositionTable/KillerTable/HistoryTable instances to pass in
 /// (see tt.h's header comment on the current per-call lifetime), not
 /// this function.
-SearchResult search_root(Position& pos, int depth, TranspositionTable& tt, KillerTable& killers,
-                          HistoryTable& history) {
+///
+/// `aspiration_alpha`/`aspiration_beta` is the search window to use --
+/// search_fixed_depth() always passes the full (-kInfinity, kInfinity)
+/// window (no previous iteration's score to aspirate around);
+/// search_iterative_deepening() narrows it for depth >= 2 (see its own
+/// comments and docs/DECISIONS.md's aspiration-windows entry). Callers
+/// must check the RETURNED result.score against the window they passed
+/// in: if it's <= aspiration_alpha or >= aspiration_beta, the search
+/// only proved a BOUND, not an exact score (CPW "Aspiration Windows" --
+/// same fail-low/fail-high concept as negamax()'s own TT-bound
+/// classification, just applied to the whole root call instead of one
+/// node) -- best_move in that case is not to be trusted as final either
+/// (see below), and the caller is expected to re-search with a wider
+/// window rather than accept the result as-is.
+SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int aspiration_beta,
+                          TranspositionTable& tt, KillerTable& killers, HistoryTable& history) {
     SearchResult result;
 
     MoveList moves;
@@ -245,8 +271,8 @@ SearchResult search_root(Position& pos, int depth, TranspositionTable& tt, Kille
         return result;
     }
 
-    // Root-level TT interaction, added this session alongside move
-    // ordering (deferred last session specifically until ordering
+    // Root-level TT interaction, added last session alongside move
+    // ordering (deferred the session before specifically until ordering
     // existed to consume it -- see docs/DECISIONS.md, 2026-08-15 TT
     // entry, sub-decision 4). Probed only for an ordering hint below,
     // never for an early return/cutoff: the root always needs its FULL
@@ -260,8 +286,8 @@ SearchResult search_root(Position& pos, int depth, TranspositionTable& tt, Kille
 
     order_moves(moves, pos, tt_move, killers, /*ply=*/0, history);
 
-    int alpha = -kInfinity;
-    const int beta = kInfinity;
+    int alpha = aspiration_alpha;
+    const int beta = aspiration_beta;
     Move best_move = moves[0];
 
     for (int i = 0; i < moves.size(); ++i) {
@@ -272,11 +298,14 @@ SearchResult search_root(Position& pos, int depth, TranspositionTable& tt, Kille
         // Root-level PVS, mirroring negamax()'s move loop exactly (see
         // its comments for the full rationale): first move -- now the
         // ordering-selected best candidate, not just move-generation
-        // order -- gets the full window, later moves at depth 1 skip
-        // straight to a normal search (their children are leaves -- a
-        // null-window probe can't prune there), and later moves at
-        // depth >= 2 get a null-window probe first, re-searched with the
-        // full window only on a fail-high that's still below beta.
+        // order -- gets the full [alpha, beta] window (the aspiration
+        // window when one is in effect, not necessarily the full
+        // (-inf,+inf) range -- see this function's header comment),
+        // later moves at depth 1 skip straight to a normal search
+        // (their children are leaves -- a null-window probe can't prune
+        // there), and later moves at depth >= 2 get a null-window probe
+        // first, re-searched with the full window only on a fail-high
+        // that's still below beta.
         int score;
         if (i == 0 || depth == 1) {
             score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt, killers, history);
@@ -293,17 +322,38 @@ SearchResult search_root(Position& pos, int depth, TranspositionTable& tt, Kille
             alpha = score;
             best_move = move;
         }
+        if (alpha >= beta) {
+            // Fail-high against the (possibly narrow, aspiration) window
+            // -- with a full (-inf,+inf) window this can never trigger
+            // (beta == kInfinity, no real score reaches it), so this is
+            // a no-op for search_fixed_depth(). With a narrow aspiration
+            // window it means this iteration's result is only a bound,
+            // not exact -- searching the remaining moves under the same
+            // too-narrow window can't produce a trustworthy result
+            // either, so stop immediately rather than waste nodes; the
+            // caller (search_iterative_deepening()) is expected to
+            // detect this (result.score >= aspiration_beta) and re-
+            // search with a wider window.
+            break;
+        }
     }
 
-    // The root always reviews every legal move under the full, open
-    // (-inf, +inf) window with no early cutoff (see above) -- so
-    // whatever alpha ends up as is by construction an exact score, not
-    // merely a bound. Storing it gives the NEXT iterative-deepening
-    // iteration's root call a TT-move ordering hint (this function's
-    // own probe above), and can also help any INTERNAL node elsewhere
-    // in this same top-level call that happens to transpose into this
-    // exact position.
-    tt.store(root_key, depth, alpha, Bound::Exact, best_move, 0);
+    // Whether `alpha` here is an exact score, or only a bound, depends
+    // on how the loop above ended relative to the window passed in --
+    // see this function's header comment for what the caller is
+    // expected to check. Only store an Exact TT entry when the result
+    // genuinely is one (CPW "Node Types" -- storing an unproven exact
+    // bound as Exact would let a later probe trust a value that isn't
+    // actually exact): a fail-high (the break above) only proves a
+    // LOWER bound, and a fail-low (no move ever beat aspiration_alpha,
+    // so `alpha` here still equals the original aspiration_alpha
+    // exactly) only proves an UPPER bound -- both mirror negamax()'s own
+    // Exact/Lower/Upper classification at the bottom of that function,
+    // just evaluated over the whole root call instead of one node.
+    const Bound bound_type = alpha <= aspiration_alpha ? Bound::Upper
+                            : alpha >= aspiration_beta  ? Bound::Lower
+                                                         : Bound::Exact;
+    tt.store(root_key, depth, alpha, bound_type, best_move, 0);
 
     result.best_move = best_move;
     result.score = alpha;
@@ -324,7 +374,10 @@ SearchResult search_fixed_depth(Position& pos, int depth) {
     TranspositionTable tt(kDefaultTTSizeMB);
     KillerTable killers;
     HistoryTable history;
-    return search_root(pos, depth, tt, killers, history);
+    // No previous iteration's score to aspirate around (see
+    // search_iterative_deepening() below and docs/DECISIONS.md's
+    // aspiration-windows entry) -- always the full window.
+    return search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history);
 }
 
 SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_limit_ms) {
@@ -348,9 +401,10 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
 
     // Depth 1 always runs unconditionally, before any time check, so
     // there's always a legal best_move to fall back on (see search.h's
-    // header comment).
+    // header comment). Full window: there's no previous iteration yet
+    // to aspirate around (see the depth-2-onward loop below).
     tt.new_search();
-    SearchResult result = search_root(pos, 1, tt, killers, history);
+    SearchResult result = search_root(pos, 1, -kInfinity, kInfinity, tt, killers, history);
     std::uint64_t total_nodes = result.nodes;
 
     // Position already over (checkmate/stalemate at the root): every
@@ -372,7 +426,70 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
         }
 
         tt.new_search();
-        SearchResult next = search_root(pos, depth, tt, killers, history);
+        SearchResult next;
+
+        // Aspiration windows (CPW "Aspiration Windows"): the previous
+        // iteration's score is usually a good estimate of this
+        // iteration's score too (positions rarely swing wildly between
+        // one ply of search depth and the next), so start this
+        // iteration with a narrow window centered on it instead of the
+        // full (-inf,+inf) range -- a narrower window means more beta
+        // cutoffs happen sooner throughout the tree, at the cost of an
+        // occasional fail-high/fail-low needing a wider re-search when
+        // the estimate turns out wrong. Skipped when the previous
+        // score is already in mate-score territory (see kMateThreshold,
+        // search.h): mate scores are a different regime entirely, far
+        // outside any small centipawn-sized window, so aspirating
+        // around one would just guarantee a wasted first attempt for no
+        // benefit -- go straight to the full window instead.
+        if (result.score > -kMateThreshold && result.score < kMateThreshold) {
+            int delta = kAspirationInitialDelta;
+            int window_alpha = result.score - delta;
+            int window_beta = result.score + delta;
+            if (window_alpha < -kInfinity) {
+                window_alpha = -kInfinity;
+            }
+            if (window_beta > kInfinity) {
+                window_beta = kInfinity;
+            }
+
+            for (;;) {
+                next = search_root(pos, depth, window_alpha, window_beta, tt, killers, history);
+
+                if (next.score <= window_alpha && window_alpha > -kInfinity) {
+                    // Fail low: the true score is <= window_alpha, exact
+                    // value unknown -- search_root()'s own best_move for
+                    // this attempt isn't trustworthy either (see its
+                    // header comment), so this attempt's result is
+                    // discarded entirely by the next loop iteration.
+                    // Widen downward and retry.
+                    delta *= 2;
+                    window_alpha = result.score - delta;
+                    if (window_alpha < -kInfinity) {
+                        window_alpha = -kInfinity;
+                    }
+                } else if (next.score >= window_beta && window_beta < kInfinity) {
+                    // Fail high: symmetric case, widen upward and retry.
+                    delta *= 2;
+                    window_beta = result.score + delta;
+                    if (window_beta > kInfinity) {
+                        window_beta = kInfinity;
+                    }
+                } else {
+                    // Either the score landed strictly inside the window
+                    // (an exact result -- CPW "Aspiration Windows"), or
+                    // the window has already widened out to the full
+                    // (-inf,+inf) range, which is unconditionally exact
+                    // by construction (same as search_fixed_depth()'s
+                    // own always-full-window search) -- either way,
+                    // done.
+                    break;
+                }
+            }
+        } else {
+            next = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history);
+        }
+
         total_nodes += next.nodes;
         result = next;
     }
