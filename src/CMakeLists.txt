@@ -15,7 +15,9 @@ add_library(nightwing_lib STATIC
     eval/psqt.cpp
     eval/eval.cpp
     search/ordering.cpp
+    search/quiescence.cpp
     search/search.cpp
+    search/see.cpp
     search/tt.cpp
     uci/uci.cpp
 )
