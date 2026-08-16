@@ -8,6 +8,7 @@
 #include "board/movegen.h"
 #include "eval/eval.h"
 #include "search/ordering.h"
+#include "search/quiescence.h"
 #include "search/tt.h"
 
 namespace nightwing::search {
@@ -71,9 +72,12 @@ constexpr int kAspirationInitialDelta = 25;
 }
 
 /// Negamax alpha-beta search. Returns a score from `pos.side_to_move`'s
-/// perspective (positive = good for the side to move), consistent with
-/// eval::evaluate()'s White-perspective output being flipped for Black
-/// at the depth-0 base case below.
+/// perspective (positive = good for the side to move). At depth <= 0
+/// this hands off entirely to quiescence search (search/quiescence.h)
+/// rather than returning a raw eval::evaluate() call directly — see
+/// that module's header comment for why (the short version: avoiding
+/// the horizon effect by resolving in-flight tactics before trusting a
+/// static eval).
 ///
 /// `ply` is the number of plies searched so far from the root (0 at the
 /// root's immediate children), used only to adjust mate scores so that
@@ -111,14 +115,36 @@ constexpr int kAspirationInitialDelta = 25;
 /// history heuristic. This is also what makes the "first move" comment
 /// in the loop below actually meaningful now, rather than just "first
 /// in move-generation order."
+///
+/// The PVS loop below no longer special-cases depth == 1 (it did, prior
+/// to this session): that special case existed because a depth-1 move's
+/// child used to be a depth-0 leaf resolved by a raw eval::evaluate()
+/// call that never consulted alpha/beta at all, so a null-window probe
+/// there genuinely could never prune anything -- just wasted work.
+/// Now that depth <= 0 hands off to quiescence search (search/
+/// quiescence.h) instead, which DOES meaningfully respond to whatever
+/// window it's given (its own stand-pat comparison and cutoff logic),
+/// that's no longer true -- a null-window probe at depth == 1 can
+/// genuinely fail low and get skipped, same as at any deeper depth, so
+/// it's folded into the general PVS branch below rather than kept as a
+/// stale special case.
 int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_t& nodes,
             TranspositionTable& tt, KillerTable& killers, HistoryTable& history) {
-    ++nodes;
-
     if (depth <= 0) {
-        const int white_relative_score = eval::evaluate(pos);
-        return pos.side_to_move == Color::White ? white_relative_score : -white_relative_score;
+        // Quiescence search (search/quiescence.h) rather than a raw
+        // eval::evaluate() call: resolves in-flight capture/check
+        // sequences right at the horizon instead of trusting a static
+        // eval that might be mid-exchange (the "horizon effect," CPW
+        // "Quiescence Search"). `nodes` is passed through and
+        // incremented by quiescence()'s own counting, not incremented
+        // again here first -- this negamax() call itself does no
+        // "node work" of its own at depth <= 0, it's a pure delegation,
+        // so counting it separately here would double-count the same
+        // conceptual node.
+        return quiescence(pos, alpha, beta, ply, nodes, /*include_checks=*/true);
     }
+
+    ++nodes;
 
     const int alpha_orig = alpha;
     const Color us = pos.side_to_move;
@@ -173,15 +199,6 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // move-generation order" as it was pre-ordering: search it
             // with the full alpha-beta window to establish a real score
             // to compare everything else against.
-            score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history);
-        } else if (depth == 1) {
-            // This move's child is a leaf (depth - 1 == 0):
-            // eval::evaluate() at a leaf doesn't consult alpha/beta at
-            // all (see the depth <= 0 branch above), so a null-window
-            // probe here can never prune anything -- it would just risk
-            // a pointless re-search that doubles that leaf's node count
-            // for an identical score. Go straight to a normal search
-            // instead of paying for the PVS trick where it can't help.
             score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history);
         } else {
             // PVS: probe every later move with a null (zero-width)
@@ -295,17 +312,28 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         UndoInfo undo;
         board::make_move(pos, move, undo);
 
-        // Root-level PVS, mirroring negamax()'s move loop exactly (see
-        // its comments for the full rationale): first move -- now the
-        // ordering-selected best candidate, not just move-generation
-        // order -- gets the full [alpha, beta] window (the aspiration
-        // window when one is in effect, not necessarily the full
-        // (-inf,+inf) range -- see this function's header comment),
-        // later moves at depth 1 skip straight to a normal search
-        // (their children are leaves -- a null-window probe can't prune
-        // there), and later moves at depth >= 2 get a null-window probe
-        // first, re-searched with the full window only on a fail-high
-        // that's still below beta.
+        // Root-level PVS, mirroring negamax()'s move loop (see its
+        // comments for the full rationale) with one deliberate
+        // difference: first move -- now the ordering-selected best
+        // candidate, not just move-generation order -- gets the full
+        // [alpha, beta] window (the aspiration window when one is in
+        // effect, not necessarily the full (-inf,+inf) range -- see
+        // this function's header comment), and later moves at depth >= 2
+        // get a null-window probe first, re-searched with the full
+        // window only on a fail-high that's still below beta -- but
+        // later moves specifically at depth == 1 still skip straight to
+        // a full-window search here, unlike negamax()'s own loop (which
+        // dropped this special case this session, now that quiescence
+        // search genuinely responds to a narrow window -- see negamax()'s
+        // header comment). The difference is deliberate, not a stale
+        // leftover: a depth-1 REQUEST only ever reaches this branch via
+        // search_fixed_depth(pos, 1) or iterative deepening's mandatory
+        // first iteration, both of which always pass the full
+        // (-inf, +inf) window in the first place (no previous score to
+        // aspirate around yet -- search_iterative_deepening()'s own
+        // comments), so `beta` here is always kInfinity when depth == 1
+        // specifically, and a null-window probe against an
+        // already-infinite beta has nothing to gain from skipping to.
         int score;
         if (i == 0 || depth == 1) {
             score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt, killers, history);

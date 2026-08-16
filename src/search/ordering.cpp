@@ -36,13 +36,9 @@ constexpr int kPromotionBase = 900'000;
 constexpr int kKiller1Score = 800'000;
 constexpr int kKiller2Score = 799'000;
 
-/// MVV-LVA (Most Valuable Victim, Least Valuable Attacker): favors
-/// capturing the most valuable piece with the least valuable attacker.
-/// `move` must be a genuine capture (is_capture() == true) of `pos`,
-/// which must not have had `move` applied yet (victim/attacker are read
-/// directly off the board). En passant is special-cased since the
-/// captured pawn isn't on `move.to()`, unlike every other capture type.
-[[nodiscard]] int mvv_lva_score(const Position& pos, Move move) noexcept {
+} // namespace
+
+int mvv_lva_score(const Position& pos, Move move) noexcept {
     const PieceType attacker = board::piece_type_of(pos.piece_at(move.from()));
     const PieceType victim =
         move.is_en_passant() ? PieceType::Pawn : board::piece_type_of(pos.piece_at(move.to()));
@@ -50,6 +46,8 @@ constexpr int kKiller2Score = 799'000;
     const int victim_value = eval::material_value(victim).mg;
     return victim_value * 10 - attacker_value;
 }
+
+namespace {
 
 [[nodiscard]] int score_move(const Position& pos, Move move, Move tt_move,
                               const KillerTable& killers, int ply,

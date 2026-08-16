@@ -108,6 +108,18 @@ private:
         table_{};
 };
 
+/// MVV-LVA (Most Valuable Victim, Least Valuable Attacker): favors
+/// capturing the most valuable piece with the least valuable attacker.
+/// `move` must be a genuine capture (is_capture() == true) of `pos`,
+/// which must not have had `move` applied yet (victim/attacker are read
+/// directly off the board). En passant is special-cased since the
+/// captured pawn isn't on `move.to()`, unlike every other capture type.
+/// Public (not just an order_moves() implementation detail) so other
+/// capture-ordering needs -- e.g. quiescence search's own, simpler
+/// capture ordering, search/quiescence.h -- can reuse the exact same
+/// scoring rather than a second, potentially-drifting copy.
+[[nodiscard]] int mvv_lva_score(const board::Position& pos, board::Move move) noexcept;
+
 /// Reorders `moves` in place (highest-priority move first) using the
 /// scheme in this file's header comment. `pos` must be the position the
 /// moves were generated FROM (used to classify captures and look up
