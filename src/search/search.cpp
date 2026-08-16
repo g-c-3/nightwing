@@ -7,6 +7,7 @@
 
 #include "board/movegen.h"
 #include "eval/eval.h"
+#include "search/ordering.h"
 #include "search/tt.h"
 
 namespace nightwing::search {
@@ -90,8 +91,16 @@ constexpr std::size_t kDefaultTTSizeMB = 16;
 /// the branch immediately below), so there is nothing for the TT to
 /// usefully cache there yet (no quiescence search exists as of this
 /// commit — ROADMAP.md's separate "Quiescence search" item).
+///
+/// Move ordering (search/ordering.h) reorders the generated move list
+/// before this function's own loop below, using the TT probe's move
+/// (even one too shallow to trigger a cutoff above -- still a useful
+/// hint), MVV-LVA for captures, promotion value, killer moves, and the
+/// history heuristic. This is also what makes the "first move" comment
+/// in the loop below actually meaningful now, rather than just "first
+/// in move-generation order."
 int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_t& nodes,
-            TranspositionTable& tt) {
+            TranspositionTable& tt, KillerTable& killers, HistoryTable& history) {
     ++nodes;
 
     if (depth <= 0) {
@@ -100,6 +109,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     }
 
     const int alpha_orig = alpha;
+    const Color us = pos.side_to_move;
     const std::uint64_t key = pos.zobrist_hash;
     tt.prefetch(key); // ARCHITECTURE.md: issued as early as possible, to overlap with movegen below.
 
@@ -118,6 +128,11 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // search using the untouched alpha/beta (see this function's
         // header comment on why this deliberately doesn't narrow them).
     }
+    // Even a probe too shallow for a cutoff above is still worth using
+    // as a move-ordering hint below -- a Move() (null) if there was no
+    // hit at all, in which case order_moves() simply gives it no special
+    // priority (see ordering.h).
+    const Move tt_move = probe.hit ? probe.move : Move();
 
     MoveList moves;
     board::generate_legal_moves(pos, moves);
@@ -129,6 +144,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         return in_check(pos) ? -(kMateScore - ply) : kDrawScore;
     }
 
+    order_moves(moves, pos, tt_move, killers, ply, history);
+
     int best = -kInfinity;
     Move best_move; // Move() default (null) unless overwritten below — every real position has >=1 move here.
     for (int i = 0; i < moves.size(); ++i) {
@@ -138,13 +155,13 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 
         int score;
         if (i == 0) {
-            // First move (assumed most-promising, per PVS's usual pairing
-            // with move ordering -- ordering itself is a separate,
-            // still-unchecked ROADMAP.md item, so "first" here is simply
-            // move-generation order for now, same as the pre-PVS code):
-            // search it with the full alpha-beta window to establish a
-            // real score to compare everything else against.
-            score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt);
+            // First move -- now genuinely the highest-priority candidate
+            // per order_moves() above (TT move, else best-scoring
+            // capture/promotion/killer/history move), not just "first in
+            // move-generation order" as it was pre-ordering: search it
+            // with the full alpha-beta window to establish a real score
+            // to compare everything else against.
+            score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history);
         } else if (depth == 1) {
             // This move's child is a leaf (depth - 1 == 0):
             // eval::evaluate() at a leaf doesn't consult alpha/beta at
@@ -153,7 +170,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // a pointless re-search that doubles that leaf's node count
             // for an identical score. Go straight to a normal search
             // instead of paying for the PVS trick where it can't help.
-            score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt);
+            score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history);
         } else {
             // PVS: probe every later move with a null (zero-width)
             // window first -- cheap, since it only needs to prove
@@ -162,9 +179,9 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // actually beat alpha (a fail-high on the null window that's
             // still below beta) is it worth paying for a full-window
             // re-search to get its real score.
-            score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, nodes, tt);
+            score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, nodes, tt, killers, history);
             if (score > alpha && score < beta) {
-                score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt);
+                score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history);
             }
         }
 
@@ -178,7 +195,18 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             alpha = score;
         }
         if (alpha >= beta) {
-            break; // Beta cutoff: the opponent won't let us reach this line.
+            // Beta cutoff. Record it for future ordering (killers +
+            // history) only for quiet, non-promotion moves -- captures
+            // and promotions already order well via MVV-LVA/promotion
+            // value (see ordering.h's header comment), so mixing them
+            // into the killer/history scheme adds noise without adding
+            // information (CPW's "Killer Heuristic"/"History Heuristic"
+            // are conventionally quiet-move-only for the same reason).
+            if (!move.is_capture() && !move.is_promotion()) {
+                killers.update(ply, move);
+                history.update(us, move, depth);
+            }
+            break; // The opponent won't let us reach this line.
         }
     }
 
@@ -199,9 +227,11 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 /// Core root-move-loop logic shared by both public entry points below.
 /// Kept as a private, TT-taking function rather than exposed directly:
 /// each public entry point is responsible for deciding *which*
-/// TranspositionTable instance to pass in (see tt.h's header comment on
-/// the current per-call lifetime), not this function.
-SearchResult search_root(Position& pos, int depth, TranspositionTable& tt) {
+/// TranspositionTable/KillerTable/HistoryTable instances to pass in
+/// (see tt.h's header comment on the current per-call lifetime), not
+/// this function.
+SearchResult search_root(Position& pos, int depth, TranspositionTable& tt, KillerTable& killers,
+                          HistoryTable& history) {
     SearchResult result;
 
     MoveList moves;
@@ -215,6 +245,21 @@ SearchResult search_root(Position& pos, int depth, TranspositionTable& tt) {
         return result;
     }
 
+    // Root-level TT interaction, added this session alongside move
+    // ordering (deferred last session specifically until ordering
+    // existed to consume it -- see docs/DECISIONS.md, 2026-08-15 TT
+    // entry, sub-decision 4). Probed only for an ordering hint below,
+    // never for an early return/cutoff: the root always needs its FULL
+    // legal move list reviewed to report a genuine best move (there's
+    // no "skip searching, trust the cache" shortcut that would still
+    // give a UCI-quality result), unlike internal negamax() nodes which
+    // are free to trust a sufficiently-deep proven bound.
+    const std::uint64_t root_key = pos.zobrist_hash;
+    const TTProbeResult root_probe = tt.probe(root_key, 0);
+    const Move tt_move = root_probe.hit ? root_probe.move : Move();
+
+    order_moves(moves, pos, tt_move, killers, /*ply=*/0, history);
+
     int alpha = -kInfinity;
     const int beta = kInfinity;
     Move best_move = moves[0];
@@ -225,24 +270,20 @@ SearchResult search_root(Position& pos, int depth, TranspositionTable& tt) {
         board::make_move(pos, move, undo);
 
         // Root-level PVS, mirroring negamax()'s move loop exactly (see
-        // its comments for the full rationale): first move gets the full
-        // window, later moves at depth 1 skip straight to a normal
-        // search (their children are leaves -- a null-window probe can't
-        // prune there), and later moves at depth >= 2 get a null-window
-        // probe first, re-searched with the full window only on a
-        // fail-high that's still below beta. No TT probe/store for the
-        // root position itself in this pass -- see docs/DECISIONS.md,
-        // 2026-08-15 TT entry: without move ordering (a separate,
-        // still-unchecked ROADMAP.md item) yet using a TT-move hint,
-        // root-level TT interaction has no payoff to justify its own
-        // complexity today.
+        // its comments for the full rationale): first move -- now the
+        // ordering-selected best candidate, not just move-generation
+        // order -- gets the full window, later moves at depth 1 skip
+        // straight to a normal search (their children are leaves -- a
+        // null-window probe can't prune there), and later moves at
+        // depth >= 2 get a null-window probe first, re-searched with the
+        // full window only on a fail-high that's still below beta.
         int score;
         if (i == 0 || depth == 1) {
-            score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt);
+            score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt, killers, history);
         } else {
-            score = -negamax(pos, depth - 1, -alpha - 1, -alpha, 1, result.nodes, tt);
+            score = -negamax(pos, depth - 1, -alpha - 1, -alpha, 1, result.nodes, tt, killers, history);
             if (score > alpha && score < beta) {
-                score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt);
+                score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt, killers, history);
             }
         }
 
@@ -253,6 +294,16 @@ SearchResult search_root(Position& pos, int depth, TranspositionTable& tt) {
             best_move = move;
         }
     }
+
+    // The root always reviews every legal move under the full, open
+    // (-inf, +inf) window with no early cutoff (see above) -- so
+    // whatever alpha ends up as is by construction an exact score, not
+    // merely a bound. Storing it gives the NEXT iterative-deepening
+    // iteration's root call a TT-move ordering hint (this function's
+    // own probe above), and can also help any INTERNAL node elsewhere
+    // in this same top-level call that happens to transpose into this
+    // exact position.
+    tt.store(root_key, depth, alpha, Bound::Exact, best_move, 0);
 
     result.best_move = best_move;
     result.score = alpha;
@@ -265,12 +316,15 @@ SearchResult search_root(Position& pos, int depth, TranspositionTable& tt) {
 SearchResult search_fixed_depth(Position& pos, int depth) {
     assert(depth >= 1 && "search_fixed_depth: depth must be at least 1");
 
-    // A fresh, private table for this one call (see tt.h's header
-    // comment) -- kDefaultTTSizeMB is a placeholder until the UCI `Hash`
-    // option (ROADMAP.md Phase 8) makes this configurable and the table
-    // itself persistent across calls.
+    // Fresh, private tables for this one call (see tt.h's header
+    // comment, which applies equally to KillerTable/HistoryTable --
+    // search/ordering.h). kDefaultTTSizeMB is a placeholder until the
+    // UCI `Hash` option (ROADMAP.md Phase 8) makes table size
+    // configurable and the tables themselves persistent across calls.
     TranspositionTable tt(kDefaultTTSizeMB);
-    return search_root(pos, depth, tt);
+    KillerTable killers;
+    HistoryTable history;
+    return search_root(pos, depth, tt, killers, history);
 }
 
 SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_limit_ms) {
@@ -278,17 +332,25 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
 
     const auto start_time = std::chrono::steady_clock::now();
 
-    // One table shared across every iteration of THIS call (see tt.h's
-    // header comment) -- this is where the TT's cross-iteration value
-    // actually comes from right now, since search_fixed_depth() on its
-    // own always starts from an empty table.
+    // Tables shared across every iteration of THIS call (see tt.h's
+    // header comment) -- this cross-iteration sharing is where the
+    // ordering/TT machinery's real value comes from right now, since
+    // search_fixed_depth() on its own always starts from empty tables.
+    // Unlike the TT (aged via new_search() each iteration), killers and
+    // history are NOT reset between iterations on purpose: a killer or
+    // a historically-good quiet move from a shallower iteration is
+    // still a reasonable ordering bet for the next, deeper one, and
+    // letting them persist is exactly how real engines use iterative
+    // deepening to make each successive iteration cheaper.
     TranspositionTable tt(kDefaultTTSizeMB);
+    KillerTable killers;
+    HistoryTable history;
 
     // Depth 1 always runs unconditionally, before any time check, so
     // there's always a legal best_move to fall back on (see search.h's
     // header comment).
     tt.new_search();
-    SearchResult result = search_root(pos, 1, tt);
+    SearchResult result = search_root(pos, 1, tt, killers, history);
     std::uint64_t total_nodes = result.nodes;
 
     // Position already over (checkmate/stalemate at the root): every
@@ -310,7 +372,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
         }
 
         tt.new_search();
-        SearchResult next = search_root(pos, depth, tt);
+        SearchResult next = search_root(pos, depth, tt, killers, history);
         total_nodes += next.nodes;
         result = next;
     }
