@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+## 2026-08-16 (2) — Session 12: Aspiration windows
+
+**What was built:** Phase 3's next item. `src/search/search.cpp`, `src/search/search.h` — **modified.** `search_root()` now takes an explicit `(aspiration_alpha, aspiration_beta)` window instead of hardcoding the full range; `search_iterative_deepening()`'s depth >= 2 iterations center a narrow window on the previous iteration's score, widening (doubling the failing side) and retrying on a fail-high/fail-low, with a bypass straight to the full window when the previous score is already in mate-score territory. `negamax()` itself is completely untouched — this is a root-only technique (CPW "Aspiration Windows"). Full design rationale — the four specific decisions, including why `search_root()`'s TT-store classification needed to genuinely generalize from always-`Exact` rather than just get relabeled — in DECISIONS.md's 2026-08-16 (2) entry.
+
+**Bugs fixed:** None — new technique layered onto already-correct code.
+
+**Decisions made:** Logged in DECISIONS.md — root-only scope, symmetric (failing-side-only) widening, the mate-score bypass, and the TT-store bound-classification generalization this change required (2026-08-16 (2)).
+
+**Verification:** Real build+test cycle against a freshly `codeload`-fetched `main` with the two changed files overlaid in. Release: zero warnings, **all 155 `ctest` cases passed unchanged** — no test assertion needed updating this session (unlike the move-ordering session), itself a good sign the exactness guarantee held on the first attempt. Debug (ASan+UBSan): zero warnings; the three most relevant search tests re-verified clean — depth-1 exact node count (confirms depth 1 bypasses aspiration entirely), depth-2 mate-in-1 (confirms the mate-score bypass path), and depth-3 iterative-deepening-vs-direct (the one that actually exercises the new retry loop). Additionally, a real depth-5 benchmark on the start position, compiled and run against both this session's code and a fresh pre-change `main` checkout, showed **19,051 → 15,612 nodes (~18% fewer)** with an identical score and best move — the expected outcome of a correctly-implemented aspiration window.
+
+**Next session start point:** Phase 3 continues with the next unchecked ROADMAP.md item: Quiescence search (captures + checks, with SEE pruning). This is a bigger item than the last few — it adds a genuinely new search routine (not just reordering/windowing an existing one), called from `negamax()`'s current `depth <= 0` base case instead of jumping straight to `eval::evaluate()`, to resolve "horizon effect" tactics (hanging captures right at the search's depth cutoff) before trusting the static eval. Re-read `src/search/search.cpp` in full before touching it (changed four times now across three sessions) and `src/board/movegen.h` for whether a captures-only (or captures+checks-only) move generation mode already exists or needs adding. Push this session's two touched files and confirm CI is green before starting. Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-16 — CI fix: actions/checkout Node 20 deprecation warnings
 
 **What was built:** Gokul flagged (via a screenshot of the Actions run) that all 6 green CI jobs carried a "Node.js 20 is deprecated" annotation. `.github/workflows/ci.yml` — **modified**: `actions/checkout@v4` → `actions/checkout@v7` (current latest), which runs on Node 24 natively. No other workflow change; full rationale in DECISIONS.md's 2026-08-16 entry. Not a ROADMAP.md item — a standalone infra fix, doesn't affect Phase 3 progress or the next session's starting point below.
