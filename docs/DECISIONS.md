@@ -4,6 +4,19 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+## 2026-08-16 (4) — CI: readable job names via matrix.include, replacing the default cross-product labels
+
+**Decision:** `.github/workflows/ci.yml`'s matrix changed from a plain `os: [...] x build_type: [...]` cross-product to an explicit `matrix.include` list of all 6 combinations, each carrying an added `os_name` field (`Linux`/`macOS`/`Windows`), plus a job-level `name: ${{ matrix.os_name }} ${{ matrix.build_type }}`. Jobs now show as "Linux Release," "macOS Debug," etc. in the Actions UI instead of GitHub's default "build-and-test (ubuntu-latest, Release)" label.
+
+**Rationale:** purely cosmetic/readability — Gokul is mobile-only and reads the Actions UI on a narrow screen where the default matrix labels truncate awkwardly (per the screenshot prompting this change). No change to what actually runs: `runs-on` still resolves to the same `ubuntu-latest`/`macos-latest`/`windows-latest` runners, and `os_name` is a new field used only for display, not referenced by `runs-on` or any step.
+
+**Verification:** YAML re-validated (`python3 -c "import yaml; yaml.safe_load(...)"`), and the parsed structure inspected to confirm all 6 combinations are present with the intended `os`/`os_name`/`build_type` values. As with the previous `actions/checkout` version bump, workflow files can't be fully exercised outside GitHub itself — real confirmation is the next push's job list showing the new names.
+
+**Alternatives considered:**
+- A reusable/matrix-level `env` or `${{ fromJSON(...) }}` lookup table instead of `matrix.include`'s explicit list — rejected; `include` is more verbose (6 explicit entries vs. 2 short arrays) but is the standard, most-readable way to attach an extra display-only field per combination, and 6 entries is small enough that the verbosity cost is negligible.
+
+---
+
 ## 2026-08-16 (3) — Quiescence search + SEE: scope, the depth==1 PVS fix it unlocked, and two of my own test bugs caught and fixed
 
 **Decision:** Two new modules. `src/search/see.h`/`see.cpp` implements Static Exchange Evaluation (the classic CPW swap-off algorithm: iteratively find the least valuable attacker of a square, alternate sides, then resolve the resulting gain array backward with each side choosing to stop or continue optimally). `src/search/quiescence.h`/`quiescence.cpp` implements quiescence search: at negamax()'s depth <= 0 base case (`search.cpp`), instead of returning a raw `eval::evaluate()` call, the search now continues through captures (always) and check-giving quiet moves (only at the very first quiescence ply — see below), pruning captures with negative SEE, until a quiet position is reached. Several notable decisions:

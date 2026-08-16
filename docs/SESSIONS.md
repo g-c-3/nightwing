@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+## 2026-08-16 (4) — CI fix: readable job names
+
+**What was built:** Gokul asked (via a screenshot of the Actions run list) for the 6 CI jobs to show as "macOS Release," "Linux Debug," etc. instead of GitHub's default "build-and-test (macos-latest, Release)" label. `.github/workflows/ci.yml` — **modified**: matrix switched to an explicit `include` list carrying an `os_name` display field, plus a job-level `name:` expression. No change to what actually runs. Full rationale in DECISIONS.md's 2026-08-16 (4) entry. Not a ROADMAP.md item.
+
+**Bugs fixed:** None — cosmetic/readability change only.
+
+**Decisions made:** Logged in DECISIONS.md, 2026-08-16 (4).
+
+**Verification:** YAML re-validated and parsed structure checked for all 6 intended combinations. Real confirmation is the next push's job list.
+
+**Next session start point:** Unchanged from Session 13 — Phase 3 continues with Internal Iterative Reduction (IIR).
+
+---
+
 ## 2026-08-16 (3) — Session 13: Quiescence search + SEE
 
 **What was built:** Phase 3's next item, the biggest single addition since the transposition table. `src/search/see.h`, `src/search/see.cpp` — **new.** Static Exchange Evaluation, the classic swap-off algorithm. `src/search/quiescence.h`, `src/search/quiescence.cpp` — **new.** Quiescence search: captures always, check-giving quiets only at the first quiescence ply, SEE-pruned, full evasion search when in check, a defensive 32-ply recursion cap. `src/search/search.cpp`, `src/search/search.h` — **modified.** `negamax()`'s depth <= 0 base case now delegates to `quiescence()` instead of a raw `eval::evaluate()` call; the now-stale PVS `depth == 1` special case was removed (quiescence genuinely respects alpha/beta, unlike the old raw-eval leaf, so the special case's original justification no longer held — real additional pruning unlocked as a result); `++nodes` moved to avoid double-counting with quiescence's own counter. `src/search/ordering.h`, `src/search/ordering.cpp` — **modified, small.** `mvv_lva_score()` exposed publicly (was private to `ordering.cpp`) so quiescence's own capture ordering can reuse it. Full rationale for every decision above, plus two of my own test-construction bugs caught before anything was presented, in DECISIONS.md's 2026-08-16 (3) entry.
