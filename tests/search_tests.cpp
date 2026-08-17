@@ -205,3 +205,42 @@ TEST_CASE("search_iterative_deepening: picks a move from the actual legal move l
     REQUIRE_FALSE(result.best_move.is_null());
     REQUIRE(legal.contains(result.best_move));
 }
+
+TEST_CASE("search_iterative_deepening: finds a genuine mate-in-3 correctly with IIR active",
+          "[search][iir]") {
+    init_all();
+    // Q+R vs lone king, verified by independent exhaustive search
+    // (python-chess, not this engine) to be forced mate in exactly 3
+    // full moves for White -- specifically NOT mate in 1 or 2, so this
+    // genuinely requires looking 5 plies ahead to find with certainty.
+    // At max_depth=6, negamax()'s internal recursion routinely reaches
+    // remaining depth >= kIIRMinDepth (4) with no TT entry yet during
+    // the earlier, shallower iterative-deepening iterations, so this
+    // exercises Internal Iterative Reduction for real, not just at a
+    // depth where it can never trigger -- and specifically relies on
+    // IIR's actual safety net (iterative deepening's own
+    // self-correction across iterations, not per-call exactness -- see
+    // negamax()'s header comment in search.cpp) rather than coincidence,
+    // since IIR is not a provably-exact technique the way PVS/TT/
+    // aspiration windows are.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
+TEST_CASE("search_fixed_depth: completes and returns a legal move at a depth where IIR engages",
+          "[search][iir]") {
+    init_all();
+    // Coarse regression/safety-net check: a depth request comfortably
+    // beyond kIIRMinDepth (4) from the start position doesn't hang,
+    // crash, or return anything nonsensical. Doesn't assert an exact
+    // best_move/score (IIR is a heuristic, not exact -- see negamax()'s
+    // header comment -- so unlike the depth-1/depth-2 tests above, an
+    // exact expected value isn't something to hand-verify here).
+    Position pos = start_position();
+    const SearchResult result = search_fixed_depth(pos, 5);
+    REQUIRE_FALSE(result.best_move.is_null());
+    REQUIRE(result.depth_completed == 5);
+    REQUIRE(result.score > -kMateThreshold);
+    REQUIRE(result.score < kMateThreshold);
+}
