@@ -6,27 +6,32 @@
 // window re-search on a fail-high, backed by a transposition table for
 // cutoffs on repeated/transposed positions, reordering each node's move
 // list (search/ordering.h: TT move, MVV-LVA captures, promotions,
-// killer moves, history heuristic) before searching it, and now
-// resolving the horizon with quiescence search (search/quiescence.h:
-// captures, checks at the first quiescence ply, SEE-pruned via
-// search/see.h) instead of a raw static eval at the depth cutoff; see
-// search.cpp's negamax() comments for all of the above), plus iterative
-// deepening on top of it, which for depth >= 2 now searches each
-// iteration through a narrow aspiration window centered on the previous
-// iteration's score (CPW "Aspiration Windows"), widening and
-// re-searching on a fail-high/fail-low -- see search.cpp's
-// search_iterative_deepening() comments. Remaining pruning/extensions
-// are later ROADMAP.md items layered on top of this; this file is
-// deliberately just "does the tree search return a legal best move,
-// correctly, and can it be asked to deepen incrementally under a time
-// budget," per ARCHITECTURE.md's phase-by-phase build order. PVS, the
-// transposition table, aspiration windows, and quiescence search are
-// all exact-or-deliberately-scoped techniques (see each module's own
-// header comment for exactly what "exact" means for it) -- none of them
-// change the final answer's correctness, only how quickly/cheaply it's
-// reached or how far past the nominal depth horizon it's resolved. See tt.h's header comment on the
-// TT's (and KillerTable/HistoryTable's, search/ordering.h) current
-// per-call, not yet persistent-global, lifetime.
+// killer moves, history heuristic) before searching it, resolving the
+// horizon with quiescence search (search/quiescence.h: captures, checks
+// at the first quiescence ply, SEE-pruned via search/see.h) instead of
+// a raw static eval at the depth cutoff, and reducing the search depth
+// at internal nodes with no transposition-table entry at all (Internal
+// Iterative Reduction, CPW's modern replacement for Internal Iterative
+// Deepening); see search.cpp's negamax() comments for all of the
+// above), plus iterative deepening on top of it, which for depth >= 2
+// now searches each iteration through a narrow aspiration window
+// centered on the previous iteration's score (CPW "Aspiration
+// Windows"), widening and re-searching on a fail-high/fail-low -- see
+// search.cpp's search_iterative_deepening() comments. Remaining
+// pruning/extensions are later ROADMAP.md items layered on top of this;
+// this file is deliberately just "does the tree search return a legal
+// best move, correctly, and can it be asked to deepen incrementally
+// under a time budget," per ARCHITECTURE.md's phase-by-phase build
+// order. PVS, the transposition table, and aspiration windows are all
+// exact techniques (same best move/score as plain full-window alpha-
+// beta, regardless of how they're called) -- IIR is different: it's a
+// genuine heuristic approximation whose safety depends on iterative
+// deepening's own self-correction across iterations, not per-call
+// exactness (see negamax()'s header comment for why this matters for
+// interpreting a single search_fixed_depth() call at real depth). See
+// tt.h's header comment on the TT's (and KillerTable/HistoryTable's,
+// search/ordering.h) current per-call, not yet persistent-global,
+// lifetime.
 
 #include <cstdint>
 

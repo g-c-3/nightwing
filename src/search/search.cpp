@@ -46,6 +46,18 @@ constexpr std::size_t kDefaultTTSizeMB = 16;
 /// verified optimal here).
 constexpr int kAspirationInitialDelta = 25;
 
+/// Internal Iterative Reduction (IIR) thresholds: a node with no
+/// transposition-table entry at all has no move-ordering hint (see
+/// negamax()'s header comment for the full technique). Only applied
+/// beyond this minimum remaining depth (below it, the effect isn't
+/// meaningful and isn't worth risking), reducing the effective depth
+/// searched at that node by this many plies. Both are common, modest
+/// starting values in other engines' IIR implementations -- not yet
+/// tuned for Nightwing specifically, same caveat as
+/// kAspirationInitialDelta above.
+constexpr int kIIRMinDepth = 4;
+constexpr int kIIRReduction = 1;
+
 // search_iterative_deepening() (below) only checks its time budget
 // *between* full-depth search_fixed_depth() calls, not mid-search --
 // negamax() itself has no clock/stop-flag awareness. True mid-search
@@ -128,6 +140,32 @@ constexpr int kAspirationInitialDelta = 25;
 /// genuinely fail low and get skipped, same as at any deeper depth, so
 /// it's folded into the general PVS branch below rather than kept as a
 /// stale special case.
+///
+/// Internal Iterative Reduction (IIR): a node with no TT entry at all
+/// (probe.hit == false) has no move-ordering hint to search efficiently
+/// with -- CPW's modern alternative to Internal Iterative Deepening,
+/// which spent extra search effort *at this same node* up front trying
+/// to manufacture a move-ordering hint before the real search. IIR
+/// instead just accepts a slightly shallower search here (reducing the
+/// effective `depth` by kIIRReduction, only when the unreduced `depth`
+/// is already at least kIIRMinDepth), trusting iterative deepening's
+/// own outer loop to naturally revisit this node with a real TT-move
+/// hint on a later, less-reduced iteration -- exactly why this is safe
+/// in the way PVS/TT/aspiration windows were NOT: those were provably
+/// exact (same best move/score as plain full-window alpha-beta,
+/// regardless of how they were called); IIR is a genuine heuristic
+/// approximation, like the pruning/reduction techniques ROADMAP.md's
+/// remaining Phase 3/4 items add, whose safety net is iterative
+/// deepening's own self-correction across iterations, not per-call
+/// exactness -- a single search_fixed_depth() call with no shallower
+/// iteration to have already populated the TT has no such correction
+/// available, so it's a real (if generally small) accuracy/depth
+/// trade at any one node, same as it is in every other engine that
+/// uses this technique. `depth` is reassigned in place (not a separate
+/// variable) so every downstream use in this function -- the move
+/// loop's recursive calls and the TT store at the bottom -- correctly
+/// reflects the depth actually searched, not the depth originally
+/// requested.
 int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_t& nodes,
             TranspositionTable& tt, KillerTable& killers, HistoryTable& history) {
     if (depth <= 0) {
@@ -171,6 +209,16 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // hit at all, in which case order_moves() simply gives it no special
     // priority (see ordering.h).
     const Move tt_move = probe.hit ? probe.move : Move();
+
+    // IIR (see this function's header comment): no TT entry at all for
+    // this position, and deep enough that a shallower search here still
+    // does something useful. Reassigning `depth` in place is
+    // deliberate -- everything below (the move loop's recursive calls,
+    // the TT store at the bottom) must reflect what was ACTUALLY
+    // searched, not the depth this call was originally asked for.
+    if (!probe.hit && depth >= kIIRMinDepth) {
+        depth -= kIIRReduction;
+    }
 
     MoveList moves;
     board::generate_legal_moves(pos, moves);
@@ -258,7 +306,15 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 /// each public entry point is responsible for deciding *which*
 /// TranspositionTable/KillerTable/HistoryTable instances to pass in
 /// (see tt.h's header comment on the current per-call lifetime), not
-/// this function.
+/// this function. Deliberately does NOT apply Internal Iterative
+/// Reduction (negamax()'s header comment) to its own `depth`: the root
+/// is the exact position a caller asked to search to a specific depth
+/// (via search_fixed_depth()'s parameter, or the current iteration of
+/// search_iterative_deepening()'s loop) -- silently searching it any
+/// shallower than requested would misreport SearchResult::depth_completed
+/// and give a UCI caller a less-deep analysis than it asked for. IIR
+/// only ever reduces *internal* nodes, reached through negamax()'s own
+/// recursion below the root.
 ///
 /// `aspiration_alpha`/`aspiration_beta` is the search window to use --
 /// search_fixed_depth() always passes the full (-kInfinity, kInfinity)
