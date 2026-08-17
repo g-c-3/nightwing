@@ -43,13 +43,26 @@ target_compile_features(nightwing_lib PUBLIC cxx_std_20)
 # this quietly downgrade them for this one file (compilers take the last -O
 # flag specified on the command line as authoritative, and per-source
 # COMPILE_OPTIONS are appended after the build type's global flags).
+#
+# MSVC needs one more flag alongside /O2: CMake's default Debug configuration
+# enables /RTC1 (runtime stack-frame/uninitialized-variable checks) for MSVC,
+# and MSVC hard-errors if /RTC1 and any optimization above /Od are both
+# present on the same command line (confirmed directly from a real CI
+# failure: "cl : command line error D8016: '/O2' and '/RTC1' command-line
+# options are incompatible" -- not a hypothetical). /RTC- explicitly disables
+# runtime checks for this one file, resolving the conflict; every other file
+# keeps /RTC1 (and -O0/ASan/UBSan on GCC/Clang) exactly as before.
 if(MSVC)
-    set(NIGHTWING_INIT_OPT_FLAG "/O2")
+    set(NIGHTWING_INIT_OPT_FLAGS "/O2" "/RTC-")
 else()
-    set(NIGHTWING_INIT_OPT_FLAG "-O2")
+    set(NIGHTWING_INIT_OPT_FLAGS "-O2")
 endif()
+set(NIGHTWING_INIT_OPT_GENEX "")
+foreach(flag ${NIGHTWING_INIT_OPT_FLAGS})
+    list(APPEND NIGHTWING_INIT_OPT_GENEX "$<$<CONFIG:Debug>:${flag}>")
+endforeach()
 set_source_files_properties(board/attacks.cpp PROPERTIES
-    COMPILE_OPTIONS "$<$<CONFIG:Debug>:${NIGHTWING_INIT_OPT_FLAG}>"
+    COMPILE_OPTIONS "${NIGHTWING_INIT_OPT_GENEX}"
 )
 
 if(NIGHTWING_ENABLE_BMI2 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64|i[3-6]86|x86|X86)$")
