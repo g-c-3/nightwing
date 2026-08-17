@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+## 2026-08-17 (2) — Session 14: Internal Iterative Reduction (IIR)
+
+**What was built:** Phase 3's next item. `src/search/search.cpp`, `src/search/search.h` — **modified.** `negamax()` now reduces its own remaining depth by 1 ply whenever a node has no transposition-table entry at all and the unreduced depth is already >= 4, trusting iterative deepening's outer loop to self-correct on a later, deeper iteration rather than spending extra effort up front (the older Internal Iterative Deepening approach). Deliberately not applied at the root. `tests/search_tests.cpp` — **modified**, two new tests: a rigorously-verified forced mate-in-exactly-3 position (independently brute-force-checked with `python-chess`, not recalled from memory) confirming IIR doesn't break tactical correctness across real iterative-deepening depth, and a coarse depth-5 regression/safety-net check.
+
+**Bugs fixed:** None — this is new heuristic search behavior, not a fix to existing correctness.
+
+**Decisions made:** Logged in DECISIONS.md — the reduction condition and thresholds, and critically, a real investigation into a node-count regression an early benchmark surfaced (the start position got up to ~88% *worse* at depth 8) before concluding it was alpha-beta's own known sensitivity to move-ordering perturbations on an atypically symmetric position rather than an implementation bug, backed by a second position (Kiwipete) showing clean, consistent, zero-divergence improvements at every depth tested. Full numbers and reasoning in DECISIONS.md's 2026-08-17 (2) entry — written to include the concerning data, not just the favorable numbers.
+
+**Verification:** Real build+test cycle against a freshly `codeload`-fetched `main`. Release: zero warnings, **all 173 `ctest` cases passed unchanged** (no existing test could have been affected — every existing fixed-depth test requests a depth too shallow for IIR's threshold to ever trigger). Debug (ASan+UBSan): zero warnings, both new tests ran clean. Separately, real depth-4-through-9 node-count comparisons (with vs. without IIR, both compiled at `-O3` outside `ctest`) were run on two positions: the start position (volatile, both wins and losses depending on depth, understood as alpha-beta node-count sensitivity on a highly symmetric position) and Kiwipete (clean, consistent wins at every depth checked, zero score/move divergence anywhere).
+
+**Next session start point:** Phase 3 continues with the next unchecked ROADMAP.md item: Mate distance pruning. This is a smaller, contained addition to `negamax()`'s alpha/beta bounds at the top of the function (clamping the window against the best/worst possible mate score reachable from the current ply, since no score beyond that is meaningful) — should be a quick, low-risk session. Re-read `src/search/search.cpp` in full before touching it again (changed six times now across five sessions). Push this session's two touched files and confirm CI is green before starting. Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-17 — CI fix: Debug jobs' 1-hour+ runtime traced and fixed
 
 **What was built:** CI logs (from a real run showing Linux Debug at 1h2m, Windows Debug at 1h10m) were downloaded and analyzed in full rather than guessed at. Root cause traced to one function: `board/attacks.cpp`'s magic bitboard table generation, redone from scratch by every one of 171 tests' own `init_all()` call (each Catch2 `TEST_CASE` runs as its own process in this codebase), costing ~33.6s per call under Debug's `-O0` + ASan/UBSan build — 89 of 171 tests pay this cost, accounting for 99.9%+ of total test time. `src/CMakeLists.txt` — **modified**: `attacks.cpp` now compiles at `-O2` (`/O2` on MSVC) even inside the Debug build, via a `$<CONFIG:Debug>`-guarded `set_source_files_properties()` override, with full ASan/UBSan instrumentation still active on that file. Full investigation, measurements, and rationale for why this narrow fix was chosen over restructuring the test suite's process model, in DECISIONS.md's 2026-08-17 entry.
