@@ -4,6 +4,22 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+## 2026-08-18 — CI: Windows Debug build break from the attacks.cpp optimization override, fixed
+
+**Decision:** `src/CMakeLists.txt`'s per-file `/O2` override for `board/attacks.cpp` (2026-08-17 entry) now also passes `/RTC-` for MSVC specifically, restructured from a single flag string to a small per-flag generator-expression list so both GCC/Clang (one flag, `-O2`) and MSVC (two flags, `/O2` and `/RTC-`) are handled uniformly.
+
+**What broke and why:** the previous session's fix landed and worked exactly as measured on Linux (1h2m → 6m41s) and macOS (18m29s → 10m6s) in the very next real CI run, but Windows Debug failed outright at the build step with `cl : command line error D8016: '/O2' and '/RTC1' command-line options are incompatible`. CMake's default MSVC Debug configuration enables `/RTC1` (runtime stack-frame and uninitialized-variable checks) as part of `CMAKE_CXX_FLAGS_DEBUG`, and MSVC hard-errors if `/RTC1` and any optimization level above `/Od` both appear on the same compile command — a real, documented MSVC restriction, not something guessed at: this was flagged as an open, unverified risk in the original fix's entry ("Windows Debug's slowdown may also involve MSVC's iterator-debugging checks... but the real confirmation is the next CI run"), and the next CI run supplied the exact, unambiguous answer.
+
+**Fix:** `/RTC-` is MSVC's documented syntax to explicitly disable runtime checks, and later flags override earlier ones on MSVC's command line the same way GCC/Clang take the last `-O` flag as authoritative — appending it after the inherited `/RTC1` resolves the conflict for this one file without touching `/RTC1` (or anything else) anywhere else in the Debug build.
+
+**Verification:** real build+test cycle against a freshly `codeload`-fetched `main` with the one-file CMakeLists.txt change applied. Confirmed via verbose Makefile output that GCC's compile line for `attacks.cpp` is completely unchanged by the restructure (still ends in a single trailing `-O2`, same as before); confirmed the Release build's `attacks.cpp` invocation is still untouched (plain `-O3`). Ran a batch of unrelated fast tests to confirm no other regression from the CMakeLists.txt restructure — all passed. The MSVC-specific `/RTC-` addition itself could not be directly verified (no MSVC toolchain available in this environment, same limitation noted in the original entry) — real confirmation is the next CI run's Windows Debug job actually reaching the test step instead of failing at build.
+
+**Alternatives considered:**
+- Drop the optimization override for MSVC entirely, accepting Windows Debug staying slow — rejected; the whole point of the original fix was cross-platform, and the actual error message pointed to a precise, standard, well-understood fix rather than an unknown problem requiring a fallback.
+- Lower Windows Debug's optimization override to `/O1` instead of `/O2` to reduce risk — rejected; the reported error was specifically about `/RTC1` incompatibility with optimization in general, not about which optimization level, so `/O1` would have failed identically.
+
+---
+
 ## 2026-08-17 (2) — Internal Iterative Reduction: implementation, thresholds, and a real investigation into node-count volatility before shipping
 
 **Decision:** `negamax()` (`search.cpp`) now reduces its own `depth` by `kIIRReduction` (1) whenever a node has no transposition-table entry at all (`!probe.hit`) and the unreduced `depth` is already at least `kIIRMinDepth` (4) — CPW's modern replacement for Internal Iterative Deepening: instead of spending extra search effort *at this node* up front to manufacture a move-ordering hint, the node is simply searched slightly shallower, trusting iterative deepening's own outer loop to naturally revisit it with a real TT-move hint on a later, less-reduced iteration. `depth` is reassigned in place so the move loop's recursive calls and the TT store at the end both correctly reflect what was actually searched. Deliberately does not apply at the root (`search_root()`) — the root is the exact position a caller asked to search to a specific depth, and silently searching it shallower would misreport `depth_completed`.

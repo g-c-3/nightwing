@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+## 2026-08-18 — CI fix: Windows Debug build break from the previous session's speed fix
+
+**What was built:** The previous CI speed fix worked exactly as measured on Linux and macOS in the very next real run, but broke Windows Debug's build outright: MSVC hard-errors on `/O2` combined with its default Debug `/RTC1` runtime checks. `src/CMakeLists.txt` — **modified**: the per-file override now also passes `/RTC-` for MSVC, disabling runtime checks specifically on the one file being optimized. Full details in DECISIONS.md's 2026-08-18 entry.
+
+**Bugs fixed:** One — a build break introduced by the 2026-08-17 CI speed fix, caught by the very next real CI run (exactly the residual risk flagged as unverified in that entry).
+
+**Decisions made:** Logged in DECISIONS.md, 2026-08-18.
+
+**Verification:** Confirmed via verbose Makefile output that the GCC/Clang compile path is completely unaffected by the restructure, and that Release builds remain untouched. The MSVC-specific fix itself couldn't be directly verified (no MSVC toolchain available) — real confirmation is the next CI run's Windows Debug job.
+
+**Next session start point:** Unchanged from Session 14 — Phase 3 continues with Mate distance pruning.
+
+---
+
 ## 2026-08-17 (2) — Session 14: Internal Iterative Reduction (IIR)
 
 **What was built:** Phase 3's next item. `src/search/search.cpp`, `src/search/search.h` — **modified.** `negamax()` now reduces its own remaining depth by 1 ply whenever a node has no transposition-table entry at all and the unreduced depth is already >= 4, trusting iterative deepening's outer loop to self-correct on a later, deeper iteration rather than spending extra effort up front (the older Internal Iterative Deepening approach). Deliberately not applied at the root. `tests/search_tests.cpp` — **modified**, two new tests: a rigorously-verified forced mate-in-exactly-3 position (independently brute-force-checked with `python-chess`, not recalled from memory) confirming IIR doesn't break tactical correctness across real iterative-deepening depth, and a coarse depth-5 regression/safety-net check.
