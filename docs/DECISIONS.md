@@ -4,6 +4,34 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+## 2026-08-17 — CI: Debug jobs' 1-hour+ runtime traced to one file, fixed with a per-file optimization override
+
+**Decision:** `src/CMakeLists.txt` now compiles `board/attacks.cpp` (magic bitboard table generation) at `-O2` (`/O2` on MSVC), even inside the overall Debug build's `-O0` + ASan/UBSan configuration, via `set_source_files_properties()` guarded by a `$<CONFIG:Debug>` generator expression so Release builds are unaffected. Every other file keeps the Debug build's normal `-O0`, full sanitizer instrumentation, and debug symbols unchanged.
+
+**Investigation:** Debug CI jobs were taking 1h+ (Linux Debug: 1h2m, Windows Debug: 1h10m per a real run's logs) while Release jobs ran in 1-6 minutes. Downloaded and analyzed the actual CI logs rather than guessing: of 171 tests, 89 each individually cost ~41-54 seconds (Linux/Windows) or ~10-15 seconds (macOS) — accounting for 99.9%+ of total test time — while the other ~82 trivial tests ran in milliseconds. Critically, Windows Debug showed the identical signature despite having zero ASan instrumentation (reverted 2026-08-13 after hanging that runner), ruling out sanitizer overhead as the root cause. The common factor: every one of the 89 slow tests calls `init_magic_bitboards()` via its own `init_all()` helper, and because this codebase deliberately runs each Catch2 `TEST_CASE` as its own process (for isolation — see `tests/*.cpp`'s own comments), that one-time setup cost gets fully redone from scratch, unoptimized, in 89 separate process launches.
+
+Verified directly by timing `init_magic_bitboards()` in isolation at each relevant configuration:
+
+| Config | Time |
+|---|---|
+| `-O0` (plain Debug) | 5.4s |
+| `-O0` + ASan/UBSan (actual Linux Debug CI config) | 33.6s |
+| `-O2` (no sanitizers) | 358ms |
+| `-O2` + ASan/UBSan (sanitizers still fully active) | 4.0s |
+
+The last row is the fix that was applied: an 8.3x reduction with zero loss of sanitizer coverage on that file.
+
+**Rationale for a narrow per-file fix over restructuring the test suite into fewer processes:** the data argues against a broader architecture change. Trivial tests that never call `init_magic_bitboards()` cost 0.03-0.04s each, confirming plain process-launch overhead was never the actual bottleneck — it only looked that way because one specific piece of code's cost was being multiplied by 89. Fixing that code directly is a two-line CMake change; reworking which tests share a process would be a much larger change to test architecture for a problem the data shows it isn't actually causing, and would give up the crash-isolation property that per-process tests provide under ASan's abort-on-error behavior (one sanitizer violation can't hide the pass/fail status of the other 170 tests in the same run). This fix also scales forward: any future test that calls `init_all()` now pays the small, fixed ~4s cost automatically, rather than CI time growing worse and worse as more tests are added across the remaining ROADMAP.md phases.
+
+**Verification:** real build+test cycle against a freshly `codeload`-fetched `main` with the one-line CMakeLists.txt change applied. Confirmed via verbose Makefile output that the actual compiler invocation for `attacks.cpp` ends with `-O2` overriding the preceding `-O0` (compilers take the last `-O` flag on the command line as authoritative), with `-fsanitize=address,undefined` still present; separately confirmed the Release build's `attacks.cpp` invocation is untouched (still plain `-O3`, no stray `-O2`). Ran 23 of the 89 previously-slow tests (the full `perft:`, `quiescence:`, and `SEE:` groups) under the real Debug/ASan/UBSan configuration: all 23 passed, averaging 4.45s each (down from ~41-46s each in the original CI run), consistent with the isolated 4.0s measurement above. Extrapolated across all 89 affected tests, this should bring the Linux Debug job from ~1h2m down to roughly 7-8 minutes. The Windows/macOS-specific magnitude of improvement hasn't been directly verified (no MSVC or Apple Silicon toolchain available in this environment) — Windows Debug's slowdown may also involve MSVC's iterator-debugging checks in addition to plain `-O0`, which this fix's `/O2` override should address the same way, but the real confirmation is the next CI run's actual job durations across all three platforms.
+
+**Alternatives considered:**
+- Stop running every `TEST_CASE` as its own process (run all tests in one process per binary, Catch2's default) — rejected; the data shows this isn't where the actual cost is, and it would trade away meaningful crash isolation for a problem a narrower fix already solves.
+- Cache/reuse Catch2's build across CI runs — investigated first as the likely culprit before the log analysis, but ruled out: Catch2's own configure+build cost was under a minute total in the same logs, negligible next to the 89 × ~41s test-time cost.
+- Apply the optimization override more broadly (e.g. all of `board/`) rather than just `attacks.cpp` — rejected; `init_masks()` and `init_zobrist_keys()` both measured at 0ms even at `-O0` + ASan, so there was no cost to address there, and a narrower change is easier to reason about and lower-risk.
+
+---
+
 ## 2026-08-16 (4) — CI: readable job names via matrix.include, replacing the default cross-product labels
 
 **Decision:** `.github/workflows/ci.yml`'s matrix changed from a plain `os: [...] x build_type: [...]` cross-product to an explicit `matrix.include` list of all 6 combinations, each carrying an added `os_name` field (`Linux`/`macOS`/`Windows`), plus a job-level `name: ${{ matrix.os_name }} ${{ matrix.build_type }}`. Jobs now show as "Linux Release," "macOS Debug," etc. in the Actions UI instead of GitHub's default "build-and-test (ubuntu-latest, Release)" label.

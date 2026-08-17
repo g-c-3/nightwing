@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+## 2026-08-17 — CI fix: Debug jobs' 1-hour+ runtime traced and fixed
+
+**What was built:** CI logs (from a real run showing Linux Debug at 1h2m, Windows Debug at 1h10m) were downloaded and analyzed in full rather than guessed at. Root cause traced to one function: `board/attacks.cpp`'s magic bitboard table generation, redone from scratch by every one of 171 tests' own `init_all()` call (each Catch2 `TEST_CASE` runs as its own process in this codebase), costing ~33.6s per call under Debug's `-O0` + ASan/UBSan build — 89 of 171 tests pay this cost, accounting for 99.9%+ of total test time. `src/CMakeLists.txt` — **modified**: `attacks.cpp` now compiles at `-O2` (`/O2` on MSVC) even inside the Debug build, via a `$<CONFIG:Debug>`-guarded `set_source_files_properties()` override, with full ASan/UBSan instrumentation still active on that file. Full investigation, measurements, and rationale for why this narrow fix was chosen over restructuring the test suite's process model, in DECISIONS.md's 2026-08-17 entry.
+
+**Bugs fixed:** None — a performance fix, not a correctness fix.
+
+**Decisions made:** Logged in DECISIONS.md, 2026-08-17 — the diagnosis process, the measured before/after numbers, and why a per-file optimization override was chosen over a bigger test-architecture change.
+
+**Verification:** Confirmed via verbose Makefile output that the compiled command line for `attacks.cpp` correctly ends with `-O2` (overriding the preceding `-O0`) with sanitizer flags intact, and that the Release build's `attacks.cpp` is unaffected (still plain `-O3`). Ran 23 of the 89 previously-slow tests under the real Debug/ASan/UBSan configuration: all passed, averaging 4.45s each (down from ~41-46s), consistent with an isolated measurement of the fixed function alone (33.6s → 4.0s, an 8.3x reduction with zero sanitizer coverage lost). Extrapolated, Linux Debug should drop from ~1h2m to roughly 7-8 minutes. Windows/macOS-specific magnitude not directly verified (no MSVC or Apple Silicon toolchain available) — real confirmation is the next CI run's job durations.
+
+**Next session start point:** Unchanged from Session 13 — Phase 3 continues with Internal Iterative Reduction (IIR). Worth checking the next CI run's actual job durations across all 6 jobs before assuming this fix's Windows/macOS impact matches the measured Linux numbers.
+
+---
+
 ## 2026-08-16 (4) — CI fix: readable job names
 
 **What was built:** A request (via a screenshot of the Actions run list) came in for the 6 CI jobs to show as "macOS Release," "Linux Debug," etc. instead of GitHub's default "build-and-test (macos-latest, Release)" label. `.github/workflows/ci.yml` — **modified**: matrix switched to an explicit `include` list carrying an `os_name` display field, plus a job-level `name:` expression. No change to what actually runs. Full rationale in DECISIONS.md's 2026-08-16 (4) entry. Not a ROADMAP.md item.
