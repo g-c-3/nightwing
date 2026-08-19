@@ -39,12 +39,19 @@ jobs:
       # Ninja needs cl.exe on PATH explicitly -- the Visual Studio generator
       # locates MSVC automatically via its own toolchain-discovery logic,
       # Ninja has no such mechanism and just invokes whatever compiler it's
-      # given. ilammy/msvc-dev-cmd is the standard, widely-used action for
-      # this. Windows-only; Linux/macOS keep the default Makefiles generator,
-      # which already works correctly and isn't part of this change.
+      # given. egor-tensin/vs-shell does this (a real, actively-used
+      # alternative to the more commonly-referenced ilammy/msvc-dev-cmd,
+      # switched to specifically because it's implemented in PowerShell, not
+      # Node.js -- ilammy/msvc-dev-cmd still declares itself as a Node 20
+      # action, which is what brought the "Node.js 20 is deprecated"
+      # annotation back after this workflow's earlier, separate Node 20 fix
+      # -- actions/checkout@v7, 2026-08-16 entry -- covered a different
+      # action entirely). Windows-only; Linux/macOS keep the default
+      # Makefiles generator, which already works correctly and isn't part of
+      # this change.
       - name: Set up MSVC dev environment (Windows only)
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: egor-tensin/vs-shell@v2
         with:
           arch: x64
 
@@ -73,6 +80,22 @@ jobs:
 
       - name: Build
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
+
+      # Diagnostic, Windows Debug only: the previous CI run fixed the D8016
+      # build break, but board/attacks.cpp's test-time speedup was far
+      # smaller than Linux/macOS's (measured ~8x reduction there) --
+      # suggesting the -O2 override in src/CMakeLists.txt may not actually
+      # be reaching the compiler under Ninja+MSVC the way it does under
+      # GCC/Clang, rather than MSVC's optimizer simply being less effective
+      # on this code. Ninja doesn't echo full compile commands by default,
+      # so this prints whatever the generated build.ninja file actually
+      # recorded for attacks.cpp's flags -- ground truth for the next fix
+      # attempt instead of another guess. Temporary: remove once the actual
+      # flags are confirmed and, if needed, the real fix is in place (see
+      # docs/DECISIONS.md's 2026-08-19 entry).
+      - name: Show attacks.cpp build flags (Windows Debug diagnostic)
+        if: runner.os == 'Windows' && matrix.build_type == 'Debug'
+        run: Select-String -Path build\build.ninja -Pattern "attacks" -Context 2,8
 
       - name: Test
         working-directory: build
