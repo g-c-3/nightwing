@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+## 2026-08-19 (2) — CI: diagnostic confirms -O2 works correctly; new lead is BMI2 runtime availability
+
+**What was built:** The `build.ninja`-dumping diagnostic (previous entry) returned real evidence: `board/attacks.cpp`'s `-O2` override genuinely reaches the compiler and is applied (MSVC's own `D9025` warning confirms it overrode `/Od` as expected). The previous hypothesis — that the flag wasn't applying — was wrong. New lead, supported by evidence already in the codebase: several existing test names reference behavior "when the host CPU supports BMI2" (this project has a runtime BMI2/PEXT dispatch), so this specific Windows runner's CPU may simply not support BMI2, making the slow path algorithmic rather than an optimization-level problem. `tests/test_smoke.cpp` — **modified**: added a temporary `WARN()` to the existing CPU-feature-detection test, since it previously checked non-null but never surfaced what was actually detected. `.github/workflows/ci.yml` — **modified**: the now-answered `build.ninja` diagnostic step replaced with one that runs this specific test directly (bypassing `ctest`, which only shows output for failing tests) with Catch2's `-s` flag to surface the `WARN()`.
+
+**Bugs fixed:** None — continued diagnosis, not a fix yet.
+
+**Decisions made:** Logged in DECISIONS.md, 2026-08-19 (2) — why the diagnostic results overturned the previous hypothesis, and the decision to confirm the BMI2 lead with real evidence before acting on it.
+
+**Verification:** The modified `test_smoke.cpp` was built and run directly: confirmed the `WARN()` correctly prints the detected feature summary under `-s` and stays silent under normal `ctest` runs (no effect on pass/fail for any other CI job). YAML re-validated. What this specific Windows runner's CPU actually reports is unverifiable from this environment — needs the next real CI run.
+
+**Next session start point:** Phase 3's Mate distance pruning remains queued behind this CI investigation. Once the next CI run's CPU-feature output is available, it will confirm or rule out the BMI2 hypothesis directly, enabling a precise fix — at that point, remove both temporary diagnostics (the `ci.yml` step and the `WARN()` in `test_smoke.cpp`) as part of landing it.
+
+---
+
 ## 2026-08-19 — CI: attempt 3 results analyzed, Node 20 warning fixed, speed gap diagnosed (not guessed at again)
 
 **What was built:** Analyzed real CI logs from the previous fix. Good news: the `D8016` build break is genuinely fixed, Windows Debug now reaches the Test step. Less good: the speedup was much smaller than expected (~50m total vs. the predicted ~7-8min) — per-test times only dropped ~20-25% instead of the ~8x measured on Linux/macOS for the same change. Ruled out Windows process/OS-level overhead as the cause using real data (trivial tests that skip `init_magic_bitboards()` are still instant, exactly like Linux) before concluding the `-O2` override likely isn't reaching the compiler under Ninja+MSVC as expected. Rather than guess a fourth fix, `.github/workflows/ci.yml` — **modified**: added a temporary diagnostic step (Windows Debug only) that dumps the actual generated Ninja build flags for `attacks.cpp`, since Ninja doesn't echo full compile commands and there's currently no way to see ground truth from these logs. Also fixed the returned Node 20 warning for real this time: `ilammy/msvc-dev-cmd@v1` still declares itself Node 20 (an entirely different action than the one already fixed in an earlier session) — swapped for `egor-tensin/vs-shell@v2`, a non-Node alternative doing the same job, verified via a real case of another project making the identical substitution for the identical reason.

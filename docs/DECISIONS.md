@@ -4,6 +4,21 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+## 2026-08-19 (2) — CI: build.ninja diagnostic results — the -O2 override was never the problem; new lead is runtime BMI2 availability
+
+**Diagnostic results, from a real CI run:** the previous entry's `build.ninja`-dumping diagnostic step returned hard evidence, and it overturns the leading hypothesis from that entry. MSVC's own build output shows `cl : Command line warning D9025 : overriding '/Od' with '/O2'` for `board/attacks.cpp` — confirming this specific conflict resolves via the expected rightmost-wins behavior (distinct from the `D8016` class that blocked the first two attempts) now that `/RTC1` is gone from the Debug baseline. The dumped `build.ninja` content directly confirms `attacks.cpp`'s recorded `FLAGS` end in `/O2`, while the otherwise-identical flags for a neighboring, untouched file (`attacks_tests.cpp`) don't have it. The override reaches the compiler and is applied correctly. The previous entry's hypothesis — that it wasn't reaching the compiler — was wrong.
+
+**New lead, with real supporting evidence already in the test suite's own naming:** several existing test names reference behavior conditional on "when the host CPU supports BMI2" (`tests/attacks_tests.cpp`), reflecting that this codebase already has a runtime BMI2/PEXT-vs-portable-magic-bitboard dispatch (`src/support/cpu_features.h`), independent of whether BMI2 support was compiled in. If this specific Windows runner's CPU doesn't support BMI2 at runtime, `init_magic_bitboards()` would take a genuinely different, slower algorithmic path regardless of compiler optimization level — which would explain why `-O2` (confirmed applied) only produced a modest improvement instead of the dramatic one measured on Linux/macOS.
+
+**Decision:** rather than act on this lead as another guess, gather direct evidence for it too. `tests/test_smoke.cpp`'s existing "CPU feature detection runs without crashing" test only asserted `cpu_feature_summary()` is non-null, never actually surfacing what it detected. Added a temporary `WARN()` call reporting the detected summary string. `.github/workflows/ci.yml`'s diagnostic step (Windows Debug only) was updated to run this specific test directly against the compiled binary with Catch2's `-s` flag (`ctest --output-on-failure` only shows output for failing tests, and this one passes) — this surfaces the `WARN()` output regardless of pass/fail, giving direct visibility into whether this runner's CPU actually reports BMI2/POPCNT support. The now-answered `build.ninja`-dumping step was removed, replaced by this one.
+
+**Verification:** the modified `tests/test_smoke.cpp` was built and run directly in this environment (confirming the `WARN()` correctly prints `"Detected CPU features: BMI2 POPCNT"` on this sandbox's Linux CPU when run with `-s`, and prints nothing extra under plain `ctest`, preserving normal pass/fail behavior for every other CI job). YAML re-validated for the workflow change. What this specific Windows runner's CPU actually reports is, as with every step of this investigation, only knowable from the next real CI run.
+
+**Alternatives considered:**
+- Acting on the BMI2 hypothesis directly (e.g., forcing the portable fallback path everywhere, or adding a Windows-specific code path) without first confirming it's actually what's happening — rejected, for the same reason the previous two guesses were costly: confirming the mechanism before proposing a fix is cheaper than another wrong attempt.
+
+---
+
 ## 2026-08-19 — CI: attempt 3 partially worked (build break fixed); Node 20 warning fixed for real; speed gap now diagnosed with evidence, not guessed at again
 
 **Results of attempt 3 (previous entry), from a real CI run:** the `D8016` build break is genuinely fixed — Windows Debug reached the Test step for the first time since this investigation started. However, the speedup was far smaller than expected: per-test times for the ~89 tests calling `init_all()` dropped only from ~41-54s to ~32-39s (roughly 20-25%), nowhere near the ~8x reduction measured and confirmed on Linux/macOS for the identical source change. Total job time: ~50m, barely better than the original ~1h10m.
