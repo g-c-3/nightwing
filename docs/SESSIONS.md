@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+## 2026-08-18 (2) — CI fix: Windows Debug speed, third attempt
+
+**What was built:** After a request that Windows Debug's speed actually be fixed rather than left slow-but-working, a more careful fix was developed: `CMakeLists.txt` (top level) — **modified**, MSVC's Debug configuration no longer includes `/RTC1` (the exact flag causing the `D8016` conflict in both prior attempts), removing the conflict at its root rather than trying to override it per-file. `.github/workflows/ci.yml` — **modified**, Windows jobs now build with the Ninja generator instead of Visual Studio's, so `attacks.cpp`'s optimization override reaches the compiler as a plain flag the same way it already does on Linux/macOS, plus two new Windows-only setup steps (`ilammy/msvc-dev-cmd` for `cl.exe` on `PATH`, `pip install ninja` for a reliable Ninja binary). `src/CMakeLists.txt` — **modified**, simplified back to a single `-O2`/`/O2` flag now that there's nothing to counter. Full reasoning, including what was actually wrong with both prior attempts, in DECISIONS.md's 2026-08-18 (2) entry.
+
+**Bugs fixed:** None new — this is the real fix for the Windows Debug slowness the 2026-08-17 speed fix couldn't extend to Windows, after two failed attempts.
+
+**Decisions made:** Logged in DECISIONS.md, 2026-08-18 (2) — the two-part fix, and an explicit, surfaced-before-implementing tradeoff: MSVC Debug builds project-wide lose `/RTC1`'s runtime checks (their only remaining sanitizer-adjacent coverage, since Windows Debug already has zero ASan/UBSan). Linux/macOS Debug are unaffected.
+
+**Verification:** Real build+test cycle against a freshly `codeload`-fetched `main`. The GCC/Clang side was fully verified directly: zero warnings, confirmed via verbose Makefile output that `attacks.cpp` gets the correct trailing `-O2` with full sanitizer flags intact while other files are unaffected, confirmed Release remains untouched, sample tests passed. YAML re-validated for the workflow change. The Windows/MSVC/Ninja path — the actual point of the fix — is unverified from this environment (no MSVC toolchain or Windows runner available); real confirmation is the next CI run.
+
+**Next session start point:** Unchanged from Session 14 — Phase 3 continues with Mate distance pruning, pending confirmation the next CI run shows Windows Debug passing and fast.
+
+---
+
 ## 2026-08-18 — CI fix: Windows Debug build break from the previous session's speed fix
 
 **What was built:** The previous CI speed fix worked exactly as measured on Linux and macOS in the very next real run, but broke Windows Debug's build outright: MSVC hard-errors on `/O2` combined with its default Debug `/RTC1` runtime checks. `src/CMakeLists.txt` — **modified**: the per-file override now also passes `/RTC-` for MSVC, disabling runtime checks specifically on the one file being optimized. Full details in DECISIONS.md's 2026-08-18 entry.
