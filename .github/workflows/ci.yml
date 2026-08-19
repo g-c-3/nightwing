@@ -81,21 +81,27 @@ jobs:
       - name: Build
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
 
-      # Diagnostic, Windows Debug only: the previous CI run fixed the D8016
-      # build break, but board/attacks.cpp's test-time speedup was far
-      # smaller than Linux/macOS's (measured ~8x reduction there) --
-      # suggesting the -O2 override in src/CMakeLists.txt may not actually
-      # be reaching the compiler under Ninja+MSVC the way it does under
-      # GCC/Clang, rather than MSVC's optimizer simply being less effective
-      # on this code. Ninja doesn't echo full compile commands by default,
-      # so this prints whatever the generated build.ninja file actually
-      # recorded for attacks.cpp's flags -- ground truth for the next fix
-      # attempt instead of another guess. Temporary: remove once the actual
-      # flags are confirmed and, if needed, the real fix is in place (see
-      # docs/DECISIONS.md's 2026-08-19 entry).
-      - name: Show attacks.cpp build flags (Windows Debug diagnostic)
+      # Diagnostic, Windows Debug only: confirmed via the previous run's
+      # build.ninja inspection that board/attacks.cpp's -O2 override
+      # (src/CMakeLists.txt) genuinely reaches the compiler under Ninja+MSVC
+      # (MSVC even logged "overriding '/Od' with '/O2'", D9025, exactly the
+      # rightmost-wins resolution expected once /RTC1 was removed) -- so the
+      # earlier hypothesis that the flag wasn't applying was wrong. Test
+      # names elsewhere in the suite reference behavior conditional on "when
+      # the host CPU supports BMI2" (this codebase has a runtime BMI2/PEXT
+      # dispatch, board/attacks.cpp -- see src/support/cpu_features.h), so
+      # the new lead is that THIS runner's CPU may not support BMI2, making
+      # init_magic_bitboards() take a genuinely slower algorithmic path no
+      # amount of optimization level can compensate for. This runs the
+      # relevant test directly (bypassing ctest, which only shows output for
+      # FAILING tests, and this one passes) with Catch2's -s flag to surface
+      # its temporary WARN() diagnostic (tests/test_smoke.cpp) reporting
+      # what was actually detected. Temporary: remove both this step and
+      # that WARN() once resolved (see docs/DECISIONS.md's 2026-08-19
+      # entries).
+      - name: Show detected CPU features (Windows Debug diagnostic)
         if: runner.os == 'Windows' && matrix.build_type == 'Debug'
-        run: Select-String -Path build\build.ninja -Pattern "attacks" -Context 2,8
+        run: build\tests\nightwing_tests.exe "CPU feature detection runs without crashing" -s
 
       - name: Test
         working-directory: build
