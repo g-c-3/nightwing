@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+## 2026-08-19 — CI: attempt 3 results analyzed, Node 20 warning fixed, speed gap diagnosed (not guessed at again)
+
+**What was built:** Analyzed real CI logs from the previous fix. Good news: the `D8016` build break is genuinely fixed, Windows Debug now reaches the Test step. Less good: the speedup was much smaller than expected (~50m total vs. the predicted ~7-8min) — per-test times only dropped ~20-25% instead of the ~8x measured on Linux/macOS for the same change. Ruled out Windows process/OS-level overhead as the cause using real data (trivial tests that skip `init_magic_bitboards()` are still instant, exactly like Linux) before concluding the `-O2` override likely isn't reaching the compiler under Ninja+MSVC as expected. Rather than guess a fourth fix, `.github/workflows/ci.yml` — **modified**: added a temporary diagnostic step (Windows Debug only) that dumps the actual generated Ninja build flags for `attacks.cpp`, since Ninja doesn't echo full compile commands and there's currently no way to see ground truth from these logs. Also fixed the returned Node 20 warning for real this time: `ilammy/msvc-dev-cmd@v1` still declares itself Node 20 (an entirely different action than the one already fixed in an earlier session) — swapped for `egor-tensin/vs-shell@v2`, a non-Node alternative doing the same job, verified via a real case of another project making the identical substitution for the identical reason.
+
+**Bugs fixed:** The Node 20 warning's return, fixed at the root (action swap) rather than suppressed.
+
+**Decisions made:** Logged in DECISIONS.md, 2026-08-19 — the diagnostic-before-guessing approach, and the Node 20 fix's reasoning.
+
+**Verification:** YAML re-validated, structure confirmed for both changes. Neither the diagnostic step's actual output nor the Node 20 fix can be confirmed beyond that from this environment — both need the next real CI run.
+
+**Next session start point:** Phase 3's Mate distance pruning remains queued behind this CI investigation. Once the next CI run's diagnostic output is available, it should reveal the actual `attacks.cpp` compile flags under Ninja+MSVC, enabling a precise, evidence-based fix instead of another guess — at that point, remove the temporary diagnostic step as part of landing the real fix.
+
+---
+
 ## 2026-08-18 (2) — CI fix: Windows Debug speed, third attempt
 
 **What was built:** After a request that Windows Debug's speed actually be fixed rather than left slow-but-working, a more careful fix was developed: `CMakeLists.txt` (top level) — **modified**, MSVC's Debug configuration no longer includes `/RTC1` (the exact flag causing the `D8016` conflict in both prior attempts), removing the conflict at its root rather than trying to override it per-file. `.github/workflows/ci.yml` — **modified**, Windows jobs now build with the Ninja generator instead of Visual Studio's, so `attacks.cpp`'s optimization override reaches the compiler as a plain flag the same way it already does on Linux/macOS, plus two new Windows-only setup steps (`ilammy/msvc-dev-cmd` for `cl.exe` on `PATH`, `pip install ninja` for a reliable Ninja binary). `src/CMakeLists.txt` — **modified**, simplified back to a single `-O2`/`/O2` flag now that there's nothing to counter. Full reasoning, including what was actually wrong with both prior attempts, in DECISIONS.md's 2026-08-18 (2) entry.
