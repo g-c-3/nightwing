@@ -44,25 +44,26 @@ target_compile_features(nightwing_lib PUBLIC cxx_std_20)
 # flag specified on the command line as authoritative, and per-source
 # COMPILE_OPTIONS are appended after the build type's global flags).
 #
-# MSVC needs one more flag alongside /O2: CMake's default Debug configuration
-# enables /RTC1 (runtime stack-frame/uninitialized-variable checks) for MSVC,
-# and MSVC hard-errors if /RTC1 and any optimization above /Od are both
-# present on the same command line (confirmed directly from a real CI
-# failure: "cl : command line error D8016: '/O2' and '/RTC1' command-line
-# options are incompatible" -- not a hypothetical). /RTC- explicitly disables
-# runtime checks for this one file, resolving the conflict; every other file
-# keeps /RTC1 (and -O0/ASan/UBSan on GCC/Clang) exactly as before.
+# Applies to both GCC/Clang and MSVC. MSVC needed two earlier, more involved
+# attempts here (docs/DECISIONS.md's 2026-08-17 and 2026-08-18 entries) that
+# both failed with MSVC error D8016, "'/O2' and '/RTC1' command-line options
+# are incompatible" -- a hard, order-independent conflict, confirmed against
+# Microsoft's own documentation, not resolvable by appending a counter-flag
+# here. The actual fix lives in the top-level CMakeLists.txt: /RTC1 is no
+# longer part of MSVC's Debug baseline at all (see its own comment there for
+# the coverage tradeoff that involves), and the CI workflow now builds
+# Windows with the Ninja generator instead of Visual Studio's, so this
+# override reaches the compiler as a plain, literal trailing flag the same
+# way it already does for GCC/Clang -- rather than as a structured per-file
+# MSBuild XML property, which is what made the two earlier attempts
+# unreliable to reason about.
 if(MSVC)
-    set(NIGHTWING_INIT_OPT_FLAGS "/O2" "/RTC-")
+    set(NIGHTWING_INIT_OPT_FLAG "/O2")
 else()
-    set(NIGHTWING_INIT_OPT_FLAGS "-O2")
+    set(NIGHTWING_INIT_OPT_FLAG "-O2")
 endif()
-set(NIGHTWING_INIT_OPT_GENEX "")
-foreach(flag ${NIGHTWING_INIT_OPT_FLAGS})
-    list(APPEND NIGHTWING_INIT_OPT_GENEX "$<$<CONFIG:Debug>:${flag}>")
-endforeach()
 set_source_files_properties(board/attacks.cpp PROPERTIES
-    COMPILE_OPTIONS "${NIGHTWING_INIT_OPT_GENEX}"
+    COMPILE_OPTIONS "$<$<CONFIG:Debug>:${NIGHTWING_INIT_OPT_FLAG}>"
 )
 
 if(NIGHTWING_ENABLE_BMI2 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64|i[3-6]86|x86|X86)$")
