@@ -51,6 +51,30 @@ endif()
 if(NOT MSVC)
     set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer")
     set(CMAKE_EXE_LINKER_FLAGS_DEBUG "-fsanitize=address,undefined")
+else()
+    # CMake's own MSVC Debug default is "/MDd /Zi /Ob0 /Od /RTC1" --
+    # reproduced here identically MINUS /RTC1 (runtime stack-frame and
+    # uninitialized-variable checks). /RTC1 is hard-incompatible (MSVC
+    # error D8016, confirmed against Microsoft's own documentation: an
+    # absolute "cannot be specified together" check, not resolvable by
+    # flag ordering) with any per-file optimization override above /Od,
+    # such as the one applied to board/attacks.cpp below, for reasons
+    # covered in that file's own comment. Rather than keep trying to
+    # override/cancel /RTC1 per-file after two failed attempts (see
+    # docs/DECISIONS.md's 2026-08-17/2026-08-18 entries for that full
+    # history), it's removed from the Debug configuration's baseline here
+    # so there's nothing to conflict with in the first place, regardless
+    # of build-file generator or flag-ordering semantics.
+    #
+    # This is a project-wide tradeoff for MSVC Debug specifically, not a
+    # per-file one: every MSVC Debug build loses /RTC1's checks, not just
+    # board/attacks.cpp's compilation. Windows Debug already has zero
+    # ASan/UBSan coverage as of the 2026-08-13 MSVC /fsanitize=address
+    # revert above -- /RTC1 was its only remaining sanitizer-adjacent
+    # check, so this narrows Windows-specific coverage further. Linux and
+    # macOS Debug builds are completely unaffected and keep full ASan/UBSan
+    # coverage exactly as before.
+    set(CMAKE_CXX_FLAGS_DEBUG "/MDd /Zi /Ob0 /Od")
 endif()
 
 add_subdirectory(src)
