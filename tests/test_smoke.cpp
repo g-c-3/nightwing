@@ -13,6 +13,15 @@ TEST_CASE("CPU feature detection runs without crashing", "[support]") {
     nightwing::support::detect_cpu_features();
     // CI runners vary in what they support, so we don't assert specific
     // flags here — just that detection and querying are safe to call.
+    // WARN() (not INFO()) so this prints even though the test passes --
+    // ctest normally only shows output for failing tests. Temporary,
+    // added to investigate why board/attacks.cpp's optimization override
+    // (src/CMakeLists.txt) isn't speeding up Windows Debug's test time
+    // nearly as much as it does on Linux/macOS, despite being confirmed
+    // (via a build.ninja inspection) to actually reach the compiler
+    // there -- see docs/DECISIONS.md's 2026-08-19 entries. Remove once
+    // that's resolved.
+    WARN("Detected CPU features: " << nightwing::support::cpu_feature_summary());
     REQUIRE(nightwing::support::cpu_feature_summary() != nullptr);
 }
 
