@@ -36,8 +36,40 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # Ninja needs cl.exe on PATH explicitly -- the Visual Studio generator
+      # locates MSVC automatically via its own toolchain-discovery logic,
+      # Ninja has no such mechanism and just invokes whatever compiler it's
+      # given. ilammy/msvc-dev-cmd is the standard, widely-used action for
+      # this. Windows-only; Linux/macOS keep the default Makefiles generator,
+      # which already works correctly and isn't part of this change.
+      - name: Set up MSVC dev environment (Windows only)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Ninja's actual availability on GitHub-hosted Windows runners has
+      # changed over time and isn't something to assume (see
+      # docs/DECISIONS.md's 2026-08-18 entry on this switch for the
+      # investigation) -- installing it explicitly via pip is the most
+      # reliable option: Python/pip is guaranteed present on every
+      # GitHub-hosted runner, and PyPI's `ninja` package is a real binary,
+      # not a wrapper around something that might not be there.
+      - name: Install Ninja (Windows only)
+        if: runner.os == 'Windows'
+        run: pip install ninja
+
+      # Windows uses Ninja (see docs/DECISIONS.md's 2026-08-18 entry: the
+      # Visual Studio generator represents Debug's compiler flags as
+      # structured per-file MSBuild XML properties rather than a plain
+      # command line, which is what made board/attacks.cpp's per-file
+      # optimization override in src/CMakeLists.txt unreliable to reason
+      # about there -- Ninja produces the same flat, literal compiler
+      # command line Linux/macOS's Makefiles generator already does, which
+      # is what that override is designed around). Linux/macOS are
+      # unchanged, using CMake's default generator for their platform.
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DNIGHTWING_BUILD_TESTS=ON
+        run: cmake -B build ${{ runner.os == 'Windows' && '-G Ninja' || '' }} -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DNIGHTWING_BUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
