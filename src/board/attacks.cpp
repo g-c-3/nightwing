@@ -156,7 +156,21 @@ std::uint64_t find_magic_for_square(Bitboard mask, const SubsetData& data,
     const int size = 1 << bits;
 
     table_out.assign(static_cast<std::size_t>(size), kEmptyBitboard);
-    std::vector<bool> used(static_cast<std::size_t>(size), false);
+    // NOTE: deliberately std::vector<std::uint8_t>, not std::vector<bool>.
+    // std::vector<bool> is bit-packed and accessed through a proxy
+    // reference type rather than a real bool&, which both the fill below
+    // and the used[index] read/write in the innermost loop pay for on
+    // every one of potentially thousands of candidate attempts per
+    // square. GCC/Clang's -O2 optimizes this shape well enough that it
+    // was invisible on Linux/macOS; MSVC's -O2 does not, and this was the
+    // actual cause of Windows Debug's ~30s-per-test cost surviving the
+    // attacks.cpp optimization-override fix and being unrelated to BMI2
+    // (see docs/DECISIONS.md, this date, for the full trace: BMI2 was
+    // confirmed present and irrelevant since the magic-number search
+    // below runs unconditionally regardless of whether the PEXT table
+    // ends up used at runtime). uint8_t keeps one real byte per element
+    // so both compilers get plain, unpacked array codegen.
+    std::vector<std::uint8_t> used(static_cast<std::size_t>(size), 0);
 
     for (;;) {
         const std::uint64_t candidate = sparse_random_u64(rng);
@@ -171,7 +185,7 @@ std::uint64_t find_magic_for_square(Bitboard mask, const SubsetData& data,
             continue;
         }
 
-        std::fill(used.begin(), used.end(), false);
+        std::fill(used.begin(), used.end(), 0);
         bool collision = false;
 
         for (int i = 0; i < size && !collision; ++i) {
