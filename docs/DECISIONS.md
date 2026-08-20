@@ -4,6 +4,22 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+## 2026-08-20 (3) — CI: generation-stamp fix confirmed on all three platforms; investigation closed
+
+**Results:** the generation-stamp fix (previous entry) was verified against a real 6-job CI run. All Debug jobs beat their pre-`uint8_t` baselines, not merely avoided regressing:
+
+| Job | Original | `vector<uint8_t>` | Generation-stamp |
+|---|---|---|---|
+| Windows Debug | 2732.80s | 180.33s | **157.26s** |
+| Linux Debug | 357.50s | 335.50s | **118.78s** |
+| macOS Debug | 177.53s | 326.02s | **117.27s** |
+
+173/173 tests passing on Windows and Linux; 171/171 on macOS (the 2 fewer are the expected BMI2-gated tests, not compiled on Apple Silicon/ARM64 per the `CMAKE_SYSTEM_PROCESSOR` guard in `src/CMakeLists.txt`). This confirms the earlier reasoning: the O(size) `std::fill()` reset, not the collision-array's element type, was the true cost, and removing it outright was a strict win everywhere rather than a platform trade-off.
+
+**Investigation closed.** The full arc, for future reference: an initial Windows-only slowdown was chased through a `/RTC1`-vs-`-O2` flag-precedence fix, then a suspected BMI2 runtime-detection gap (ruled out with real data), then an `attacks.cpp` `-O2` override that was confirmed reaching the compiler but not helping much, then a `std::vector<bool>` MSVC-codegen fix that overcorrected and regressed macOS, and finally the generation-stamp fix that addressed the actual algorithmic cost. Each step was driven by real CI log data rather than a next guess, per this project's standing debugging discipline — worth keeping that pattern for any future cross-platform performance investigation.
+
+---
+
 ## 2026-08-20 (2) — CI: `find_magic_for_square`'s O(size) reset was the actual cost; generation-stamp fix replaces the element-type fix, which regressed macOS
 
 **Results of the `std::vector<uint8_t>` fix (previous entry), from a real 6-job CI run:** it worked exactly as intended on Windows Debug (2732.80s → 180.33s total test time — the main goal). Linux Debug was flat-to-slightly-better (357.50s → 335.50s). But macOS Debug got roughly twice as slow (177.53s → 326.02s), confirmed by pushing the person's own observation into the actual per-test numbers rather than taking it on faith: every `init_all()`-calling test on macOS Debug shows a uniform ~2x jump (e.g. test #12 `init_magic_bitboards is idempotent`: 1.71s → 3.50s; test #52: 1.73s → 3.30s; test #63: 1.62s → 3.64s) — spread evenly across all ~89 such tests, not concentrated in any one, matching the ~149s aggregate difference almost exactly (89 × ~1.7s ≈ 149s).

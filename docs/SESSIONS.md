@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+## 2026-08-20 (3) — CI speed investigation closed: generation-stamp fix confirmed across all three platforms
+
+**What was built:** No code changes this entry — the generation-stamp fix from the previous session was verified against a real 6-job CI run. All three Debug jobs came in below their pre-`uint8_t` baselines: Windows Debug 157.26s (from an original 2732.80s), Linux Debug 118.78s (from 357.50s), macOS Debug 117.27s (from 177.53s, fully recovering the earlier regression). All 173 tests pass on Windows/Linux; 171/171 on macOS (2 fewer are the expected BMI2-gated tests not compiled on ARM64).
+
+**Bugs fixed:** None new — this closes out the multi-session CI-speed investigation.
+
+**Decisions made:** Logged in DECISIONS.md, 2026-08-20 (3) — final confirmed numbers and the investigation summary.
+
+**Verification:** Real CI data across all three platforms, all green, no further action needed on this thread.
+
+**Next session start point:** CI speed investigation is closed. Phase 3 resumes with Mate distance pruning — a small, contained addition to `negamax()`'s alpha/beta bounds at the top of the function.
+
+---
+
 ## 2026-08-20 (2) — CI: macOS Debug regression from the last fix traced and fixed (generation-stamp, not element-type)
 
 **What was built:** Real 6-job CI logs from the previous session's `std::vector<uint8_t>` fix were analyzed. Windows Debug was fixed as intended (2732.80s → 180.33s), but macOS Debug got roughly twice as slow (177.53s → 326.02s) — flagged by direct observation, then confirmed in the per-test numbers: every `init_all()`-calling test on macOS Debug shows a uniform ~2x jump (e.g. `init_magic_bitboards is idempotent`: 1.71s → 3.50s), spread evenly across all ~89 such tests. Root cause: the previous fix correctly diagnosed `std::vector<bool>` as the MSVC problem but assumed the same element-type swap would help everywhere — on Apple Silicon/Clang, `vector<bool>` was already fine, and `uint8_t`'s 8x larger footprint just added cache pressure to the same O(size) reset. `src/board/attacks.cpp` — **modified**: `find_magic_for_square()`'s `used` array replaced with a generation-stamp scheme (`stamp_at` + an incrementing `stamp` counter), eliminating the O(size) `std::fill()` reset on every candidate attempt entirely, rather than continuing to trade which platform absorbs its cost.
