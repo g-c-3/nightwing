@@ -228,6 +228,30 @@ TEST_CASE("search_iterative_deepening: finds a genuine mate-in-3 correctly with 
     REQUIRE(result.score >= kMateThreshold);
 }
 
+TEST_CASE("search_fixed_depth: back-rank mate in 1 is still found exactly when searched well "
+          "beyond the mating depth (mate distance pruning)",
+          "[search][mdp]") {
+    init_all();
+    // Same position as the "finds a back-rank mate in 1" test above, but
+    // requested at depth 6 instead of the minimum depth 2 needed to see
+    // it: mate distance pruning (negamax()'s alpha/beta clamp on `ply`,
+    // search.cpp) short-circuits nodes deep in this tree whose window is
+    // already unreachable once the mate-in-1 has been found elsewhere in
+    // the search, but must never change the actual result -- it's an
+    // exact technique (search.cpp's negamax() header comment), same
+    // guarantee class as PVS/TT/aspiration windows. Exact score
+    // (kMateScore - 1, not just ">= kMateThreshold" as the shallower
+    // test checks) confirms the engine still prefers the immediate mate
+    // over any longer forced-mate line the deeper search might otherwise
+    // also find, and that clamping didn't corrupt the returned score.
+    Position pos = parse_fen("6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1");
+    const SearchResult result = search_fixed_depth(pos, 6);
+    REQUIRE_FALSE(result.best_move.is_null());
+    REQUIRE(result.best_move.from() == make_square(0, 0)); // a1
+    REQUIRE(result.best_move.to() == make_square(0, 7));   // a8
+    REQUIRE(result.score == kMateScore - 1);
+}
+
 TEST_CASE("search_fixed_depth: completes and returns a legal move at a depth where IIR engages",
           "[search][iir]") {
     init_all();
