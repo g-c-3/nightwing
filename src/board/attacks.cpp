@@ -156,21 +156,21 @@ std::uint64_t find_magic_for_square(Bitboard mask, const SubsetData& data,
     const int size = 1 << bits;
 
     table_out.assign(static_cast<std::size_t>(size), kEmptyBitboard);
-    // NOTE: deliberately std::vector<std::uint8_t>, not std::vector<bool>.
-    // std::vector<bool> is bit-packed and accessed through a proxy
-    // reference type rather than a real bool&, which both the fill below
-    // and the used[index] read/write in the innermost loop pay for on
-    // every one of potentially thousands of candidate attempts per
-    // square. GCC/Clang's -O2 optimizes this shape well enough that it
-    // was invisible on Linux/macOS; MSVC's -O2 does not, and this was the
-    // actual cause of Windows Debug's ~30s-per-test cost surviving the
-    // attacks.cpp optimization-override fix and being unrelated to BMI2
-    // (see docs/DECISIONS.md, this date, for the full trace: BMI2 was
-    // confirmed present and irrelevant since the magic-number search
-    // below runs unconditionally regardless of whether the PEXT table
-    // ends up used at runtime). uint8_t keeps one real byte per element
-    // so both compilers get plain, unpacked array codegen.
-    std::vector<std::uint8_t> used(static_cast<std::size_t>(size), 0);
+    // Generation-stamp collision tracking, replacing an earlier
+    // std::vector<bool>/std::vector<uint8_t> "used" array that was reset
+    // with std::fill() on every one of potentially thousands of candidate
+    // attempts per square. That O(size) reset (not the element type) was
+    // always the dominant cost of this loop; two different element-type
+    // fixes each helped one platform and hurt another (see
+    // docs/DECISIONS.md, this date, for the measured numbers: uint8_t
+    // fixed MSVC's poor std::vector<bool> codegen but doubled per-test
+    // cost on Apple Silicon/Clang, where vector<bool> was already fine
+    // and uint8_t's 8x larger footprint just added cache pressure to the
+    // same repeated fill). This scheme needs no reset at all: an index is
+    // "used this attempt" only when stamp_at[index] equals the current
+    // attempt's stamp, so a fresh attempt is just one increment.
+    std::vector<std::uint32_t> stamp_at(static_cast<std::size_t>(size), 0);
+    std::uint32_t stamp = 0;
 
     for (;;) {
         const std::uint64_t candidate = sparse_random_u64(rng);
@@ -185,14 +185,14 @@ std::uint64_t find_magic_for_square(Bitboard mask, const SubsetData& data,
             continue;
         }
 
-        std::fill(used.begin(), used.end(), 0);
+        ++stamp;
         bool collision = false;
 
         for (int i = 0; i < size && !collision; ++i) {
             const std::uint64_t index = (data.occupancies[static_cast<std::size_t>(i)] * candidate) >>
                                          (64 - bits);
-            if (!used[index]) {
-                used[index] = true;
+            if (stamp_at[index] != stamp) {
+                stamp_at[index] = stamp;
                 table_out[index] = data.reference[static_cast<std::size_t>(i)];
             } else if (table_out[index] != data.reference[static_cast<std::size_t>(i)]) {
                 collision = true;
