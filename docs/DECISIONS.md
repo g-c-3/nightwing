@@ -4,6 +4,24 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+## 2026-08-20 — CI: Windows Debug speed — real root cause found (`std::vector<bool>` in `find_magic_for_square`), BMI2 lead closed
+
+**Diagnostic results, from real Windows Debug CI logs:** the Windows Debug diagnostic step's `WARN()` output confirms the runner detects `"BMI2 POPCNT"` — the BMI2 hypothesis from the two prior entries is ruled out. The Build log confirms `board/attacks.cpp`'s `/O2` override reaches the compiler exactly as expected (`cl : Command line warning D9025 : overriding '/Od' with '/O2'`). Despite both being confirmed working, every `init_all()`-calling test still took a near-constant ~29.7-30.4s, essentially unchanged from before the `-O2` fix and unrelated to test workload — a trivial legality test and a full depth-6 perft test cost almost the same, and total job time (~45.5 min) barely moved from the prior attempt's ~50 min.
+
+**Root cause, found via source inspection rather than further guessing:** `board/attacks.cpp`'s `find_magic_for_square()` — the random magic-number search — runs unconditionally for every square regardless of whether BMI2/PEXT ends up used at runtime (per its own header comment: "This is the portable path, always built"). Its innermost retry loop used a `std::vector<bool> used` collision-tracking array, cleared with `std::fill` on every failed candidate. `std::vector<bool>` is a bit-packed specialization accessed through a proxy reference type rather than a real `bool&`; GCC/Clang's `-O2` optimizes this shape well enough to be invisible (consistent with the measured 33.6s→4.0s win on Linux/macOS, 2026-08-17 entry), but MSVC's `-O2` does not produce comparable codegen for it — which is why the confirmed-applied `/O2` override kept having only a negligible effect on Windows specifically. This makes the BMI2 investigation (the previous three entries) a fair diagnostic step given the evidence available at the time, but ultimately not the actual cause.
+
+**Fix:** `used` changed from `std::vector<bool>` to `std::vector<std::uint8_t>` in `find_magic_for_square()`. Semantically identical — every read/write site already treated it as a boolean flag array — removing only the bit-packing/proxy-reference overhead. This is a genuine portability fix, not an MSVC-only patch, since `std::vector<bool>` is a documented pitfall on any compiler.
+
+**Cleanup:** the two temporary diagnostics from the BMI2 investigation are removed now that it's resolved: `tests/test_smoke.cpp`'s `WARN()` and `.github/workflows/ci.yml`'s "Show detected CPU features" step.
+
+**Verification:** Confirmed by direct inspection that the `used[index]` read (`!used[index]`) and write (`used[index] = true`) sites need no further changes — implicit bool conversion behaves identically for `uint8_t`. Collision-detection control flow (same comparisons, same loop structure) is untouched. The actual Windows Debug timing improvement is unverified from this environment (no MSVC toolchain available) — real confirmation is the next CI run's Windows Debug job duration. If the gap doesn't fully close, the Linux/macOS 33.6s→4.0s baseline is available to help isolate any remaining Windows-specific factor.
+
+**Alternatives considered:**
+- Continuing to chase the BMI2 lead with Windows-specific code (e.g., forcing the portable path, or OS-conditional logic) — moot now that the real cause is unrelated to BMI2 entirely.
+- Rewriting `find_magic_for_square()`'s collision check to avoid the `used` array altogether (e.g., a generation-counter/sentinel scheme avoiding the per-candidate `std::fill`) — a further possible optimization, but out of scope here; the `vector<uint8_t>` swap is the minimal change addressing the measured gap, and a generation-counter version can be revisited if the plain swap doesn't fully close it.
+
+---
+
 ## 2026-08-19 (2) — CI: build.ninja diagnostic results — the -O2 override was never the problem; new lead is runtime BMI2 availability
 
 **Diagnostic results, from a real CI run:** the previous entry's `build.ninja`-dumping diagnostic step returned hard evidence, and it overturns the leading hypothesis from that entry. MSVC's own build output shows `cl : Command line warning D9025 : overriding '/Od' with '/O2'` for `board/attacks.cpp` — confirming this specific conflict resolves via the expected rightmost-wins behavior (distinct from the `D8016` class that blocked the first two attempts) now that `/RTC1` is gone from the Debug baseline. The dumped `build.ninja` content directly confirms `attacks.cpp`'s recorded `FLAGS` end in `/O2`, while the otherwise-identical flags for a neighboring, untouched file (`attacks_tests.cpp`) don't have it. The override reaches the compiler and is applied correctly. The previous entry's hypothesis — that it wasn't reaching the compiler — was wrong.
