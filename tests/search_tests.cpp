@@ -6,6 +6,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
+#include <vector>
+
 #include "board/attacks.h"
 #include "board/board.h"
 #include "board/fen.h"
@@ -28,6 +31,33 @@ void init_all() {
     init_masks();
     init_magic_bitboards();
     init_zobrist_keys();
+}
+
+/// Test helper: finds the legal move from `from` to `to` in `pos` and
+/// applies it, recording `pos.zobrist_hash` (the PRE-move position) into
+/// `*history` first if `history` isn't null -- exactly the convention
+/// src/uci/uci.cpp's apply_uci_moves() uses to build the `game_history`
+/// search::search_fixed_depth()/search_iterative_deepening() take (see
+/// search.h's doc comment). Fails the test outright (REQUIRE) if no such
+/// legal move exists, rather than silently doing nothing, since every
+/// call site below is hand-constructed to be a specific legal move --
+/// silently skipping one would leave the position subtly wrong for
+/// every step after it instead of failing loudly at the point of the
+/// actual mistake.
+void play_move(Position& pos, Square from, Square to, std::vector<std::uint64_t>* history = nullptr) {
+    MoveList legal;
+    generate_legal_moves(pos, legal);
+    for (int i = 0; i < legal.size(); ++i) {
+        if (legal[i].from() == from && legal[i].to() == to) {
+            if (history != nullptr) {
+                history->push_back(pos.zobrist_hash);
+            }
+            UndoInfo undo;
+            make_move(pos, legal[i], undo);
+            return;
+        }
+    }
+    FAIL("play_move: no legal move found from the requested squares");
 }
 } // namespace
 
@@ -267,4 +297,68 @@ TEST_CASE("search_fixed_depth: completes and returns a legal move at a depth whe
     REQUIRE(result.depth_completed == 5);
     REQUIRE(result.score > -kMateThreshold);
     REQUIRE(result.score < kMateThreshold);
+}
+
+TEST_CASE("search_fixed_depth: 50-move rule forces a draw score one quiet ply after "
+          "halfmove_clock reaches 100",
+          "[search][fifty-move]") {
+    init_all();
+    // A quiet king-and-rook-vs-king position (no pawns, no captures
+    // available for anyone) with halfmove_clock already at 99 -- one
+    // more quiet move from ANY root move (every legal move here is a
+    // quiet king or rook move) pushes it to 100, at which point
+    // is_draw_by_rule() (search.cpp) must score that child kDrawScore
+    // regardless of the position's material. Depth 2 is enough to reach
+    // that child (negamax() at ply 1, depth 1 remaining -- still a
+    // depth >= 1 node, so the check applies before this function hands
+    // off to quiescence). Every root move leads to the same outcome
+    // here, so the assertion is on result.score alone, not best_move.
+    Position pos = parse_fen("7k/8/8/8/8/8/8/R6K w - - 99 50");
+    const SearchResult result = search_fixed_depth(pos, 2);
+    REQUIRE(result.score == kDrawScore);
+}
+
+TEST_CASE("search_fixed_depth: a position that already repeated once in game_history is "
+          "recognized when the search revisits it, even though the losing side is down a "
+          "whole queen",
+          "[search][repetition]") {
+    init_all();
+    // White (down a queen, otherwise a bare king) shuffles Kb1-a1-b1
+    // while Black mirrors Kb8-a8-b8, landing back on the exact starting
+    // position (pos0) after 4 real, already-played moves -- a genuine
+    // first repetition of pos0/pos1's king-on-a1 sub-position, recorded
+    // into `history` below exactly as src/uci/uci.cpp's
+    // apply_uci_moves() would. The black queen sits on h4 specifically
+    // because it's off every diagonal/rank/file the a1/b1/a8/b8 shuffle
+    // touches (CPW "Zobrist Hashing" doesn't factor in here directly,
+    // but keeping the queen a spectator keeps this test's only variable
+    // the repetition itself, not incidental tactics).
+    //
+    // From the resulting position (White to move, material score around
+    // -900 for White on any non-repeating line -- nothing in this
+    // engine's current material+PSQT eval could plausibly claw that back
+    // to exactly 0), if is_draw_by_rule() correctly recognizes that
+    // replaying Kb1-a1 recreates pos1 (already in `history`), that
+    // specific move scores exactly kDrawScore -- strictly better than
+    // every other legal White move, all of which stay deep in
+    // queen-down territory. A score of exactly 0 here is strong,
+    // specific evidence the repetition path was found and preferred,
+    // not an artifact of the material-dominated eval landing near zero
+    // by coincidence.
+    Position pos = parse_fen("1k6/8/8/8/7q/8/8/1K6 w - - 0 1");
+    std::vector<std::uint64_t> history;
+
+    play_move(pos, make_square(1, 0), make_square(0, 0), &history); // pos0 -> pos1: Kb1-a1
+    play_move(pos, make_square(1, 7), make_square(0, 7), &history); // pos1 -> pos2: Kb8-a8
+    play_move(pos, make_square(0, 0), make_square(1, 0), &history); // pos2 -> pos3: Ka1-b1
+    play_move(pos, make_square(0, 7), make_square(1, 7), &history); // pos3 -> pos4: Ka8-b8
+
+    REQUIRE(history.size() == 4);
+    REQUIRE(pos.halfmove_clock == 4);
+
+    const SearchResult result = search_fixed_depth(pos, 2, history);
+    REQUIRE(result.score == kDrawScore);
+    REQUIRE_FALSE(result.best_move.is_null());
+    REQUIRE(result.best_move.from() == make_square(1, 0)); // b1
+    REQUIRE(result.best_move.to() == make_square(0, 0));   // a1
 }
