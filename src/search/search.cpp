@@ -103,6 +103,20 @@ constexpr int kIIRReduction = 1;
 /// also keyed and mate-distance-adjusted around this same `ply`
 /// convention — see tt.cpp's adjustment functions.
 ///
+/// Mate distance pruning (CPW "Mate Distance Pruning") is applied right
+/// at the top of this function, before the TT probe or movegen: alpha/
+/// beta are clamped to the best/worst scores actually reachable from
+/// this node given `ply` (the same -(kMateScore - ply) formula the
+/// `moves.empty()` branch below uses for "mated right here," and its
+/// mirror kMateScore - ply - 1 for "deliver mate as fast as possible
+/// from here"), and if that clamping alone collapses alpha >= beta, the
+/// node returns immediately with no movegen/TT/ordering work at all.
+/// This never changes what any node returns relative to plain alpha-
+/// beta -- it only short-circuits nodes whose window was already
+/// unreachable because some shallower ancestor has already found a
+/// forced mate shorter than anything this node could possibly still
+/// improve on.
+///
 /// Transposition table integration deliberately stays simple for this
 /// first pass (see docs/DECISIONS.md, 2026-08-15 TT entry): a probe
 /// that doesn't immediately resolve the window (an Exact hit, or a
@@ -183,6 +197,32 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     }
 
     ++nodes;
+
+    // Mate distance pruning (CPW "Mate Distance Pruning"): regardless of
+    // what the rest of this node finds, the best score achievable here
+    // is capped at kMateScore - ply - 1 (delivering mate one ply deeper
+    // than this node -- the fastest mate reachable from here), and the
+    // worst score achievable is floored at -(kMateScore - ply) (getting
+    // mated at this very node -- the identical formula the
+    // `moves.empty()` branch below already uses). Clamping alpha/beta to
+    // those bounds before doing any real work lets a window that's
+    // already outside what's reachable from this node fail immediately:
+    // if a shallower ancestor has already found a shorter forced mate
+    // than anything achievable here, alpha/beta collapse and there's
+    // nothing left to search for. This is a pure efficiency win, not a
+    // change in what any node returns -- a node whose window wasn't
+    // already unreachable in this way is completely unaffected, since
+    // clamping alpha/beta to bounds that are still looser than the
+    // caller's own window is a no-op.
+    if (alpha < -(kMateScore - ply)) {
+        alpha = -(kMateScore - ply);
+    }
+    if (beta > kMateScore - ply - 1) {
+        beta = kMateScore - ply - 1;
+    }
+    if (alpha >= beta) {
+        return alpha;
+    }
 
     const int alpha_orig = alpha;
     const Color us = pos.side_to_move;
