@@ -18,6 +18,7 @@
 
 #include "uci/uci.h"
 
+#include <cstdint>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -56,7 +57,19 @@ using board::Position;
 /// first token that doesn't match any legal move (rather than throwing)
 /// — a GUI or script sending a slightly malformed move list shouldn't
 /// crash the engine, per the UCI spec's general robustness expectation.
-void apply_uci_moves(Position& pos, const std::vector<std::string>& move_tokens) {
+///
+/// `history` receives `pos.zobrist_hash` immediately before each
+/// successfully-applied move — i.e. on return, `history` holds every
+/// ancestor position's hash strictly before the final `pos`, oldest to
+/// newest, matching search::search_iterative_deepening()'s
+/// `game_history` parameter exactly (search/search.h's doc comment) —
+/// so repetition detection (ROADMAP.md Phase 3) sees the real game's
+/// history, not just whatever the search recalculates within its own
+/// tree. Caller is responsible for clearing `history` first when a
+/// `position` command should start a fresh line rather than extend the
+/// previous one (see handle_position() below).
+void apply_uci_moves(Position& pos, const std::vector<std::string>& move_tokens,
+                      std::vector<std::uint64_t>& history) {
     for (const std::string& token : move_tokens) {
         MoveList legal;
         board::generate_legal_moves(pos, legal);
@@ -64,6 +77,7 @@ void apply_uci_moves(Position& pos, const std::vector<std::string>& move_tokens)
         bool matched = false;
         for (int i = 0; i < legal.size(); ++i) {
             if (legal[i].to_uci() == token) {
+                history.push_back(pos.zobrist_hash); // pre-move position becomes an ancestor
                 board::UndoInfo undo; // discarded — the position isn't unwound afterward.
                 board::make_move(pos, legal[i], undo);
                 matched = true;
@@ -80,10 +94,21 @@ void apply_uci_moves(Position& pos, const std::vector<std::string>& move_tokens)
 /// Malformed input (missing startpos/fen, an unparseable FEN) is
 /// ignored, leaving `pos` unchanged, rather than throwing — same
 /// robustness rationale as apply_uci_moves() above.
-void handle_position(Position& pos, const std::vector<std::string>& tokens) {
+///
+/// `history` is cleared unconditionally at the top: a `position` command
+/// always fully (re)specifies the game from `startpos`/`fen`, exactly
+/// the same way it fully (re)specifies `pos` itself rather than
+/// incrementally patching the previous one — a GUI resends the entire
+/// move list on every `position` command, so accumulating history
+/// across calls instead of rebuilding it here would double-count moves
+/// already reflected in the resent list.
+void handle_position(Position& pos, std::vector<std::uint64_t>& history,
+                      const std::vector<std::string>& tokens) {
     if (tokens.size() < 2) {
         return;
     }
+
+    history.clear();
 
     std::size_t idx = 1;
     if (tokens[idx] == "startpos") {
@@ -112,7 +137,7 @@ void handle_position(Position& pos, const std::vector<std::string>& tokens) {
         ++idx;
         const std::vector<std::string> move_tokens(tokens.begin() + static_cast<long>(idx),
                                                      tokens.end());
-        apply_uci_moves(pos, move_tokens);
+        apply_uci_moves(pos, move_tokens, history);
     }
 }
 
@@ -163,7 +188,15 @@ constexpr int kNoTimeControlDepth = 5;
 /// `infinite`/`ponder`/`mate`/`nodes` are accepted but ignored — see
 /// this file's header comment): runs the search and writes
 /// `bestmove <uci>` to `out`.
-void handle_go(Position& pos, const std::vector<std::string>& tokens, std::ostream& out) {
+///
+/// `game_history` is passed straight through to
+/// search::search_iterative_deepening() (search/search.h's doc
+/// comment) so repetition detection (ROADMAP.md Phase 3) is aware of
+/// the real game's history, not just whatever the search recalculates
+/// within its own tree — see handle_position()/apply_uci_moves() above
+/// for how it's built.
+void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
+               const std::vector<std::string>& tokens, std::ostream& out) {
     int max_depth = 0;
     int time_limit_ms = 0;
     bool have_depth = false;
@@ -226,7 +259,7 @@ void handle_go(Position& pos, const std::vector<std::string>& tokens, std::ostre
     }
 
     const search::SearchResult result =
-        search::search_iterative_deepening(pos, max_depth, time_limit_ms);
+        search::search_iterative_deepening(pos, max_depth, time_limit_ms, game_history);
 
     out << "bestmove ";
     if (result.best_move.is_null()) {
@@ -245,6 +278,11 @@ void handle_go(Position& pos, const std::vector<std::string>& tokens, std::ostre
 
 void run(std::istream& in, std::ostream& out) {
     Position pos = board::start_position();
+    // Ancestors of `pos`, oldest to newest, NOT including `pos` itself —
+    // see apply_uci_moves()/handle_position() above for how this is
+    // built and search/search.h's `game_history` doc comment for what
+    // it's used for.
+    std::vector<std::uint64_t> game_history;
     std::string line;
 
     while (std::getline(in, line)) {
@@ -264,10 +302,11 @@ void run(std::istream& in, std::ostream& out) {
             out.flush();
         } else if (cmd == "ucinewgame") {
             pos = board::start_position();
+            game_history.clear();
         } else if (cmd == "position") {
-            handle_position(pos, tokens);
+            handle_position(pos, game_history, tokens);
         } else if (cmd == "go") {
-            handle_go(pos, tokens, out);
+            handle_go(pos, game_history, tokens, out);
         } else if (cmd == "quit") {
             break;
         }
