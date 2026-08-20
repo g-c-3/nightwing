@@ -39,7 +39,7 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [x] Quiescence search (captures + checks, with SEE pruning)
 - [x] Internal Iterative Reduction (IIR) — reduce depth on nodes with no TT move (modern replacement for IID)
 - [x] Mate distance pruning
-- [ ] Repetition detection (threefold) and 50-move rule handling integrated into search, not just board state
+- [x] Repetition detection (threefold) and 50-move rule handling integrated into search, not just board state
 - [ ] Pawn hash table (small separate TT keyed on pawn structure only, for pawn eval reuse)
 - [ ] Pondering — search side: handle `go ponder`, continue as real search on `ponderhit`, discard and restart on `stop`+actual move
 
@@ -127,4 +127,4 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 2 complete.** **Current phase: 3 — Core Search Strengthening.** Next task: Repetition detection (threefold) and 50-move rule handling.
+**Phase 2 complete.** **Current phase: 3 — Core Search Strengthening.** Next task: Pawn hash table (small separate TT keyed on pawn structure only, for pawn eval reuse).

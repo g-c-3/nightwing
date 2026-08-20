@@ -4,6 +4,33 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+## 2026-08-20 (4) — Repetition detection and 50-move rule: search-time draw checks, second-occurrence convention, real game history threaded from UCI
+
+**Decision:** Repetition and 50-move-rule detection (ROADMAP.md Phase 3) is implemented as a single `is_draw_by_rule()` check inside `negamax()` (`src/search/search.cpp`), run immediately after the node-count increment — before mate distance pruning's clamp, before the transposition-table probe, before movegen. Two independent rules, either sufficient:
+
+- **50-move rule:** `pos.halfmove_clock >= 100` is treated as an unconditional draw. No claim modeling (a real FIDE game requires a player to claim it below 75 moves) — matches the near-universal UCI engine convention of scoring it automatically during search.
+- **Repetition:** a position is scored as a draw on its **second** occurrence within reach of the current node, not the third. Once a position has recurred once, a side can force an actual legal threefold simply by repeating it again, so the second occurrence is already draw-equivalent information for a search that's trying to evaluate whether continuing down this line is good or bad — the standard simplification essentially every engine uses.
+
+**Why before the TT probe specifically:** a position that's a draw by repetition may have been reached through a *different* path the last time this exact Zobrist key was stored in the TT (the "Graph History Interaction" problem — a TT entry has no memory of which path reached it). Checking first means a draw-by-rule score is never looked up from a stale, wrong-context TT entry, and — since the function returns immediately when the check fires — is also never itself stored into the TT, so it can never later poison a different path's legitimate, path-independent evaluation of the same key.
+
+**How history is threaded:** two pieces of state, kept deliberately separate rather than merged into one array:
+- `game_history` (`std::span<const std::uint64_t>`): every ancestor position's hash strictly before the search root, oldest to newest, supplied by the caller. `search_fixed_depth()`/`search_iterative_deepening()` (`src/search/search.h`) both take it as an optional parameter, defaulting to empty for callers with no real game context (existing tests unaffected).
+- `path` (`std::array<std::uint64_t, search::kMaxPly>`, reusing `search/ordering.h`'s existing constant rather than a new one): the current root-to-here search path's own hashes, one entry per ply, owned by the top-level call and threaded by reference through every `negamax()`/`search_root()` call — the same per-ply-array-reused-across-the-whole-tree pattern `KillerTable` already uses (ARCHITECTURE.md "Memory & Cache": no heap allocation for per-node search state). `path[0]` is the root's own hash, set once by `search_root()` (the root itself is never passed through `negamax()`, so nothing else would record it).
+
+Both sequences are walked backward together (without ever materializing a combined array) only as far as `pos.halfmove_clock` plies — a position from before the most recent pawn move or capture can never recur, since any such recurrence would itself have to cross that same irreversible move.
+
+**Root itself is never draw-checked.** `search_root()` always fully reviews every legal root move regardless of whether the root position happens to already be a repeated/50-move-drawn position — consistent with its existing "no internal-node shortcuts" philosophy (it always needs the full legal move list to report a genuine best move for a UCI caller).
+
+**UCI integration:** `src/uci/uci.cpp`'s `apply_uci_moves()` now records `pos.zobrist_hash` immediately before every move it successfully applies, and `handle_position()` clears that history at the top of every `position` command (a GUI always resends the complete move list, so accumulating across calls would double-count). `run()` owns the resulting `std::vector<std::uint64_t>` for the loop's lifetime, clearing it on `ucinewgame` too, and passes it straight through `handle_go()` into `search_iterative_deepening()`. This means repetition detection is aware of positions that occurred earlier in the *actual* game, not just ones the search happens to recalculate within its own tree — the specific gap ROADMAP.md's phrasing ("not just board state") was flagging.
+
+**Alternatives considered:**
+- Waiting for a genuine third occurrence before scoring a draw — rejected: strictly more code (need an occurrence *count*, not just "does any match exist") for no real accuracy gain, since a second occurrence is already sufficient evidence a side can force the draw; this is the convention essentially every other engine uses for the same reason.
+- Storing `pos.halfmove_clock`-length history *inside* `Position` (`board/board.h`) — rejected outright: `Position` is already at its documented ~3-cache-line budget (`static_assert(sizeof(Position) <= 192, ...)`), and a repetition history has nothing to do with what a `Position` fundamentally *is* (ARCHITECTURE.md's separation of board state from search-time bookkeeping) — it belongs to the caller/search, not the position struct.
+- Checking for repetition *after* movegen (alongside the existing `moves.empty()` terminal check) instead of before — rejected: strictly more wasted work on the common repeated-position case (movegen would run for nothing), and — more importantly — it would mean a stale TT entry gets probed and potentially trusted before the draw is recognized, reintroducing the exact GHI risk the current placement avoids.
+- A single flat combined array instead of `game_history` (read-only span) + `path` (mutable per-ply array) — rejected: would require either copying `game_history` into a larger owned buffer per top-level call (real, if small, allocation/copy cost) or accepting an awkward "caller must pre-size a buffer large enough for game history + max search depth" API; keeping them separate and walking both with one small index calculation costs nothing extra at each check and keeps `search_fixed_depth()`'s signature simple (a `std::span`, not an out-parameter or a caller-owned combined buffer).
+
+---
+
 ## 2026-08-20 (3) — CI: generation-stamp fix confirmed on all three platforms; investigation closed
 
 **Results:** the generation-stamp fix (previous entry) was verified against a real 6-job CI run. All Debug jobs beat their pre-`uint8_t` baselines, not merely avoided regressing:
