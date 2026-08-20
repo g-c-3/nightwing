@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+## 2026-08-20 (2) — CI: macOS Debug regression from the last fix traced and fixed (generation-stamp, not element-type)
+
+**What was built:** Real 6-job CI logs from the previous session's `std::vector<uint8_t>` fix were analyzed. Windows Debug was fixed as intended (2732.80s → 180.33s), but macOS Debug got roughly twice as slow (177.53s → 326.02s) — flagged by direct observation, then confirmed in the per-test numbers: every `init_all()`-calling test on macOS Debug shows a uniform ~2x jump (e.g. `init_magic_bitboards is idempotent`: 1.71s → 3.50s), spread evenly across all ~89 such tests. Root cause: the previous fix correctly diagnosed `std::vector<bool>` as the MSVC problem but assumed the same element-type swap would help everywhere — on Apple Silicon/Clang, `vector<bool>` was already fine, and `uint8_t`'s 8x larger footprint just added cache pressure to the same O(size) reset. `src/board/attacks.cpp` — **modified**: `find_magic_for_square()`'s `used` array replaced with a generation-stamp scheme (`stamp_at` + an incrementing `stamp` counter), eliminating the O(size) `std::fill()` reset on every candidate attempt entirely, rather than continuing to trade which platform absorbs its cost.
+
+**Bugs fixed:** A ~2x macOS Debug test-time regression introduced by the immediately preceding session's fix — caught by direct observation of the next real CI run, exactly the kind of thing this project's "verify with real data" discipline exists for.
+
+**Decisions made:** Logged in DECISIONS.md, 2026-08-20 (2) — the regression's numbers, the root cause (element-type choice was never the real lever, the repeated reset was), the generation-stamp fix, and why a per-compiler special case was rejected in favor of removing the actual cost.
+
+**Verification:** Confirmed by inspection that the stamp scheme has no off-by-one risk at the shared zero-initial-value boundary, and that `uint32_t` wraparound (~4.3 billion attempts) is many orders of magnitude beyond realistic convergence. Collision-detection logic is otherwise unchanged. No compiler toolchain available in this environment — real confirmation is the next CI run, expected to hold Windows Debug's win and actually improve on the pre-`uint8_t` Linux/macOS baselines (357.50s / 177.53s) rather than merely avoid regressing them.
+
+**Next session start point:** Push `src/board/attacks.cpp` and confirm the next CI run's timings across all three Debug jobs (Windows, Linux, macOS) before considering the CI speed investigation fully closed. If all three look right (Windows ~3 min, Linux/macOS at or below their pre-`uint8_t` baselines), Phase 3 resumes with Mate distance pruning. If any platform still looks off, get the real numbers first rather than guessing at a fourth variant of this fix.
+
+---
+
 ## 2026-08-20 — CI: Windows Debug speed root cause found and fixed (`std::vector<bool>`, not BMI2)
 
 **What was built:** Real CI logs (uploaded, from the diagnostic added in the previous session) were analyzed directly. The BMI2 hypothesis was ruled out: the Windows runner's own `WARN()` output confirmed full BMI2/POPCNT support, yet every `init_all()`-calling test still cost a near-constant ~29.7-30.4s regardless of workload, unchanged from before the confirmed-working `-O2` override. Source-level investigation of `src/board/attacks.cpp` found the real cause: `find_magic_for_square()`'s random magic-number search runs unconditionally on every square regardless of BMI2 availability, and its innermost retry loop's collision-tracking array was a `std::vector<bool>` — a bit-packed specialization MSVC's `-O2` doesn't optimize nearly as well as GCC/Clang's, explaining why the confirmed-applied optimization override had negligible effect on Windows specifically. `src/board/attacks.cpp` — **modified**: `used` changed from `std::vector<bool>` to `std::vector<std::uint8_t>`, a semantically identical, compiler-agnostic fix. `tests/test_smoke.cpp` — **modified**: the temporary BMI2-investigation `WARN()` removed now that the lead is closed. `.github/workflows/ci.yml` — **modified**: the temporary "Show detected CPU features" diagnostic step removed.
