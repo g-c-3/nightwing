@@ -2,8 +2,10 @@
 
 #include "search/search.h"
 
+#include <array>
 #include <cassert>
 #include <chrono>
+#include <span>
 
 #include "board/movegen.h"
 #include "eval/eval.h"
@@ -83,6 +85,104 @@ constexpr int kIIRReduction = 1;
     return board::is_square_attacked(pos, king_sq, board::opposite(us));
 }
 
+/// Returns true if `pos` (whose Zobrist hash is `key`, passed separately
+/// since every caller already has it on hand) should be scored as an
+/// immediate draw for search purposes, checking two independent rules:
+///
+/// 50-move rule (CPW "50-move Rule"): `pos.halfmove_clock >= 100` (100
+/// plies = 50 full moves since the last pawn move or capture) is treated
+/// as an automatic draw, the near-universal engine convention — real
+/// FIDE play requires a player to *claim* the draw, but essentially
+/// every UCI engine scores this as an unconditional draw during search
+/// rather than modeling the claim itself, and this implementation does
+/// the same.
+///
+/// Repetition (CPW "Repetition Detection"): scored as a draw on a
+/// position's SECOND occurrence within reach of this node, not
+/// waiting for an actual third — standard engine practice, since once a
+/// position has recurred once, a side can force a real threefold simply
+/// by repeating it again, so the second occurrence is already
+/// draw-equivalent information for search purposes. Only ever looks
+/// back up to `pos.halfmove_clock` plies: a position from before the
+/// most recent pawn move or capture can never recur (any recurrence
+/// would itself have to cross that same irreversible move, which is
+/// impossible), so this bounds the lookback naturally without needing
+/// to track exactly how far `game_history`/`path` extend.
+///
+/// `game_history` is every ancestor position's hash strictly before the
+/// search root (see search.h's header comment) — NOT including the
+/// root. `path[0]` is the root's own hash (written once by
+/// search_root(), see its comments) and `path[p]` for p in [1, ply) is
+/// the hash negamax() itself recorded at every shallower ply of the
+/// current root-to-here search path (see negamax()'s header comment) —
+/// together, `game_history` followed by `path[0..ply]` form one
+/// continuous, chronologically-ordered sequence ending at this node,
+/// walked backward here without ever materializing it as a single
+/// combined array.
+[[nodiscard]] bool is_draw_by_rule(const Position& pos, std::uint64_t key, int ply,
+                                    std::span<const std::uint64_t> game_history,
+                                    const std::array<std::uint64_t, kMaxPly>& path) noexcept {
+    if (pos.halfmove_clock >= 100) {
+        return true;
+    }
+    if (ply >= kMaxPly) {
+        // Comfortably beyond any depth this engine reaches in practice
+        // today (search/ordering.h's kMaxPly header comment) -- skip
+        // repetition tracking here rather than risk an out-of-bounds
+        // `path` access below; the 50-move check above still applies
+        // regardless.
+        return false;
+    }
+
+    const int history_len = static_cast<int>(game_history.size());
+    const int cur = history_len + ply; // this node's own index in the conceptual combined sequence
+    const int lookback = pos.halfmove_clock;
+
+    for (int steps = 1; steps <= lookback; ++steps) {
+        const int idx = cur - steps;
+        if (idx < 0) {
+            break; // Walked past all available history -- nothing further to check.
+        }
+        const std::uint64_t candidate = idx >= history_len
+                                             ? path[static_cast<std::size_t>(idx - history_len)]
+                                             : game_history[static_cast<std::size_t>(idx)];
+        if (candidate == key) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Repetition and 50-move-rule detection (see is_draw_by_rule() just
+/// above) is checked immediately after the node-count increment, before
+/// even mate distance pruning's clamp — deliberately the very first
+/// thing this function does at a real (depth >= 1) node. Two reasons for
+/// going first: it's the cheapest possible check (no movegen, no TT
+/// probe), and — more importantly — a position that's a draw by
+/// repetition was very possibly reached through a *different* path last
+/// time the search (or a previous iterative-deepening iteration) visited
+/// this same Zobrist key, so any cached TT entry for it isn't safe to
+/// trust here (the well-known "Graph History Interaction" problem: a TT
+/// entry doesn't know which path reached it). Checking and returning
+/// before the TT probe below means a draw-by-repetition/50-move score is
+/// never looked up from a stale, wrong-context TT entry — and, since
+/// this function returns immediately when it applies, such a score is
+/// also never itself stored into the TT (the store happens at the
+/// bottom of this function, which this early return skips entirely),
+/// so a real, path-independent evaluation of this same key from a
+/// different path is never at risk of being overwritten by a
+/// path-dependent draw score either. `game_history`/`path` are passed
+/// through unchanged to every recursive call below, and `path[ply]` is
+/// written right after `key` is computed (see below) so a DEEPER node's
+/// own is_draw_by_rule() call can see this node as part of its walk
+/// back — this reuses `path` as a single flat, per-ply array the same
+/// way search/ordering.h's KillerTable does (ARCHITECTURE.md "Memory &
+/// Cache": no heap allocation for per-node search state), overwritten
+/// as the search backtracks and descends a different line, which is
+/// correct precisely because only the currently-active root-to-here
+/// path is ever read backward from, never a stale sibling's leftover
+/// entry at the same ply.
+///
 /// Negamax alpha-beta search. Returns a score from `pos.side_to_move`'s
 /// perspective (positive = good for the side to move). At depth <= 0
 /// this hands off entirely to quiescence search (search/quiescence.h)
@@ -181,7 +281,8 @@ constexpr int kIIRReduction = 1;
 /// reflects the depth actually searched, not the depth originally
 /// requested.
 int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_t& nodes,
-            TranspositionTable& tt, KillerTable& killers, HistoryTable& history) {
+            TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
+            std::span<const std::uint64_t> game_history, std::array<std::uint64_t, kMaxPly>& path) {
     if (depth <= 0) {
         // Quiescence search (search/quiescence.h) rather than a raw
         // eval::evaluate() call: resolves in-flight capture/check
@@ -197,6 +298,21 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     }
 
     ++nodes;
+
+    const std::uint64_t key = pos.zobrist_hash;
+    if (ply < kMaxPly) {
+        // Record this node's own hash before any recursive call below
+        // can need to see it (see negamax()'s header comment on why
+        // `path` is written this way, mirroring KillerTable's per-ply
+        // array reuse).
+        path[static_cast<std::size_t>(ply)] = key;
+    }
+    if (is_draw_by_rule(pos, key, ply, game_history, path)) {
+        // Not stored in the TT -- see negamax()'s header comment on why
+        // this check deliberately runs before the TT probe below (the
+        // Graph History Interaction problem).
+        return kDrawScore;
+    }
 
     // Mate distance pruning (CPW "Mate Distance Pruning"): regardless of
     // what the rest of this node finds, the best score achievable here
@@ -226,7 +342,6 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 
     const int alpha_orig = alpha;
     const Color us = pos.side_to_move;
-    const std::uint64_t key = pos.zobrist_hash;
     tt.prefetch(key); // ARCHITECTURE.md: issued as early as possible, to overlap with movegen below.
 
     const TTProbeResult probe = tt.probe(key, ply);
@@ -287,8 +402,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // move-generation order" as it was pre-ordering: search it
             // with the full alpha-beta window to establish a real score
             // to compare everything else against.
-            score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history);
-        } else {
+            score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history,
+                              game_history, path);
             // PVS: probe every later move with a null (zero-width)
             // window first -- cheap, since it only needs to prove
             // "fails low against alpha" or "fails high," not compute an
@@ -296,9 +411,11 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // actually beat alpha (a fail-high on the null window that's
             // still below beta) is it worth paying for a full-window
             // re-search to get its real score.
-            score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, nodes, tt, killers, history);
+            score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, nodes, tt, killers, history,
+                              game_history, path);
             if (score > alpha && score < beta) {
-                score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history);
+                score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history,
+                                  game_history, path);
             }
         }
 
@@ -369,8 +486,17 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 /// node) -- best_move in that case is not to be trusted as final either
 /// (see below), and the caller is expected to re-search with a wider
 /// window rather than accept the result as-is.
+/// `game_history`/`path`: threaded straight through to every negamax()
+/// call below unchanged -- see negamax()'s header comment and
+/// is_draw_by_rule() for what they're for. `path[0]` is set to this
+/// call's own root_key right after it's computed, below, since the root
+/// itself is never passed through negamax() (it has no ply of its own
+/// in that sense) but its hash still needs to be part of the sequence a
+/// deeper node's repetition check can walk back through.
 SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int aspiration_beta,
-                          TranspositionTable& tt, KillerTable& killers, HistoryTable& history) {
+                          TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
+                          std::span<const std::uint64_t> game_history,
+                          std::array<std::uint64_t, kMaxPly>& path) {
     SearchResult result;
 
     MoveList moves;
@@ -394,6 +520,7 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
     // give a UCI-quality result), unlike internal negamax() nodes which
     // are free to trust a sufficiently-deep proven bound.
     const std::uint64_t root_key = pos.zobrist_hash;
+    path[0] = root_key; // See this function's header comment.
     const TTProbeResult root_probe = tt.probe(root_key, 0);
     const Move tt_move = root_probe.hit ? root_probe.move : Move();
 
@@ -432,11 +559,14 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         // already-infinite beta has nothing to gain from skipping to.
         int score;
         if (i == 0 || depth == 1) {
-            score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt, killers, history);
+            score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt, killers, history,
+                              game_history, path);
         } else {
-            score = -negamax(pos, depth - 1, -alpha - 1, -alpha, 1, result.nodes, tt, killers, history);
+            score = -negamax(pos, depth - 1, -alpha - 1, -alpha, 1, result.nodes, tt, killers, history,
+                              game_history, path);
             if (score > alpha && score < beta) {
-                score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt, killers, history);
+                score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt, killers, history,
+                                  game_history, path);
             }
         }
 
@@ -487,7 +617,7 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
 
 } // namespace
 
-SearchResult search_fixed_depth(Position& pos, int depth) {
+SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::uint64_t> game_history) {
     assert(depth >= 1 && "search_fixed_depth: depth must be at least 1");
 
     // Fresh, private tables for this one call (see tt.h's header
@@ -498,13 +628,20 @@ SearchResult search_fixed_depth(Position& pos, int depth) {
     TranspositionTable tt(kDefaultTTSizeMB);
     KillerTable killers;
     HistoryTable history;
+    // Fresh, zero-initialized per-ply hash record for this one call (see
+    // negamax()'s header comment and is_draw_by_rule()) -- a fixed-size
+    // stack array, not heap-allocated (ARCHITECTURE.md "Memory & Cache"),
+    // sized via search/ordering.h's existing kMaxPly rather than a new
+    // constant.
+    std::array<std::uint64_t, kMaxPly> path{};
     // No previous iteration's score to aspirate around (see
     // search_iterative_deepening() below and docs/DECISIONS.md's
     // aspiration-windows entry) -- always the full window.
-    return search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history);
+    return search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history, game_history, path);
 }
 
-SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_limit_ms) {
+SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_limit_ms,
+                                         std::span<const std::uint64_t> game_history) {
     assert(max_depth >= 1 && "search_iterative_deepening: max_depth must be at least 1");
 
     const auto start_time = std::chrono::steady_clock::now();
@@ -522,13 +659,22 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     TranspositionTable tt(kDefaultTTSizeMB);
     KillerTable killers;
     HistoryTable history;
+    // Shared across every iteration of this call too, same rationale as
+    // tt/killers/history just above (see negamax()'s header comment and
+    // is_draw_by_rule()) -- a later, deeper iteration re-deriving the
+    // same repetition information from scratch would be wasted work,
+    // and more importantly wouldn't change anything: `path` is
+    // overwritten ply-by-ply as each iteration's own root-to-here search
+    // proceeds, the same reuse pattern as within a single negamax() call.
+    std::array<std::uint64_t, kMaxPly> path{};
 
     // Depth 1 always runs unconditionally, before any time check, so
     // there's always a legal best_move to fall back on (see search.h's
     // header comment). Full window: there's no previous iteration yet
     // to aspirate around (see the depth-2-onward loop below).
     tt.new_search();
-    SearchResult result = search_root(pos, 1, -kInfinity, kInfinity, tt, killers, history);
+    SearchResult result =
+        search_root(pos, 1, -kInfinity, kInfinity, tt, killers, history, game_history, path);
     std::uint64_t total_nodes = result.nodes;
 
     // Position already over (checkmate/stalemate at the root): every
@@ -578,7 +724,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             }
 
             for (;;) {
-                next = search_root(pos, depth, window_alpha, window_beta, tt, killers, history);
+                next = search_root(pos, depth, window_alpha, window_beta, tt, killers, history,
+                                    game_history, path);
 
                 if (next.score <= window_alpha && window_alpha > -kInfinity) {
                     // Fail low: the true score is <= window_alpha, exact
@@ -611,7 +758,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                 }
             }
         } else {
-            next = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history);
+            next = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history, game_history,
+                                path);
         }
 
         total_nodes += next.nodes;

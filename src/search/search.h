@@ -34,6 +34,7 @@
 // lifetime.
 
 #include <cstdint>
+#include <span>
 
 #include "board/board.h"
 #include "board/move.h"
@@ -93,10 +94,23 @@ struct SearchResult {
 /// best move plus its score. `pos` is left unmodified on return (every
 /// make_move() during the search is paired with a matching unmake_move()).
 ///
+/// `game_history` is the Zobrist hash (board::Position::zobrist_hash) of
+/// every ancestor position strictly BEFORE `pos` in the actual game,
+/// oldest to newest — NOT including `pos` itself. Used for repetition
+/// detection (search.cpp's negamax() header comment): a position found
+/// during the search that also occurred earlier in the real game is
+/// recognized and scored as a draw, not just repetitions the search
+/// discovers entirely within its own calculated lines. Defaults to empty
+/// (no known game history — e.g. a one-off analysis of an arbitrary
+/// position with no real game behind it), in which case repetition
+/// detection still works fully within the search tree itself, just
+/// without awareness of anything that happened before `pos`.
+///
 /// Precondition: `depth >= 1`, and init_masks()/init_magic_bitboards()
 /// have been called (movegen's precondition, transitively — see
 /// board/movegen.h).
-[[nodiscard]] SearchResult search_fixed_depth(board::Position& pos, int depth);
+[[nodiscard]] SearchResult search_fixed_depth(board::Position& pos, int depth,
+                                               std::span<const std::uint64_t> game_history = {});
 
 /// Runs iterative deepening: calls search_fixed_depth() at depth = 1,
 /// 2, 3, ... up to `max_depth`, keeping the most recently *completed*
@@ -116,7 +130,12 @@ struct SearchResult {
 ///
 /// Precondition: same as search_fixed_depth() — `max_depth >= 1`, and
 /// init_masks()/init_magic_bitboards() must already have been called.
+///
+/// `game_history`: same meaning and default as search_fixed_depth()'s
+/// parameter of the same name — see that function's doc comment. Shared
+/// across every depth iteration of this one call, same as `pos` itself.
 [[nodiscard]] SearchResult search_iterative_deepening(
-    board::Position& pos, int max_depth, int time_limit_ms = 0);
+    board::Position& pos, int max_depth, int time_limit_ms = 0,
+    std::span<const std::uint64_t> game_history = {});
 
 } // namespace nightwing::search
