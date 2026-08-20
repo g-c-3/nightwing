@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+## 2026-08-20 (4) — Session 15: Mate distance pruning
+
+**What was built:** Phase 3's next item, as queued by the previous session. `src/search/search.cpp` — **modified.** `negamax()` now clamps its incoming `alpha`/`beta` window, right after the node-count increment and before the TT probe or movegen, to the best/worst score actually reachable from the current node given `ply`: `-(kMateScore - ply)` as the floor (the same formula the existing `moves.empty()` terminal branch already uses for "mated right here") and `kMateScore - ply - 1` as the ceiling (the mirror — mate delivered one ply deeper than this node, the fastest possible from here). If that clamp alone collapses `alpha >= beta`, the node returns immediately with no TT probe, movegen, or move-ordering work at all. The function's header comment gained a new paragraph documenting this alongside the existing ply/mate-score explanation. `tests/search_tests.cpp` — **modified**, one new test: the existing back-rank mate-in-1 position re-searched at depth 6 instead of the minimum depth 2, asserting the exact score `kMateScore - 1` (not just `>= kMateThreshold` as the shallower existing test checks) to confirm the clamp doesn't corrupt the returned score or cause the engine to settle for a longer line once mate distance pruning is actually exercised deeper in the tree.
+
+**Bugs fixed:** None — new pruning behavior, not a fix to existing correctness.
+
+**Decisions made:** None requiring a DECISIONS.md entry — mate distance pruning is a well-established, provably-exact CPW technique (same guarantee class as PVS/TT/aspiration windows already in this codebase, unlike IIR's heuristic approximation), applied here in its standard form with no Nightwing-specific design choice to record.
+
+**Verification:** Confirmed by inspection: the clamp is a strict no-op whenever the caller's window is already tighter than the mate-reachability bounds (the common case, away from any nearby forced mate), since `alpha`/`beta` only move when the incoming value is looser than the new bound. The `moves.empty()` terminal branch is unaffected — it returns its own mate score directly without consulting `alpha`/`beta` at all, so a checkmate is always detected and correctly scored regardless of what the clamp did on the way in. No compiler toolchain available in this environment — a real build+`ctest` run (Release and Debug/ASan/UBSan) against the two touched files is the next step before trusting this beyond inspection, same discipline as every other code-touching session.
+
+**Next session start point:** Push `src/search/search.cpp` and `tests/search_tests.cpp`, confirm a real `ctest` run is fully green (Release + Debug/ASan/UBSan) before starting the next task. Phase 3 continues with the next unchecked ROADMAP.md item: Repetition detection (threefold) and 50-move rule handling integrated into search, not just board state — this touches `Position`'s move-history tracking (`board/board.h`/`.cpp`) as well as `negamax()`, so read both in full before starting, not just `search.cpp`. Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-20 (3) — CI speed investigation closed: generation-stamp fix confirmed across all three platforms
 
 **What was built:** No code changes this entry — the generation-stamp fix from the previous session was verified against a real 6-job CI run. All three Debug jobs came in below their pre-`uint8_t` baselines: Windows Debug 157.26s (from an original 2732.80s), Linux Debug 118.78s (from 357.50s), macOS Debug 117.27s (from 177.53s, fully recovering the earlier regression). All 173 tests pass on Windows/Linux; 171/171 on macOS (2 fewer are the expected BMI2-gated tests not compiled on ARM64).
