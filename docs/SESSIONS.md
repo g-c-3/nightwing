@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+## 2026-08-20 (6) — Session 17: CI results reviewed — one real regression found and fixed (test, not search logic)
+
+**What was built:** No new features. Real CI logs (all 6 platforms: Linux/macOS/Windows × Debug/Release) were uploaded and reviewed for the first time since the mate-distance-pruning and repetition-detection sessions. All 6 builds compiled clean with zero errors/warnings-as-errors. 175/176 (Linux/Windows) or 173/174 (macOS) tests passed on every platform; exactly one test failed, identically, on all 6: `search_iterative_deepening: unlimited time reaches max_depth with the same best move/score as a direct search`, at `REQUIRE(id.best_move == direct.best_move)`. Both new tests added in the repetition-detection session ([search][fifty-move], [search][repetition]) passed everywhere — the hand-traced index arithmetic and FEN construction from that session held up under a real compiler.
+
+**Bugs fixed:** The one failing test was diagnosed as a real, deterministic, previously-unknown consequence of combining repetition detection (path-dependent node scoring) with `search_iterative_deepening()`'s existing TT/killer/history sharing across iterations plus PVS's null-window cutoffs — a specific instance of the "Graph History Interaction" problem, not a coding mistake (full root-cause analysis in docs/DECISIONS.md, 2026-08-20 (5)). `tests/search_tests.cpp` — **modified**: the affected test's `id.best_move == direct.best_move` / `id.score == direct.score` assertions (no longer universally valid once path-dependent draw scoring exists in the tree) were replaced with what's still actually guaranteed — both searches reach the requested depth and return an in-range, non-mate score — with a thorough comment explaining the mechanism and pointing to the DECISIONS.md entry. No search/eval/UCI code changed — the search logic itself isn't wrong, the test's assumption was outdated.
+
+**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-20 (5)) — relax the test rather than sacrifice TT/killer/history sharing or attempt an unverified PVS-null-window carve-out; this mirrors the project's own prior precedent (the same test's node-count assertion was already relaxed once before, 2026-08-15, for an analogous reason).
+
+**Verification:** This session's fix is a test-only change with no production-code risk — the new assertions are weaker, not exactness-dependent, so there's no equivalent "hand-trace and hope" risk the way the repetition-detection session's new tests carried. The diagnosis itself was cross-checked against all 6 platforms' logs individually (identical failing line, identical assertion, ruling out flakiness/UB) before concluding it was deterministic and mechanism-explainable rather than environment-specific. Still needs a real CI run to confirm the updated test now passes — this specific file (`tests/search_tests.cpp`) is the only thing that changed since the run being reviewed, so the remaining risk is purely "did the new assertions compile and hold," not "did this change alter any other passing test."
+
+**Next session start point:** Push the updated `tests/search_tests.cpp`, confirm a real `ctest` run is fully green (all 6 platforms) with no failures at all this time. If green, Phase 3 continues with the next unchecked ROADMAP.md item: Pawn hash table (a small separate TT keyed on pawn structure only, for pawn eval reuse) — read `src/search/tt.h`/`.cpp` in full before starting, plus `src/eval/eval.cpp` for how pawn structure is currently evaluated. Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-20 (5) — Session 16: Repetition detection and 50-move rule, integrated into search + real UCI game history
 
 **What was built:** Phase 3's next item. Full design rationale in docs/DECISIONS.md's matching entry (2026-08-20 (4)) — summarized here.
