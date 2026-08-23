@@ -9,6 +9,7 @@
 
 #include "board/movegen.h"
 #include "eval/eval.h"
+#include "eval/pawn_tt.h"
 #include "search/ordering.h"
 #include "search/quiescence.h"
 #include "search/tt.h"
@@ -35,6 +36,12 @@ constexpr int kInfinity = 1'000'000;
 /// tt.h's header comment on lifetime), so this gets allocated/freed
 /// often rather than once for the engine's lifetime.
 constexpr std::size_t kDefaultTTSizeMB = 16;
+
+/// Placeholder default pawn hash table size, same lifetime caveat as
+/// kDefaultTTSizeMB just above -- KB, not MB, matching eval::PawnHashTable's
+/// constructor (eval/pawn_tt.h's header comment on why this table is
+/// sized much smaller than the main TT).
+constexpr std::size_t kDefaultPawnTTSizeKB = 512;
 
 /// Starting half-width (centipawns) of the aspiration window
 /// search_iterative_deepening() centers on the previous iteration's
@@ -282,7 +289,8 @@ constexpr int kIIRReduction = 1;
 /// requested.
 int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_t& nodes,
             TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
-            std::span<const std::uint64_t> game_history, std::array<std::uint64_t, kMaxPly>& path) {
+            std::span<const std::uint64_t> game_history, std::array<std::uint64_t, kMaxPly>& path,
+            eval::PawnHashTable& pawn_tt) {
     if (depth <= 0) {
         // Quiescence search (search/quiescence.h) rather than a raw
         // eval::evaluate() call: resolves in-flight capture/check
@@ -294,7 +302,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // "node work" of its own at depth <= 0, it's a pure delegation,
         // so counting it separately here would double-count the same
         // conceptual node.
-        return quiescence(pos, alpha, beta, ply, nodes, /*include_checks=*/true);
+        return quiescence(pos, alpha, beta, ply, nodes, /*include_checks=*/true, &pawn_tt);
     }
 
     ++nodes;
@@ -403,7 +411,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // with the full alpha-beta window to establish a real score
             // to compare everything else against.
             score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history,
-                              game_history, path);
+                              game_history, path, pawn_tt);
+        } else {
             // PVS: probe every later move with a null (zero-width)
             // window first -- cheap, since it only needs to prove
             // "fails low against alpha" or "fails high," not compute an
@@ -412,10 +421,10 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // still below beta) is it worth paying for a full-window
             // re-search to get its real score.
             score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, nodes, tt, killers, history,
-                              game_history, path);
+                              game_history, path, pawn_tt);
             if (score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history,
-                                  game_history, path);
+                                  game_history, path, pawn_tt);
             }
         }
 
@@ -493,10 +502,14 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 /// itself is never passed through negamax() (it has no ply of its own
 /// in that sense) but its hash still needs to be part of the sequence a
 /// deeper node's repetition check can walk back through.
+/// `pawn_tt`: threaded straight through to every negamax() call below
+/// unchanged, which threads it further into quiescence()/eval::evaluate()
+/// -- see eval/eval.h's doc comment on evaluate()'s own `pawn_tt`
+/// parameter for what it's for.
 SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int aspiration_beta,
                           TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
                           std::span<const std::uint64_t> game_history,
-                          std::array<std::uint64_t, kMaxPly>& path) {
+                          std::array<std::uint64_t, kMaxPly>& path, eval::PawnHashTable& pawn_tt) {
     SearchResult result;
 
     MoveList moves;
@@ -560,13 +573,13 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         int score;
         if (i == 0 || depth == 1) {
             score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt, killers, history,
-                              game_history, path);
+                              game_history, path, pawn_tt);
         } else {
             score = -negamax(pos, depth - 1, -alpha - 1, -alpha, 1, result.nodes, tt, killers, history,
-                              game_history, path);
+                              game_history, path, pawn_tt);
             if (score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt, killers, history,
-                                  game_history, path);
+                                  game_history, path, pawn_tt);
             }
         }
 
@@ -634,10 +647,15 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
     // sized via search/ordering.h's existing kMaxPly rather than a new
     // constant.
     std::array<std::uint64_t, kMaxPly> path{};
+    // Fresh, private pawn hash table for this one call (same lifetime
+    // scoping/rationale as tt/killers/history just above -- see
+    // eval/pawn_tt.h's header comment).
+    eval::PawnHashTable pawn_tt(kDefaultPawnTTSizeKB);
     // No previous iteration's score to aspirate around (see
     // search_iterative_deepening() below and docs/DECISIONS.md's
     // aspiration-windows entry) -- always the full window.
-    return search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history, game_history, path);
+    return search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history, game_history, path,
+                        pawn_tt);
 }
 
 SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_limit_ms,
@@ -667,14 +685,17 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // overwritten ply-by-ply as each iteration's own root-to-here search
     // proceeds, the same reuse pattern as within a single negamax() call.
     std::array<std::uint64_t, kMaxPly> path{};
+    // Shared across every iteration too -- see eval/pawn_tt.h's header
+    // comment for the same lifetime rationale as tt/killers/history.
+    eval::PawnHashTable pawn_tt(kDefaultPawnTTSizeKB);
 
     // Depth 1 always runs unconditionally, before any time check, so
     // there's always a legal best_move to fall back on (see search.h's
     // header comment). Full window: there's no previous iteration yet
     // to aspirate around (see the depth-2-onward loop below).
     tt.new_search();
-    SearchResult result =
-        search_root(pos, 1, -kInfinity, kInfinity, tt, killers, history, game_history, path);
+    SearchResult result = search_root(pos, 1, -kInfinity, kInfinity, tt, killers, history,
+                                       game_history, path, pawn_tt);
     std::uint64_t total_nodes = result.nodes;
 
     // Position already over (checkmate/stalemate at the root): every
@@ -725,7 +746,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
 
             for (;;) {
                 next = search_root(pos, depth, window_alpha, window_beta, tt, killers, history,
-                                    game_history, path);
+                                    game_history, path, pawn_tt);
 
                 if (next.score <= window_alpha && window_alpha > -kInfinity) {
                     // Fail low: the true score is <= window_alpha, exact
@@ -759,7 +780,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             }
         } else {
             next = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history, game_history,
-                                path);
+                                path, pawn_tt);
         }
 
         total_nodes += next.nodes;

@@ -6,6 +6,7 @@
 
 #include "board/movegen.h"
 #include "eval/eval.h"
+#include "eval/pawn_tt.h"
 #include "search/ordering.h" // mvv_lva_score() -- reused here for a simple capture-only ordering pass
 #include "search/search.h" // kMateScore, kDrawScore
 #include "search/see.h"
@@ -36,12 +37,13 @@ constexpr int kInfinity = 1'000'000;
 /// count) -- this exists specifically to bound the "in check -> full
 /// evasion search" path (see quiescence()'s header comment), which
 /// isn't self-limiting the same way: a contrived repeating-check
-/// pattern could otherwise recurse far deeper than intended, especially
-/// since Nightwing doesn't yet have repetition detection wired into
-/// search to recognize and cut such a pattern off on its own. 32 plies
-/// is comfortably beyond any realistic capture/check-resolution
-/// sequence -- this is a rare-pathological-case safety net, not
-/// expected to be hit in normal play.
+/// pattern could otherwise recurse deep before repetition detection
+/// (search.cpp's negamax()) ever gets a chance to recognize it --
+/// quiescence doesn't itself check for repetition (a deliberate scope
+/// choice, see quiescence.h's header comment). 32 plies is comfortably
+/// beyond any realistic capture/check-resolution sequence -- this is a
+/// rare-pathological-case safety net, not expected to be hit in normal
+/// play.
 constexpr int kMaxQuiescencePly = 32;
 
 /// Returns true if `pos.side_to_move`'s king is currently attacked.
@@ -99,7 +101,7 @@ void order_captures_first(MoveList& moves, const Position& pos) noexcept {
 }
 
 int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& nodes,
-                     bool include_checks, int qs_ply) noexcept {
+                     bool include_checks, int qs_ply, eval::PawnHashTable* pawn_tt) noexcept {
     ++nodes;
 
     const bool us_in_check = in_check(pos);
@@ -120,7 +122,7 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         // even if `us_in_check` (there's no better cheap alternative at
         // this depth, and this branch is not expected to be reached in
         // normal play).
-        const int white_relative = eval::evaluate(pos);
+        const int white_relative = eval::evaluate(pos, pawn_tt);
         return pos.side_to_move == Color::White ? white_relative : -white_relative;
     }
 
@@ -131,7 +133,7 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         // position is already good enough to beat beta with no more
         // moves played, or better than anything found so far, that's a
         // real, legitimate baseline score, not a placeholder.
-        const int white_relative = eval::evaluate(pos);
+        const int white_relative = eval::evaluate(pos, pawn_tt);
         best = pos.side_to_move == Color::White ? white_relative : -white_relative;
         if (best >= beta) {
             return best;
@@ -184,8 +186,8 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
 
         UndoInfo undo;
         board::make_move(pos, move, undo);
-        const int score =
-            -quiescence_impl(pos, -beta, -alpha, ply + 1, nodes, /*include_checks=*/false, qs_ply + 1);
+        const int score = -quiescence_impl(pos, -beta, -alpha, ply + 1, nodes,
+                                            /*include_checks=*/false, qs_ply + 1, pawn_tt);
         board::unmake_move(pos, move, undo);
 
         if (score > best) {
@@ -205,8 +207,8 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
 } // namespace
 
 int quiescence(Position& pos, int alpha, int beta, int ply, std::uint64_t& nodes,
-               bool include_checks) noexcept {
-    return quiescence_impl(pos, alpha, beta, ply, nodes, include_checks, /*qs_ply=*/0);
+               bool include_checks, eval::PawnHashTable* pawn_tt) noexcept {
+    return quiescence_impl(pos, alpha, beta, ply, nodes, include_checks, /*qs_ply=*/0, pawn_tt);
 }
 
 } // namespace nightwing::search

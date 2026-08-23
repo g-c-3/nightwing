@@ -19,6 +19,7 @@
 #include <cstdint>
 
 #include "board/board.h"
+#include "eval/pawn_tt.h"
 
 namespace nightwing::search {
 
@@ -47,16 +48,26 @@ namespace nightwing::search {
 /// remaining material each time, guaranteeing eventual termination),
 /// non-capturing checks don't reduce anything, so including them at
 /// every recursive level risks a check-evade-check-evade chain running
-/// far deeper than a horizon-effect fix is meant to cost -- especially
-/// since Nightwing doesn't yet have repetition detection wired into
-/// search (a separate, still-unchecked ROADMAP.md item) to recognize
-/// and cut off a repeating pattern on its own. Bounding checks to the
-/// first quiescence ply only keeps the useful case (spotting an
-/// immediate tactical check right at the horizon) without that risk.
+/// deeper than a horizon-effect fix is meant to cost. Quiescence
+/// deliberately doesn't check for repetition itself (negamax()'s own
+/// repetition detection, search.cpp, only runs at real depth >= 1
+/// nodes) -- kMaxQuiescencePly (quiescence.cpp) is the resulting safety
+/// net. Bounding checks to the first quiescence ply only keeps the
+/// useful case (spotting an immediate tactical check right at the
+/// horizon) without that risk.
+///
+/// `pawn_tt`, if non-null, is forwarded to every eval::evaluate() call
+/// this function makes (both the stand-pat baseline and the
+/// kMaxQuiescencePly safety-net fallback) -- see eval/eval.h's doc
+/// comment on evaluate()'s own `pawn_tt` parameter for what it does.
+/// Defaults to nullptr, meaning "no pawn hash table" (evaluate() just
+/// recomputes pawn structure fresh every call, as before this
+/// parameter existed).
 ///
 /// Precondition: same as negamax()'s own -- init_masks()/
 /// init_magic_bitboards() have been called.
 [[nodiscard]] int quiescence(board::Position& pos, int alpha, int beta, int ply,
-                              std::uint64_t& nodes, bool include_checks) noexcept;
+                              std::uint64_t& nodes, bool include_checks,
+                              eval::PawnHashTable* pawn_tt = nullptr) noexcept;
 
 } // namespace nightwing::search
