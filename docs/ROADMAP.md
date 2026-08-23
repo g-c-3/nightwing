@@ -60,7 +60,7 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 ## Phase 5 — Eval Expansion & Tuning
 - [ ] Mobility eval
 - [ ] King safety (pawn shield, open files near king, attacker weighting)
-- [ ] Pawn structure (passed, isolated, doubled, backward, connected)
+- [x] Pawn structure (passed, isolated, doubled, backward, connected) — implemented ahead of Mobility/King safety above, specifically to give Phase 3's Pawn hash table item real values to cache; see docs/DECISIONS.md
 - [ ] Bishop pair, rook on open/semi-open file, rook on 7th rank
 - [ ] Knight outposts
 - [ ] Space evaluation
@@ -127,4 +127,4 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 2 complete.** **Current phase: 3 — Core Search Strengthening.** Next task: Pawn hash table (small separate TT keyed on pawn structure only, for pawn eval reuse).
+**Phase 2 complete.** **Current phase: 3 — Core Search Strengthening.** Next task: Pawn hash table (small separate TT keyed on pawn structure only, for pawn eval reuse) — Phase 5's "Pawn structure" item was implemented out of order (see above) specifically so this task now has real values to cache.

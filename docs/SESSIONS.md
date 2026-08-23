@@ -4,6 +4,32 @@ Newest entry at top.
 
 ---
 
+## 2026-08-21 (1) — Session 18: Pawn structure eval (Phase 5, out of order) — Pawn hash table's real prerequisite
+
+**What was built:** Flagged before writing any code: ROADMAP.md's next Phase 3 item, "Pawn hash table," exists to cache pawn-structure evaluation, but that evaluation (Phase 5's "Pawn structure" item) didn't exist yet — `eval.cpp` only had material+PSQT. Presented three options; the person chose reordering (implement pawn structure eval now, out of its normal phase, then return to the hash table with real values to cache). Full rationale in docs/DECISIONS.md (2026-08-21 (1)).
+
+`src/eval/pawns.h`/`.cpp` — **new.** `pawn_structure_value(pos)`: passed, isolated, doubled, backward, connected pawns (CPW standard definitions, from-scratch implementation, credited per ARCHITECTURE.md). Own translation unit specifically so the upcoming pawn hash table has one clean function call to wrap. All five terms' constants exposed publicly in `pawns.h` (not file-private) for the future Texel tuner and for `tests/pawns_tests.cpp` to reference by name instead of hardcoded magic numbers.
+
+`src/board/masks.h`/`.cpp` — **modified.** New precomputed `passed_pawn_mask()`/`backward_support_mask()` tables (populated inside the existing `init_masks()`, no new startup call) plus a small `constexpr adjacent_files_mask()` helper.
+
+`src/eval/score.h` — **modified.** Added `Score::operator==`/`operator!=` (missing before; needed for `pawns_tests.cpp`'s exact-value assertions).
+
+`src/eval/eval.cpp`/`.h` — **modified.** `evaluate()` now includes `pawn_structure_value()` in its tapered sum; header comment updated.
+
+`tests/pawns_tests.cpp` — **new**, five tests, each using a minimal hand-constructed position specifically chosen so every contributing term can be traced by hand against `pawns.cpp`'s exact logic (unlike a realistic game position, where every term interacts at once).
+
+`src/CMakeLists.txt`/`tests/CMakeLists.txt` — **modified**, registering `eval/pawns.cpp`/`pawns_tests.cpp`.
+
+**Bugs fixed:** None in existing code — this is new functionality. Two mistakes were caught and fixed during this session's own drafting, before ever reaching the delivered files: (1) the "connected/defended" pawn check initially used the wrong color argument to `pawn_attacks()` in the reverse-pawn-attack trick — caught by working through concrete coordinates by hand (`pawn_attacks(them, sq)`, not `pawn_attacks(c, sq)`, gives the squares a friendly defender would stand on) before it was ever written into the shipped file. (2) An early draft of the backward-pawn test placed a White king and a White support pawn on the same square (e1) across two related test positions — caught while re-reading the draft, fixed by moving the kings off to a1/a8 (pawn-structure eval never looks at king placement, so this has zero effect on the test's already-verified arithmetic).
+
+**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-21 (1)) — the phase-reordering decision itself (with the person's explicit choice among three presented options), pawns.h/pawns.cpp as a separate translation unit anticipating the pawn hash table, and exposing the pawn-structure constants publicly.
+
+**Verification:** No compiler toolchain available in this environment, same as every other code-touching session — every test in `pawns_tests.cpp` was hand-traced term-by-term (isolated/doubled/passed/backward/connected checks individually re-derived against `pawns.cpp`'s exact logic for each hand-built position) rather than estimated, and the reverse-pawn-attack trick's color argument was verified against concrete `(file, rank)` coordinates rather than reasoned about abstractly, specifically because that's exactly the kind of subtle directional mistake that's easy to get backwards and hard to catch by re-reading prose. A real `ctest` run is the necessary next step before trusting any of this beyond inspection — this session touched more files (masks.h/.cpp, score.h, eval.cpp/.h, two new files, two CMakeLists) than either of the prior two sessions, so there's more total surface area for something to have been missed despite the term-by-term tracing.
+
+**Next session start point:** Push all eight touched/new files (`src/eval/pawns.h`, `src/eval/pawns.cpp`, `src/board/masks.h`, `src/board/masks.cpp`, `src/eval/score.h`, `src/eval/eval.cpp`, `src/eval/eval.h`, `tests/pawns_tests.cpp`, `src/CMakeLists.txt`, `tests/CMakeLists.txt`); confirm a real `ctest` run is fully green on all 6 platforms — pay particular attention to `[eval][pawns]`-tagged tests, since (like the repetition-detection session's tests) their exact-value assertions were derived by hand-tracing rather than compiler-verified. If green, return to Phase 3's "Pawn hash table" item (small separate TT keyed on pawn structure only, for pawn eval reuse) — `pawn_structure_value()` now exists to give it real values to cache; read `src/search/tt.h`/`.cpp` in full first (closest precedent for table sizing/replacement, even though a pawn hash table's key space and entry contents differ). Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-20 (6) — Session 17: CI results reviewed — one real regression found and fixed (test, not search logic)
 
 **What was built:** No new features. Real CI logs (all 6 platforms: Linux/macOS/Windows × Debug/Release) were uploaded and reviewed for the first time since the mate-distance-pruning and repetition-detection sessions. All 6 builds compiled clean with zero errors/warnings-as-errors. 175/176 (Linux/Windows) or 173/174 (macOS) tests passed on every platform; exactly one test failed, identically, on all 6: `search_iterative_deepening: unlimited time reaches max_depth with the same best move/score as a direct search`, at `REQUIRE(id.best_move == direct.best_move)`. Both new tests added in the repetition-detection session ([search][fifty-move], [search][repetition]) passed everywhere — the hand-traced index arithmetic and FEN construction from that session held up under a real compiler.
