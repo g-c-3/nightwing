@@ -60,5 +60,23 @@ void init_zobrist_keys();
 /// h-file). Precondition: init_zobrist_keys() called, 0 <= file < 8.
 [[nodiscard]] std::uint64_t en_passant_file_key(int file) noexcept;
 
+/// Computes a hash of PAWN PLACEMENT ONLY (both colors' pawns' squares --
+/// no side-to-move, castling, en passant, or non-pawn pieces), for use
+/// as the pawn hash table's key (eval/pawn_tt.h). O(number of pawns on
+/// the board, <= 16) -- computed fresh on demand rather than maintained
+/// incrementally in Position alongside the main zobrist_hash (see docs/
+/// DECISIONS.md, 2026-08-21 pawn hash table entry, for why: Position is
+/// already at its documented cache-line budget, board.h, and
+/// incrementally updating a second hash through every make_move()/
+/// unmake_move() code path -- captures, promotions, en passant -- is
+/// real correctness risk this deliberately avoided without a compiler
+/// available to verify it). Uses the identical piece_square_key() terms
+/// compute_hash() does, just XORing only the pawn ones -- so a position
+/// with the same pawn placement but a different side to move, castling
+/// rights, or en passant square correctly produces the SAME pawn hash
+/// (exactly the key-space collapsing the pawn hash table exists for).
+/// Precondition: init_zobrist_keys() has been called.
+[[nodiscard]] std::uint64_t compute_pawn_hash(const Position& pos) noexcept;
+
 } // namespace nightwing::board
 

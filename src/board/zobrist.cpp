@@ -117,4 +117,19 @@ std::uint64_t en_passant_file_key(int file) noexcept {
     return g_en_passant_file_keys[static_cast<std::size_t>(file)];
 }
 
+std::uint64_t compute_pawn_hash(const Position& pos) noexcept {
+    std::uint64_t hash = 0;
+
+    for (const Color c : {Color::White, Color::Black}) {
+        Bitboard pawns = pos.pieces(c, PieceType::Pawn);
+        while (pawns != 0) {
+            const Square sq = pop_lsb(pawns);
+            hash ^= g_piece_square_keys[static_cast<std::size_t>(make_piece(c, PieceType::Pawn))]
+                                        [static_cast<std::size_t>(sq)];
+        }
+    }
+
+    return hash;
+}
+
 } // namespace nightwing::board
