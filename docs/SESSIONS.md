@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+## 2026-08-21 (4) — Session 21: Late move reductions (Phase 4 continues)
+
+**What was built:** Phase 4's next item, LMR, integrated directly into `negamax()`'s existing PVS `else` branch (move loop) as one more cascading fallback step rather than a separate mechanism — full design and rationale in docs/DECISIONS.md (2026-08-21 (6)). `src/search/search.cpp` — new `kLMR*` constants (same simple two-tier reduction style as null-move pruning's own constants last session); `us_in_check` now computed once before the move loop and reused for LMR's eligibility check; the reduction/re-verification logic itself. `tests/search_tests.cpp` — one new regression test reusing the same externally-verified mate-in-3 position already used for the IIR and NMP checks, confirmed still correct with LMR active.
+
+**Bugs fixed:** None this session.
+
+**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-21 (6)) — integrating LMR into the existing PVS cascade rather than as a separate step, the reduction scheme, and why captures/promotions/in-check nodes are excluded from reduction eligibility.
+
+**Verification:** No compiler toolchain available in this environment, same as every session. The change was kept deliberately small and additive to the exact `else` branch this session started from (verified unchanged from last session's known-correct state before editing), specifically to keep it easy to diff against what was already there. Brace-balance swept on both touched files (`search.cpp`, `search_tests.cpp`). Like null-move pruning last session, this genuinely changes search-tree shape (which nodes get visited, not just cache/plumbing), so a real `ctest` run checking the existing perft/mate/node-count tests remain green — not just the new `[lmr]`-tagged test — matters here too.
+
+**Next session start point:** Push `src/search/search.cpp` and `tests/search_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. Confirm a real `ctest` run is fully green on all 6 platforms. If green, Phase 4 continues with its next unchecked item: Late move pruning (LMP) / move-count based pruning at low depth — read the just-updated `negamax()` move loop in full first (LMP typically sits right in the same move loop, skipping remaining quiet moves outright once a move-count threshold is hit at low depth, so it needs to compose cleanly with LMR's own eligibility logic rather than duplicate it). Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-21 (3) — Session 20: Pondering deferred to Phase 7; Null-move pruning implemented (Phase 4 begins)
 
 **What was built:** Two things, in order. (1) Flagged before proceeding: Pondering (Phase 3's last item) needs real concurrent search, which the engine doesn't have and which Phase 7's own multithreading work is where it belongs — presented three options, gave a recommendation when asked, and moved ROADMAP.md's "Pondering" line to Phase 7 alongside Lazy SMP. Full reasoning in docs/DECISIONS.md (2026-08-21 (4)). Phase 3 is now complete. (2) Phase 4's first item, Null-move pruning: `src/board/board.h`/`.cpp` — new `make_null_move()`/`unmake_null_move()` primitives (narrow, incrementally-hashed, reusing the existing `UndoInfo` struct as-is). `src/search/search.cpp` — the NMP block in `negamax()` with all of CPW's standard guards (min depth, no-consecutive-null via a new defaulted `allow_null_move` parameter, zugzwang/non-pawn-material check, mate-range-beta guard with score clamping). Full design in docs/DECISIONS.md (2026-08-21 (5)).
