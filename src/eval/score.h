@@ -48,6 +48,14 @@ struct Score {
     [[nodiscard]] constexpr Score operator-() const noexcept {
         return {-mg, -eg};
     }
+
+    [[nodiscard]] constexpr bool operator==(const Score& other) const noexcept {
+        return mg == other.mg && eg == other.eg;
+    }
+
+    [[nodiscard]] constexpr bool operator!=(const Score& other) const noexcept {
+        return !(*this == other);
+    }
 };
 
 /// Per-piece-type game-phase weights (standard CPW "Tapered Eval"

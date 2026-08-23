@@ -2,6 +2,7 @@
 
 #include "eval/eval.h"
 
+#include "eval/pawns.h"
 #include "eval/psqt.h"
 #include "eval/score.h"
 
@@ -59,7 +60,7 @@ int evaluate(const board::Position& pos) noexcept {
         }
     }
 
-    return taper(score, compute_phase(pos));
+    return taper(score + pawn_structure_value(pos), compute_phase(pos));
 }
 
 } // namespace nightwing::eval

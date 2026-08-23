@@ -1,9 +1,13 @@
 #pragma once
 // src/eval/eval.h
 //
-// Top-level static evaluation. Phase 2 baseline: material + tapered
-// piece-square tables only (ARCHITECTURE.md's planned mobility/king
-// safety/pawn structure/etc. terms land incrementally in Phase 5).
+// Top-level static evaluation. Material + tapered piece-square tables
+// (eval/psqt.h) plus pawn structure (eval/pawns.h: passed, isolated,
+// doubled, backward, connected pawns — ROADMAP.md Phase 5's "Pawn
+// structure" item, implemented ahead of Phase 5's other items
+// specifically to give ROADMAP.md Phase 3's "Pawn hash table" item real
+// values to cache — see docs/DECISIONS.md). Mobility, king safety, and
+// the rest of Phase 5's terms land incrementally after this.
 
 #include "board/board.h"
 
