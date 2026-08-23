@@ -178,6 +178,40 @@ void unmake_move(Position& pos, const Move& move, const UndoInfo& undo) noexcept
     }
 }
 
+void make_null_move(Position& pos, UndoInfo& undo) noexcept {
+    undo.captured_piece = Piece::None;
+    undo.castling_rights = pos.castling_rights; // unchanged by a null move; saved for symmetry only
+    undo.en_passant_square = pos.en_passant_square;
+    undo.halfmove_clock = pos.halfmove_clock;
+    undo.zobrist_hash = pos.zobrist_hash;
+
+    std::uint64_t hash = pos.zobrist_hash;
+
+    // Same "clear en passant, XOR its file key out if one was set"
+    // pattern make_move() uses above — a null move forfeits any
+    // just-set en passant opportunity exactly like any other move that
+    // doesn't take it.
+    if (pos.en_passant_square != kNoEnPassantSquare) {
+        hash ^= en_passant_file_key(file_of(pos.en_passant_square));
+    }
+    pos.en_passant_square = kNoEnPassantSquare;
+
+    pos.halfmove_clock = static_cast<std::uint8_t>(pos.halfmove_clock + 1);
+
+    pos.side_to_move = opposite(pos.side_to_move);
+    hash ^= side_to_move_key(); // unconditional toggle; XOR is its own inverse
+
+    pos.zobrist_hash = hash;
+}
+
+void unmake_null_move(Position& pos, const UndoInfo& undo) noexcept {
+    pos.side_to_move = opposite(pos.side_to_move);
+    pos.castling_rights = undo.castling_rights;
+    pos.en_passant_square = undo.en_passant_square;
+    pos.halfmove_clock = undo.halfmove_clock;
+    pos.zobrist_hash = undo.zobrist_hash;
+}
+
 Position start_position() {
     Position pos;
     // Position's default member initializers already give White to move,

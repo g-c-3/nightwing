@@ -274,6 +274,35 @@ void make_move(Position& pos, const Move& move, UndoInfo& undo) noexcept;
 /// must nest, like the search tree they're driving).
 void unmake_move(Position& pos, const Move& move, const UndoInfo& undo) noexcept;
 
+/// Applies a "null move" to `pos` (CPW "Null Move Pruning", search/
+/// search.cpp): side to move flips, any en passant target is cleared
+/// (a null move means "the side to move does nothing," so any
+/// just-set en passant capture opportunity is forfeit exactly as it
+/// would be after any other real move that doesn't take it),
+/// halfmove_clock increments (a null move is not a pawn move or
+/// capture), and pos.zobrist_hash is updated incrementally (side-to-move
+/// key XORed, en passant file key XORed out if one was set) — never a
+/// full recompute, the same discipline make_move() follows. No piece
+/// moves, and fullmove_number is deliberately left unchanged — a null
+/// move is a search-tree-only artifact, not a real ply in the game's
+/// own move numbering, and nothing reads fullmove_number during search
+/// (it exists only for FEN output). Saves the pre-move en_passant_square,
+/// halfmove_clock, and zobrist_hash into `undo` for unmake_null_move()
+/// to reverse; `undo.captured_piece`/`undo.castling_rights` are left at
+/// UndoInfo's defaults, unused — a null move can't capture anything or
+/// change castling rights, so there's nothing there to save or restore.
+/// Precondition: init_zobrist_keys() has been called, and (CPW's own
+/// "Null Move Pruning" caveat) `pos.side_to_move` is not currently in
+/// check — passing a null move in check would let the search "escape"
+/// check by doing nothing, which is not a legal chess outcome and would
+/// corrupt the search; the caller (negamax(), search.cpp) is responsible
+/// for checking this before calling.
+void make_null_move(Position& pos, UndoInfo& undo) noexcept;
+
+/// Exactly reverses the most recent make_null_move(pos, undo) call. Same
+/// strict stack-discipline precondition as unmake_move().
+void unmake_null_move(Position& pos, const UndoInfo& undo) noexcept;
+
 /// Returns the standard chess starting position: full initial piece
 /// placement, White to move, all castling rights available, no en
 /// passant target, halfmove clock 0, fullmove number 1.
