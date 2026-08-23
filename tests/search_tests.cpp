@@ -331,6 +331,27 @@ TEST_CASE("search_fixed_depth: a pure king-and-pawn endgame (no non-pawn materia
     REQUIRE(result.score < kMateThreshold);
 }
 
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "late move reductions active",
+          "[search][lmr]") {
+    init_all();
+    // Same position/rationale as the IIR and NMP regression tests above
+    // -- reused again here specifically for LMR (search.cpp's negamax()
+    // move loop, the `else` branch's reduction logic). Like NMP, LMR is
+    // not a provably-exact technique (a reduced probe that happens to
+    // stay <= alpha is trusted without ever re-verifying at full depth
+    // -- that's the entire point of the optimization, and also exactly
+    // the risk if the reduction/re-verification cascade has a bug), so
+    // a real search-level check that a genuine forced line survives it
+    // matters here specifically, not just that the code compiles and
+    // runs. Depth 6 gives plenty of room for `i >= kLMRMinMoveIndex`
+    // quiet moves at `depth >= kLMRMinDepth` to actually get reduced
+    // during this search, not just sit below the threshold everywhere.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
 TEST_CASE("search_fixed_depth: back-rank mate in 1 is still found exactly when searched well "
           "beyond the mating depth (mate distance pruning)",
           "[search][mdp]") {
