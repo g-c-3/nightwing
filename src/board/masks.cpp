@@ -26,6 +26,8 @@ constexpr Deltas8 kKingDeltas = {{
 std::array<Bitboard, kNumSquares> g_knight_attacks{};
 std::array<Bitboard, kNumSquares> g_king_attacks{};
 std::array<std::array<Bitboard, kNumSquares>, kNumColors> g_pawn_attacks{};
+std::array<std::array<Bitboard, kNumSquares>, kNumColors> g_passed_pawn_mask{};
+std::array<std::array<Bitboard, kNumSquares>, kNumColors> g_backward_support_mask{};
 bool g_initialized = false;
 
 } // namespace
@@ -83,6 +85,41 @@ void init_masks() {
             }
         }
         g_pawn_attacks[static_cast<std::size_t>(Color::Black)][sq] = black_pawn_bb;
+
+        // Passed-pawn span and backward-support span (masks.h's doc
+        // comments on passed_pawn_mask()/backward_support_mask()): own
+        // file + adjacent files strictly ahead, and adjacent files only
+        // at-or-behind, respectively, from each color's own advancing
+        // direction (White toward higher ranks, Black toward lower).
+        Bitboard white_passed_bb = kEmptyBitboard;
+        Bitboard black_passed_bb = kEmptyBitboard;
+        Bitboard white_backward_bb = kEmptyBitboard;
+        Bitboard black_backward_bb = kEmptyBitboard;
+        for (int f = file - 1; f <= file + 1; ++f) {
+            if (f < 0 || f >= kNumFiles) {
+                continue;
+            }
+            for (int r = 0; r < kNumRanks; ++r) {
+                if (r > rank) {
+                    set_bit(white_passed_bb, make_square(f, r));
+                }
+                if (r < rank) {
+                    set_bit(black_passed_bb, make_square(f, r));
+                }
+                if (f != file) {
+                    if (r <= rank) {
+                        set_bit(white_backward_bb, make_square(f, r));
+                    }
+                    if (r >= rank) {
+                        set_bit(black_backward_bb, make_square(f, r));
+                    }
+                }
+            }
+        }
+        g_passed_pawn_mask[static_cast<std::size_t>(Color::White)][sq] = white_passed_bb;
+        g_passed_pawn_mask[static_cast<std::size_t>(Color::Black)][sq] = black_passed_bb;
+        g_backward_support_mask[static_cast<std::size_t>(Color::White)][sq] = white_backward_bb;
+        g_backward_support_mask[static_cast<std::size_t>(Color::Black)][sq] = black_backward_bb;
     }
 
     g_initialized = true;
@@ -98,6 +135,14 @@ Bitboard king_attacks(Square sq) noexcept {
 
 Bitboard pawn_attacks(Color c, Square sq) noexcept {
     return g_pawn_attacks[static_cast<std::size_t>(c)][static_cast<std::size_t>(sq)];
+}
+
+Bitboard passed_pawn_mask(Color c, Square sq) noexcept {
+    return g_passed_pawn_mask[static_cast<std::size_t>(c)][static_cast<std::size_t>(sq)];
+}
+
+Bitboard backward_support_mask(Color c, Square sq) noexcept {
+    return g_backward_support_mask[static_cast<std::size_t>(c)][static_cast<std::size_t>(sq)];
 }
 
 } // namespace nightwing::board

@@ -63,4 +63,40 @@ void init_masks();
     return bb;
 }
 
+/// Returns every square on the file(s) adjacent to `file` (file-1 and
+/// file+1; only one if `file` is the a- or h-file). Used for
+/// isolated/backward pawn detection (eval/pawns.cpp: CPW "Isolated
+/// Pawn", "Backward Pawn").
+[[nodiscard]] constexpr Bitboard adjacent_files_mask(int file) noexcept {
+    Bitboard bb = kEmptyBitboard;
+    if (file - 1 >= 0) {
+        bb |= file_mask(file - 1);
+    }
+    if (file + 1 < kNumFiles) {
+        bb |= file_mask(file + 1);
+    }
+    return bb;
+}
+
+/// Returns the "passed pawn span" for a pawn of color `c` on `sq`: every
+/// square on `sq`'s own file and both adjacent files, strictly ahead of
+/// `sq` from `c`'s perspective (toward promotion). A pawn on `sq` is
+/// passed exactly when this span contains no enemy pawns -- no enemy
+/// pawn can ever block or capture it on the way to promotion (eval/
+/// pawns.cpp: CPW "Passed Pawn"). Precondition: init_masks() has been
+/// called.
+[[nodiscard]] Bitboard passed_pawn_mask(Color c, Square sq) noexcept;
+
+/// Returns the "backward pawn support span" for a pawn of color `c` on
+/// `sq`: every square on the two adjacent files ONLY (not `sq`'s own
+/// file), at `sq`'s rank or further back toward `c`'s own side. A
+/// friendly pawn anywhere in this span could, by advancing, eventually
+/// stand beside or defend a pawn on `sq` -- its absence is one half of
+/// CPW's "Backward Pawn" test (the other half, whether `sq`'s push
+/// square is attacked by an enemy pawn, doesn't need a dedicated mask --
+/// see eval/pawns.cpp for how it reuses pawn_attacks() directly, the
+/// standard reverse-pawn-attack trick). Precondition: init_masks() has
+/// been called.
+[[nodiscard]] Bitboard backward_support_mask(Color c, Square sq) noexcept;
+
 } // namespace nightwing::board
