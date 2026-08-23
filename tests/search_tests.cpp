@@ -286,6 +286,51 @@ TEST_CASE("search_iterative_deepening: finds a genuine mate-in-3 correctly with 
     REQUIRE(result.score >= kMateThreshold);
 }
 
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "null-move pruning active (depth 6 comfortably exceeds kNullMoveMinDepth at internal "
+          "nodes)",
+          "[search][nmp]") {
+    init_all();
+    // Same position/rationale as the IIR test just above, reused here
+    // specifically to confirm null-move pruning (search.cpp's negamax(),
+    // the NMP block right after IIR) doesn't cause this forced mate to
+    // be missed or its score corrupted -- NMP is not a provably-exact
+    // technique either (its own guards -- zugzwang risk, mate-range
+    // beta, consecutive-null prevention -- exist precisely because
+    // getting any of them wrong risks exactly this kind of missed
+    // tactic), so a real search-level regression check matters here
+    // beyond board.cpp's make_null_move()/unmake_null_move() round-trip
+    // tests (tests/makemove_tests.cpp), which only confirm the
+    // mechanical state/hash update is correct, not that the search
+    // using it still finds real forced lines.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
+TEST_CASE("search_fixed_depth: a pure king-and-pawn endgame (no non-pawn material) still "
+          "searches successfully -- null-move pruning's zugzwang guard correctly disables it "
+          "rather than crashing or hanging",
+          "[search][nmp]") {
+    init_all();
+    // White has only a king and a pawn -- board::PieceType::Knight/
+    // Bishop/Rook/Queen are all empty for White, so negamax()'s
+    // `non_pawn_material` check (search.cpp) is false at every White
+    // node, meaning null-move pruning's zugzwang guard should keep NMP
+    // entirely inactive for this whole search, not just "usually skip
+    // it." This test doesn't (and, without a reference engine, can't
+    // easily) verify the position's exact evaluated value is
+    // tablebase-correct -- it verifies the guard's code path itself
+    // is exercised (a position where NMP is ALWAYS skipped, for the
+    // entire search, not just sometimes) without crashing, hanging, or
+    // returning a nonsensical result.
+    Position pos = parse_fen("4k3/8/4K3/4P3/8/8/8/8 w - - 0 1");
+    const SearchResult result = search_fixed_depth(pos, 5);
+    REQUIRE_FALSE(result.best_move.is_null());
+    REQUIRE(result.score > -kMateThreshold);
+    REQUIRE(result.score < kMateThreshold);
+}
+
 TEST_CASE("search_fixed_depth: back-rank mate in 1 is still found exactly when searched well "
           "beyond the mating depth (mate distance pruning)",
           "[search][mdp]") {

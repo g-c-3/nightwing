@@ -271,3 +271,84 @@ TEST_CASE("capturing an enemy rook on its home corner revokes that side's castli
     REQUIRE((pos.castling_rights & castling::kBlackKingside) != 0);
     REQUIRE(pos.zobrist_hash == compute_hash(pos));
 }
+
+TEST_CASE("make_null_move then unmake_null_move exactly restores the start position",
+          "[makemove][nullmove]") {
+    init_masks();
+    init_magic_bitboards();
+    init_zobrist_keys();
+
+    Position pos = start_position();
+    const Position original = pos;
+
+    UndoInfo undo;
+    make_null_move(pos, undo);
+
+    REQUIRE(pos.side_to_move == Color::Black);
+    REQUIRE(pos.halfmove_clock == 1);
+    REQUIRE(pos.fullmove_number == original.fullmove_number); // deliberately unchanged -- board.h's doc comment
+    REQUIRE(pos.en_passant_square == kNoEnPassantSquare);      // was already none here; still none
+    REQUIRE(pos.zobrist_hash == compute_hash(pos)); // incremental update matches a from-scratch recompute
+
+    unmake_null_move(pos, undo);
+    REQUIRE(positions_equal(pos, original));
+}
+
+TEST_CASE("make_null_move clears an active en passant target and its zobrist key term",
+          "[makemove][nullmove]") {
+    init_masks();
+    init_magic_bitboards();
+    init_zobrist_keys();
+
+    // Same double-push setup as the very first test in this file, so
+    // pos.en_passant_square is genuinely set (e3) before the null move.
+    Position pos = start_position();
+    UndoInfo push_undo;
+    const Move e2e4(make_square(4, 1), make_square(4, 3), MoveFlag::DoublePawnPush);
+    make_move(pos, e2e4, push_undo);
+    REQUIRE(pos.en_passant_square == make_square(4, 2)); // e3, confirms the setup is as expected
+
+    const Position before_null = pos;
+    UndoInfo null_undo;
+    make_null_move(pos, null_undo);
+
+    REQUIRE(pos.en_passant_square == kNoEnPassantSquare);
+    REQUIRE(pos.side_to_move == Color::White); // flipped back from Black (after e2e4) to White
+    REQUIRE(pos.halfmove_clock == before_null.halfmove_clock + 1);
+    // The strongest check: the incrementally-updated hash (side-to-move
+    // toggle AND en-passant-file key removal, both applied inside
+    // make_null_move()) must match an independent from-scratch
+    // recomputation of the resulting position -- not just be
+    // "internally consistent" with whatever make_null_move() itself
+    // believes it did.
+    REQUIRE(pos.zobrist_hash == compute_hash(pos));
+
+    unmake_null_move(pos, null_undo);
+    REQUIRE(positions_equal(pos, before_null));
+}
+
+TEST_CASE("two consecutive make_null_move calls return the side to move to its original color",
+          "[makemove][nullmove]") {
+    init_masks();
+    init_magic_bitboards();
+    init_zobrist_keys();
+
+    Position pos = start_position();
+    const Color original_stm = pos.side_to_move;
+
+    UndoInfo undo1;
+    make_null_move(pos, undo1);
+    REQUIRE(pos.side_to_move != original_stm);
+
+    UndoInfo undo2;
+    make_null_move(pos, undo2);
+    REQUIRE(pos.side_to_move == original_stm);
+    REQUIRE(pos.zobrist_hash == compute_hash(pos));
+
+    // Unmake in strict LIFO order, matching the stack discipline both
+    // make_move()/unmake_move() and make_null_move()/unmake_null_move()
+    // share (board.h's doc comments on both).
+    unmake_null_move(pos, undo2);
+    unmake_null_move(pos, undo1);
+    REQUIRE(positions_equal(pos, start_position()));
+}
