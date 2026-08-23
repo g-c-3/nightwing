@@ -14,6 +14,7 @@ add_library(nightwing_lib STATIC
     board/perft.cpp
     eval/psqt.cpp
     eval/pawns.cpp
+    eval/pawn_tt.cpp
     eval/eval.cpp
     search/ordering.cpp
     search/quiescence.cpp
