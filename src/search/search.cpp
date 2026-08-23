@@ -67,6 +67,20 @@ constexpr int kAspirationInitialDelta = 25;
 constexpr int kIIRMinDepth = 4;
 constexpr int kIIRReduction = 1;
 
+/// Null-move pruning (CPW "Null Move Pruning", negamax()'s NMP block
+/// below) constants. Not yet tuned (ROADMAP.md Phase 5's Texel/SPSA
+/// tuner is scoped for eval terms specifically; a future session
+/// extending it, or a separate search-parameter tuning pass, may revise
+/// these) -- a simple, well-established two-tier reduction scheme
+/// common across many "classical" engines, chosen for this first-draft
+/// implementation over a smoother adaptive formula (e.g. `3 + depth/6`)
+/// specifically to keep the logic easy to hand-verify without a
+/// compiler available.
+constexpr int kNullMoveMinDepth = 3;        // don't bother below this remaining depth
+constexpr int kNullMoveReduction = 2;       // R for depth < kNullMoveBigReductionDepth
+constexpr int kNullMoveBigReductionDepth = 6;
+constexpr int kNullMoveBigReduction = 3;    // R for depth >= kNullMoveBigReductionDepth
+
 // search_iterative_deepening() (below) only checks its time budget
 // *between* full-depth search_fixed_depth() calls, not mid-search --
 // negamax() itself has no clock/stop-flag awareness. True mid-search
@@ -190,6 +204,19 @@ constexpr int kIIRReduction = 1;
 /// path is ever read backward from, never a stale sibling's leftover
 /// entry at the same ply.
 ///
+/// Null-move pruning (see the NMP block right after IIR, below) needs
+/// one more piece of state IIR/IID's own logic never did: whether a
+/// null move is even allowed at this node. `allow_null_move` defaults
+/// to true for every ordinary call (every existing call site is
+/// unaffected and doesn't need updating); the ONE place this function
+/// ever passes false explicitly is its own recursive call inside the
+/// NMP block, for the single child that call makes -- CPW's "no two
+/// null moves in a row" rule (skipping straight past every real move
+/// at a node by permitting the very next node to also just pass would
+/// prove nothing about the actual position). This is deliberately NOT
+/// a "was there a null move anywhere among this node's ancestors"
+/// check -- only immediate adjacency matters.
+///
 /// Negamax alpha-beta search. Returns a score from `pos.side_to_move`'s
 /// perspective (positive = good for the side to move). At depth <= 0
 /// this hands off entirely to quiescence search (search/quiescence.h)
@@ -290,7 +317,7 @@ constexpr int kIIRReduction = 1;
 int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_t& nodes,
             TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
             std::span<const std::uint64_t> game_history, std::array<std::uint64_t, kMaxPly>& path,
-            eval::PawnHashTable& pawn_tt) {
+            eval::PawnHashTable& pawn_tt, bool allow_null_move = true) {
     if (depth <= 0) {
         // Quiescence search (search/quiescence.h) rather than a raw
         // eval::evaluate() call: resolves in-flight capture/check
@@ -381,6 +408,49 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // searched, not the depth this call was originally asked for.
     if (!probe.hit && depth >= kIIRMinDepth) {
         depth -= kIIRReduction;
+    }
+
+    // Null-move pruning (CPW "Null Move Pruning"): if we're not in
+    // check and it's still our move even after "passing" (giving the
+    // opponent a free tempo -- searched at reduced depth, since this is
+    // just a cheap plausibility probe, not a real line worth full
+    // depth), and that STILL isn't enough to bring the score down to
+    // beta, then a real move (which can only do at least as well as
+    // passing) would certainly also reach beta -- so this node can be
+    // pruned outright without searching any of its real moves.
+    //
+    // Guards, each corresponding to a real unsoundness risk otherwise:
+    // in check (board::make_null_move()'s own precondition -- a null
+    // move can't escape check, not a legal chess outcome, and would
+    // corrupt the search); two null moves in a row (`allow_null_move`,
+    // see this function's header comment); too shallow (kNullMoveMinDepth
+    // -- not worth the reduced re-search's own cost below a minimum);
+    // zugzwang risk (CPW's own caveat -- skipped whenever the side to
+    // move has no non-pawn, non-king material, the classic
+    // king-and-pawn-endgame case where "passing" can be a strictly
+    // WORSE option than any real move, making the technique unsound
+    // there); and a mate-range beta (a reduced-depth null-move probe
+    // stumbling onto what looks like a mate score isn't a trustworthy
+    // claim of an actual forced mate at full depth).
+    const bool non_pawn_material =
+        (pos.pieces(us, board::PieceType::Knight) | pos.pieces(us, board::PieceType::Bishop) |
+         pos.pieces(us, board::PieceType::Rook) | pos.pieces(us, board::PieceType::Queen)) != 0;
+    if (allow_null_move && depth >= kNullMoveMinDepth && beta < kMateThreshold && non_pawn_material &&
+        !in_check(pos)) {
+        const int reduction =
+            depth >= kNullMoveBigReductionDepth ? kNullMoveBigReduction : kNullMoveReduction;
+        UndoInfo null_undo;
+        board::make_null_move(pos, null_undo);
+        const int null_score = -negamax(pos, depth - 1 - reduction, -beta, -beta + 1, ply + 1, nodes,
+                                         tt, killers, history, game_history, path, pawn_tt,
+                                         /*allow_null_move=*/false);
+        board::unmake_null_move(pos, null_undo);
+        if (null_score >= beta) {
+            // Don't hand back a mate-range score verbatim from a
+            // reduced, unverified probe (CPW's own caution) -- clamp to
+            // beta instead of trusting an unconfirmed "mate" claim.
+            return null_score >= kMateThreshold ? beta : null_score;
+        }
     }
 
     MoveList moves;
