@@ -41,10 +41,9 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [x] Mate distance pruning
 - [x] Repetition detection (threefold) and 50-move rule handling integrated into search, not just board state
 - [x] Pawn hash table (small separate TT keyed on pawn structure only, for pawn eval reuse)
-- [ ] Pondering — search side: handle `go ponder`, continue as real search on `ponderhit`, discard and restart on `stop`+actual move
 
 ## Phase 4 — Pruning & Extensions
-- [ ] Null-move pruning
+- [x] Null-move pruning
 - [ ] Late move reductions (LMR)
 - [ ] Late move pruning (LMP) / move-count based pruning at low depth
 - [ ] Futility pruning
@@ -92,6 +91,7 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
 - [ ] Lazy SMP implementation
 - [ ] Lock-free TT for concurrent access
 - [ ] Thread count UCI option
+- [ ] Pondering — search side: handle `go ponder`, continue as real search on `ponderhit`, discard and restart on `stop`+actual move. Moved here from Phase 3 (2026-08-21): pondering needs real concurrent search (a background search thread, an async-checkable stop signal, and the UCI loop able to read `ponderhit`/`stop` while a search is in flight) — infrastructure this phase is building anyway for Lazy SMP. Building it ad-hoc in Phase 3, before that infrastructure exists, risked either a half-working implementation or throwaway work once this phase's real thread pool landed. See docs/DECISIONS.md for the full reasoning.
 - [ ] Verify no strength regression vs. single-threaded at equal single-thread depth
 
 ## Phase 8 — Polish & Tournament Readiness
@@ -127,4 +127,4 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 2 complete.** **Current phase: 3 — Core Search Strengthening.** Next task: Pondering — search side: handle `go ponder`, continue as real search on `ponderhit`, discard and restart on `stop`+actual move.
+**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Current phase: 4 — Pruning & Extensions.** Next task: Late move reductions (LMR).

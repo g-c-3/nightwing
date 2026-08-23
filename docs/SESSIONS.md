@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+## 2026-08-21 (3) — Session 20: Pondering deferred to Phase 7; Null-move pruning implemented (Phase 4 begins)
+
+**What was built:** Two things, in order. (1) Flagged before proceeding: Pondering (Phase 3's last item) needs real concurrent search, which the engine doesn't have and which Phase 7's own multithreading work is where it belongs — presented three options, gave a recommendation when asked, and moved ROADMAP.md's "Pondering" line to Phase 7 alongside Lazy SMP. Full reasoning in docs/DECISIONS.md (2026-08-21 (4)). Phase 3 is now complete. (2) Phase 4's first item, Null-move pruning: `src/board/board.h`/`.cpp` — new `make_null_move()`/`unmake_null_move()` primitives (narrow, incrementally-hashed, reusing the existing `UndoInfo` struct as-is). `src/search/search.cpp` — the NMP block in `negamax()` with all of CPW's standard guards (min depth, no-consecutive-null via a new defaulted `allow_null_move` parameter, zugzwang/non-pawn-material check, mate-range-beta guard with score clamping). Full design in docs/DECISIONS.md (2026-08-21 (5)).
+
+`tests/makemove_tests.cpp` — three new tests for the null-move primitives themselves (round-trip restoration + hash-matches-from-scratch-recompute, matching this file's existing convention exactly; an en-passant-clearing case; two-consecutive-nulls). `tests/search_tests.cpp` — two new tests: the externally-verified mate-in-3 position (already used for the IIR regression test) re-confirmed correct with NMP active, and a pure king-and-pawn endgame confirming the zugzwang guard's code path runs without issue.
+
+**Bugs fixed:** None this session — no bug was introduced or found in this session's own new code. (For context: the previous session, 2026-08-21 (2)/Session 19, both introduced and fixed a serious bug from the session before that; this session's null-move code was written with that lesson fresh, hence the deliberately narrow scope of `make_null_move()`/`unmake_null_move()` and the extra guard-completeness discussed in docs/DECISIONS.md.)
+
+**Decisions made:** Both logged in full in docs/DECISIONS.md — the Pondering deferral (2026-08-21 (4)) and Null-move pruning's design (2026-08-21 (5)).
+
+**Verification:** No compiler toolchain available in this environment, same as every session. `make_null_move()`/`unmake_null_move()` specifically got the same rigor as `make_move()`/`unmake_move()`'s own existing tests (hash-matches-independent-recompute, not just self-consistency) precisely because this is exactly the class of hot-path board-state code where the previous session found a real bug elsewhere. Brace-balance swept across every file this session touched (`board.h`, `board.cpp`, `search.cpp`, `makemove_tests.cpp`, `search_tests.cpp`, `ROADMAP.md`). A real `ctest` run is the essential next step, as always — and given this session added new search-tree-shape-changing logic (NMP genuinely changes which nodes get visited, unlike the previous session's pure plumbing/cache work), pay particular attention to whether existing perft/mate-finding/node-count tests still pass, not just the new `[nmp]`-tagged ones.
+
+**Next session start point:** Push all touched/new files (`src/board/board.h`, `src/board/board.cpp`, `src/search/search.cpp`, `tests/makemove_tests.cpp`, `tests/search_tests.cpp`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`). Confirm a real `ctest` run is fully green on all 6 platforms, and this time also confirm the build logs are actually read for compiler warnings (not just grepped for "error"/"FAILED"), per the action item from two sessions ago (docs/DECISIONS.md, 2026-08-21 (3))'s note about CI's sanitizer coverage possibly having blind spots. If green, Phase 4 continues with its next unchecked ROADMAP.md item: Late move reductions (LMR) — read `src/search/ordering.h`/`.cpp` in full first (LMR's reduction decisions typically lean on the same move-ordering signals — history score, move index — already computed there). Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-21 (2) — Session 19: Pawn hash table (Phase 3) — and a critical bug found/fixed along the way
 
 **What was built:** Phase 3's "Pawn hash table" item, now that the previous session's pawn structure eval gives it real values to cache. Full design in docs/DECISIONS.md (2026-08-21 (2)).
