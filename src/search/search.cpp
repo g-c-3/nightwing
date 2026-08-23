@@ -81,6 +81,16 @@ constexpr int kNullMoveReduction = 2;       // R for depth < kNullMoveBigReducti
 constexpr int kNullMoveBigReductionDepth = 6;
 constexpr int kNullMoveBigReduction = 3;    // R for depth >= kNullMoveBigReductionDepth
 
+/// Late move reductions (CPW "Late Move Reductions", negamax()'s move
+/// loop below) constants. Same "simple, hand-verifiable two-tier
+/// scheme over a smoother formula" choice as the null-move-pruning
+/// constants just above, and the same not-yet-tuned status.
+constexpr int kLMRMinDepth = 3;        // don't bother below this remaining depth
+constexpr int kLMRMinMoveIndex = 4;    // don't reduce the first few (already well-ordered) moves
+constexpr int kLMRReduction = 1;       // R for depth < kLMRBigReductionDepth
+constexpr int kLMRBigReductionDepth = 6;
+constexpr int kLMRBigReduction = 2;    // R for depth >= kLMRBigReductionDepth
+
 // search_iterative_deepening() (below) only checks its time budget
 // *between* full-depth search_fixed_depth() calls, not mid-search --
 // negamax() itself has no clock/stop-flag awareness. True mid-search
@@ -203,6 +213,23 @@ constexpr int kNullMoveBigReduction = 3;    // R for depth >= kNullMoveBigReduct
 /// correct precisely because only the currently-active root-to-here
 /// path is ever read backward from, never a stale sibling's leftover
 /// entry at the same ply.
+///
+/// Late move reductions (CPW "Late Move Reductions", the move loop
+/// below) reduce depth for LATE, QUIET moves specifically -- ones far
+/// enough into the already-ordered move list (order_moves(), search/
+/// ordering.h) that they're unlikely to be the best move here, so a
+/// cheap reduced-depth probe first is worth the risk of occasionally
+/// needing a full-depth re-verification. This slots into the existing
+/// PVS null-window structure as one MORE fallback step before it, not a
+/// separate mechanism: reduced null-window probe -> (only if it beats
+/// alpha) full-DEPTH null-window re-check -> (only if THAT still beats
+/// alpha and stays below beta) the existing full-WINDOW re-search. A
+/// move never gets reduced at all when in check (few, forced-feeling
+/// replies -- not a good candidate for a shortcut), when it's a capture
+/// or promotion (tactical moves need full-depth verification, the same
+/// reasoning NMP's own guards lean on), or when it's not late enough
+/// in the list yet (kLMRMinMoveIndex) -- see this file's kLMR* constants
+/// for the exact thresholds.
 ///
 /// Null-move pruning (see the NMP block right after IIR, below) needs
 /// one more piece of state IIR/IID's own logic never did: whether a
@@ -465,6 +492,11 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 
     order_moves(moves, pos, tt_move, killers, ply, history);
 
+    // Computed once, reused by LMR's eligibility check below (moves
+    // themselves don't change whether the position THEY'RE PLAYED FROM
+    // was in check) rather than re-derived per move.
+    const bool us_in_check = in_check(pos);
+
     int best = -kInfinity;
     Move best_move; // Move() default (null) unless overwritten below — every real position has >=1 move here.
     for (int i = 0; i < moves.size(); ++i) {
@@ -483,15 +515,39 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history,
                               game_history, path, pawn_tt);
         } else {
+            // Late move reductions (CPW "Late Move Reductions", this
+            // function's header comment): only quiet, non-check-evading
+            // moves late enough in order_moves()'s ranking get reduced
+            // -- see kLMR* constants above for the exact thresholds.
+            const bool eligible_for_lmr = !us_in_check && depth >= kLMRMinDepth &&
+                                           i >= kLMRMinMoveIndex && !move.is_capture() &&
+                                           !move.is_promotion();
+            const int reduction = eligible_for_lmr ? (depth >= kLMRBigReductionDepth
+                                                            ? kLMRBigReduction
+                                                            : kLMRReduction)
+                                                     : 0;
+
             // PVS: probe every later move with a null (zero-width)
             // window first -- cheap, since it only needs to prove
             // "fails low against alpha" or "fails high," not compute an
             // exact score. Only if the probe suggests this move might
             // actually beat alpha (a fail-high on the null window that's
             // still below beta) is it worth paying for a full-window
-            // re-search to get its real score.
-            score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, nodes, tt, killers, history,
-                              game_history, path, pawn_tt);
+            // re-search to get its real score. Reduced depth (LMR) when
+            // `reduction > 0` -- see this function's header comment for
+            // how that interacts with the two fallback steps below.
+            score = -negamax(pos, depth - 1 - reduction, -alpha - 1, -alpha, ply + 1, nodes, tt,
+                              killers, history, game_history, path, pawn_tt);
+            if (reduction > 0 && score > alpha) {
+                // The reduced probe suggested this move might actually
+                // be good -- not trustworthy on its own (a shallower
+                // search can overstate a quiet move's value), so
+                // re-verify at full depth (still a null window -- this
+                // is still just a probe) before deciding whether the
+                // full-window re-search below is warranted.
+                score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, nodes, tt, killers,
+                                  history, game_history, path, pawn_tt);
+            }
             if (score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history,
                                   game_history, path, pawn_tt);
