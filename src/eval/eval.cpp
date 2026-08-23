@@ -2,6 +2,7 @@
 
 #include "eval/eval.h"
 
+#include "board/zobrist.h"
 #include "eval/pawns.h"
 #include "eval/psqt.h"
 #include "eval/score.h"
@@ -35,7 +36,7 @@ namespace {
 
 } // namespace
 
-int evaluate(const board::Position& pos) noexcept {
+int evaluate(const board::Position& pos, PawnHashTable* pawn_tt) noexcept {
     using board::Color;
     using board::Piece;
     using board::PieceType;
@@ -60,7 +61,21 @@ int evaluate(const board::Position& pos) noexcept {
         }
     }
 
-    return taper(score + pawn_structure_value(pos), compute_phase(pos));
+    Score pawn_score;
+    if (pawn_tt == nullptr) {
+        pawn_score = pawn_structure_value(pos);
+    } else {
+        const std::uint64_t pawn_key = board::compute_pawn_hash(pos);
+        const auto [hit, cached] = pawn_tt->probe(pawn_key);
+        if (hit) {
+            pawn_score = cached;
+        } else {
+            pawn_score = pawn_structure_value(pos);
+            pawn_tt->store(pawn_key, pawn_score);
+        }
+    }
+
+    return taper(score + pawn_score, compute_phase(pos));
 }
 
 } // namespace nightwing::eval

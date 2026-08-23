@@ -10,6 +10,7 @@
 // the rest of Phase 5's terms land incrementally after this.
 
 #include "board/board.h"
+#include "eval/pawn_tt.h"
 
 namespace nightwing::eval {
 
@@ -28,6 +29,15 @@ namespace nightwing::eval {
 /// this is the right tradeoff for Phase 2's "get something playing"
 /// goal specifically, and revisit once eval has enough terms and a
 /// profiled hot path to justify the accumulator's extra bookkeeping.
-[[nodiscard]] int evaluate(const board::Position& pos) noexcept;
+///
+/// `pawn_tt`, if non-null, is probed/stored around the pawn_structure_value()
+/// term specifically (eval/pawns.h) via board::compute_pawn_hash() (board/
+/// zobrist.h) as the key — every OTHER term (material, PSQT) is still
+/// recomputed fresh every call, since only pawn structure gets its own
+/// cache (docs/DECISIONS.md, 2026-08-21 pawn hash table entry). Defaults
+/// to nullptr, which just means "always recompute pawn structure" —
+/// existing callers/tests are unaffected and still correct, just without
+/// the cache's speedup.
+[[nodiscard]] int evaluate(const board::Position& pos, PawnHashTable* pawn_tt = nullptr) noexcept;
 
 } // namespace nightwing::eval
