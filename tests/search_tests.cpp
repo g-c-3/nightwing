@@ -352,6 +352,27 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
     REQUIRE(result.score >= kMateThreshold);
 }
 
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "late move pruning active",
+          "[search][lmp]") {
+    init_all();
+    // Same position/rationale as the IIR/NMP/LMR regression tests above
+    // -- reused again here specifically for LMP (search.cpp's negamax()
+    // move loop, the new move-count-based skip checked ahead of LMR's
+    // own reduction). LMP is strictly more aggressive than LMR (it can
+    // skip a quiet move's search entirely, not just reduce it), so a
+    // bug in its guards -- the in-check exclusion, the mate-threshold
+    // guard, the quiets_tried counter itself -- risks silently pruning
+    // away the one quiet move that was actually needed somewhere along
+    // this forced mating line, not just searching it less deeply. Depth
+    // 6 comfortably exceeds kLMPMaxDepth at the shallower internal
+    // nodes this search reaches, so LMP's skip path is genuinely
+    // exercised here, not just present in the code but never triggered.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
 TEST_CASE("search_fixed_depth: back-rank mate in 1 is still found exactly when searched well "
           "beyond the mating depth (mate distance pruning)",
           "[search][mdp]") {
