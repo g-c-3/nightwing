@@ -437,7 +437,33 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
     REQUIRE(result.score >= kMateThreshold);
 }
 
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "continuation history active",
+          "[search][continuation_history]") {
+    init_all();
+    // Same position/rationale as the IIR/NMP/LMR/LMP/futility/razoring/
+    // history-pruning regression tests above -- reused again here
+    // specifically for continuation history (search/ordering.h's
+    // ContinuationHistoryTable, threaded through search.cpp's
+    // negamax()/search_root() as `cont_history`/`prev_piece`/`prev_to`).
+    // This is purely a move-ORDERING signal (added into score_move(),
+    // search/ordering.cpp), not a pruning technique -- nothing here can
+    // change which moves are legal or searched, only what order they're
+    // tried in -- so a bug in the threading (the wrong piece/square
+    // captured before make_move(), a `prev_piece`/`prev_to` pair not
+    // actually reaching the intended child call) risks silently
+    // misordering moves rather than mis-scoring the position, but the
+    // deepest confirmation available without a real bench/perft
+    // comparison is still that the correct forced mate is found exactly
+    // once continuation history is live end-to-end across the whole
+    // recursive call chain this test exercises.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
 
+
+          "beyond the mating depth (mate distance pruning)",
           "[search][mdp]") {
     init_all();
     // Same position as the "finds a back-rank mate in 1" test above, but
