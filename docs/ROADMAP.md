@@ -48,7 +48,7 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [x] Late move pruning (LMP) / move-count based pruning at low depth
 - [x] Futility pruning
 - [x] Razoring
-- [ ] History pruning (skip quiet moves with poor history score at low depth)
+- [x] History pruning (skip quiet moves with poor history score at low depth)
 - [ ] Continuation history (1-ply and 2-ply "counter-move history" for move ordering + pruning decisions)
 - [ ] ProbCut / multi-cut pruning
 - [ ] Delta pruning in quiescence search
@@ -127,4 +127,4 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Current phase: 4 — Pruning & Extensions.** Next task: History pruning (skip quiet moves with poor history score at low depth).
+**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Current phase: 4 — Pruning & Extensions.** Next task: Continuation history.
