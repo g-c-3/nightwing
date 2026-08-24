@@ -373,6 +373,26 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
     REQUIRE(result.score >= kMateThreshold);
 }
 
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "futility pruning active",
+          "[search][futility]") {
+    init_all();
+    // Same position/rationale as the IIR/NMP/LMR/LMP regression tests
+    // above -- reused again here specifically for futility pruning
+    // (search.cpp's negamax() move loop, the new node-level static-eval
+    // check ahead of LMP and LMR). Futility pruning is checked FIRST in
+    // the else-branch cascade, so a bug in its guards -- the
+    // not-in-check/mate-range exclusions, the static-eval computation
+    // itself, the margin table -- risks silently pruning away a quiet
+    // move a forced line needed before LMP or LMR even get a chance to
+    // run. Depth 6 gives internal nodes at remaining depth <=
+    // kFutilityMaxDepth (3) plenty of opportunity to actually trigger
+    // the skip, not just leave the code present but unexercised.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
 TEST_CASE("search_fixed_depth: back-rank mate in 1 is still found exactly when searched well "
           "beyond the mating depth (mate distance pruning)",
           "[search][mdp]") {
