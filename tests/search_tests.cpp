@@ -415,8 +415,29 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
     REQUIRE(result.score >= kMateThreshold);
 }
 
-TEST_CASE("search_fixed_depth: back-rank mate in 1 is still found exactly when searched well "
-          "beyond the mating depth (mate distance pruning)",
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "history pruning active",
+          "[search][history_pruning]") {
+    init_all();
+    // Same position/rationale as the IIR/NMP/LMR/LMP/futility/razoring
+    // regression tests above -- reused again here specifically for
+    // history pruning (search.cpp's negamax() move loop, checked
+    // independently of, right alongside, the existing LMP check). A
+    // fresh HistoryTable starts every move at score 0, so at shallow
+    // depth this check is maximally aggressive early in a fresh search
+    // -- exactly the situation where a guard bug (the not-in-check
+    // exclusion, the mate-range guard, an off-by-one in the threshold
+    // table) would most plausibly prune away a move this forced mating
+    // line actually needs. Depth 6 gives internal nodes at remaining
+    // depth <= kHistoryPruningMaxDepth (3) plenty of opportunity to
+    // trigger the check, not just leave the code present but
+    // unexercised.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
+
           "[search][mdp]") {
     init_all();
     // Same position as the "finds a back-rank mate in 1" test above, but
