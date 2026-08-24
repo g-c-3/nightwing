@@ -112,6 +112,33 @@ constexpr std::array<int, kLMPMaxDepth + 1> kLMPMoveCountLimits = {
     0, 5, 8, 13, 18, 25, 32, 41, 50,
 };
 
+/// Futility pruning (CPW "Futility Pruning", negamax()'s move loop
+/// below) constants. At shallow remaining depth, if the node's own
+/// static evaluation (computed once, before the move loop -- the value
+/// doesn't depend on which move is being considered) is already so far
+/// below alpha that even a generous per-depth margin couldn't plausibly
+/// close the gap, quiet, non-check-giving moves at this node are
+/// skipped outright rather than searched -- CPW's own stated caveat
+/// applies (`static_eval` is a rough proxy, not the move's real
+/// post-move value, so this is a heuristic, not provably exact).
+/// kFutilityMargins is a fixed lookup table (index 0 unused, same
+/// reasoning as kLMPMoveCountLimits just above) rather than a formula,
+/// for the same hand-verification-without-a-compiler reasoning as
+/// every other pruning constant in this file. Deliberately narrow
+/// (kFutilityMaxDepth = 3, CPW's own "frontier"/near-frontier range) --
+/// the margin's job is bounding how much a quiet move could plausibly
+/// swing the eval by remaining-depth plies of further search, and that
+/// bound gets far less trustworthy the deeper the remaining search is.
+/// Linear margin growth (100cp per remaining ply) rather than a
+/// quadratic or exponential shape, matching the project's existing
+/// preference for the simplest scheme that's still a real, documented
+/// first draft -- not yet tuned for Nightwing specifically, same
+/// caveat as every other constant in this file.
+constexpr int kFutilityMaxDepth = 3;
+constexpr std::array<int, kFutilityMaxDepth + 1> kFutilityMargins = {
+    0, 100, 200, 300,
+};
+
 // search_iterative_deepening() (below) only checks its time budget
 // *between* full-depth search_fixed_depth() calls, not mid-search --
 // negamax() itself has no clock/stop-flag awareness. True mid-search
@@ -273,6 +300,21 @@ constexpr std::array<int, kLMPMaxDepth + 1> kLMPMoveCountLimits = {
 /// move, since side-to-move has already flipped to the opponent by
 /// then -- a true result means this move gives check. See this file's
 /// kLMP* constants for the exact per-depth thresholds.
+///
+/// Futility pruning (CPW "Futility Pruning", the move loop below) is a
+/// third, node-level check alongside LMP, evaluated once per node (not
+/// once per move -- unlike LMP's `quiets_tried` counter, the underlying
+/// condition, "is this node's static eval already too far below alpha
+/// for a quiet move to plausibly close the gap," doesn't change as the
+/// move loop progresses, only the move being considered does) using
+/// `eval::evaluate()` computed before the move loop starts. Only
+/// computed at all when it could actually matter (shallow remaining
+/// depth, not in check, alpha not already in mate range) to avoid
+/// paying eval's cost at nodes where futility could never apply anyway.
+/// Same quiet/non-check-giving move restriction as LMP, for the same
+/// reason (a capture or a check can swing the position's real value
+/// well past a static margin's estimate). See this file's kFutility*
+/// constants for the exact per-depth margins.
 ///
 /// Null-move pruning (see the NMP block right after IIR, below) needs
 /// one more piece of state IIR/IID's own logic never did: whether a
@@ -540,6 +582,25 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // was in check) rather than re-derived per move.
     const bool us_in_check = in_check(pos);
 
+    // Futility pruning's static eval (this function's header comment):
+    // computed once per node, before the move loop, since the
+    // condition it feeds doesn't depend on which move is being
+    // considered -- only on the position BEFORE any of them are
+    // played. Only computed when it could actually be used (shallow
+    // remaining depth, not in check, alpha not already mate-range) to
+    // avoid paying eval::evaluate()'s cost at nodes where futility
+    // could never apply anyway.
+    const bool futility_may_apply =
+        !us_in_check && depth <= kFutilityMaxDepth && alpha < kMateThreshold;
+    int static_eval = 0;
+    if (futility_may_apply) {
+        const int white_relative = eval::evaluate(pos, &pawn_tt);
+        static_eval = us == Color::White ? white_relative : -white_relative;
+    }
+    const bool futility_prune_node =
+        futility_may_apply &&
+        static_eval + kFutilityMargins[static_cast<std::size_t>(depth)] <= alpha;
+
     int best = -kInfinity;
     Move best_move; // Move() default (null) unless overwritten below — every real position has >=1 move here.
     // Count of quiet (non-capture, non-promotion) moves already tried at
@@ -568,6 +629,27 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history,
                               game_history, path, pawn_tt);
         } else {
+            // "Gives check" is computed once here, right after the move
+            // is already applied -- no dedicated move flag exists in
+            // this codebase for it (see this function's header
+            // comment) -- and reused by both cascading checks below.
+            const bool move_gives_check = in_check(pos);
+
+            // Futility pruning (CPW "Futility Pruning", this function's
+            // header comment): a node-level condition -- computed once,
+            // before the move loop, since it doesn't depend on which
+            // move is being tried -- checked first among this branch's
+            // three cascading checks since, like LMP, it can skip the
+            // move outright at zero search cost. Same quiet/non-check
+            // restriction as LMP, for the same reason (a capture or
+            // check can swing the real value well past a static
+            // margin's estimate).
+            if (futility_prune_node && move_is_quiet && !move_gives_check) {
+                board::unmake_move(pos, move, undo);
+                ++quiets_tried;
+                continue;
+            }
+
             // Late move pruning (CPW "Move Count Based Pruning", this
             // function's header comment): a strict subset of LMR's own
             // eligibility, checked first since it can skip the move
@@ -577,7 +659,6 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // codebase -- see this function's header comment), so this
             // check comes after make_move() above, using the fact that
             // side-to-move has already flipped to the opponent by then.
-            const bool move_gives_check = in_check(pos);
             if (!us_in_check && move_is_quiet && !move_gives_check && depth <= kLMPMaxDepth &&
                 quiets_tried >= kLMPMoveCountLimits[static_cast<std::size_t>(depth)] &&
                 alpha > -kMateThreshold) {
