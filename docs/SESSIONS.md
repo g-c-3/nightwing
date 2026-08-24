@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+## 2026-08-24 — Session 22: Late move pruning (Phase 4 continues)
+
+**What was built:** Phase 4's next item, LMP (move-count based pruning), added to `negamax()`'s existing PVS/LMR `else` branch in `src/search/search.cpp`, checked ahead of LMR's own eligibility logic since LMP is strictly more aggressive (skips a quiet move's search entirely rather than just reducing it) and applies to a subset of what LMR would otherwise reduce. New `kLMPMaxDepth`/`kLMPMoveCountLimits` constants (a fixed lookup table, not a formula, matching this project's existing hand-verification preference); a new per-node `quiets_tried` counter (deliberately distinct from the raw move index `i`, since LMP's premise is about how many quiet alternatives have already failed, not where a move sits relative to captures/promotions ahead of it in the ordering); "gives check" determined the same way as everywhere else in this codebase (no dedicated move flag) by reading `in_check(pos)` right after `board::make_move()` applies the candidate move. Full design and rationale in docs/DECISIONS.md (2026-08-24). `negamax()`'s header comment extended with an LMP section mirroring the existing LMR section. `tests/search_tests.cpp` — one new regression test, reusing the same externally-verified mate-in-3 position already used for the IIR/NMP/LMR checks, confirmed still correct with LMP active at a depth comfortably exceeding `kLMPMaxDepth`.
+
+**Bugs fixed:** None this session.
+
+**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-24) — LMP's design (guards, the `quiets_tried` counter, the threshold table, where it sits relative to LMR in the cascade).
+
+**Verification:** No compiler toolchain available in this environment, same as every session. The change was kept additive to the exact `else` branch LMR itself extended last session (verified unchanged from last session's known-correct state before editing). Brace-balance swept on both touched files (`search.cpp`, `search_tests.cpp`) — balanced (62/62 in search.cpp; a pre-existing, unrelated paren-count artifact confined to comments was confirmed present in the file *before* this session's edit too, so not a symptom of this change). Like LMR and NMP before it, this genuinely changes search-tree shape (a move can now be skipped outright, not just reduced), so a real `ctest` run checking the existing perft/mate/node-count tests remain green — not just the new `[lmp]`-tagged test — matters here too, and specifically: LMP is more aggressive than LMR, so a guard bug here risks silently pruning away a move a forced line actually needed, not just searching it less deeply.
+
+**Next session start point:** Push `src/search/search.cpp` and `tests/search_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. Confirm a real `ctest` run is fully green on all 6 platforms. If green, Phase 4 continues with its next unchecked item: Futility pruning — read the just-updated `negamax()` move loop in full first (futility pruning typically applies its own static-eval-plus-margin check near the top of the move loop or per-move, alongside the LMP check just added, so it needs to compose cleanly with both LMP and LMR's own eligibility logic rather than duplicate their guards). Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-21 (4) — Session 21: Late move reductions (Phase 4 continues)
 
 **What was built:** Phase 4's next item, LMR, integrated directly into `negamax()`'s existing PVS `else` branch (move loop) as one more cascading fallback step rather than a separate mechanism — full design and rationale in docs/DECISIONS.md (2026-08-21 (6)). `src/search/search.cpp` — new `kLMR*` constants (same simple two-tier reduction style as null-move pruning's own constants last session); `us_in_check` now computed once before the move loop and reused for LMR's eligibility check; the reduction/re-verification logic itself. `tests/search_tests.cpp` — one new regression test reusing the same externally-verified mate-in-3 position already used for the IIR and NMP checks, confirmed still correct with LMR active.
