@@ -112,6 +112,29 @@ constexpr std::array<int, kLMPMaxDepth + 1> kLMPMoveCountLimits = {
     0, 5, 8, 13, 18, 25, 32, 41, 50,
 };
 
+/// History pruning (CPW "History Leaf Pruning" / move loop below)
+/// constants: distinct from, and checked alongside, LMP -- LMP's skip
+/// is purely a function of HOW MANY quiet moves have already been
+/// tried (`quiets_tried`), while this is a function of a specific
+/// move's own accumulated `HistoryTable` score (search/ordering.h),
+/// regardless of its position in the list. `order_moves()` already
+/// sorts quiet moves by descending history score, so in practice a
+/// move failing this threshold tends to sit late in the quiet tail
+/// anyway -- but this check can trigger independently of (and
+/// potentially earlier than) LMP's own move-count threshold at very
+/// shallow depth, when even an early quiet candidate's history score is
+/// poor enough. kHistoryPruningThresholds is a fixed lookup table
+/// (index 0 unused, same convention as kLMPMoveCountLimits above),
+/// decreasing with depth (more aggressive right at the shallowest
+/// depth, near-disabled by kHistoryPruningMaxDepth's own ceiling) --
+/// same hand-verification-without-a-compiler reasoning as every other
+/// pruning constant in this file, not yet tuned for Nightwing
+/// specifically.
+constexpr int kHistoryPruningMaxDepth = 3;
+constexpr std::array<int, kHistoryPruningMaxDepth + 1> kHistoryPruningThresholds = {
+    0, 300, 150, 50,
+};
+
 /// Futility pruning (CPW "Futility Pruning", negamax()'s move loop
 /// below) constants. At shallow remaining depth, if the node's own
 /// static evaluation (computed once, before the move loop -- the value
@@ -317,6 +340,21 @@ constexpr std::array<int, kRazorMaxDepth + 1> kRazorMargins = {
 /// move, since side-to-move has already flipped to the opponent by
 /// then -- a true result means this move gives check. See this file's
 /// kLMP* constants for the exact per-depth thresholds.
+///
+/// History pruning (CPW "History Leaf Pruning", the move loop below) is
+/// checked alongside LMP, using the same quiet/non-check-giving move
+/// restriction, but a different signal: not how many quiet alternatives
+/// have already been tried (LMP's `quiets_tried`), but this SPECIFIC
+/// move's own accumulated `HistoryTable` score (search/ordering.h) --
+/// skipped outright when that score is below a per-depth threshold, on
+/// the premise that a quiet move which has rarely-if-ever caused a beta
+/// cutoff elsewhere in this search is a poor bet to spend a full search
+/// on this late in the game tree. Independent of LMP's own check (both
+/// run, either can trigger the skip on its own) rather than folded into
+/// one combined condition, since they measure genuinely different
+/// things and either one failing is already sufficient reason to skip.
+/// See this file's kHistoryPruning* constants for the exact per-depth
+/// thresholds.
 ///
 /// Futility pruning (CPW "Futility Pruning", the move loop below) is a
 /// third, node-level check alongside LMP, evaluated once per node (not
@@ -725,6 +763,21 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             if (!us_in_check && move_is_quiet && !move_gives_check && depth <= kLMPMaxDepth &&
                 quiets_tried >= kLMPMoveCountLimits[static_cast<std::size_t>(depth)] &&
                 alpha > -kMateThreshold) {
+                board::unmake_move(pos, move, undo);
+                ++quiets_tried;
+                continue;
+            }
+
+            // History pruning (CPW "History Leaf Pruning", this
+            // function's header comment): independent of LMP's own
+            // check just above -- a different signal (this move's own
+            // HistoryTable score, not how many quiet alternatives have
+            // already been tried), either sufficient on its own to skip
+            // the move. Same not-in-check/quiet/non-check-giving/
+            // mate-range guards as LMP, for the same reasons.
+            if (!us_in_check && move_is_quiet && !move_gives_check &&
+                depth <= kHistoryPruningMaxDepth && alpha > -kMateThreshold &&
+                history.score(us, move) < kHistoryPruningThresholds[static_cast<std::size_t>(depth)]) {
                 board::unmake_move(pos, move, undo);
                 ++quiets_tried;
                 continue;
