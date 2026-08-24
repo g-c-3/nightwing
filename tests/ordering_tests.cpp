@@ -114,6 +114,69 @@ TEST_CASE("HistoryTable: colors and squares are independent", "[ordering][histor
     REQUIRE(history.score(Color::White, black_move) == 0); // different move entirely
 }
 
+TEST_CASE("ContinuationHistoryTable: an unrecorded combination scores 0", "[ordering][continuation_history]") {
+    ContinuationHistoryTable cont_history;
+    REQUIRE(cont_history.score(PieceType::Knight, make_square(4, 3), PieceType::Bishop,
+                                make_square(2, 5)) == 0);
+}
+
+TEST_CASE("ContinuationHistoryTable: update() adds a depth-squared bonus, same weighting as "
+          "HistoryTable's",
+          "[ordering][continuation_history]") {
+    ContinuationHistoryTable cont_history;
+    cont_history.update(PieceType::Knight, make_square(4, 3), PieceType::Bishop, make_square(2, 5),
+                         /*depth=*/4);
+    REQUIRE(cont_history.score(PieceType::Knight, make_square(4, 3), PieceType::Bishop,
+                                make_square(2, 5)) == 16); // 4*4
+    cont_history.update(PieceType::Knight, make_square(4, 3), PieceType::Bishop, make_square(2, 5),
+                         /*depth=*/3);
+    REQUIRE(cont_history.score(PieceType::Knight, make_square(4, 3), PieceType::Bishop,
+                                make_square(2, 5)) == 25); // 16 + 3*3
+}
+
+TEST_CASE("ContinuationHistoryTable: a PieceType::None prev_piece is always a no-op/zero",
+          "[ordering][continuation_history]") {
+    // The "no real preceding move" sentinel (search/ordering.h's own
+    // header comment) -- the true search root, or immediately after a
+    // null move. update() must not record anything, and score() must
+    // always report 0, regardless of how many times either is called.
+    ContinuationHistoryTable cont_history;
+    cont_history.update(PieceType::None, make_square(4, 3), PieceType::Bishop, make_square(2, 5),
+                         /*depth=*/10);
+    REQUIRE(cont_history.score(PieceType::None, make_square(4, 3), PieceType::Bishop,
+                                make_square(2, 5)) == 0);
+}
+
+TEST_CASE("ContinuationHistoryTable: distinct preceding-move contexts are independent",
+          "[ordering][continuation_history]") {
+    // The same reply (Bishop to the same square) following two DIFFERENT
+    // preceding moves must be tracked separately -- this is the entire
+    // point of the table (distinct from HistoryTable, which has no
+    // notion of what came before).
+    ContinuationHistoryTable cont_history;
+    cont_history.update(PieceType::Knight, make_square(4, 3), PieceType::Bishop, make_square(2, 5),
+                         /*depth=*/5);
+    REQUIRE(cont_history.score(PieceType::Knight, make_square(4, 3), PieceType::Bishop,
+                                make_square(2, 5)) == 25);
+    REQUIRE(cont_history.score(PieceType::Rook, make_square(4, 3), PieceType::Bishop,
+                                make_square(2, 5)) == 0); // different prev_piece
+    REQUIRE(cont_history.score(PieceType::Knight, make_square(0, 0), PieceType::Bishop,
+                                make_square(2, 5)) == 0); // different prev_to
+}
+
+TEST_CASE("ContinuationHistoryTable: score is clamped and never overflows",
+          "[ordering][continuation_history]") {
+    ContinuationHistoryTable cont_history;
+    for (int i = 0; i < 100; ++i) {
+        cont_history.update(PieceType::Knight, make_square(4, 3), PieceType::Bishop, make_square(2, 5),
+                             /*depth=*/50); // 50*50 = 2500 per call, far exceeding the cap quickly
+    }
+    const int score = cont_history.score(PieceType::Knight, make_square(4, 3), PieceType::Bishop,
+                                          make_square(2, 5));
+    REQUIRE(score > 0);
+    REQUIRE(score <= 8192); // matches ContinuationHistoryTable::kContinuationHistoryMax (private)
+}
+
 TEST_CASE("order_moves: the TT move is always ordered first when present", "[ordering]") {
     init_all();
     // White queen e4, rook c4, knight b4; Black rook c6, pawn d5, king e8.
@@ -127,13 +190,14 @@ TEST_CASE("order_moves: the TT move is always ordered first when present", "[ord
 
     KillerTable killers;
     HistoryTable history;
+    ContinuationHistoryTable cont_history;
     // Without a TT move, Rxc6 (captures a rook) should outrank Qxd5
     // (captures a pawn) on MVV-LVA alone -- sanity-check that first,
     // then confirm the TT move overrides it.
-    order_moves(moves, pos, Move(), killers, 0, history);
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, PieceType::None, 0);
     REQUIRE(moves[0] == rxc6);
 
-    order_moves(moves, pos, /*tt_move=*/qxd5, killers, 0, history);
+    order_moves(moves, pos, /*tt_move=*/qxd5, killers, 0, history, cont_history, PieceType::None, 0);
     REQUIRE(moves[0] == qxd5);
 }
 
@@ -150,7 +214,8 @@ TEST_CASE("order_moves: MVV -- capturing the more valuable victim ranks first re
 
     KillerTable killers;
     HistoryTable history;
-    order_moves(moves, pos, Move(), killers, 0, history);
+    ContinuationHistoryTable cont_history;
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, PieceType::None, 0);
     REQUIRE(moves[0] == rxc6); // rook victim (500) beats pawn victim (100) regardless of attacker value
 }
 
@@ -166,7 +231,8 @@ TEST_CASE("order_moves: LVA -- among equal victims, the cheaper attacker ranks f
 
     KillerTable killers;
     HistoryTable history;
-    order_moves(moves, pos, Move(), killers, 0, history);
+    ContinuationHistoryTable cont_history;
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, PieceType::None, 0);
     REQUIRE(moves[0] == nxd5); // same victim (pawn) -- cheaper attacker (knight < queen) goes first
 }
 
@@ -184,7 +250,8 @@ TEST_CASE("order_moves: captures rank above non-capture promotions", "[ordering]
 
     KillerTable killers;
     HistoryTable history;
-    order_moves(moves, pos, Move(), killers, 0, history);
+    ContinuationHistoryTable cont_history;
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, PieceType::None, 0);
     REQUIRE(moves[0] == qxd5); // any capture outranks a non-capture promotion in this scheme
 }
 
@@ -200,7 +267,8 @@ TEST_CASE("order_moves: a non-capture promotion ranks above a plain quiet move",
 
     KillerTable killers;
     HistoryTable history;
-    order_moves(moves, pos, Move(), killers, 0, history);
+    ContinuationHistoryTable cont_history;
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, PieceType::None, 0);
     REQUIRE(moves[0] == promo);
 }
 
@@ -217,7 +285,8 @@ TEST_CASE("order_moves: a killer move ranks above an unrelated quiet move with n
     KillerTable killers;
     killers.update(/*ply=*/2, killer_move);
     HistoryTable history;
-    order_moves(moves, pos, Move(), killers, /*ply=*/2, history);
+    ContinuationHistoryTable cont_history;
+    order_moves(moves, pos, Move(), killers, /*ply=*/2, history, cont_history, PieceType::None, 0);
     REQUIRE(moves[0] == killer_move);
 }
 
@@ -234,7 +303,8 @@ TEST_CASE("order_moves: a killer move only applies at its own recorded ply", "[o
     KillerTable killers;
     killers.update(/*ply=*/2, killer_move); // recorded at ply 2...
     HistoryTable history;
-    order_moves(moves, pos, Move(), killers, /*ply=*/7, history); // ...but ordering happens at ply 7
+    ContinuationHistoryTable cont_history;
+    order_moves(moves, pos, Move(), killers, /*ply=*/7, history, cont_history, PieceType::None, 0); // ...but ordering happens at ply 7
     REQUIRE(moves[0] == killer_move); // unaffected -- both still score 0 (no killer match, no history);
                                        // move-generation order (stable sort) keeps killer_move first
                                        // simply because it was pushed first, not because it "won."
@@ -252,9 +322,10 @@ TEST_CASE("order_moves: a higher-history quiet move ranks above a lower-history 
 
     KillerTable killers;
     HistoryTable history;
+    ContinuationHistoryTable cont_history;
     history.update(Color::White, good_move, /*depth=*/6); // 36
     history.update(Color::White, meh_move, /*depth=*/2);  // 4
-    order_moves(moves, pos, Move(), killers, 0, history);
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, PieceType::None, 0);
     REQUIRE(moves[0] == good_move);
 }
 
@@ -271,13 +342,14 @@ TEST_CASE("order_moves: history-scored quiets still rank below killers", "[order
     KillerTable killers;
     killers.update(2, killer_move);
     HistoryTable history;
+    ContinuationHistoryTable cont_history;
     // A very large history score -- still must not outrank a killer,
     // since killer scores (ordering.cpp) are deliberately kept above
     // HistoryTable::kHistoryMax's ceiling.
     for (int i = 0; i < 20; ++i) {
         history.update(Color::White, history_move, 50);
     }
-    order_moves(moves, pos, Move(), killers, 2, history);
+    order_moves(moves, pos, Move(), killers, 2, history, cont_history, PieceType::None, 0);
     REQUIRE(moves[0] == killer_move);
 }
 
@@ -293,7 +365,8 @@ TEST_CASE("order_moves: equal-scoring quiets keep move-generation order (stable 
 
     KillerTable killers;
     HistoryTable history;
-    order_moves(moves, pos, Move(), killers, 0, history);
+    ContinuationHistoryTable cont_history;
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, PieceType::None, 0);
     REQUIRE(moves[0] == first);
     REQUIRE(moves[1] == second);
 }

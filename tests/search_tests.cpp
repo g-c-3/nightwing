@@ -462,7 +462,7 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
     REQUIRE(result.score >= kMateThreshold);
 }
 
-
+TEST_CASE("search_fixed_depth: back-rank mate in 1 is still found exactly when searched well "
           "beyond the mating depth (mate distance pruning)",
           "[search][mdp]") {
     init_all();
