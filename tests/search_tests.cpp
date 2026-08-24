@@ -393,6 +393,28 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
     REQUIRE(result.score >= kMateThreshold);
 }
 
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "razoring active",
+          "[search][razoring]") {
+    init_all();
+    // Same position/rationale as the IIR/NMP/LMR/LMP/futility regression
+    // tests above -- reused again here specifically for razoring
+    // (search.cpp's negamax(), the new node-level check right after the
+    // NMP block, before movegen). Razoring is the most drastic of this
+    // phase's techniques so far -- it can skip an entire node's move
+    // loop, not just individual moves -- so a bug in its verification
+    // step (falling through to the normal move loop whenever quiescence
+    // itself disagrees with the static eval's pessimism) risks silently
+    // returning a wrong, unverified score for a node along this forced
+    // mating line rather than just searching it differently. Depth 6
+    // gives internal nodes at remaining depth <= kRazorMaxDepth (3)
+    // plenty of opportunity to actually trigger the check, not just
+    // leave the code present but unexercised.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
 TEST_CASE("search_fixed_depth: back-rank mate in 1 is still found exactly when searched well "
           "beyond the mating depth (mate distance pruning)",
           "[search][mdp]") {
