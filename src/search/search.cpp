@@ -91,6 +91,27 @@ constexpr int kLMRReduction = 1;       // R for depth < kLMRBigReductionDepth
 constexpr int kLMRBigReductionDepth = 6;
 constexpr int kLMRBigReduction = 2;    // R for depth >= kLMRBigReductionDepth
 
+/// Late move pruning (LMP) / move-count based pruning (CPW "Move Count
+/// Based Pruning", negamax()'s move loop below) constants. Only applies
+/// at shallow remaining depth (kLMPMaxDepth) -- the technique's own
+/// premise, "this many other candidates already failed to help, so one
+/// more deep into an already-long tail almost certainly won't either,"
+/// gets weaker the more plies of search remain to prove that wrong.
+/// kLMPMoveCountLimits is a fixed lookup table (index 0 unused --
+/// negamax() never reaches its move loop with depth <= 0, see the
+/// quiescence delegation at the top of this function -- kept only so
+/// kLMPMoveCountLimits[depth] reads directly, no off-by-one offset)
+/// rather than a formula, matching this project's existing preference
+/// (LMR/NMP's own two-tier constants above) for something exactly
+/// hand-verifiable at each depth without a compiler available. Roughly
+/// quadratic growth, a common shape for this technique in other
+/// engines -- not yet tuned for Nightwing specifically, same caveat as
+/// every other first-draft pruning constant in this file.
+constexpr int kLMPMaxDepth = 8;
+constexpr std::array<int, kLMPMaxDepth + 1> kLMPMoveCountLimits = {
+    0, 5, 8, 13, 18, 25, 32, 41, 50,
+};
+
 // search_iterative_deepening() (below) only checks its time budget
 // *between* full-depth search_fixed_depth() calls, not mid-search --
 // negamax() itself has no clock/stop-flag awareness. True mid-search
@@ -230,6 +251,28 @@ constexpr int kLMRBigReduction = 2;    // R for depth >= kLMRBigReductionDepth
 /// reasoning NMP's own guards lean on), or when it's not late enough
 /// in the list yet (kLMRMinMoveIndex) -- see this file's kLMR* constants
 /// for the exact thresholds.
+///
+/// Late move pruning (CPW "Move Count Based Pruning", the move loop
+/// below) goes one step further than LMR for a strict SUBSET of what
+/// LMR would otherwise reduce: once enough quiet, non-check-giving
+/// moves have already been tried at this node (this function's own
+/// `quiets_tried` counter, not the raw move index -- LMP's premise is
+/// specifically about how many quiet ALTERNATIVES have already failed
+/// to help, not where a move happens to sit in a list that also
+/// contains captures/promotions ahead of it) without any of them
+/// raising alpha, the remaining quiet tail is skipped outright --
+/// never even a reduced probe -- rather than searched at all. Only
+/// applies at shallow remaining depth (kLMPMaxDepth) and never when
+/// this node itself is in check (few, forced-feeling replies -- the
+/// same reasoning LMR excludes in-check nodes for) or when alpha is
+/// already in mate-score range (a position this close to a proven mate
+/// needs every candidate reply actually checked, not skipped on a
+/// move-count heuristic). "Gives check" is determined the same way
+/// as everywhere else in this codebase without a dedicated move flag:
+/// in_check(pos) read immediately after board::make_move() applies the
+/// move, since side-to-move has already flipped to the opponent by
+/// then -- a true result means this move gives check. See this file's
+/// kLMP* constants for the exact per-depth thresholds.
 ///
 /// Null-move pruning (see the NMP block right after IIR, below) needs
 /// one more piece of state IIR/IID's own logic never did: whether a
@@ -499,8 +542,18 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 
     int best = -kInfinity;
     Move best_move; // Move() default (null) unless overwritten below — every real position has >=1 move here.
+    // Count of quiet (non-capture, non-promotion) moves already tried at
+    // this node, incremented once per move below regardless of which
+    // path that move took (searched, LMR-reduced, or LMP-skipped) --
+    // late move pruning's own threshold check (kLMP* constants above,
+    // this function's header comment) is keyed on this, not the raw
+    // move index `i`, since LMP's premise is specifically about how many
+    // quiet ALTERNATIVES have already failed to help, not where a move
+    // sits in a list that also contains captures/promotions ahead of it.
+    int quiets_tried = 0;
     for (int i = 0; i < moves.size(); ++i) {
         const Move move = moves[i];
+        const bool move_is_quiet = !move.is_capture() && !move.is_promotion();
         UndoInfo undo;
         board::make_move(pos, move, undo);
 
@@ -515,6 +568,24 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history,
                               game_history, path, pawn_tt);
         } else {
+            // Late move pruning (CPW "Move Count Based Pruning", this
+            // function's header comment): a strict subset of LMR's own
+            // eligibility, checked first since it can skip the move
+            // entirely -- no reduced probe, no PVS null-window search at
+            // all. "Gives check" can only be known once the move is
+            // already applied (no dedicated move flag exists in this
+            // codebase -- see this function's header comment), so this
+            // check comes after make_move() above, using the fact that
+            // side-to-move has already flipped to the opponent by then.
+            const bool move_gives_check = in_check(pos);
+            if (!us_in_check && move_is_quiet && !move_gives_check && depth <= kLMPMaxDepth &&
+                quiets_tried >= kLMPMoveCountLimits[static_cast<std::size_t>(depth)] &&
+                alpha > -kMateThreshold) {
+                board::unmake_move(pos, move, undo);
+                ++quiets_tried;
+                continue;
+            }
+
             // Late move reductions (CPW "Late Move Reductions", this
             // function's header comment): only quiet, non-check-evading
             // moves late enough in order_moves()'s ranking get reduced
@@ -555,6 +626,9 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         }
 
         board::unmake_move(pos, move, undo);
+        if (move_is_quiet) {
+            ++quiets_tried;
+        }
 
         if (score > best) {
             best = score;
