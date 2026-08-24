@@ -139,6 +139,23 @@ constexpr std::array<int, kFutilityMaxDepth + 1> kFutilityMargins = {
     0, 100, 200, 300,
 };
 
+/// Razoring (CPW "Razoring", negamax()'s own node-level check right
+/// after the NMP block below) constants. Similar shape to futility
+/// pruning's margins above -- a fixed lookup table, index 0 unused, not
+/// yet tuned -- but deliberately wider at every depth: razoring is a
+/// more drastic decision than futility (it drops the ENTIRE node
+/// straight into quiescence search instead of running the normal move
+/// loop at all, not just skipping individual late quiet moves), so it
+/// needs stronger evidence -- a bigger gap between static eval and
+/// alpha -- before it's worth trusting. kRazorMaxDepth (3) matches
+/// kFutilityMaxDepth's own shallow-only scope, for the same reason: a
+/// static eval's margin is a much weaker signal about what deeper
+/// search might still find the further from the leaves it's applied.
+constexpr int kRazorMaxDepth = 3;
+constexpr std::array<int, kRazorMaxDepth + 1> kRazorMargins = {
+    0, 300, 400, 500,
+};
+
 // search_iterative_deepening() (below) only checks its time budget
 // *between* full-depth search_fixed_depth() calls, not mid-search --
 // negamax() itself has no clock/stop-flag awareness. True mid-search
@@ -315,6 +332,28 @@ constexpr std::array<int, kFutilityMaxDepth + 1> kFutilityMargins = {
 /// reason (a capture or a check can swing the position's real value
 /// well past a static margin's estimate). See this file's kFutility*
 /// constants for the exact per-depth margins.
+///
+/// Razoring (CPW "Razoring", the node-level check right after the NMP
+/// block below, before movegen) is a more drastic cousin of futility
+/// pruning: instead of skipping individual late quiet moves inside the
+/// move loop, it can skip the ENTIRE move loop for this node when the
+/// static eval is so far below alpha (a wider margin than futility's
+/// own, see kRazor* constants) that no move here plausibly recovers.
+/// Rather than trusting that verdict outright, it drops into
+/// quiescence search (which still correctly resolves the position's
+/// own captures/checks/terminal status -- see quiescence()'s own
+/// header comment) and only returns early if the quiescence result
+/// ITSELF independently confirms the same conclusion (still <= alpha)
+/// -- CPW's "razoring with verification," safer than trusting a wide
+/// static-eval margin alone. If quiescence comes back ABOVE alpha, the
+/// static eval's pessimism was wrong, and this falls through to the
+/// normal move loop below rather than returning a bad, unverified
+/// score. Self-contained (its own `in_check()`/`eval::evaluate()`
+/// calls, not sharing state with futility pruning's own later,
+/// separately-computed static eval) for the same reason NMP's own
+/// block is self-contained -- it runs at a different point in this
+/// function (before movegen even happens) than futility does (after
+/// order_moves(), inside the move loop's own preamble).
 ///
 /// Null-move pruning (see the NMP block right after IIR, below) needs
 /// one more piece of state IIR/IID's own logic never did: whether a
@@ -562,6 +601,30 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // reduced, unverified probe (CPW's own caution) -- clamp to
             // beta instead of trusting an unconfirmed "mate" claim.
             return null_score >= kMateThreshold ? beta : null_score;
+        }
+    }
+
+    // Razoring (CPW "Razoring", this function's header comment): only
+    // at shallow remaining depth, not in check, and only when this
+    // node's own static eval is so far below alpha that even a wide
+    // margin makes it implausible any move here recovers. Rather than
+    // trusting that verdict outright and returning the static eval
+    // directly, drop into quiescence search (which still correctly
+    // resolves in-flight captures/checks and this position's own
+    // terminal status) and only return early if THAT result
+    // independently confirms the same conclusion.
+    if (!in_check(pos) && depth <= kRazorMaxDepth && alpha < kMateThreshold) {
+        const int white_relative = eval::evaluate(pos, &pawn_tt);
+        const int razor_static_eval = us == Color::White ? white_relative : -white_relative;
+        if (razor_static_eval + kRazorMargins[static_cast<std::size_t>(depth)] <= alpha) {
+            const int razor_score =
+                quiescence(pos, alpha, beta, ply, nodes, /*include_checks=*/true, &pawn_tt);
+            if (razor_score <= alpha) {
+                return razor_score;
+            }
+            // Quiescence disagreed with the static eval's pessimism --
+            // fall through to the normal move loop below rather than
+            // trusting the unverified margin.
         }
     }
 
