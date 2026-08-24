@@ -18,9 +18,17 @@
 //   4. Killer moves: up to 2 quiet moves per ply that caused a beta
 //      cutoff in a SIBLING node at the same ply (CPW "Killer Heuristic")
 //   5. Remaining quiet moves, scored by the history heuristic (CPW
-//      "History Heuristic") -- a per-[color][from][to] table of how
-//      often a quiet move has caused a beta cutoff, weighted by the
-//      depth at which it did
+//      "History Heuristic") PLUS continuation history (CPW
+//      "Continuation History", the 1-ply "counter-move history" case of
+//      Stockfish's own generalized scheme) -- the plain history table's
+//      per-[color][from][to] score, added to a separate score for how
+//      often this move (by piece type and destination) has caused a
+//      cutoff specifically as a reply to the immediately preceding move
+//      (also by piece type and destination) -- both weighted by the
+//      depth at which they did. Search.cpp's negamax() move loop is
+//      responsible for threading the "immediately preceding move"
+//      context down through each level of recursion; ordering.cpp
+//      itself has no notion of search history beyond what's passed in.
 //   6. Everything else (untried quiets with no history), left in
 //      move-generation order (std::stable_sort preserves this as the
 //      tiebreak for equal-scored moves)
@@ -108,6 +116,70 @@ private:
         table_{};
 };
 
+/// Continuation history: how often a move (by piece type and
+/// destination square) has caused a beta cutoff GIVEN a specific
+/// immediately-preceding move (also by piece type and destination
+/// square) played by the opponent (CPW "Continuation History" / the
+/// 1-ply "counter-move history" case of Stockfish's own generalized
+/// scheme), weighted by the depth at which it did -- same depth-squared
+/// weighting as HistoryTable::update() above, for the same reason.
+/// Distinct from HistoryTable (which only looks at [color][from][to]
+/// with no notion of what came immediately before it): the same move
+/// can be a strong reply to one preceding move and a poor one to
+/// another, and this table is the piece of state that lets ordering
+/// distinguish those two cases rather than averaging them together into
+/// one score.
+///
+/// Indexed by PIECE TYPE and destination square only -- not from-square,
+/// not color -- for both the preceding move and the current one. Not
+/// color-indexed: a continuation's usefulness (this shape of reply to
+/// that shape of preceding move) is treated as symmetric between White
+/// and Black for this first draft, a simplifying assumption common to
+/// this specific table even in engines that otherwise track plain
+/// history per color (unlike HistoryTable above, where the side to
+/// move genuinely does change which table cell a from/to pair belongs
+/// to).
+///
+/// `board::PieceType::None` (board/board.h's own sentinel, not a
+/// genuine piece type) represents "there was no preceding move to
+/// condition on" -- the true root of a search, or the position
+/// immediately after a null move (search.cpp's NMP block) -- and is
+/// never actually stored into or read from this table's own array
+/// (sized for `board::kNumPieceTypes`, not `kNumPieceTypes + 1`):
+/// update() and score() both treat a `board::PieceType::None`
+/// `prev_piece` as a no-op/zero rather than indexing with it, since
+/// there is nothing meaningful to record or look up in that case.
+/// Scoped like HistoryTable (this file's own header comment): one
+/// instance per top-level search call.
+class ContinuationHistoryTable {
+public:
+    /// Adds a depth-weighted bonus for `move` (`piece` moved to `to`)
+    /// having caused a beta cutoff when it directly followed
+    /// `prev_piece` moving to `prev_to`. No-op if `prev_piece` is
+    /// `board::PieceType::None` (no real preceding move to condition
+    /// on -- see this class's header comment).
+    void update(board::PieceType prev_piece, board::Square prev_to, board::PieceType piece,
+                board::Square to, int depth) noexcept;
+
+    /// Returns the current continuation-history score, or 0 if
+    /// `prev_piece` is `board::PieceType::None` or the combination has
+    /// never been recorded.
+    [[nodiscard]] int score(board::PieceType prev_piece, board::Square prev_to,
+                             board::PieceType piece, board::Square to) const noexcept;
+
+private:
+    /// Same cap, and the same rationale, as HistoryTable::kHistoryMax
+    /// above -- comfortably below the killer-move score band in
+    /// ordering.cpp's score_move() even after being added to a plain
+    /// history score there.
+    static constexpr int kContinuationHistoryMax = 8192;
+
+    std::array<std::array<std::array<std::array<int, board::kNumSquares>, board::kNumPieceTypes>,
+                          board::kNumSquares>,
+               board::kNumPieceTypes>
+        table_{};
+};
+
 /// MVV-LVA (Most Valuable Victim, Least Valuable Attacker): favors
 /// capturing the most valuable piece with the least valuable attacker.
 /// `move` must be a genuine capture (is_capture() == true) of `pos`,
@@ -132,8 +204,16 @@ private:
 /// scored like any other move it happens to match, since Move equality
 /// only depends on the packed from/to/flag bits). `killers` and
 /// `history` are looked up using this node's `ply` and `pos`'s side to
-/// move, respectively.
+/// move, respectively. `cont_history`/`prev_piece`/`prev_to` describe
+/// the move immediately preceding this node (the move the caller made
+/// to reach `pos`) -- pass `board::PieceType::None` for `prev_piece`
+/// when there isn't one (the true search root, or immediately after a
+/// null move; see ContinuationHistoryTable's own header comment), which
+/// makes continuation history contribute nothing to this call's
+/// scoring, same as if the table were empty.
 void order_moves(board::MoveList& moves, const board::Position& pos, board::Move tt_move,
-                  const KillerTable& killers, int ply, const HistoryTable& history) noexcept;
+                  const KillerTable& killers, int ply, const HistoryTable& history,
+                  const ContinuationHistoryTable& cont_history, board::PieceType prev_piece,
+                  board::Square prev_to) noexcept;
 
 } // namespace nightwing::search

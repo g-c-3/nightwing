@@ -50,8 +50,9 @@ int mvv_lva_score(const Position& pos, Move move) noexcept {
 namespace {
 
 [[nodiscard]] int score_move(const Position& pos, Move move, Move tt_move,
-                              const KillerTable& killers, int ply,
-                              const HistoryTable& history) noexcept {
+                              const KillerTable& killers, int ply, const HistoryTable& history,
+                              const ContinuationHistoryTable& cont_history, PieceType prev_piece,
+                              board::Square prev_to) noexcept {
     if (move == tt_move) {
         return kTTMoveScore;
     }
@@ -67,7 +68,16 @@ namespace {
     if (move == killers.get(ply, 1)) {
         return kKiller2Score;
     }
-    return history.score(pos.side_to_move, move);
+    // Plain history plus continuation history (this file's own header
+    // comment): two independent signals about the same quiet move,
+    // summed rather than picking one -- score() on either table is 0 if
+    // it has nothing recorded (including, for cont_history, whenever
+    // prev_piece is PieceType::None -- see ContinuationHistoryTable's
+    // own header comment), so this degrades gracefully to plain history
+    // alone wherever continuation context isn't available.
+    const PieceType piece = board::piece_type_of(pos.piece_at(move.from()));
+    return history.score(pos.side_to_move, move) +
+           cont_history.score(prev_piece, prev_to, piece, move.to());
 }
 
 } // namespace
@@ -104,8 +114,33 @@ int HistoryTable::score(Color color, Move move) const noexcept {
                  [static_cast<std::size_t>(move.to())];
 }
 
+void ContinuationHistoryTable::update(PieceType prev_piece, board::Square prev_to, PieceType piece,
+                                       board::Square to, int depth) noexcept {
+    if (prev_piece == PieceType::None) {
+        // No real preceding move to condition on -- see this class's
+        // own header comment (ordering.h). Nothing to record.
+        return;
+    }
+    int& slot = table_[static_cast<std::size_t>(prev_piece)][static_cast<std::size_t>(prev_to)]
+                       [static_cast<std::size_t>(piece)][static_cast<std::size_t>(to)];
+    slot += depth * depth;
+    if (slot > kContinuationHistoryMax) {
+        slot = kContinuationHistoryMax;
+    }
+}
+
+int ContinuationHistoryTable::score(PieceType prev_piece, board::Square prev_to, PieceType piece,
+                                     board::Square to) const noexcept {
+    if (prev_piece == PieceType::None) {
+        return 0; // See this class's own header comment (ordering.h).
+    }
+    return table_[static_cast<std::size_t>(prev_piece)][static_cast<std::size_t>(prev_to)]
+                 [static_cast<std::size_t>(piece)][static_cast<std::size_t>(to)];
+}
+
 void order_moves(MoveList& moves, const Position& pos, Move tt_move, const KillerTable& killers,
-                  int ply, const HistoryTable& history) noexcept {
+                  int ply, const HistoryTable& history, const ContinuationHistoryTable& cont_history,
+                  PieceType prev_piece, board::Square prev_to) noexcept {
     struct ScoredMove {
         Move move;
         int score;
@@ -114,8 +149,9 @@ void order_moves(MoveList& moves, const Position& pos, Move tt_move, const Kille
     const int count = moves.size();
     std::array<ScoredMove, board::kMaxMoves> scored{};
     for (int i = 0; i < count; ++i) {
-        scored[static_cast<std::size_t>(i)] = {moves[i],
-                                                score_move(pos, moves[i], tt_move, killers, ply, history)};
+        scored[static_cast<std::size_t>(i)] = {
+            moves[i], score_move(pos, moves[i], tt_move, killers, ply, history, cont_history,
+                                  prev_piece, prev_to)};
     }
 
     // Stable so equal-scored moves (most commonly: untried quiets that

@@ -422,7 +422,19 @@ constexpr std::array<int, kRazorMaxDepth + 1> kRazorMargins = {
 /// looks less attractive to a side searching for the *fastest* mate, or
 /// less bad to a side merely trying to survive as long as possible —
 /// the deeper the forced mate lies. Standard CPW "Mate Scores"
-/// convention; from-scratch implementation here. `tt` (search/tt.h) is
+/// convention; from-scratch implementation here. `cont_history`,
+/// `prev_piece`, and `prev_to` describe the move immediately preceding
+/// this call (the move the caller just made to reach `pos`) -- threaded
+/// through so this node's own order_moves() call and its own
+/// killer/history-style update on a beta cutoff (this function's move
+/// loop, below) can both consult/update continuation history (see
+/// search/ordering.h's ContinuationHistoryTable for the full
+/// rationale). `prev_piece` is `board::PieceType::None` when there
+/// isn't a real preceding move to condition on -- immediately after a
+/// null move (this function's own NMP block skips passing continuation
+/// context to its null-move child for exactly that reason) -- which
+/// makes continuation history contribute nothing at that node, same as
+/// if the table were empty. `tt` (search/tt.h) is
 /// also keyed and mate-distance-adjusted around this same `ply`
 /// convention — see tt.cpp's adjustment functions.
 ///
@@ -505,8 +517,10 @@ constexpr std::array<int, kRazorMaxDepth + 1> kRazorMargins = {
 /// requested.
 int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_t& nodes,
             TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
-            std::span<const std::uint64_t> game_history, std::array<std::uint64_t, kMaxPly>& path,
-            eval::PawnHashTable& pawn_tt, bool allow_null_move = true) {
+            ContinuationHistoryTable& cont_history, board::PieceType prev_piece,
+            board::Square prev_to, std::span<const std::uint64_t> game_history,
+            std::array<std::uint64_t, kMaxPly>& path, eval::PawnHashTable& pawn_tt,
+            bool allow_null_move = true) {
     if (depth <= 0) {
         // Quiescence search (search/quiescence.h) rather than a raw
         // eval::evaluate() call: resolves in-flight capture/check
@@ -631,7 +645,9 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         UndoInfo null_undo;
         board::make_null_move(pos, null_undo);
         const int null_score = -negamax(pos, depth - 1 - reduction, -beta, -beta + 1, ply + 1, nodes,
-                                         tt, killers, history, game_history, path, pawn_tt,
+                                         tt, killers, history, cont_history,
+                                         /*prev_piece=*/board::PieceType::None, /*prev_to=*/0,
+                                         game_history, path, pawn_tt,
                                          /*allow_null_move=*/false);
         board::unmake_null_move(pos, null_undo);
         if (null_score >= beta) {
@@ -676,7 +692,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         return in_check(pos) ? -(kMateScore - ply) : kDrawScore;
     }
 
-    order_moves(moves, pos, tt_move, killers, ply, history);
+    order_moves(moves, pos, tt_move, killers, ply, history, cont_history, prev_piece, prev_to);
 
     // Computed once, reused by LMR's eligibility check below (moves
     // themselves don't change whether the position THEY'RE PLAYED FROM
@@ -716,6 +732,15 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     for (int i = 0; i < moves.size(); ++i) {
         const Move move = moves[i];
         const bool move_is_quiet = !move.is_capture() && !move.is_promotion();
+        // The piece making this move, read BEFORE make_move() below
+        // vacates its from-square -- threaded into every recursive
+        // negamax() call as that child's own `prev_piece`/`prev_to` (see
+        // this function's header comment on continuation history).
+        // Computed uniformly for every move, including captures and
+        // promotions, matching mvv_lva_score()'s own convention
+        // (search/ordering.cpp) of reading the attacker's piece type off
+        // the from-square the same way regardless of move type.
+        const board::PieceType moved_piece = board::piece_type_of(pos.piece_at(move.from()));
         UndoInfo undo;
         board::make_move(pos, move, undo);
 
@@ -728,7 +753,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // with the full alpha-beta window to establish a real score
             // to compare everything else against.
             score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history,
-                              game_history, path, pawn_tt);
+                              cont_history, moved_piece, move.to(), game_history, path, pawn_tt);
         } else {
             // "Gives check" is computed once here, right after the move
             // is already applied -- no dedicated move flag exists in
@@ -805,7 +830,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // `reduction > 0` -- see this function's header comment for
             // how that interacts with the two fallback steps below.
             score = -negamax(pos, depth - 1 - reduction, -alpha - 1, -alpha, ply + 1, nodes, tt,
-                              killers, history, game_history, path, pawn_tt);
+                              killers, history, cont_history, moved_piece, move.to(), game_history,
+                              path, pawn_tt);
             if (reduction > 0 && score > alpha) {
                 // The reduced probe suggested this move might actually
                 // be good -- not trustworthy on its own (a shallower
@@ -814,11 +840,12 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 // is still just a probe) before deciding whether the
                 // full-window re-search below is warranted.
                 score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, nodes, tt, killers,
-                                  history, game_history, path, pawn_tt);
+                                  history, cont_history, moved_piece, move.to(), game_history, path,
+                                  pawn_tt);
             }
             if (score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history,
-                                  game_history, path, pawn_tt);
+                                  cont_history, moved_piece, move.to(), game_history, path, pawn_tt);
             }
         }
 
@@ -836,15 +863,20 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         }
         if (alpha >= beta) {
             // Beta cutoff. Record it for future ordering (killers +
-            // history) only for quiet, non-promotion moves -- captures
-            // and promotions already order well via MVV-LVA/promotion
-            // value (see ordering.h's header comment), so mixing them
-            // into the killer/history scheme adds noise without adding
-            // information (CPW's "Killer Heuristic"/"History Heuristic"
-            // are conventionally quiet-move-only for the same reason).
+            // history + continuation history) only for quiet,
+            // non-promotion moves -- captures and promotions already
+            // order well via MVV-LVA/promotion value (see ordering.h's
+            // header comment), so mixing them into the killer/history
+            // scheme adds noise without adding information (CPW's
+            // "Killer Heuristic"/"History Heuristic" are conventionally
+            // quiet-move-only for the same reason).
             if (!move.is_capture() && !move.is_promotion()) {
                 killers.update(ply, move);
                 history.update(us, move, depth);
+                // No-op if prev_piece is board::PieceType::None (no real
+                // preceding move at this node -- see this function's
+                // header comment and ContinuationHistoryTable's own).
+                cont_history.update(prev_piece, prev_to, moved_piece, move.to(), depth);
             }
             break; // The opponent won't let us reach this line.
         }
@@ -902,9 +934,23 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 /// `pawn_tt`: threaded straight through to every negamax() call below
 /// unchanged, which threads it further into quiescence()/eval::evaluate()
 /// -- see eval/eval.h's doc comment on evaluate()'s own `pawn_tt`
-/// parameter for what it's for.
+/// parameter for what it's for. `cont_history`: threaded through to
+/// every negamax() call below alongside killers/history (search/
+/// ordering.h's ContinuationHistoryTable) -- but this function's OWN
+/// order_moves() call (below) always passes board::PieceType::None for
+/// `prev_piece`, not a real piece: the root has no preceding move of
+/// its own to condition on (the game move that led to this exact
+/// position isn't threaded into search_fixed_depth()/
+/// search_iterative_deepening() today, only game_history's hashes are
+/// -- a deliberate first-draft scope limit, not an oversight; revisit
+/// if/when a real move, not just a hash, is threaded that far). Each
+/// root MOVE's own piece/destination, by contrast, genuinely is known
+/// (computed fresh per iteration of the loop below) and IS passed as
+/// `prev_piece`/`prev_to` into that move's negamax() children, exactly
+/// as negamax()'s own move loop does for its own children.
 SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int aspiration_beta,
                           TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
+                          ContinuationHistoryTable& cont_history,
                           std::span<const std::uint64_t> game_history,
                           std::array<std::uint64_t, kMaxPly>& path, eval::PawnHashTable& pawn_tt) {
     SearchResult result;
@@ -934,7 +980,8 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
     const TTProbeResult root_probe = tt.probe(root_key, 0);
     const Move tt_move = root_probe.hit ? root_probe.move : Move();
 
-    order_moves(moves, pos, tt_move, killers, /*ply=*/0, history);
+    order_moves(moves, pos, tt_move, killers, /*ply=*/0, history, cont_history,
+                /*prev_piece=*/board::PieceType::None, /*prev_to=*/0);
 
     int alpha = aspiration_alpha;
     const int beta = aspiration_beta;
@@ -942,6 +989,11 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
 
     for (int i = 0; i < moves.size(); ++i) {
         const Move move = moves[i];
+        // Same rationale as negamax()'s own move loop (its header
+        // comment): read before make_move() vacates the from-square,
+        // threaded into this move's own negamax() children below as
+        // their `prev_piece`/`prev_to`.
+        const board::PieceType moved_piece = board::piece_type_of(pos.piece_at(move.from()));
         UndoInfo undo;
         board::make_move(pos, move, undo);
 
@@ -970,13 +1022,13 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         int score;
         if (i == 0 || depth == 1) {
             score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt, killers, history,
-                              game_history, path, pawn_tt);
+                              cont_history, moved_piece, move.to(), game_history, path, pawn_tt);
         } else {
             score = -negamax(pos, depth - 1, -alpha - 1, -alpha, 1, result.nodes, tt, killers, history,
-                              game_history, path, pawn_tt);
+                              cont_history, moved_piece, move.to(), game_history, path, pawn_tt);
             if (score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt, killers, history,
-                                  game_history, path, pawn_tt);
+                                  cont_history, moved_piece, move.to(), game_history, path, pawn_tt);
             }
         }
 
@@ -1031,13 +1083,15 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
     assert(depth >= 1 && "search_fixed_depth: depth must be at least 1");
 
     // Fresh, private tables for this one call (see tt.h's header
-    // comment, which applies equally to KillerTable/HistoryTable --
-    // search/ordering.h). kDefaultTTSizeMB is a placeholder until the
-    // UCI `Hash` option (ROADMAP.md Phase 8) makes table size
-    // configurable and the tables themselves persistent across calls.
+    // comment, which applies equally to KillerTable/HistoryTable/
+    // ContinuationHistoryTable -- search/ordering.h). kDefaultTTSizeMB
+    // is a placeholder until the UCI `Hash` option (ROADMAP.md Phase 8)
+    // makes table size configurable and the tables themselves
+    // persistent across calls.
     TranspositionTable tt(kDefaultTTSizeMB);
     KillerTable killers;
     HistoryTable history;
+    ContinuationHistoryTable cont_history;
     // Fresh, zero-initialized per-ply hash record for this one call (see
     // negamax()'s header comment and is_draw_by_rule()) -- a fixed-size
     // stack array, not heap-allocated (ARCHITECTURE.md "Memory & Cache"),
@@ -1051,8 +1105,8 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
     // No previous iteration's score to aspirate around (see
     // search_iterative_deepening() below and docs/DECISIONS.md's
     // aspiration-windows entry) -- always the full window.
-    return search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history, game_history, path,
-                        pawn_tt);
+    return search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history, cont_history,
+                        game_history, path, pawn_tt);
 }
 
 SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_limit_ms,
@@ -1065,15 +1119,17 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // header comment) -- this cross-iteration sharing is where the
     // ordering/TT machinery's real value comes from right now, since
     // search_fixed_depth() on its own always starts from empty tables.
-    // Unlike the TT (aged via new_search() each iteration), killers and
-    // history are NOT reset between iterations on purpose: a killer or
-    // a historically-good quiet move from a shallower iteration is
-    // still a reasonable ordering bet for the next, deeper one, and
-    // letting them persist is exactly how real engines use iterative
-    // deepening to make each successive iteration cheaper.
+    // Unlike the TT (aged via new_search() each iteration), killers,
+    // history, and continuation history are NOT reset between
+    // iterations on purpose: a killer or a historically-good quiet move
+    // (plain or continuation) from a shallower iteration is still a
+    // reasonable ordering bet for the next, deeper one, and letting them
+    // persist is exactly how real engines use iterative deepening to
+    // make each successive iteration cheaper.
     TranspositionTable tt(kDefaultTTSizeMB);
     KillerTable killers;
     HistoryTable history;
+    ContinuationHistoryTable cont_history;
     // Shared across every iteration of this call too, same rationale as
     // tt/killers/history just above (see negamax()'s header comment and
     // is_draw_by_rule()) -- a later, deeper iteration re-deriving the
@@ -1092,7 +1148,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // to aspirate around (see the depth-2-onward loop below).
     tt.new_search();
     SearchResult result = search_root(pos, 1, -kInfinity, kInfinity, tt, killers, history,
-                                       game_history, path, pawn_tt);
+                                       cont_history, game_history, path, pawn_tt);
     std::uint64_t total_nodes = result.nodes;
 
     // Position already over (checkmate/stalemate at the root): every
@@ -1143,7 +1199,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
 
             for (;;) {
                 next = search_root(pos, depth, window_alpha, window_beta, tt, killers, history,
-                                    game_history, path, pawn_tt);
+                                    cont_history, game_history, path, pawn_tt);
 
                 if (next.score <= window_alpha && window_alpha > -kInfinity) {
                     // Fail low: the true score is <= window_alpha, exact
@@ -1176,8 +1232,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                 }
             }
         } else {
-            next = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history, game_history,
-                                path, pawn_tt);
+            next = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history, cont_history,
+                                game_history, path, pawn_tt);
         }
 
         total_nodes += next.nodes;
