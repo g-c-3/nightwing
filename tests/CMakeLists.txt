@@ -26,6 +26,7 @@ add_executable(nightwing_tests
     see_tests.cpp
     tt_tests.cpp
     uci_tests.cpp
+    bench_tests.cpp
 )
 target_link_libraries(nightwing_tests PRIVATE nightwing_lib Catch2::Catch2WithMain)
 
