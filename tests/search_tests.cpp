@@ -512,6 +512,33 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
     REQUIRE(result.score >= kMateThreshold);
 }
 
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "singular extensions active",
+          "[search][singular_extension]") {
+    init_all();
+    // Same position/rationale as every prior Phase 4 regression test
+    // above -- reused again here specifically for singular extensions
+    // (search.cpp's negamax(), this file's second and more expensive
+    // depth-adding technique, evaluated only for the TT move). Unlike
+    // most of this position's other Phase 4 tests, singular extensions
+    // depend on a PRIOR search having already stored a TT entry with a
+    // Bound::Lower score for the position being re-searched -- iterative
+    // deepening naturally provides that (each depth's search populates
+    // the TT that the next, deeper iteration probes), so this position
+    // is searched via search_iterative_deepening() specifically (not
+    // search_fixed_depth()) to give the singular-extension check a
+    // realistic chance to actually trigger by the final iteration,
+    // rather than only ever seeing an empty or too-shallow TT. This is
+    // an end-to-end regression check (the mate is still found correctly
+    // whether or not any given node's TT move happens to qualify as
+    // singular) rather than a demonstration that the extension is
+    // NECESSARY to find this particular mate -- the same caveat the
+    // check-extensions test above already notes, for the same reason.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
 TEST_CASE("search_fixed_depth: back-rank mate in 1 is still found exactly when searched well "
           "beyond the mating depth (mate distance pruning)",
           "[search][mdp]") {
