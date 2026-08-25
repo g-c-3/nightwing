@@ -485,6 +485,33 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
     REQUIRE(result.score >= kMateThreshold);
 }
 
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "check extensions active",
+          "[search][check_extension]") {
+    init_all();
+    // Same position/rationale as every prior Phase 4 regression test
+    // above -- reused again here specifically for check extensions
+    // (search.cpp's negamax()/search_root(), the first DEPTH-ADDING
+    // technique in this file rather than a pruning/reduction one). This
+    // position's own mating line is built entirely from checking moves
+    // (Qd4-d8+, Ra1-a8#, etc.), so every ply of the actual search this
+    // test exercises should be getting the extra ply check extensions
+    // grant, not just occasionally touching the code path the way some
+    // of the narrower Phase 4 checks above only get exercised at a
+    // specific depth threshold. This is an end-to-end regression check
+    // (the mate is still found, extended or not, since alpha-beta plus
+    // a correct evaluation would eventually find it regardless) rather
+    // than a demonstration that the extension is NECESSARY to find this
+    // particular mate at this particular depth -- constructing a
+    // position where a check extension is the deciding factor between
+    // finding and missing a mate at a fixed low depth would need
+    // external engine verification to build with confidence, and is
+    // deferred rather than guessed at by hand.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
 TEST_CASE("search_fixed_depth: back-rank mate in 1 is still found exactly when searched well "
           "beyond the mating depth (mate distance pruning)",
           "[search][mdp]") {
