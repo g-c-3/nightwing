@@ -79,6 +79,48 @@ TEST_CASE("quiescence: a genuinely good (non-pruned) capture is actually searche
     REQUIRE(nodes > 1);
 }
 
+TEST_CASE("quiescence: delta pruning skips a capture whose value can't plausibly close a much "
+          "higher alpha, even though SEE alone would accept it",
+          "[quiescence][delta]") {
+    init_all();
+    // Same undefended-pawn capture as the "genuinely good capture" test
+    // above (SEE > 0, so SEE pruning alone would never skip it) --
+    // deliberately isolating delta pruning as the reason for the skip
+    // by passing a much higher alpha than a single pawn's value plus
+    // this file's own kDeltaMargin could ever plausibly close, on a
+    // position where the stand-pat baseline is already well below that
+    // alpha too (White is up a queen for nothing, a large but still
+    // bounded material edge). With delta pruning working, the capture
+    // is skipped before ever reaching the recursive call that would
+    // search it: nodes stays at 1 (only the top-level call).
+    Position pos = parse_fen("4k3/8/8/3p4/8/8/8/3QK3 w - - 0 1");
+    std::uint64_t nodes = 0;
+    (void)quiescence(pos, /*alpha=*/5000, /*beta=*/1'000'000, 0, nodes, /*include_checks=*/false);
+    REQUIRE(nodes == 1);
+}
+
+TEST_CASE("quiescence: delta pruning's own mate-range-alpha guard prevents it from wrongly "
+          "skipping a good capture when alpha is already near a mate score",
+          "[quiescence][delta]") {
+    init_all();
+    // Same good capture again, but with alpha pushed into mate-score
+    // territory (kMateThreshold and up) -- without the guard on delta
+    // pruning's own applicability (this file's quiescence_impl(), right
+    // before the candidate loop), the per-move margin check below would
+    // wrongly conclude EVERY ordinary capture fails to close a mate-
+    // sized alpha and skip it outright, which would be a correctness
+    // bug (silently reporting no good options exist when a real,
+    // materially-winning capture does) rather than a missed
+    // optimization. With the guard working, delta pruning doesn't apply
+    // at all here, so the capture reaches SEE (which accepts it, SEE >
+    // 0) and gets genuinely searched: nodes > 1.
+    Position pos = parse_fen("4k3/8/8/3p4/8/8/8/3QK3 w - - 0 1");
+    std::uint64_t nodes = 0;
+    (void)quiescence(pos, /*alpha=*/kMateThreshold + 1, /*beta=*/1'000'000, 0, nodes,
+                      /*include_checks=*/false);
+    REQUIRE(nodes > 1);
+}
+
 TEST_CASE("quiescence: include_checks controls whether a non-capture checking move is explored",
           "[quiescence]") {
     init_all();
