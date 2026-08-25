@@ -2,6 +2,7 @@
 
 #include "search/search.h"
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <chrono>
@@ -202,19 +203,60 @@ constexpr int kProbCutMargin = 200; // centipawns
 constexpr int kProbCutReduction = 4;
 
 /// Check extensions (CPW "Check Extensions", negamax()'s move loop
-/// below) constant: the ONLY extension technique in this file so far
-/// (every previous Phase 4 addition has been a pruning/reduction
-/// technique that removes search depth, never adds it) -- when a move
-/// gives check, the child search below it is granted one extra ply
-/// (`depth - 1 + kCheckExtensionPly` instead of the usual `depth - 1`)
-/// rather than losing one, on the premise that a forced check-response
-/// sequence is exactly the kind of tactical line the horizon effect
-/// (this file's own quiescence()-related header comments) is most
-/// likely to misjudge if cut off one ply too early -- and a position
-/// that's just been put in check has, structurally, far fewer legal
-/// replies than an ordinary position, so the extra ply doesn't cost
-/// nearly as much branching as it would anywhere else in the tree.
+/// below) constant: the FIRST extension technique added to this file
+/// (every earlier Phase 4 addition was a pruning/reduction technique
+/// that removes search depth, never adds it; singular extensions below
+/// are this file's second) -- when a move gives check, the child search
+/// below it is granted one extra ply (`depth - 1 + kCheckExtensionPly`
+/// instead of the usual `depth - 1`) rather than losing one, on the
+/// premise that a forced check-response sequence is exactly the kind of
+/// tactical line the horizon effect (this file's own quiescence()-
+/// related header comments) is most likely to misjudge if cut off one
+/// ply too early -- and a position that's just been put in check has,
+/// structurally, far fewer legal replies than an ordinary position, so
+/// the extra ply doesn't cost nearly as much branching as it would
+/// anywhere else in the tree.
 constexpr int kCheckExtensionPly = 1;
+
+/// Singular extensions (CPW "Singular Extensions", negamax()'s move
+/// loop below, evaluated only for the TT move specifically) constants.
+/// Unlike check extensions (a cheap, purely local decision -- just look
+/// at whether the move gives check), this technique pays for a real,
+/// reduced-depth VERIFICATION search of every OTHER legal move at the
+/// node, all under a narrow window built from the TT's own previously-
+/// stored score, before deciding whether the TT move is "singular" --
+/// so much better than every alternative that none of them can even
+/// approach a score just below it. If none can, the TT move is
+/// considered forced/critical enough to deserve an extra ply of its own
+/// child search, on the premise that a position with only one genuinely
+/// good move is exactly where a shallow search is most likely to
+/// misjudge how forced the line actually is. Deliberately expensive
+/// (an entire extra search per eligible node), so gated behind several
+/// guards: `kSingularMinDepth` (8) -- shallow nodes can't afford to pay
+/// for a verification search at all; `kSingularTTDepthMargin` (3) -- the
+/// TT entry itself must be from a search deep enough to trust (`probe.
+/// depth >= depth - kSingularTTDepthMargin`), or its stored score isn't
+/// a reliable enough baseline to build a verification window from;
+/// `kSingularMarginPerPly` (2) -- `singular_beta = probe.score -
+/// kSingularMarginPerPly * depth`, a margin that widens with depth
+/// (rather than a fixed lookup table the way most of this file's other
+/// margins are -- depth here can range from kSingularMinDepth up
+/// through however deep iterative deepening goes, too wide a range for
+/// a hand-verifiable table the way kFutilityMargins/kRazorMargins could
+/// afford with their own narrow, capped depth ranges); `kSingularDepth
+/// Divisor` (2) -- the verification search itself runs at `(depth - 1)
+/// / kSingularDepthDivisor`, roughly half the remaining depth, cheap
+/// enough to be worth paying for while still deep enough to mean
+/// something. `kSingularExtensionPly` (1) -- same size as check
+/// extensions' own bonus; combined via `std::max()`, not summed, with
+/// any check-extension bonus the same move might also separately
+/// qualify for (this function's move loop), so a move never gets
+/// double-extended for two different reasons at once.
+constexpr int kSingularMinDepth = 8;
+constexpr int kSingularTTDepthMargin = 3;
+constexpr int kSingularMarginPerPly = 2;
+constexpr int kSingularDepthDivisor = 2;
+constexpr int kSingularExtensionPly = 1;
 
 // search_iterative_deepening() (below) only checks its time budget
 // *between* full-depth search_fixed_depth() calls, not mid-search --
@@ -340,26 +382,26 @@ constexpr int kCheckExtensionPly = 1;
 /// entry at the same ply.
 ///
 /// Check extensions (CPW "Check Extensions", the move loop below) are
-/// the only DEPTH-ADDING technique in this file -- every other Phase 4
-/// addition (LMP, futility, razoring, history pruning, ProbCut, LMR
-/// itself) removes search depth, never adds it. A move that gives
-/// check gets its own child search granted one extra ply
-/// (kCheckExtensionPly) rather than losing the usual one, since a
-/// forced check-response sequence is exactly the shape of tactical line
-/// the horizon effect is most likely to misjudge if cut off one ply too
-/// early, and a position that's just been put in check structurally has
-/// far fewer legal replies than an ordinary one, so the extra ply costs
-/// much less branching than it would elsewhere. Guarded by `ply + 1 <
-/// kMaxPly` -- not just a niceness check, a genuine correctness
-/// requirement: `path` and the killer/PV bookkeeping this function
-/// relies on are fixed-size arrays sized by kMaxPly (search/ordering.h),
-/// so an unbounded chain of check extensions pushing `ply` past that
-/// bound would be an out-of-bounds write, not just a wasted search.
-/// `move_gives_check` (computed once per move, right after make_move()
-/// -- shared by futility/LMP/history-pruning's own checks above AND
-/// this) is what decides both the extension here AND, as of this
-/// session, LMR's own eligibility just below: a checking move is never
-/// LMR-reduced anymore (previously an oversight -- LMR's own guard
+/// the FIRST DEPTH-ADDING technique in this file -- every earlier
+/// Phase 4 addition (LMP, futility, razoring, history pruning, ProbCut,
+/// LMR itself) removes search depth, never adds it; singular extensions
+/// just below are this file's second. A move that gives check gets its
+/// own child search granted one extra ply (kCheckExtensionPly) rather
+/// than losing the usual one, since a forced check-response sequence is
+/// exactly the shape of tactical line the horizon effect is most likely
+/// to misjudge if cut off one ply too early, and a position that's just
+/// been put in check structurally has far fewer legal replies than an
+/// ordinary one, so the extra ply costs much less branching than it
+/// would elsewhere. Guarded by `ply + 1 < kMaxPly` -- not just a
+/// niceness check, a genuine correctness requirement: `path` and the
+/// killer/PV bookkeeping this function relies on are fixed-size arrays
+/// sized by kMaxPly (search/ordering.h), so an unbounded chain of check
+/// extensions pushing `ply` past that bound would be an out-of-bounds
+/// write, not just a wasted search. `move_gives_check` (computed once
+/// per move, right after make_move() -- shared by futility/LMP/history-
+/// pruning's own checks above AND this) is what decides both the
+/// extension here AND LMR's own eligibility just below: a checking move
+/// is never LMR-reduced (previously an oversight -- LMR's own guard
 /// excluded captures/promotions but not checks, even though a checking
 /// move is exactly as tactical/forcing as either of those and CPW's own
 /// LMR guidance excludes them for the identical reason NMP/LMR already
@@ -367,6 +409,24 @@ constexpr int kCheckExtensionPly = 1;
 /// mutually exclusive per move under this design: a move is either
 /// forcing enough to extend, or ordinary enough to consider reducing,
 /// never plausibly both.
+///
+/// Singular extensions (CPW "Singular Extensions", also the move loop
+/// below, but evaluated ONLY for the TT move -- see this file's
+/// kSingular* constants for the full guard list and rationale) are this
+/// file's second, more expensive depth-adding technique: when the TT's
+/// own previously-stored score for this node's TT move indicates it
+/// caused a beta cutoff before, and every OTHER legal move here fails a
+/// cheap, reduced-depth verification search against a window built just
+/// below that stored score, the TT move is judged "singular" (the only
+/// genuinely good option at this node) and its own child search gets
+/// the same one-ply bonus check extensions grant -- combined via
+/// `std::max()` with any check-extension bonus, never summed, so a
+/// checking TT move that's ALSO judged singular still only gets
+/// extended once. Unlike check extensions (a free, purely local
+/// look-at-the-move decision), this pays for a genuine extra search per
+/// eligible node, which is exactly why it's gated behind kSingularMin
+/// Depth and the TT-entry-freshness guard, not applied unconditionally
+/// the way check extensions are.
 ///
 /// Late move reductions (CPW "Late Move Reductions", the move loop
 /// below) reduce depth for LATE, QUIET moves specifically -- ones far
@@ -876,6 +936,48 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // (search/ordering.cpp) of reading the attacker's piece type off
         // the from-square the same way regardless of move type.
         const board::PieceType moved_piece = board::piece_type_of(pos.piece_at(move.from()));
+
+        // Singular extensions (this function's header comment): only
+        // evaluated for the TT move itself (order_moves() places it
+        // first whenever `tt_move` is present and legal, so this is
+        // scoped to `i == 0`), and using `pos` as it stands BEFORE
+        // `move` is played -- the verification search below tries every
+        // OTHER legal move from this same position, so it has to run
+        // before this iteration's own make_move() changes it.
+        int singular_extension = 0;
+        if (i == 0 && probe.hit && move == tt_move && probe.bound == Bound::Lower &&
+            depth >= kSingularMinDepth && probe.depth >= depth - kSingularTTDepthMargin &&
+            probe.score > -kMateThreshold && probe.score < kMateThreshold) {
+            const int singular_beta = probe.score - kSingularMarginPerPly * depth;
+            const int singular_depth = (depth - 1) / kSingularDepthDivisor;
+            bool any_alternative_matched = false;
+            for (int j = 0; j < moves.size() && !any_alternative_matched; ++j) {
+                if (moves[j] == tt_move) {
+                    continue;
+                }
+                const Move alt_move = moves[j];
+                const board::PieceType alt_moved_piece =
+                    board::piece_type_of(pos.piece_at(alt_move.from()));
+                UndoInfo alt_undo;
+                board::make_move(pos, alt_move, alt_undo);
+                const int alt_score =
+                    -negamax(pos, singular_depth, -singular_beta, -singular_beta + 1, ply + 1, nodes,
+                             tt, killers, history, cont_history, alt_moved_piece, alt_move.to(),
+                             game_history, path, pawn_tt);
+                board::unmake_move(pos, alt_move, alt_undo);
+                if (alt_score >= singular_beta) {
+                    // Some other move can already reach almost as high a
+                    // score as the TT move's own previous cutoff --
+                    // disproves singularity (the TT move isn't the ONLY
+                    // good option here), so no extension.
+                    any_alternative_matched = true;
+                }
+            }
+            if (!any_alternative_matched) {
+                singular_extension = kSingularExtensionPly;
+            }
+        }
+
         UndoInfo undo;
         board::make_move(pos, move, undo);
 
@@ -894,8 +996,12 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // the usual one -- guarded by `ply + 1 < kMaxPly`, a genuine
         // correctness requirement (see the header comment) rather than
         // just a niceness check, since path/killer bookkeeping is
-        // sized by kMaxPly.
-        const int extension = (move_gives_check && ply + 1 < kMaxPly) ? kCheckExtensionPly : 0;
+        // sized by kMaxPly. Combined with any singular-extension bonus
+        // computed just above via std::max(), not summed (this
+        // function's header comment) -- a move never gets extended
+        // twice for two different reasons at once.
+        const int check_extension = (move_gives_check && ply + 1 < kMaxPly) ? kCheckExtensionPly : 0;
+        const int extension = std::max(check_extension, singular_extension);
 
         int score;
         if (i == 0) {
@@ -905,8 +1011,9 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // move-generation order" as it was pre-ordering: search it
             // with the full alpha-beta window to establish a real score
             // to compare everything else against. `+ extension` applies
-            // even to this first move -- a checking move deserves the
-            // extra ply regardless of its position in the ordering.
+            // even to this first move -- a checking or singular move
+            // deserves the extra ply regardless of its position in the
+            // ordering.
             score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt, killers,
                               history, cont_history, moved_piece, move.to(), game_history, path,
                               pawn_tt);
