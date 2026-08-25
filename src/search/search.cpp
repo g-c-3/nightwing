@@ -179,6 +179,28 @@ constexpr std::array<int, kRazorMaxDepth + 1> kRazorMargins = {
     0, 300, 400, 500,
 };
 
+/// ProbCut (CPW "ProbCut", negamax()'s own node-level check just before
+/// the main move loop below) constants. Opposite end of the depth
+/// spectrum from futility/razoring above: those apply near the leaves
+/// (shallow remaining depth, looking for a reason to fail LOW early);
+/// ProbCut applies at moderate-to-high remaining depth (kProbCutMinDepth
+/// and up), looking for a reason to fail HIGH early -- a cheap, reduced
+/// -depth verification search against a raised window
+/// (`beta + kProbCutMargin`) that, if it also fails high, is taken as
+/// strong evidence a full-depth search would too, without paying for
+/// one. kProbCutReduction (4) is deliberately large relative to LMR's
+/// own kLMRReduction/kLMRBigReduction (1-2) above -- ProbCut's
+/// verification search only needs to be roughly right about "is this
+/// position winning by at least a large, specific margin," not compute
+/// an exact score, so a much shallower probe is an acceptable trade for
+/// this technique specifically, the same way NMP's own R (this file's
+/// kNullMoveReduction) is chosen independently of LMR's. Not yet tuned
+/// for Nightwing specifically, same caveat as every other constant in
+/// this file.
+constexpr int kProbCutMinDepth = 5;
+constexpr int kProbCutMargin = 200; // centipawns
+constexpr int kProbCutReduction = 4;
+
 // search_iterative_deepening() (below) only checks its time budget
 // *between* full-depth search_fixed_depth() calls, not mid-search --
 // negamax() itself has no clock/stop-flag awareness. True mid-search
@@ -392,6 +414,31 @@ constexpr std::array<int, kRazorMaxDepth + 1> kRazorMargins = {
 /// block is self-contained -- it runs at a different point in this
 /// function (before movegen even happens) than futility does (after
 /// order_moves(), inside the move loop's own preamble).
+///
+/// ProbCut (CPW "ProbCut," the node-level check just before the main
+/// move loop, right after order_moves() -- see kProbCut* constants
+/// above) is razoring's mirror image: instead of looking for a reason
+/// to fail LOW early at shallow depth, it looks for a reason to fail
+/// HIGH early at moderate-to-high depth. It reuses the SAME already-
+/// ordered `moves` list order_moves() just produced (no second movegen
+/// or ordering pass) rather than being self-contained the way razoring
+/// is -- razoring runs before movegen even happens, so it has nothing
+/// to reuse yet, while ProbCut deliberately runs after, specifically so
+/// its own verification search can walk captures/promotions in their
+/// already-best-first MVV-LVA order rather than redo that work. For
+/// each capture or promotion in `moves` (quiet moves are skipped with
+/// `continue`, not `break` -- the TT move, which can be quiet, is
+/// always tried first regardless of type, so a quiet move at index 0
+/// doesn't mean everything after it is quiet too), a reduced-depth
+/// search against a raised, null (`beta + kProbCutMargin`) window
+/// checks whether this one move alone can already prove the position
+/// is winning by at least that inflated margin; if it can, that's
+/// taken as strong enough evidence a full-depth search of the whole
+/// node would also fail high that this function returns immediately
+/// (fail-soft: the verification score itself, not just `beta` --
+/// mirroring NMP's own fail-soft return just below, including the same
+/// mate-range clamp and for the identical reason: a raw score from a
+/// REDUCED search shouldn't be trusted as an exact mate distance).
 ///
 /// Null-move pruning (see the NMP block right after IIR, below) needs
 /// one more piece of state IIR/IID's own logic never did: whether a
@@ -698,6 +745,48 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // themselves don't change whether the position THEY'RE PLAYED FROM
     // was in check) rather than re-derived per move.
     const bool us_in_check = in_check(pos);
+
+    // ProbCut (CPW "ProbCut", this function's header comment): only at
+    // moderate-to-high remaining depth, not in check, and only when
+    // beta itself isn't already mate-range (a raised, inflated window
+    // built from a mate score would be meaningless -- same reasoning as
+    // NMP's own beta guard just below in this file). Walks the SAME
+    // already-ordered `moves` list order_moves() just produced, trying
+    // only captures/promotions (quiet moves are `continue`d past, not a
+    // `break`, since the TT move -- always tried first regardless of
+    // type -- can itself be quiet without that meaning everything after
+    // it is quiet too).
+    if (!us_in_check && depth >= kProbCutMinDepth && beta < kMateThreshold) {
+        const int probcut_beta = beta + kProbCutMargin;
+        for (int i = 0; i < moves.size(); ++i) {
+            const Move probcut_move = moves[i];
+            if (!probcut_move.is_capture() && !probcut_move.is_promotion()) {
+                continue;
+            }
+            const board::PieceType probcut_moved_piece =
+                board::piece_type_of(pos.piece_at(probcut_move.from()));
+            UndoInfo probcut_undo;
+            board::make_move(pos, probcut_move, probcut_undo);
+            const int probcut_score =
+                -negamax(pos, depth - kProbCutReduction, -probcut_beta, -probcut_beta + 1, ply + 1,
+                         nodes, tt, killers, history, cont_history, probcut_moved_piece,
+                         probcut_move.to(), game_history, path, pawn_tt);
+            board::unmake_move(pos, probcut_move, probcut_undo);
+            if (probcut_score >= probcut_beta) {
+                // This one move alone, even searched shallower than the
+                // rest of this node will be, already proves the
+                // position is winning by more than a normal beta cutoff
+                // would need -- strong enough evidence that a full-depth
+                // search of the whole node would also fail high that
+                // it's not worth paying for one. Fail-soft (the
+                // verification score itself, not just `beta`), clamped
+                // the same way NMP's own null-move probe is just below:
+                // a REDUCED search's score shouldn't be trusted as an
+                // exact mate distance.
+                return probcut_score >= kMateThreshold ? beta : probcut_score;
+            }
+        }
+    }
 
     // Futility pruning's static eval (this function's header comment):
     // computed once per node, before the move loop, since the
