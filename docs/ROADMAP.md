@@ -53,7 +53,7 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [x] ProbCut / multi-cut pruning
 - [x] Delta pruning in quiescence search
 - [x] Check extensions
-- [ ] Singular extensions
+- [x] Singular extensions
 - [ ] Regression bench: node-count/strength tracked in SESSIONS.md per change
 
 ## Phase 5 — Eval Expansion & Tuning
@@ -127,4 +127,4 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Current phase: 4 — Pruning & Extensions.** Next task: Singular extensions.
+**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Current phase: 4 — Pruning & Extensions.** Next task: Regression bench (node-count/strength tracked in SESSIONS.md per change) — the last unchecked Phase 4 item.
