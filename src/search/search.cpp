@@ -201,6 +201,21 @@ constexpr int kProbCutMinDepth = 5;
 constexpr int kProbCutMargin = 200; // centipawns
 constexpr int kProbCutReduction = 4;
 
+/// Check extensions (CPW "Check Extensions", negamax()'s move loop
+/// below) constant: the ONLY extension technique in this file so far
+/// (every previous Phase 4 addition has been a pruning/reduction
+/// technique that removes search depth, never adds it) -- when a move
+/// gives check, the child search below it is granted one extra ply
+/// (`depth - 1 + kCheckExtensionPly` instead of the usual `depth - 1`)
+/// rather than losing one, on the premise that a forced check-response
+/// sequence is exactly the kind of tactical line the horizon effect
+/// (this file's own quiescence()-related header comments) is most
+/// likely to misjudge if cut off one ply too early -- and a position
+/// that's just been put in check has, structurally, far fewer legal
+/// replies than an ordinary position, so the extra ply doesn't cost
+/// nearly as much branching as it would anywhere else in the tree.
+constexpr int kCheckExtensionPly = 1;
+
 // search_iterative_deepening() (below) only checks its time budget
 // *between* full-depth search_fixed_depth() calls, not mid-search --
 // negamax() itself has no clock/stop-flag awareness. True mid-search
@@ -324,6 +339,35 @@ constexpr int kProbCutReduction = 4;
 /// path is ever read backward from, never a stale sibling's leftover
 /// entry at the same ply.
 ///
+/// Check extensions (CPW "Check Extensions", the move loop below) are
+/// the only DEPTH-ADDING technique in this file -- every other Phase 4
+/// addition (LMP, futility, razoring, history pruning, ProbCut, LMR
+/// itself) removes search depth, never adds it. A move that gives
+/// check gets its own child search granted one extra ply
+/// (kCheckExtensionPly) rather than losing the usual one, since a
+/// forced check-response sequence is exactly the shape of tactical line
+/// the horizon effect is most likely to misjudge if cut off one ply too
+/// early, and a position that's just been put in check structurally has
+/// far fewer legal replies than an ordinary one, so the extra ply costs
+/// much less branching than it would elsewhere. Guarded by `ply + 1 <
+/// kMaxPly` -- not just a niceness check, a genuine correctness
+/// requirement: `path` and the killer/PV bookkeeping this function
+/// relies on are fixed-size arrays sized by kMaxPly (search/ordering.h),
+/// so an unbounded chain of check extensions pushing `ply` past that
+/// bound would be an out-of-bounds write, not just a wasted search.
+/// `move_gives_check` (computed once per move, right after make_move()
+/// -- shared by futility/LMP/history-pruning's own checks above AND
+/// this) is what decides both the extension here AND, as of this
+/// session, LMR's own eligibility just below: a checking move is never
+/// LMR-reduced anymore (previously an oversight -- LMR's own guard
+/// excluded captures/promotions but not checks, even though a checking
+/// move is exactly as tactical/forcing as either of those and CPW's own
+/// LMR guidance excludes them for the identical reason NMP/LMR already
+/// exclude captures) -- so extension and reduction are naturally
+/// mutually exclusive per move under this design: a move is either
+/// forcing enough to extend, or ordinary enough to consider reducing,
+/// never plausibly both.
+///
 /// Late move reductions (CPW "Late Move Reductions", the move loop
 /// below) reduce depth for LATE, QUIET moves specifically -- ones far
 /// enough into the already-ordered move list (order_moves(), search/
@@ -335,11 +379,13 @@ constexpr int kProbCutReduction = 4;
 /// alpha) full-DEPTH null-window re-check -> (only if THAT still beats
 /// alpha and stays below beta) the existing full-WINDOW re-search. A
 /// move never gets reduced at all when in check (few, forced-feeling
-/// replies -- not a good candidate for a shortcut), when it's a capture
-/// or promotion (tactical moves need full-depth verification, the same
-/// reasoning NMP's own guards lean on), or when it's not late enough
-/// in the list yet (kLMRMinMoveIndex) -- see this file's kLMR* constants
-/// for the exact thresholds.
+/// replies -- not a good candidate for a shortcut), when IT ITSELF
+/// gives check (see this file's check-extensions section just above --
+/// it gets extended instead), when it's a capture or promotion
+/// (tactical moves need full-depth verification, the same reasoning
+/// NMP's own guards lean on), or when it's not late enough in the list
+/// yet (kLMRMinMoveIndex) -- see this file's kLMR* constants for the
+/// exact thresholds.
 ///
 /// Late move pruning (CPW "Move Count Based Pruning", the move loop
 /// below) goes one step further than LMR for a strict SUBSET of what
@@ -833,6 +879,24 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         UndoInfo undo;
         board::make_move(pos, move, undo);
 
+        // "Gives check" is computed once here, right after the move is
+        // already applied -- no dedicated move flag exists in this
+        // codebase for it (see this function's header comment) -- and
+        // shared by every check below that needs it, including the
+        // first move (i == 0): check extensions (this function's own
+        // header comment) apply to ANY checking move, not just late
+        // ones, so this can no longer be computed only inside the
+        // i != 0 branch the way it used to be.
+        const bool move_gives_check = in_check(pos);
+
+        // Check extensions (this function's header comment): a checking
+        // move's own child search gets one extra ply rather than losing
+        // the usual one -- guarded by `ply + 1 < kMaxPly`, a genuine
+        // correctness requirement (see the header comment) rather than
+        // just a niceness check, since path/killer bookkeeping is
+        // sized by kMaxPly.
+        const int extension = (move_gives_check && ply + 1 < kMaxPly) ? kCheckExtensionPly : 0;
+
         int score;
         if (i == 0) {
             // First move -- now genuinely the highest-priority candidate
@@ -840,16 +904,13 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // capture/promotion/killer/history move), not just "first in
             // move-generation order" as it was pre-ordering: search it
             // with the full alpha-beta window to establish a real score
-            // to compare everything else against.
-            score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history,
-                              cont_history, moved_piece, move.to(), game_history, path, pawn_tt);
+            // to compare everything else against. `+ extension` applies
+            // even to this first move -- a checking move deserves the
+            // extra ply regardless of its position in the ordering.
+            score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt, killers,
+                              history, cont_history, moved_piece, move.to(), game_history, path,
+                              pawn_tt);
         } else {
-            // "Gives check" is computed once here, right after the move
-            // is already applied -- no dedicated move flag exists in
-            // this codebase for it (see this function's header
-            // comment) -- and reused by both cascading checks below.
-            const bool move_gives_check = in_check(pos);
-
             // Futility pruning (CPW "Futility Pruning", this function's
             // header comment): a node-level condition -- computed once,
             // before the move loop, since it doesn't depend on which
@@ -869,11 +930,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // function's header comment): a strict subset of LMR's own
             // eligibility, checked first since it can skip the move
             // entirely -- no reduced probe, no PVS null-window search at
-            // all. "Gives check" can only be known once the move is
-            // already applied (no dedicated move flag exists in this
-            // codebase -- see this function's header comment), so this
-            // check comes after make_move() above, using the fact that
-            // side-to-move has already flipped to the opponent by then.
+            // all.
             if (!us_in_check && move_is_quiet && !move_gives_check && depth <= kLMPMaxDepth &&
                 quiets_tried >= kLMPMoveCountLimits[static_cast<std::size_t>(depth)] &&
                 alpha > -kMateThreshold) {
@@ -898,12 +955,15 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             }
 
             // Late move reductions (CPW "Late Move Reductions", this
-            // function's header comment): only quiet, non-check-evading
-            // moves late enough in order_moves()'s ranking get reduced
-            // -- see kLMR* constants above for the exact thresholds.
+            // function's header comment): only quiet, non-check-evading,
+            // non-check-GIVING (see this file's check-extensions header
+            // comment -- a checking move is extended instead, never
+            // reduced, as of this session) moves late enough in
+            // order_moves()'s ranking get reduced -- see kLMR* constants
+            // above for the exact thresholds.
             const bool eligible_for_lmr = !us_in_check && depth >= kLMRMinDepth &&
                                            i >= kLMRMinMoveIndex && !move.is_capture() &&
-                                           !move.is_promotion();
+                                           !move.is_promotion() && !move_gives_check;
             const int reduction = eligible_for_lmr ? (depth >= kLMRBigReductionDepth
                                                             ? kLMRBigReduction
                                                             : kLMRReduction)
@@ -915,26 +975,32 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // exact score. Only if the probe suggests this move might
             // actually beat alpha (a fail-high on the null window that's
             // still below beta) is it worth paying for a full-window
-            // re-search to get its real score. Reduced depth (LMR) when
-            // `reduction > 0` -- see this function's header comment for
-            // how that interacts with the two fallback steps below.
-            score = -negamax(pos, depth - 1 - reduction, -alpha - 1, -alpha, ply + 1, nodes, tt,
-                              killers, history, cont_history, moved_piece, move.to(), game_history,
-                              path, pawn_tt);
+            // re-search to get its real score. `+ extension - reduction`
+            // are naturally mutually exclusive per move under this
+            // session's design (see this function's header comment) --
+            // see it for how that interacts with the two fallback steps
+            // below.
+            score = -negamax(pos, depth - 1 + extension - reduction, -alpha - 1, -alpha, ply + 1,
+                              nodes, tt, killers, history, cont_history, moved_piece, move.to(),
+                              game_history, path, pawn_tt);
             if (reduction > 0 && score > alpha) {
                 // The reduced probe suggested this move might actually
                 // be good -- not trustworthy on its own (a shallower
                 // search can overstate a quiet move's value), so
                 // re-verify at full depth (still a null window -- this
                 // is still just a probe) before deciding whether the
-                // full-window re-search below is warranted.
-                score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, nodes, tt, killers,
-                                  history, cont_history, moved_piece, move.to(), game_history, path,
-                                  pawn_tt);
+                // full-window re-search below is warranted. `extension`
+                // is always 0 here (reduction > 0 implies eligible_for_lmr
+                // was true, which requires !move_gives_check, which is
+                // the only thing that ever sets extension > 0).
+                score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, ply + 1, nodes, tt,
+                                  killers, history, cont_history, moved_piece, move.to(), game_history,
+                                  path, pawn_tt);
             }
             if (score > alpha && score < beta) {
-                score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, nodes, tt, killers, history,
-                                  cont_history, moved_piece, move.to(), game_history, path, pawn_tt);
+                score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt,
+                                  killers, history, cont_history, moved_piece, move.to(), game_history,
+                                  path, pawn_tt);
             }
         }
 
@@ -1086,6 +1152,16 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         UndoInfo undo;
         board::make_move(pos, move, undo);
 
+        // Check extensions (negamax()'s own header comment) apply
+        // symmetrically at the root: a root move that gives check
+        // deserves the same extra ply any other checking move in the
+        // tree gets. `ply + 1 < kMaxPly` is always true here (ply is 0
+        // at the root, `kMaxPly` far larger), but the guard is kept
+        // identical to negamax()'s own for a single, consistently-
+        // applied rule rather than a root-specific shortcut.
+        const bool move_gives_check = in_check(pos);
+        const int extension = (move_gives_check && 1 < kMaxPly) ? kCheckExtensionPly : 0;
+
         // Root-level PVS, mirroring negamax()'s move loop (see its
         // comments for the full rationale) with one deliberate
         // difference: first move -- now the ordering-selected best
@@ -1110,14 +1186,17 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         // already-infinite beta has nothing to gain from skipping to.
         int score;
         if (i == 0 || depth == 1) {
-            score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt, killers, history,
-                              cont_history, moved_piece, move.to(), game_history, path, pawn_tt);
+            score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt, killers,
+                              history, cont_history, moved_piece, move.to(), game_history, path,
+                              pawn_tt);
         } else {
-            score = -negamax(pos, depth - 1, -alpha - 1, -alpha, 1, result.nodes, tt, killers, history,
-                              cont_history, moved_piece, move.to(), game_history, path, pawn_tt);
+            score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, 1, result.nodes, tt,
+                              killers, history, cont_history, moved_piece, move.to(), game_history,
+                              path, pawn_tt);
             if (score > alpha && score < beta) {
-                score = -negamax(pos, depth - 1, -beta, -alpha, 1, result.nodes, tt, killers, history,
-                                  cont_history, moved_piece, move.to(), game_history, path, pawn_tt);
+                score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt,
+                                  killers, history, cont_history, moved_piece, move.to(), game_history,
+                                  path, pawn_tt);
             }
         }
 
