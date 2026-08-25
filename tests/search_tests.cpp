@@ -462,6 +462,29 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
     REQUIRE(result.score >= kMateThreshold);
 }
 
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "ProbCut active",
+          "[search][probcut]") {
+    init_all();
+    // Same position/rationale as the IIR/NMP/LMR/LMP/futility/razoring/
+    // history-pruning/continuation-history regression tests above --
+    // reused again here specifically for ProbCut (search.cpp's
+    // negamax(), the new node-level check right after order_moves(),
+    // opposite end of the depth spectrum from futility/razoring: it
+    // applies at MODERATE-to-high remaining depth, not near the
+    // leaves). Depth 6 gives the root's own immediate children remaining
+    // depth 5 -- exactly kProbCutMinDepth -- so this test's very first
+    // ply already exercises the check, not just leaves the code present
+    // but unreached. ProbCut is a whole-node fail-high shortcut (like
+    // razoring's own fail-low shortcut, just mirrored), so a bug in its
+    // guards or its fail-soft return risks silently mis-scoring a node
+    // along this forced mating line rather than merely searching it
+    // differently.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
 TEST_CASE("search_fixed_depth: back-rank mate in 1 is still found exactly when searched well "
           "beyond the mating depth (mate distance pruning)",
           "[search][mdp]") {
