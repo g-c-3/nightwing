@@ -7,6 +7,7 @@
 #include "board/movegen.h"
 #include "eval/eval.h"
 #include "eval/pawn_tt.h"
+#include "eval/psqt.h" // eval::material_value() -- delta pruning's captured-piece value below
 #include "search/ordering.h" // mvv_lva_score() -- reused here for a simple capture-only ordering pass
 #include "search/search.h" // kMateScore, kDrawScore
 #include "search/see.h"
@@ -45,6 +46,21 @@ constexpr int kInfinity = 1'000'000;
 /// rare-pathological-case safety net, not expected to be hit in normal
 /// play.
 constexpr int kMaxQuiescencePly = 32;
+
+/// Delta pruning (CPW "Delta Pruning", the candidate loop in
+/// quiescence_impl() below) margin: a generous centipawn buffer added
+/// on top of a captured piece's raw material value to account for
+/// positional factors this simple, material-only estimate can't see
+/// (the captured piece's own square/mobility value, discovered attacks,
+/// etc.). Comparable in size to search.cpp's own shallow-depth futility
+/// margins (100-300cp there) rather than razoring's wider ones (300-
+/// 500cp) -- a wrongly-pruned capture here can't be recovered by a
+/// later ply the way a slightly-too-aggressive full-search margin
+/// sometimes gets papered over by a subsequent iterative-deepening
+/// pass, so this leans toward the more conservative end of that range
+/// rather than the wider one. Not yet tuned for Nightwing specifically,
+/// same caveat as every other margin constant in this codebase.
+constexpr int kDeltaMargin = 200;
 
 /// Returns true if `pos.side_to_move`'s king is currently attacked.
 /// Deliberately duplicated from search.cpp's own private helper of the
@@ -168,10 +184,56 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         return best;
     }
 
+    // Delta pruning (CPW "Delta Pruning") guard: computed once per node,
+    // not once per move -- the underlying question, "is alpha already
+    // so far into mate-score territory that a centipawn-based margin
+    // comparison would be meaningless," doesn't depend on which capture
+    // is being considered, only on alpha itself (same reasoning as
+    // search.cpp's negamax() own `alpha < kMateThreshold`/`beta <
+    // kMateThreshold` guards on its own margin-based pruning). Without
+    // this guard, delta pruning's own per-move check below could
+    // wrongly skip EVERY capture at a node where alpha is already a
+    // large mate score, since no ordinary captured-piece value could
+    // ever close that gap -- a correctness bug, not just a missed
+    // optimization, since it's checked here rather than folded directly
+    // into the per-move condition below specifically to make this
+    // safety reasoning visible in one place instead of repeated at
+    // every candidate.
+    const bool delta_pruning_may_apply = !us_in_check && alpha < kMateThreshold;
+
     order_captures_first(candidates, pos);
 
     for (int i = 0; i < candidates.size(); ++i) {
         const Move move = candidates[i];
+
+        // Delta pruning (CPW "Delta Pruning"): skip a capture outright,
+        // before even paying for SEE below, when the captured piece's
+        // raw value plus a generous safety margin (kDeltaMargin, for
+        // positional factors SEE/this material-only estimate can't see)
+        // still couldn't plausibly bring the stand-pat baseline (`best`
+        // -- see this function's stand-pat comment above) up to alpha.
+        // Cheaper than SEE (no swap-algorithm simulation, just one
+        // piece's value) and checked first for exactly that reason: a
+        // capture delta pruning already rules out never needs SEE run
+        // on it at all. Excludes capture-promotions deliberately (same
+        // as SEE's own scope note doesn't need to, since SEE naturally
+        // accounts for the promoted piece's value mid-sequence, but this
+        // simpler check does NOT -- a promotion's value swing is large
+        // and would make the plain captured-piece-value estimate
+        // unreliable here specifically): `en_passant`'s captured pawn
+        // sits one rank behind `move.to()`, not on it (same fact SEE's
+        // own implementation already accounts for -- search/see.cpp),
+        // so the captured piece's type is read the same way SEE reads
+        // it, not assumed from `move.to()` unconditionally.
+        if (delta_pruning_may_apply && move.is_capture() && !move.is_promotion()) {
+            const board::PieceType captured_type = move.is_en_passant()
+                                                        ? board::PieceType::Pawn
+                                                        : board::piece_type_of(pos.piece_at(move.to()));
+            const int captured_value = eval::material_value(captured_type).mg;
+            if (best + captured_value + kDeltaMargin < alpha) {
+                continue;
+            }
+        }
 
         // SEE pruning (ROADMAP.md: "with SEE pruning"): skip captures
         // that lose material even after all reasonable recaptures --
