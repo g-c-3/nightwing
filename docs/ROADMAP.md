@@ -54,7 +54,39 @@ Phases are sequential unless noted. Check off tasks as completed; add new ones a
 - [x] Delta pruning in quiescence search
 - [x] Check extensions
 - [x] Singular extensions
-- [ ] Regression bench: node-count/strength tracked in SESSIONS.md per change
+- [x] Regression bench: node-count/strength tracked in SESSIONS.md per change
+
+## Priority Fixes (external code review, 2026-08-25)
+
+Not phase-gated — inserted here, before Phase 5, per the decision logged in
+docs/DECISIONS.md (2026-08-25 (8)). An external code review (build + full
+test suite run in Release and Debug/ASan+UBSan, both green; 52,236
+assertions / 211 test cases; UCI smoke-tested) confirmed the project's own
+self-reported state and surfaced two real gaps neither caught by the test
+suite nor yet on this roadmap explicitly. A third finding (TT/pawn hash
+tables reallocated per `go` call) needed no new item — already an
+intentional, documented placeholder under Phase 8's `Hash` option below.
+
+- [ ] Mid-search time checks: periodic node-count-based clock check inside
+      `negamax()`/quiescence, with a clean unwind path that doesn't corrupt
+      alpha/best-move bookkeeping — **High priority.** This is the Phase 2
+      "check the clock only between iterations, not mid-search" scope cut's
+      own documented revisit trigger (docs/DECISIONS.md, the iterative-
+      deepening entry: *"the natural point to add [mid-search interruption]
+      is alongside real time-control parsing in the UCI loop... revisit
+      then"*) — that condition (`wtime`/`btime`/`winc`/`binc`/`movetime` all
+      implemented) has been met for some time without the revisit happening.
+      Without this, a search under a tight `movetime` or low-time budget can
+      overrun by an entire additional depth iteration, which given the
+      roughly order-of-magnitude cost growth per ply can be large relative
+      to the allocated budget.
+- [ ] UCI `info` output during search: emit `info depth ... score cp ...
+      nodes ... pv ...` per completed iterative-deepening iteration, using
+      data `SearchResult` already collects — **Medium priority.** Currently
+      `uci.cpp` only ever emits the final `bestmove` line; most GUIs still
+      function without live search feedback, but some tournament managers
+      or strict UCI validators may flag its absence, and there's no
+      principal-variation display.
 
 ## Phase 5 — Eval Expansion & Tuning
 - [ ] Mobility eval
@@ -95,9 +127,9 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
 - [ ] Verify no strength regression vs. single-threaded at equal single-thread depth
 
 ## Phase 8 — Polish & Tournament Readiness
-- [ ] Full UCI option set (Hash size, Threads, MultiPV, Ponder, Move Overhead, etc.)
+- [ ] Full UCI option set (Hash size, Threads, MultiPV, Ponder, Move Overhead, etc.) — note: `Hash` size specifically is also what makes the current per-`go`-call TT/pawn-hash reallocation (docs/DECISIONS.md, 2026-08-25 (8), an external code review finding) worth revisiting; no separate item needed, tracked here.
 - [ ] Pondering — protocol side: `Ponder` UCI option exposed, verified working against GUIs that ponder (Arena, CuteChess, etc.)
-- [ ] Time management (search time allocation per move, increment handling, best-move-stability-based extension)
+- [ ] Time management (search time allocation per move, increment handling, best-move-stability-based extension) — this is the FULL allocation-strategy feature; the narrower, more urgent "does the search actually stop mid-iteration when the clock says to" gap is tracked separately, above Phase 5, as a Priority Fix (docs/DECISIONS.md, 2026-08-25 (8)) rather than waiting for this item's own scheduled phase.
 - [ ] `bench` command — fixed-position node/time benchmark for fishtest/OpenBench-style regression testing
 - [ ] Profile-Guided Optimization (PGO) build pipeline (generate profile via `bench`/self-play, rebuild optimized)
 - [ ] TT prefetch verified to actually overlap memory latency with useful work (profiled, not assumed)
@@ -127,4 +159,4 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Current phase: 4 — Pruning & Extensions.** Next task: Regression bench (node-count/strength tracked in SESSIONS.md per change) — the last unchecked Phase 4 item.
+**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Phase 4 complete.** **Current: the Priority Fixes section above** (external code review, 2026-08-25) — next task: mid-search time checks (High priority), then UCI `info` output (Medium priority). Phase 5 begins after both.

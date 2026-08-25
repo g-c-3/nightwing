@@ -4,6 +4,34 @@ Newest entry at top.
 
 ---
 
+## 2026-08-25 (8) — Session 33: Regression bench implemented — Phase 4 complete
+
+**What was built:** `tests/bench_tests.cpp` — the last Phase 4 item, per the scope agreed in the prior discussion turn: node-count only, four fixed positions (startpos, kiwipete, a quiet middlegame, the recurring mate-in-3 endgame fixture) searched via `search_fixed_depth()` at a fixed depth (6), node counts/score/best-move printed to stdout in a plain `BENCH ...` format for a human to read from CI logs and record in this file going forward. Asserts only genuine invariants (non-null best move, `nodes > 0`, `depth_completed == kBenchDepth`), never the node count itself — full reasoning in docs/DECISIONS.md (2026-08-25 (9)). Wired into `tests/CMakeLists.txt`. This docs push also carries the previous session's (Session 32's) "Priority Fixes" ROADMAP.md section, which had been drafted but not yet committed when this session started — reapplied here alongside this session's own regression-bench checkbox, both against a fresh fetch of the actual repo state. **Phase 4 (Pruning & Extensions) is now fully complete.**
+
+**Bugs fixed:** None this session.
+
+**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-25 (9)) — the bench's design (why no exact-count assertions, why fixed depth, why these four positions) and a note on how the `BENCH` output is meant to feed this file's own "record node counts per change" convention from here on. The external-review Priority Fixes entry (2026-08-25 (8)) was also reapplied in this same push since it hadn't reached the repo yet.
+
+**Verification:** No compiler toolchain available in this environment, same as every session. Brace-balance swept on `tests/bench_tests.cpp` (11/11, 1 TEST_CASE). This is a NEW test file, not an edit to an existing one, so the recurring orphaned-`TEST_CASE` `str_replace` failure that's hit several recent sessions' worth of test-file edits doesn't apply here — the whole file was written fresh via `create_file`, not patched into an existing one.
+
+**Next session start point:** Push `tests/bench_tests.cpp`, `tests/CMakeLists.txt`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. Confirm a real `ctest` run is fully green on all 6 platforms, AND this time also read the `BENCH` lines from the CI log — they're this project's first real bench baseline, worth recording in a follow-up SESSIONS.md note once available, even though no session's own work is waiting on that number specifically. After confirming green, next task per ROADMAP.md's own updated footer: mid-search time checks (High priority, the external code review's first Priority Fix) — read `search.cpp`'s `negamax()`/`search_iterative_deepening()` and `uci.cpp`'s time-control parsing in full first, since this touches the recursion's own unwind path, not just a single self-contained block the way every Phase 4 technique was. Say "Continue" or "Start" to proceed.
+
+---
+
+## 2026-08-25 (7) — Session 32: External code review intake + regression-bench scope agreed (docs-only, no code changed)
+
+**What was built:** Nothing in source code this session — a docs-only planning session prompted by two inputs: (1) a discussion on the last remaining Phase 4 item's own scope (regression bench: node-count only, a small fixed set of positions, wired into `ctest`), and (2) an independently-produced code review report against a checkout of the repository, confirming a clean build and full green test suite (52,236 assertions / 211 test cases) in both Release and Debug/ASan+UBSan configurations, plus three findings. Two of the three (no UCI `info` output during search; time management doesn't check the clock mid-search) were promoted to a new "Priority Fixes" section in ROADMAP.md, positioned between Phase 4 and Phase 5; the third (TT/pawn hash reallocated per `go` call) needed no new item, already an intentional documented placeholder cross-referenced from Phase 8. Full reasoning in docs/DECISIONS.md (2026-08-25 (8)). **Note:** this session's own docs edits were drafted but not committed to the repo before the next session began — see Session 33's own entry above for how that was reconciled (both sessions' docs bundled into one push against a fresh repo fetch).
+
+**Bugs fixed:** None — no source code touched this session.
+
+**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-25 (8)) — how each of the review's four findings was handled, and the ordering rationale for the two promoted Priority Fixes relative to the in-progress regression-bench item and Phase 5.
+
+**Verification:** N/A — no code changed. The review itself is the verification event worth noting: the first time this project's build/test claims have been checked by something other than the CI logs pasted back each session, and it came back clean.
+
+**Next session start point:** Superseded by Session 33's own entry above (that session picked this one up and completed the regression bench).
+
+---
+
 ## 2026-08-25 (6) — Session 31: Singular extensions (Phase 4 continues — last search-code item)
 
 **What was built:** Phase 4's next item, singular extensions, added to `negamax()`'s move loop in `src/search/search.cpp` — this file's second depth-adding technique (after check extensions, last session), and its most expensive: evaluated only for the TT move, it runs a genuine reduced-depth verification search over every OTHER legal move at the node before deciding whether to grant a bonus ply. New `kSingularMinDepth`/`kSingularTTDepthMargin`/`kSingularMarginPerPly`/`kSingularDepthDivisor`/`kSingularExtensionPly` constants. Required restructuring the move loop so the verification check (which needs the pre-move position) runs BEFORE each move's own `make_move()`, while `move_gives_check` (check extensions, needing the post-move position) still runs after — the two techniques straddle `make_move()` from opposite sides for reasons specific to what each observes. `extension` is now `std::max(check_extension, singular_extension)` rather than just the check-extension value alone. Full design and rationale, including why `us_in_check` deliberately isn't a guard here (unlike several pruning techniques), in docs/DECISIONS.md (2026-08-25 (7)). `tests/search_tests.cpp` — one new regression test using `search_iterative_deepening()` specifically, so the TT is realistically populated by the time the check could plausibly trigger.
