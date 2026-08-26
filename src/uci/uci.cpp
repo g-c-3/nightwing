@@ -6,19 +6,26 @@
 //   - setoption / Hash / Threads / any engine options: no options exist
 //     yet (no TT, single-threaded) — nothing to configure.
 //   - True asynchronous `go infinite` + `stop`: would need a background
-//     search thread and a stop flag negamax() checks periodically, which
-//     doesn't exist (consistent with the previous session's decision to
-//     defer mid-search interruption for iterative deepening's time
-//     checks — see DECISIONS.md). `go` always runs synchronously to
-//     completion before this loop reads its next line; `stop` is parsed
-//     but has no effect, since by the time it could arrive on `in`,
-//     `go` has already finished and printed `bestmove`.
+//     search thread and a stop flag negamax() checks periodically. The
+//     stop-flag PIECE of that now exists (search.h's SearchLimits,
+//     since the mid-search-time-checks Priority Fix — docs/DECISIONS.md,
+//     2026-08-26) and IS what makes `go movetime`/`go wtime` actually
+//     respect their budget mid-iteration, but it's driven by an
+//     internal deadline computed once at the start of `go`, not by an
+//     externally-arriving `stop` command read from a second, concurrent
+//     input source — that still needs the background-thread half of
+//     this item, which doesn't exist. `go` still always runs
+//     synchronously to completion (or until its own internal deadline)
+//     before this loop reads its next line; `stop` is parsed but has no
+//     effect, since by the time it could arrive on `in`, `go` has
+//     already finished and printed `bestmove`.
 //   - Pondering (`go ponder`, `ponderhit`): needs the same async
 //     machinery as `stop`, plus its own logic on top; not attempted.
 
 #include "uci/uci.h"
 
 #include <cstdint>
+#include <functional>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -183,11 +190,61 @@ constexpr int kNoTimeControlDepth = 5;
     return budget;
 }
 
+/// Formats and writes one `info depth ... score cp/mate ... nodes ...
+/// pv ...` line to `out` for one completed search::search_iterative_
+/// deepening() iteration -- meant to be passed as that function's
+/// IterationCallback (search/search.h) so a GUI/tournament manager sees
+/// live progress per iteration, not just the final `bestmove` (the
+/// external code review's second Priority Fix -- docs/ROADMAP.md,
+/// docs/DECISIONS.md 2026-08-26).
+///
+/// Score is reported as `mate <N>` (N = full moves to mate, this
+/// engine's own perspective -- positive means THIS engine delivers it,
+/// negative means it gets mated) rather than `cp <N>` whenever
+/// |result.score| reaches search::kMateThreshold, per the UCI spec's
+/// own distinction between the two -- search.h's kMateThreshold doc
+/// comment already anticipates exactly this use. The plies-to-moves
+/// conversion (`(plies_to_mate + 1) / 2`) is the standard UCI rounding
+/// (CPW/common engine practice): a mate deliverable on the very next
+/// move (1 ply from the root) reports as `mate 1`, not `mate 0`.
+///
+/// `pv` is emitted move-by-move via Move::to_uci(). An empty
+/// `result.pv` (SearchResult's own doc comment: can happen if a TT
+/// entry needed to extend it was evicted before this call, though
+/// `best_move` itself is never null for a genuinely completed
+/// iteration) still emits a `pv` field containing exactly `best_move`
+/// alone, so every `info` line names at least the one move its score
+/// applies to, never a bare `pv` with nothing after it.
+void emit_info(const search::SearchResult& result, std::ostream& out) {
+    out << "info depth " << result.depth_completed << " score ";
+    if (result.score >= search::kMateThreshold) {
+        const int plies_to_mate = search::kMateScore - result.score;
+        out << "mate " << (plies_to_mate + 1) / 2;
+    } else if (result.score <= -search::kMateThreshold) {
+        const int plies_to_mate = search::kMateScore + result.score;
+        out << "mate " << -((plies_to_mate + 1) / 2);
+    } else {
+        out << "cp " << result.score;
+    }
+    out << " nodes " << result.nodes << " pv";
+    if (result.pv.empty()) {
+        out << ' ' << result.best_move.to_uci();
+    } else {
+        for (const Move& move : result.pv) {
+            out << ' ' << move.to_uci();
+        }
+    }
+    out << '\n';
+    out.flush();
+}
+
 /// Handles `go [depth N] [movetime N] [wtime W btime B [winc I] [binc I]]`
 /// (any combination; unrecognized sub-options like `movestogo`/
 /// `infinite`/`ponder`/`mate`/`nodes` are accepted but ignored — see
-/// this file's header comment): runs the search and writes
-/// `bestmove <uci>` to `out`.
+/// this file's header comment): runs the search, writing one `info
+/// depth ... score ... nodes ... pv ...` line per completed iteration
+/// (emit_info(), above) as it goes, then writes `bestmove <uci>` to
+/// `out` once the search returns.
 ///
 /// `game_history` is passed straight through to
 /// search::search_iterative_deepening() (search/search.h's doc
@@ -258,8 +315,13 @@ void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
         }
     }
 
-    const search::SearchResult result =
-        search::search_iterative_deepening(pos, max_depth, time_limit_ms, game_history);
+    // `on_iteration` (search/search.h's IterationCallback): emits one
+    // `info depth ... score ... nodes ... pv ...` line per completed
+    // iteration, live, before the final `bestmove` below -- see
+    // emit_info()'s own doc comment.
+    const search::SearchResult result = search::search_iterative_deepening(
+        pos, max_depth, time_limit_ms, game_history,
+        [&out](const search::SearchResult& iteration_result) { emit_info(iteration_result, out); });
 
     out << "bestmove ";
     if (result.best_move.is_null()) {
