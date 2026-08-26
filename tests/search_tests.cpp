@@ -143,6 +143,85 @@ TEST_CASE("search_fixed_depth: depth_completed stays 0 for an already-terminal p
     REQUIRE(result.depth_completed == 0);
 }
 
+TEST_CASE("search_fixed_depth: pv is non-empty and starts with best_move, for a genuine mate-in-1",
+          "[search]") {
+    init_all();
+    // Textbook back-rank mate-in-1 (1.Qb8#) -- a simple enough position
+    // that the PV (SearchResult::pv, search.h) reconstructed via
+    // extract_pv()'s TT walk (search.cpp) is expected to be exactly the
+    // one move deep this depth allows, not truncated to nothing.
+    Position pos = parse_fen("6k1/5ppp/8/8/8/8/8/1Q4K1 w - - 0 1");
+    const SearchResult result = search_fixed_depth(pos, 1);
+    REQUIRE_FALSE(result.best_move.is_null());
+    REQUIRE_FALSE(result.pv.empty());
+    REQUIRE(result.pv.front() == result.best_move);
+}
+
+TEST_CASE("search_fixed_depth: pv's first move is always legal in the searched position",
+          "[search]") {
+    init_all();
+    Position pos = start_position();
+    const SearchResult result = search_fixed_depth(pos, 3);
+    REQUIRE_FALSE(result.pv.empty());
+    MoveList legal;
+    generate_legal_moves(pos, legal);
+    REQUIRE(legal.contains(result.pv.front()));
+}
+
+TEST_CASE("search_fixed_depth: an already-terminal position's pv is empty (nothing to walk from)",
+          "[search]") {
+    init_all();
+    Position pos = parse_fen(
+        "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3");
+    const SearchResult result = search_fixed_depth(pos, 2);
+    REQUIRE(result.best_move.is_null());
+    REQUIRE(result.pv.empty());
+}
+
+TEST_CASE("search_iterative_deepening: on_iteration fires once per completed depth, in "
+          "increasing depth order, with cumulative (non-decreasing) node counts",
+          "[search][id]") {
+    init_all();
+    Position pos = start_position();
+    std::vector<int> depths_seen;
+    std::vector<std::uint64_t> nodes_seen;
+    const SearchResult result =
+        search_iterative_deepening(pos, 4, 0, {}, [&](const SearchResult& iteration_result) {
+            depths_seen.push_back(iteration_result.depth_completed);
+            nodes_seen.push_back(iteration_result.nodes);
+        });
+
+    // One callback per depth 1..4, in order -- no time budget here, so
+    // every iteration is expected to complete (none skipped via
+    // mid-search interruption, search.h's SearchLimits).
+    REQUIRE(depths_seen.size() == 4);
+    for (std::size_t i = 0; i < depths_seen.size(); ++i) {
+        REQUIRE(depths_seen[i] == static_cast<int>(i) + 1);
+    }
+
+    // Nodes reported to the callback are the CUMULATIVE running total
+    // (IterationCallback's own doc comment, search.h), so each
+    // iteration's reported count must be >= the previous one's, and the
+    // very last callback's count must match the final SearchResult's own
+    // total exactly.
+    for (std::size_t i = 1; i < nodes_seen.size(); ++i) {
+        REQUIRE(nodes_seen[i] >= nodes_seen[i - 1]);
+    }
+    REQUIRE(nodes_seen.back() == result.nodes);
+}
+
+TEST_CASE("search_iterative_deepening: on_iteration is never called for an already-terminal "
+          "position",
+          "[search][id]") {
+    init_all();
+    Position pos = parse_fen(
+        "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3");
+    int callback_count = 0;
+    (void)search_iterative_deepening(pos, 5, 0, {},
+                                      [&](const SearchResult&) { ++callback_count; });
+    REQUIRE(callback_count == 0);
+}
+
 TEST_CASE("search_iterative_deepening: max_depth 1 matches search_fixed_depth(pos, 1) exactly", "[search][id]") {
     init_all();
     Position pos = start_position();

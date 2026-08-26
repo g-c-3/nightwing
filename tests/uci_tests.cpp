@@ -152,6 +152,83 @@ TEST_CASE("uci: 'position fen ...' for an already-checkmated position returns be
     REQUIRE(contains(out, "bestmove 0000"));
 }
 
+TEST_CASE("uci: 'go depth' emits an 'info depth' line, with score/nodes/pv fields, before "
+          "'bestmove'",
+          "[uci]") {
+    init_all();
+    const std::string out = run_uci({"position startpos", "go depth 2", "quit"});
+
+    const std::size_t info_idx = out.find("info depth");
+    REQUIRE(info_idx != std::string::npos);
+    REQUIRE(contains(out, " score "));
+    REQUIRE(contains(out, " nodes "));
+    REQUIRE(contains(out, " pv "));
+
+    // Every 'info' line is expected to appear before 'bestmove' -- a
+    // GUI/tournament manager wants live progress DURING the search
+    // (this session's whole point, per docs/ROADMAP.md's Priority
+    // Fixes section), not something interleaved arbitrarily after the
+    // final result.
+    const std::size_t bestmove_idx = out.find("bestmove ");
+    REQUIRE(bestmove_idx != std::string::npos);
+    REQUIRE(info_idx < bestmove_idx);
+}
+
+TEST_CASE("uci: 'go depth N' for N >= 2 emits one 'info depth' line per completed iteration, in "
+          "increasing depth order",
+          "[uci]") {
+    init_all();
+    const std::string out = run_uci({"position startpos", "go depth 3", "quit"});
+
+    // Depths 1, 2, and 3 should each produce their own "info depth <d>"
+    // line: search_iterative_deepening()'s IterationCallback (search/
+    // search.h) fires once per genuinely completed iteration, and depth
+    // 3 here is small enough that a bare "go depth 3" (no time budget)
+    // is never expected to hit mid-search interruption and skip one.
+    REQUIRE(contains(out, "info depth 1 "));
+    REQUIRE(contains(out, "info depth 2 "));
+    REQUIRE(contains(out, "info depth 3 "));
+
+    const std::size_t idx1 = out.find("info depth 1 ");
+    const std::size_t idx2 = out.find("info depth 2 ");
+    const std::size_t idx3 = out.find("info depth 3 ");
+    REQUIRE(idx1 < idx2);
+    REQUIRE(idx2 < idx3);
+}
+
+TEST_CASE("uci: an already-checkmated position's 'go' emits no 'info depth' line, only "
+          "bestmove 0000",
+          "[uci]") {
+    init_all();
+    // Same FEN as the already-checkmated test just above -- reusing it
+    // here keeps this test's own setup trivially verifiable against
+    // that existing, already-checked one. A terminal position's
+    // search_iterative_deepening() call returns immediately after its
+    // mandatory depth-1 call finds no legal moves at all (search.h's
+    // own doc comment), without ever invoking IterationCallback --
+    // there is nothing meaningful to report, per IterationCallback's
+    // own doc comment (search.h) -- so no "info depth" line should
+    // appear at all, only the final "bestmove 0000".
+    const std::string out = run_uci(
+        {"position fen rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3",
+         "go depth 3", "quit"});
+    REQUIRE(contains(out, "bestmove 0000"));
+    REQUIRE_FALSE(contains(out, "info depth"));
+}
+
+TEST_CASE("uci: 'go depth' emits an 'info' line reporting 'score mate' for a forced mate-in-1 "
+          "position, not 'score cp'",
+          "[uci]") {
+    init_all();
+    // A textbook back-rank mate-in-1: 1.Qb8#. Deep enough (depth 3) that
+    // the mate is found well within the search, exercising emit_info()'s
+    // mate-score branch (uci.cpp) rather than its plain centipawn one.
+    const std::string out =
+        run_uci({"position fen 6k1/5ppp/8/8/8/8/8/1Q4K1 w - - 0 1", "go depth 3", "quit"});
+    REQUIRE(contains(out, "score mate 1"));
+    REQUIRE_FALSE(contains(out, "score cp"));
+}
+
 TEST_CASE("uci: 'go movetime' returns promptly with a legal bestmove", "[uci]") {
     init_all();
     const std::string out = run_uci({"position startpos", "go movetime 50", "quit"});
