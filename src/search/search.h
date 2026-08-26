@@ -35,7 +35,9 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <span>
+#include <vector>
 
 #include "board/board.h"
 #include "board/move.h"
@@ -152,7 +154,40 @@ struct SearchResult {
     /// deepest iteration that finished before the loop stopped (by
     /// reaching `max_depth` or running out of its time budget).
     int depth_completed = 0;
+
+    /// Principal variation: `best_move` first, then each subsequent
+    /// position's own best-known continuation, reconstructed by walking
+    /// the transposition table (search.cpp's extract_pv()) rather than
+    /// tracked incrementally during the search itself (CPW "Triangular
+    /// PV Table" is the other standard technique — deliberately not
+    /// used here; a TT walk needed no extra per-node bookkeeping
+    /// threaded through negamax()'s own recursion, at the cost of a PV
+    /// that can come back shorter than `depth_completed` if the TT
+    /// replacement scheme (tt.h) has since evicted a needed entry, or
+    /// stop early at a node whose stored bound isn't Exact — both
+    /// accepted, documented imprecisions of the TT-walk approach, not
+    /// bugs). Empty when `best_move` is null (nothing to walk from).
+    /// Populated for search_fixed_depth() too, not just iterative
+    /// deepening — same reconstruction, just from that one call's own
+    /// (fresh, private) TT.
+    std::vector<board::Move> pv;
 };
+
+/// Optional callback invoked by search_iterative_deepening() once after
+/// each iteration that genuinely COMPLETES — including the mandatory
+/// depth-1 iteration, but excluding any iteration discarded because it
+/// was interrupted mid-search (SearchLimits, this file's own comments
+/// above) — passing that iteration's own SearchResult (best_move,
+/// score, depth_completed, and pv all reflect THIS iteration; `nodes`
+/// is the CUMULATIVE total across every iteration so far, matching the
+/// conventional meaning of a UCI `info nodes` line, not just this one
+/// iteration's own count — see search.cpp's own comment at the call
+/// site for why). Exists so a caller like uci.cpp can emit `info depth
+/// ... score cp ... nodes ... pv ...` live, once per completed
+/// iteration, rather than only learning the final result after the
+/// whole call returns. Defaults to nullptr (no-op) — every existing
+/// test/bench call site is unaffected.
+using IterationCallback = std::function<void(const SearchResult&)>;
 
 /// Runs a plain fixed-depth alpha-beta search from `pos` and returns the
 /// best move plus its score. `pos` is left unmodified on return (every
@@ -207,8 +242,13 @@ struct SearchResult {
 /// `game_history`: same meaning and default as search_fixed_depth()'s
 /// parameter of the same name — see that function's doc comment. Shared
 /// across every depth iteration of this one call, same as `pos` itself.
+///
+/// `on_iteration`, if non-null, is invoked once per genuinely completed
+/// iteration — see IterationCallback's own doc comment above for the
+/// full contract (including why the depth-1 iteration always fires it,
+/// and why an interrupted iteration never does).
 [[nodiscard]] SearchResult search_iterative_deepening(
     board::Position& pos, int max_depth, int time_limit_ms = 0,
-    std::span<const std::uint64_t> game_history = {});
+    std::span<const std::uint64_t> game_history = {}, IterationCallback on_iteration = nullptr);
 
 } // namespace nightwing::search

@@ -1237,6 +1237,80 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     return best;
 }
 
+/// Reconstructs a principal variation (SearchResult::pv, search.h) by
+/// walking the transposition table from `pos`, starting with
+/// `root_move` (search_root()'s own just-computed best move -- passed
+/// explicitly rather than re-probed, since search_root() already knows
+/// it without a redundant TT lookup) and then following each
+/// subsequent position's own TT-stored move up to `max_plies`. Takes
+/// `pos` BY VALUE deliberately: this function makes/unmakes moves on
+/// its own private copy while walking, never touching the caller's
+/// actual position (mirroring negamax()'s/search_root()'s own
+/// unmodified-on-return contract, just via a copy instead of an
+/// explicit unmake at the end).
+///
+/// Stops early, returning whatever was accumulated so far, on any of:
+/// `root_move` (or a later walked move) not being legal in the
+/// position it's about to be applied to (defensive -- a move sourced
+/// from the TT should always be legal for the position it was stored
+/// against, since it was only ever stored after being generated as a
+/// legal move there, but a TT entry surviving into a DIFFERENT
+/// position via a Zobrist collision, while astronomically unlikely
+/// (tt.h's own header comment on the empty-slot sentinel), is exactly
+/// the kind of thing this function should never trust blindly); a TT
+/// miss (nothing more is known about that continuation); a stored
+/// bound that isn't Bound::Exact (CPW "Node Types" -- only an Exact
+/// entry's move is a genuine proven PV continuation, the same
+/// distinction negamax()'s own TT-probe cutoff logic respects
+/// elsewhere; a Lower/Upper-bound entry's move is still a reasonable
+/// move, just not one this search actually proved best); a null move;
+/// or the walked position repeating one already seen earlier in THIS
+/// walk (a cycle would otherwise loop forever, and a "PV" that repeats
+/// itself isn't a meaningful line to report either way).
+std::vector<Move> extract_pv(Position pos, const TranspositionTable& tt, Move root_move,
+                              int max_plies) {
+    std::vector<Move> pv;
+    if (root_move.is_null() || max_plies <= 0) {
+        return pv;
+    }
+
+    std::vector<std::uint64_t> seen;
+    seen.reserve(static_cast<std::size_t>(max_plies));
+    Move move = root_move;
+
+    for (int i = 0; i < max_plies; ++i) {
+        MoveList legal;
+        board::generate_legal_moves(pos, legal);
+        if (!legal.contains(move)) {
+            break;
+        }
+
+        seen.push_back(pos.zobrist_hash);
+        UndoInfo undo;
+        board::make_move(pos, move, undo);
+        pv.push_back(move);
+
+        bool repeated = false;
+        for (const std::uint64_t h : seen) {
+            if (h == pos.zobrist_hash) {
+                repeated = true;
+                break;
+            }
+        }
+        if (repeated) {
+            break;
+        }
+
+        const TTProbeResult probe = tt.probe(pos.zobrist_hash, 0);
+        if (!probe.hit || probe.bound != Bound::Exact || probe.move.is_null()) {
+            break;
+        }
+        move = probe.move;
+    }
+
+    return pv;
+}
+
 /// Core root-move-loop logic shared by both public entry points below.
 /// Kept as a private, TT-taking function rather than exposed directly:
 /// each public entry point is responsible for deciding *which*
@@ -1467,6 +1541,14 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
     result.best_move = best_move;
     result.score = alpha;
     result.depth_completed = depth;
+    // Skipped when interrupted -- see the guarded TT store just above
+    // for the same reasoning: this whole SearchResult is about to be
+    // discarded wholesale by search_iterative_deepening() in that case
+    // (SearchLimits' own doc comment), so walking the TT for a PV
+    // nobody will read is wasted work.
+    if (limits == nullptr || !limits->stopped) {
+        result.pv = extract_pv(pos, tt, best_move, depth);
+    }
     return result;
 }
 
@@ -1503,7 +1585,8 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
 }
 
 SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_limit_ms,
-                                         std::span<const std::uint64_t> game_history) {
+                                         std::span<const std::uint64_t> game_history,
+                                         IterationCallback on_iteration) {
     assert(max_depth >= 1 && "search_iterative_deepening: max_depth must be at least 1");
 
     const auto start_time = std::chrono::steady_clock::now();
@@ -1547,9 +1630,20 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // Position already over (checkmate/stalemate at the root): every
     // deeper iteration would just regenerate the same empty move list
     // and return the same terminal result, so stop immediately instead
-    // of wastefully repeating it.
+    // of wastefully repeating it. No callback fired -- IterationCallback's
+    // own doc comment (search.h): nothing meaningful to report for a
+    // terminal position.
     if (result.best_move.is_null()) {
         return result;
+    }
+
+    // `result.nodes` already equals `total_nodes` at this exact point
+    // (depth 1 is the very first iteration), so no cumulative-total
+    // rewrite is needed before this first callback the way the
+    // depth-2-onward loop below needs one -- see that loop's own
+    // comment.
+    if (on_iteration) {
+        on_iteration(result);
     }
 
     for (int depth = 2; depth <= max_depth; ++depth) {
@@ -1676,6 +1770,19 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
         }
 
         result = next;
+
+        // Report CUMULATIVE nodes to the callback (matching the
+        // conventional meaning of a UCI `info nodes` line -- total
+        // work for the whole `go` command so far, not just this one
+        // iteration -- see IterationCallback's own doc comment,
+        // search.h), overwriting `next`'s own per-iteration-only count
+        // that search_root() reported. `result.nodes` picks this up
+        // too, ahead of the final rewrite below, so it's already
+        // correct even if this turns out to be the last iteration.
+        result.nodes = total_nodes;
+        if (on_iteration) {
+            on_iteration(result);
+        }
     }
 
     result.nodes = total_nodes;
