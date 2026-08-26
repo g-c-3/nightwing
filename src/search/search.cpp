@@ -258,19 +258,23 @@ constexpr int kSingularMarginPerPly = 2;
 constexpr int kSingularDepthDivisor = 2;
 constexpr int kSingularExtensionPly = 1;
 
-// search_iterative_deepening() (below) only checks its time budget
-// *between* full-depth search_fixed_depth() calls, not mid-search --
-// negamax() itself has no clock/stop-flag awareness. True mid-search
-// interruption (checking a stop condition every N nodes inside
-// negamax() and unwinding cleanly without corrupting alpha/best-move
-// bookkeeping) is a real, standard technique, but it's more machinery
-// than Phase 2's "get something playing" scope needs: without it, the
-// worst case is simply that one already-started iteration finishes
-// before the time budget is enforced, which is a minor, boundable
-// overrun (bounded by how long a single depth takes) rather than a
-// correctness problem. Revisit once real time controls (UCI `go
-// wtime`/`movetime`, the very next ROADMAP.md item) make that overrun
-// large enough to matter in practice.
+// Mid-search time-budget interruption (ROADMAP.md Priority Fix,
+// promoted from the Phase 2 scope cut this comment used to describe,
+// once its own documented revisit trigger -- real wtime/btime/movetime
+// UCI parsing -- had been met for some time without the revisit
+// happening; see docs/DECISIONS.md's 2026-08-13 and external-code-
+// review entries). negamax()/quiescence() (search.h's SearchLimits,
+// quiescence.cpp) now check a shared stop flag/deadline periodically,
+// by node count, rather than search_iterative_deepening() (below)
+// only ever checking *between* full-depth search calls the way it
+// used to exclusively. Checked only every this many nodes -- a
+// std::chrono::steady_clock::now() call is not free (ARCHITECTURE.md
+// "Hot-Path Code Practices": measure, don't guess, but a syscall-
+// backed clock read on every single node would be an obviously bad
+// trade against a node's own, much cheaper, usual cost) -- must be a
+// power of two so the check is a single bitwise AND, not a modulo.
+constexpr std::uint64_t kTimeCheckNodeInterval = 2048;
+constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
 
 /// Returns true if `pos.side_to_move`'s king is currently attacked —
 /// used to distinguish checkmate from stalemate when
@@ -668,12 +672,30 @@ constexpr int kSingularExtensionPly = 1;
 /// loop's recursive calls and the TT store at the bottom -- correctly
 /// reflects the depth actually searched, not the depth originally
 /// requested.
+///
+/// `limits`, if non-null, is the mid-search time-budget interruption
+/// state (search.h's SearchLimits) this call and every recursive call
+/// it makes -- the NMP/razoring/ProbCut/singular-extension probes
+/// below, this function's own move loop, and every quiescence()
+/// delegation -- share for one search_iterative_deepening() iteration.
+/// See SearchLimits' own doc comment for the full contract. Defaults to
+/// nullptr, meaning "no time budget": search_fixed_depth() and every
+/// existing test/bench call are unaffected.
 int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_t& nodes,
             TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
             ContinuationHistoryTable& cont_history, board::PieceType prev_piece,
             board::Square prev_to, std::span<const std::uint64_t> game_history,
             std::array<std::uint64_t, kMaxPly>& path, eval::PawnHashTable& pawn_tt,
-            bool allow_null_move = true) {
+            bool allow_null_move = true, SearchLimits* limits = nullptr) {
+    // Mid-search time-budget interruption fast path (search.h's
+    // SearchLimits doc comment has the full contract): checked before
+    // anything else, including the depth <= 0 quiescence delegation
+    // just below, so a node reached after the deadline was already
+    // noticed elsewhere in the tree does zero further work of its own.
+    if (limits != nullptr && limits->stopped) {
+        return 0;
+    }
+
     if (depth <= 0) {
         // Quiescence search (search/quiescence.h) rather than a raw
         // eval::evaluate() call: resolves in-flight capture/check
@@ -684,11 +706,23 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // again here first -- this negamax() call itself does no
         // "node work" of its own at depth <= 0, it's a pure delegation,
         // so counting it separately here would double-count the same
-        // conceptual node.
-        return quiescence(pos, alpha, beta, ply, nodes, /*include_checks=*/true, &pawn_tt);
+        // conceptual node. `limits` is threaded through too -- see
+        // quiescence.h's own doc comment on why quiescence search
+        // participates in the same interruption scheme.
+        return quiescence(pos, alpha, beta, ply, nodes, /*include_checks=*/true, &pawn_tt, limits);
     }
 
+    // Periodic deadline check (search.h's SearchLimits doc comment,
+    // this file's kTimeCheckNodeInterval comment above): checked after
+    // `nodes` is incremented so the shared counter's periodicity is
+    // consistent regardless of how deep in the tree this particular
+    // call happens to be.
     ++nodes;
+    if (limits != nullptr && limits->has_deadline && (nodes & kTimeCheckNodeMask) == 0 &&
+        std::chrono::steady_clock::now() >= limits->deadline) {
+        limits->stopped = true;
+        return 0;
+    }
 
     const std::uint64_t key = pos.zobrist_hash;
     if (ply < kMaxPly) {
@@ -801,9 +835,14 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                                          tt, killers, history, cont_history,
                                          /*prev_piece=*/board::PieceType::None, /*prev_to=*/0,
                                          game_history, path, pawn_tt,
-                                         /*allow_null_move=*/false);
+                                         /*allow_null_move=*/false, limits);
         board::unmake_null_move(pos, null_undo);
-        if (null_score >= beta) {
+        // A probe interrupted mid-search (limits->stopped) returns a
+        // meaningless, truncated-subtree score (SearchLimits' own doc
+        // comment) -- never trust it for a cutoff; fall through to the
+        // normal move loop below (which will itself immediately bail
+        // via the top-of-function check on its own next negamax() call).
+        if ((limits == nullptr || !limits->stopped) && null_score >= beta) {
             // Don't hand back a mate-range score verbatim from a
             // reduced, unverified probe (CPW's own caution) -- clamp to
             // beta instead of trusting an unconfirmed "mate" claim.
@@ -825,8 +864,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         const int razor_static_eval = us == Color::White ? white_relative : -white_relative;
         if (razor_static_eval + kRazorMargins[static_cast<std::size_t>(depth)] <= alpha) {
             const int razor_score =
-                quiescence(pos, alpha, beta, ply, nodes, /*include_checks=*/true, &pawn_tt);
-            if (razor_score <= alpha) {
+                quiescence(pos, alpha, beta, ply, nodes, /*include_checks=*/true, &pawn_tt, limits);
+            if ((limits == nullptr || !limits->stopped) && razor_score <= alpha) {
                 return razor_score;
             }
             // Quiescence disagreed with the static eval's pessimism --
@@ -876,8 +915,16 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             const int probcut_score =
                 -negamax(pos, depth - kProbCutReduction, -probcut_beta, -probcut_beta + 1, ply + 1,
                          nodes, tt, killers, history, cont_history, probcut_moved_piece,
-                         probcut_move.to(), game_history, path, pawn_tt);
+                         probcut_move.to(), game_history, path, pawn_tt, /*allow_null_move=*/true,
+                         limits);
             board::unmake_move(pos, probcut_move, probcut_undo);
+            if (limits != nullptr && limits->stopped) {
+                // Truncated subtree (SearchLimits' own doc comment) --
+                // stop trying further captures/promotions in this loop
+                // and fall through, same reasoning as NMP's own guard
+                // above.
+                break;
+            }
             if (probcut_score >= probcut_beta) {
                 // This one move alone, even searched shallower than the
                 // rest of this node will be, already proves the
@@ -963,8 +1010,19 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 const int alt_score =
                     -negamax(pos, singular_depth, -singular_beta, -singular_beta + 1, ply + 1, nodes,
                              tt, killers, history, cont_history, alt_moved_piece, alt_move.to(),
-                             game_history, path, pawn_tt);
+                             game_history, path, pawn_tt, /*allow_null_move=*/true, limits);
                 board::unmake_move(pos, alt_move, alt_undo);
+                if (limits != nullptr && limits->stopped) {
+                    // Truncated subtree -- stop the verification loop
+                    // rather than trying more alternatives against a
+                    // score that can no longer be trusted (same
+                    // reasoning as NMP's/ProbCut's own guards above);
+                    // `singular_extension` simply stays 0 below, which
+                    // is harmless either way since this whole node's
+                    // result will be discarded (SearchLimits' own doc
+                    // comment).
+                    break;
+                }
                 if (alt_score >= singular_beta) {
                     // Some other move can already reach almost as high a
                     // score as the TT move's own previous cutoff --
@@ -1016,7 +1074,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // ordering.
             score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt, killers,
                               history, cont_history, moved_piece, move.to(), game_history, path,
-                              pawn_tt);
+                              pawn_tt, /*allow_null_move=*/true, limits);
         } else {
             // Futility pruning (CPW "Futility Pruning", this function's
             // header comment): a node-level condition -- computed once,
@@ -1089,8 +1147,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // below.
             score = -negamax(pos, depth - 1 + extension - reduction, -alpha - 1, -alpha, ply + 1,
                               nodes, tt, killers, history, cont_history, moved_piece, move.to(),
-                              game_history, path, pawn_tt);
-            if (reduction > 0 && score > alpha) {
+                              game_history, path, pawn_tt, /*allow_null_move=*/true, limits);
+            if ((limits == nullptr || !limits->stopped) && reduction > 0 && score > alpha) {
                 // The reduced probe suggested this move might actually
                 // be good -- not trustworthy on its own (a shallower
                 // search can overstate a quiet move's value), so
@@ -1102,16 +1160,29 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 // the only thing that ever sets extension > 0).
                 score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, ply + 1, nodes, tt,
                                   killers, history, cont_history, moved_piece, move.to(), game_history,
-                                  path, pawn_tt);
+                                  path, pawn_tt, /*allow_null_move=*/true, limits);
             }
-            if (score > alpha && score < beta) {
+            if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt,
                                   killers, history, cont_history, moved_piece, move.to(), game_history,
-                                  path, pawn_tt);
+                                  path, pawn_tt, /*allow_null_move=*/true, limits);
             }
         }
 
         board::unmake_move(pos, move, undo);
+
+        if (limits != nullptr && limits->stopped) {
+            // This move's own score came from a subtree truncated by
+            // the deadline (SearchLimits' own doc comment) -- stop
+            // trying further moves and don't let it update
+            // best/best_move/alpha even transiently; this node's
+            // result is discarded wholesale further up the call chain
+            // regardless (search_iterative_deepening(), search.cpp),
+            // so nothing downstream of `break` here matters beyond
+            // unwinding quickly.
+            break;
+        }
+
         if (move_is_quiet) {
             ++quiets_tried;
         }
@@ -1153,7 +1224,15 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     const Bound bound_type = best <= alpha_orig ? Bound::Upper
                             : best >= beta       ? Bound::Lower
                                                   : Bound::Exact;
-    tt.store(key, depth, best, bound_type, best_move, ply);
+    // Skip the store entirely if this node's own move loop was cut
+    // short by the deadline (SearchLimits' own doc comment): `best`/
+    // `best_move` here may reflect a truncated subtree rather than a
+    // genuine result for this depth, and caching that would pollute
+    // the TT with a wrong entry that could mislead a later, real
+    // search at this same position.
+    if (limits == nullptr || !limits->stopped) {
+        tt.store(key, depth, best, bound_type, best_move, ply);
+    }
 
     return best;
 }
@@ -1210,11 +1289,28 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 /// (computed fresh per iteration of the loop below) and IS passed as
 /// `prev_piece`/`prev_to` into that move's negamax() children, exactly
 /// as negamax()'s own move loop does for its own children.
+///
+/// `limits`, if non-null, is the same mid-search time-budget
+/// interruption state negamax() takes (search.h's SearchLimits) --
+/// threaded into every negamax() call this function makes below.
+/// Unlike negamax(), this function never checks `limits->stopped` on
+/// entry itself (there is no shallower root to have set it before this
+/// call begins) -- it only observes it after each move's own negamax()
+/// call returns, at which point it stops trying further moves rather
+/// than trusting a truncated-subtree score to update `alpha`/
+/// `best_move`, and skips its own TT store. `result.depth_completed`
+/// is left at `depth` regardless (this function's caller,
+/// search_iterative_deepening(), is the one that actually decides
+/// whether an interrupted iteration's SearchResult gets used at all --
+/// see its own comments) -- callers other than
+/// search_iterative_deepening() never pass a `limits` with
+/// `has_deadline` set, so this never applies to search_fixed_depth().
 SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int aspiration_beta,
                           TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
                           ContinuationHistoryTable& cont_history,
                           std::span<const std::uint64_t> game_history,
-                          std::array<std::uint64_t, kMaxPly>& path, eval::PawnHashTable& pawn_tt) {
+                          std::array<std::uint64_t, kMaxPly>& path, eval::PawnHashTable& pawn_tt,
+                          SearchLimits* limits = nullptr) {
     SearchResult result;
 
     MoveList moves;
@@ -1295,19 +1391,32 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         if (i == 0 || depth == 1) {
             score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt, killers,
                               history, cont_history, moved_piece, move.to(), game_history, path,
-                              pawn_tt);
+                              pawn_tt, /*allow_null_move=*/true, limits);
         } else {
             score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, 1, result.nodes, tt,
                               killers, history, cont_history, moved_piece, move.to(), game_history,
-                              path, pawn_tt);
-            if (score > alpha && score < beta) {
+                              path, pawn_tt, /*allow_null_move=*/true, limits);
+            if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt,
                                   killers, history, cont_history, moved_piece, move.to(), game_history,
-                                  path, pawn_tt);
+                                  path, pawn_tt, /*allow_null_move=*/true, limits);
             }
         }
 
         board::unmake_move(pos, move, undo);
+
+        if (limits != nullptr && limits->stopped) {
+            // This move's own score came from a subtree truncated by
+            // the deadline (SearchLimits' own doc comment) -- stop
+            // trying further root moves and don't let it update
+            // alpha/best_move even transiently. The caller
+            // (search_iterative_deepening()) discards this whole
+            // iteration's SearchResult in favor of the previous one,
+            // so best_move/alpha as they stood BEFORE this move is all
+            // that matters from here, and even that is about to be
+            // thrown away one level up.
+            break;
+        }
 
         if (score > alpha) {
             alpha = score;
@@ -1344,7 +1453,16 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
     const Bound bound_type = alpha <= aspiration_alpha ? Bound::Upper
                             : alpha >= aspiration_beta  ? Bound::Lower
                                                          : Bound::Exact;
-    tt.store(root_key, depth, alpha, bound_type, best_move, 0);
+    // Same reasoning as negamax()'s own guarded store: an interrupted
+    // loop's `alpha`/`best_move` may reflect a truncated subtree from
+    // whichever move was in flight when `stopped` became true, not a
+    // genuine root result for this depth -- see this function's own
+    // header comment on `limits`. The caller (search_iterative_
+    // deepening()) discards the whole SearchResult in this case anyway;
+    // this additionally keeps the TT itself clean.
+    if (limits == nullptr || !limits->stopped) {
+        tt.store(root_key, depth, alpha, bound_type, best_move, 0);
+    }
 
     result.best_move = best_move;
     result.score = alpha;
@@ -1447,6 +1565,21 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
         tt.new_search();
         SearchResult next;
 
+        // Mid-search time-budget interruption (ROADMAP.md Priority Fix,
+        // search.h's SearchLimits): one instance per depth iteration,
+        // sharing the SAME deadline (and `stopped` flag) across every
+        // search_root() call this iteration makes below, including any
+        // aspiration-window fail-high/fail-low retries -- all of them
+        // are still spending this one iteration's time budget, not
+        // separate ones. Never constructed for depth == 1 above (that
+        // call passes no `limits` at all, preserving the "always have a
+        // legal move" guarantee -- see search.h's own doc comment).
+        SearchLimits limits;
+        limits.has_deadline = time_limit_ms > 0;
+        if (limits.has_deadline) {
+            limits.deadline = start_time + std::chrono::milliseconds(time_limit_ms);
+        }
+
         // Aspiration windows (CPW "Aspiration Windows"): the previous
         // iteration's score is usually a good estimate of this
         // iteration's score too (positions rarely swing wildly between
@@ -1474,7 +1607,16 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
 
             for (;;) {
                 next = search_root(pos, depth, window_alpha, window_beta, tt, killers, history,
-                                    cont_history, game_history, path, pawn_tt);
+                                    cont_history, game_history, path, pawn_tt, &limits);
+
+                if (limits.stopped) {
+                    // Interrupted mid-retry -- see the post-loop
+                    // handling below; the retry loop itself has nothing
+                    // trustworthy left to check `next.score` against
+                    // (SearchLimits' own doc comment), so stop
+                    // immediately rather than attempting another widen.
+                    break;
+                }
 
                 if (next.score <= window_alpha && window_alpha > -kInfinity) {
                     // Fail low: the true score is <= window_alpha, exact
@@ -1508,10 +1650,31 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             }
         } else {
             next = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history, cont_history,
-                                game_history, path, pawn_tt);
+                                game_history, path, pawn_tt, &limits);
         }
 
+        // `next.nodes` reflects real work done regardless of whether
+        // this iteration was interrupted -- every node visited, even
+        // ones whose result got discarded by a poisoned-score guard
+        // (search.cpp's negamax()/search_root() own comments), took
+        // real wall-clock time, so it's counted the same way a fully
+        // completed iteration's nodes are (see search.h's own doc
+        // comment on SearchResult::nodes).
         total_nodes += next.nodes;
+
+        if (limits.stopped) {
+            // This iteration's own SearchResult was truncated mid-
+            // search -- not trustworthy even as a bound, unlike a
+            // genuine aspiration fail-high/fail-low (SearchLimits' own
+            // doc comment) -- discard it wholesale and keep the
+            // previous, fully-completed iteration's `result` as the
+            // final answer instead. No deeper iteration would fare any
+            // better (the same, already-exhausted deadline applies to
+            // it too), so stop the outer loop entirely rather than
+            // trying depth + 1.
+            break;
+        }
+
         result = next;
     }
 

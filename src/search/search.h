@@ -33,6 +33,7 @@
 // search/ordering.h) current per-call, not yet persistent-global,
 // lifetime.
 
+#include <chrono>
 #include <cstdint>
 #include <span>
 
@@ -57,6 +58,69 @@ inline constexpr int kDrawScore = 0;
 /// plausible Phase 2 eval value (material+PSQT tops out in the low
 /// thousands even with several extra queens on the board).
 inline constexpr int kMateThreshold = kMateScore - 1000;
+
+/// Shared state for mid-search time-budget interruption (ROADMAP.md
+/// Priority Fix, "Mid-search time checks" — promoted once its own
+/// documented revisit trigger, real `wtime`/`btime`/`movetime` UCI
+/// parsing, had been met for some time without the revisit happening;
+/// see docs/DECISIONS.md, the 2026-08-13 iterative-deepening entry and
+/// the external-code-review entry that followed it). A single instance
+/// is constructed per search_iterative_deepening() depth iteration
+/// (search.cpp) and threaded by pointer through every negamax()/
+/// quiescence() call for that one iteration, the same way `nodes`/
+/// `tt`/`killers`/etc. are already threaded — every caller that
+/// doesn't want a time budget at all (search_fixed_depth(), every
+/// existing test/bench call, and iterative deepening's own mandatory,
+/// always-uninterrupted depth-1 iteration) simply omits it, since it
+/// defaults to `nullptr` throughout.
+///
+/// `stopped` is checked at the top of every negamax()/quiescence()
+/// call (search.cpp, quiescence.cpp) before any real per-node work —
+/// once true, that call returns immediately (cheap, O(1) — no TT
+/// probe, no movegen) rather than continuing to search, and its own
+/// caller, one level up, does the same on its very next check rather
+/// than trusting the just-returned score to update its own alpha/
+/// best-move bookkeeping or TT store. `stopped` is set at most once
+/// per iteration, the moment some call happens to notice the deadline
+/// has passed (checked only periodically, by node count, not on every
+/// single node — see search.cpp/quiescence.cpp's kTimeCheckNodeInterval
+/// for why), and is never reset within that iteration — a fresh
+/// SearchLimits is constructed for the next one instead.
+///
+/// This is a bounded, not a surgical, unwind: a node that was mid-way
+/// through a null-move/ProbCut/singular-extension probe (search.cpp)
+/// when `stopped` became true can briefly treat a now-meaningless
+/// truncated-subtree score as a real cutoff before ITS OWN next
+/// negamax() call re-checks `stopped` and short-circuits in turn — but
+/// this costs at most a small, bounded number of additional node
+/// visits along the current search path (each of which re-checks
+/// `stopped` first), not continued exploration of the remaining tree,
+/// and it never reaches a TT store or an iteration's own reported
+/// best_move: negamax()'s and search_root()'s own TT stores are both
+/// skipped once `stopped` is observed, and the entire iteration's
+/// SearchResult is discarded wholesale by search_iterative_deepening()
+/// in favor of the previous, fully-completed iteration's — see its own
+/// comments in search.cpp.
+struct SearchLimits {
+    /// Absolute wall-clock deadline, meaningful only when `has_deadline`
+    /// is true.
+    std::chrono::steady_clock::time_point deadline;
+
+    /// False means "no time budget for this call" — negamax()/
+    /// quiescence() skip both the periodic clock check and the
+    /// `stopped` fast-path check entirely in that case (a null
+    /// SearchLimits* has the same effect; this flag exists for the
+    /// case where a SearchLimits instance is threaded through but this
+    /// particular iteration/call still shouldn't be interrupted, e.g.
+    /// iterative deepening's own always-complete depth-1 iteration if
+    /// it were ever threaded this way instead of passing nullptr).
+    bool has_deadline = false;
+
+    /// Set true the moment a periodic check (search.cpp/quiescence.cpp)
+    /// notices `deadline` has passed. Never reset within one
+    /// SearchLimits instance's lifetime.
+    bool stopped = false;
+};
 
 /// Result of a search — either a single fixed-depth call or a full
 /// iterative-deepening run.
@@ -112,21 +176,30 @@ struct SearchResult {
 [[nodiscard]] SearchResult search_fixed_depth(board::Position& pos, int depth,
                                                std::span<const std::uint64_t> game_history = {});
 
-/// Runs iterative deepening: calls search_fixed_depth() at depth = 1,
-/// 2, 3, ... up to `max_depth`, keeping the most recently *completed*
-/// iteration's result. If `time_limit_ms` is positive, the loop also
-/// stops (before starting the next iteration, not mid-iteration — see
-/// search.cpp's header comment on why true mid-search interruption is
-/// deferred) once that many milliseconds of wall-clock time have
-/// elapsed since the call began; pass 0 (the default) for no time limit,
-/// i.e. always search all the way to `max_depth`.
+/// Runs iterative deepening: searches at depth = 1, 2, 3, ... up to
+/// `max_depth`, keeping the most recently *completed* iteration's
+/// result. If `time_limit_ms` is positive, the loop stops in two ways:
+/// between iterations (before starting the next one, once the elapsed
+/// time already exceeds the budget — the original, coarser check), and
+/// now also mid-iteration, from depth 2 onward (see search.h's
+/// SearchLimits and search.cpp's own comments): each iteration from
+/// depth 2 on is given a SearchLimits sharing the same deadline, and
+/// negamax()/quiescence() periodically check it as they search. An
+/// iteration interrupted this way is discarded wholesale — its
+/// (necessarily incomplete) result is never used to update the
+/// returned SearchResult, which keeps the previous, fully-completed
+/// iteration's best_move/score instead — so "completed" above means
+/// both "the call returned" and "it wasn't interrupted partway."
+/// Depth 1 always runs unconditionally, with no deadline at all (not
+/// just no check), before either kind of check, so the result always
+/// has a legal best_move (when `pos` has one at all) even under an
+/// extremely tight time budget — see SearchLimits::has_deadline. Pass
+/// `time_limit_ms = 0` (the default) for no time limit at all, i.e.
+/// always search all the way to `max_depth`.
 ///
-/// Depth 1 always runs unconditionally before any time check, so the
-/// result always has a legal best_move (when `pos` has one at all) even
-/// under an extremely tight time budget. If `pos` has no legal moves at
-/// all, returns immediately after the depth-1 call (see
-/// SearchResult::depth_completed) rather than wastefully repeating the
-/// same terminal result at deeper depths.
+/// If `pos` has no legal moves at all, returns immediately after the
+/// depth-1 call (see SearchResult::depth_completed) rather than
+/// wastefully repeating the same terminal result at deeper depths.
 ///
 /// Precondition: same as search_fixed_depth() — `max_depth >= 1`, and
 /// init_masks()/init_magic_bitboards() must already have been called.

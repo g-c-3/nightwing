@@ -3,6 +3,7 @@
 #include "search/quiescence.h"
 
 #include <algorithm>
+#include <chrono>
 
 #include "board/movegen.h"
 #include "eval/eval.h"
@@ -46,6 +47,14 @@ constexpr int kInfinity = 1'000'000;
 /// rare-pathological-case safety net, not expected to be hit in normal
 /// play.
 constexpr int kMaxQuiescencePly = 32;
+
+/// Mirrors search.cpp's own kTimeCheckNodeInterval/kTimeCheckNodeMask of
+/// the same value and purpose (mid-search time-budget interruption,
+/// search.h's SearchLimits) -- a private, module-local constant rather
+/// than a shared one, same convention as this file's own kInfinity
+/// above.
+constexpr std::uint64_t kTimeCheckNodeInterval = 2048;
+constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
 
 /// Delta pruning (CPW "Delta Pruning", the candidate loop in
 /// quiescence_impl() below) margin: a generous centipawn buffer added
@@ -117,8 +126,30 @@ void order_captures_first(MoveList& moves, const Position& pos) noexcept {
 }
 
 int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& nodes,
-                     bool include_checks, int qs_ply, eval::PawnHashTable* pawn_tt) noexcept {
+                     bool include_checks, int qs_ply, eval::PawnHashTable* pawn_tt,
+                     SearchLimits* limits) noexcept {
+    // Mid-search time-budget interruption (search.h's SearchLimits):
+    // fast-path bail if a shallower quiescence/negamax() frame already
+    // noticed the deadline has passed, mirroring negamax()'s own
+    // top-of-function check (search.cpp) -- see SearchLimits' own doc
+    // comment for why this cheap, unwind-one-frame-at-a-time approach
+    // is safe even though it isn't a surgically precise interruption.
+    if (limits != nullptr && limits->stopped) {
+        return 0;
+    }
+
     ++nodes;
+
+    // Periodic deadline check, same node-count granularity and
+    // rationale as negamax()'s own (search.cpp's kTimeCheckNodeInterval
+    // comment) -- checked after `nodes` is up to date so both
+    // negamax()'s and quiescence()'s own counters contribute to the
+    // same shared periodicity.
+    if (limits != nullptr && limits->has_deadline && (nodes & kTimeCheckNodeMask) == 0 &&
+        std::chrono::steady_clock::now() >= limits->deadline) {
+        limits->stopped = true;
+        return 0;
+    }
 
     const bool us_in_check = in_check(pos);
 
@@ -249,8 +280,17 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         UndoInfo undo;
         board::make_move(pos, move, undo);
         const int score = -quiescence_impl(pos, -beta, -alpha, ply + 1, nodes,
-                                            /*include_checks=*/false, qs_ply + 1, pawn_tt);
+                                            /*include_checks=*/false, qs_ply + 1, pawn_tt, limits);
         board::unmake_move(pos, move, undo);
+
+        if (limits != nullptr && limits->stopped) {
+            // The just-returned score came from a truncated subtree
+            // (SearchLimits' own doc comment) -- don't trust it to
+            // update `best`/`alpha` even transiently; stop trying
+            // further candidates and let this call's own return value
+            // propagate the interruption upward instead.
+            break;
+        }
 
         if (score > best) {
             best = score;
@@ -269,8 +309,9 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
 } // namespace
 
 int quiescence(Position& pos, int alpha, int beta, int ply, std::uint64_t& nodes,
-               bool include_checks, eval::PawnHashTable* pawn_tt) noexcept {
-    return quiescence_impl(pos, alpha, beta, ply, nodes, include_checks, /*qs_ply=*/0, pawn_tt);
+               bool include_checks, eval::PawnHashTable* pawn_tt, SearchLimits* limits) noexcept {
+    return quiescence_impl(pos, alpha, beta, ply, nodes, include_checks, /*qs_ply=*/0, pawn_tt,
+                            limits);
 }
 
 } // namespace nightwing::search

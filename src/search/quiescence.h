@@ -20,6 +20,7 @@
 
 #include "board/board.h"
 #include "eval/pawn_tt.h"
+#include "search/search.h" // SearchLimits -- mid-search time-budget interruption
 
 namespace nightwing::search {
 
@@ -64,10 +65,22 @@ namespace nightwing::search {
 /// recomputes pawn structure fresh every call, as before this
 /// parameter existed).
 ///
+/// `limits`, if non-null, is the same mid-search time-budget
+/// interruption state negamax() threads through (search.h's
+/// SearchLimits, search.cpp's own comments) -- quiescence search can
+/// run a meaningful number of nodes on its own in a tactically loaded
+/// position, so it participates in the same periodic deadline check
+/// and `stopped` fast-path as negamax(), rather than being a blind
+/// spot that could let a search overrun its budget from inside
+/// quiescence alone. Defaults to nullptr, meaning "no time budget" --
+/// every existing call site (tests, bench, negamax()'s own calls
+/// outside search_iterative_deepening()) is unaffected.
+///
 /// Precondition: same as negamax()'s own -- init_masks()/
 /// init_magic_bitboards() have been called.
 [[nodiscard]] int quiescence(board::Position& pos, int alpha, int beta, int ply,
                               std::uint64_t& nodes, bool include_checks,
-                              eval::PawnHashTable* pawn_tt = nullptr) noexcept;
+                              eval::PawnHashTable* pawn_tt = nullptr,
+                              SearchLimits* limits = nullptr) noexcept;
 
 } // namespace nightwing::search
