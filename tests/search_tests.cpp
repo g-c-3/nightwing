@@ -6,6 +6,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <vector>
 
@@ -243,6 +244,46 @@ TEST_CASE("search_iterative_deepening: a tiny time budget stops before max_depth
     const SearchResult result = search_iterative_deepening(pos, 6, 1);
     REQUIRE(result.depth_completed >= 1);
     REQUIRE(result.depth_completed < 6);
+    REQUIRE_FALSE(result.best_move.is_null());
+}
+
+TEST_CASE("search_iterative_deepening: a tiny time budget bounds wall-clock time even when a "
+          "single iteration alone would run far longer than the budget (mid-search interruption, "
+          "not just the between-iteration check)",
+          "[search][id]") {
+    init_all();
+    // Before mid-search interruption existed, only the check BETWEEN
+    // iterations (before starting the next search_root() call) could
+    // stop a search -- an iteration already in progress ran to
+    // completion regardless of the time budget. depth 1 from the
+    // starting position always completes near-instantly (guaranteed,
+    // unconditionally, no deadline at all -- search.h's own doc
+    // comment) with plenty of budget left in the 1ms requested here, so
+    // the between-iteration check right after it still lets depth 2
+    // start; from there, an unpruned-enough middlegame branching factor
+    // makes it extremely unlikely depth 2 alone also finishes within
+    // 1ms. If mid-search interruption (search.h's SearchLimits,
+    // search.cpp's kTimeCheckNodeInterval) is working, depth 2 gets cut
+    // off partway through and the whole call returns quickly regardless
+    // -- if it regressed back to between-iteration-only checking, depth
+    // 2 (and this assertion) would instead have to wait for however
+    // long an entire unpruned depth-2 search takes, which is not
+    // reliably fast. 2000ms is an enormous margin relative to the 1ms
+    // requested -- correct interruption returns within roughly one
+    // kTimeCheckNodeInterval-sized batch of extra node visits (a small,
+    // constant amount of work), not anywhere close to 2000ms, so this
+    // isn't a tight/flaky timing assertion in the direction that
+    // matters; it only guards against the regression this test exists
+    // to catch.
+    Position pos = start_position();
+    const auto call_start = std::chrono::steady_clock::now();
+    const SearchResult result = search_iterative_deepening(pos, 10, 1);
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - call_start)
+                                 .count();
+    REQUIRE(elapsed_ms < 2000);
+    REQUIRE(result.depth_completed >= 1);
+    REQUIRE(result.depth_completed < 10);
     REQUIRE_FALSE(result.best_move.is_null());
 }
 
