@@ -67,7 +67,7 @@ suite nor yet on this roadmap explicitly. A third finding (TT/pawn hash
 tables reallocated per `go` call) needed no new item — already an
 intentional, documented placeholder under Phase 8's `Hash` option below.
 
-- [ ] Mid-search time checks: periodic node-count-based clock check inside
+- [x] Mid-search time checks: periodic node-count-based clock check inside
       `negamax()`/quiescence, with a clean unwind path that doesn't corrupt
       alpha/best-move bookkeeping — **High priority.** This is the Phase 2
       "check the clock only between iterations, not mid-search" scope cut's
@@ -79,7 +79,11 @@ intentional, documented placeholder under Phase 8's `Hash` option below.
       Without this, a search under a tight `movetime` or low-time budget can
       overrun by an entire additional depth iteration, which given the
       roughly order-of-magnitude cost growth per ply can be large relative
-      to the allocated budget.
+      to the allocated budget. Implemented via a shared `SearchLimits`
+      (search.h) threaded through `negamax()`/`quiescence()`/`search_root()`,
+      checked every 2048 nodes; an iteration interrupted this way is
+      discarded wholesale by `search_iterative_deepening()` rather than
+      trusted even partially — see docs/DECISIONS.md, 2026-08-26 entry.
 - [ ] UCI `info` output during search: emit `info depth ... score cp ...
       nodes ... pv ...` per completed iterative-deepening iteration, using
       data `SearchResult` already collects — **Medium priority.** Currently
@@ -159,4 +163,4 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Phase 4 complete.** **Current: the Priority Fixes section above** (external code review, 2026-08-25) — next task: mid-search time checks (High priority), then UCI `info` output (Medium priority). Phase 5 begins after both.
+**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Phase 4 complete.** **Current: the Priority Fixes section above** (external code review, 2026-08-25) — mid-search time checks (High priority) complete; next task: UCI `info` output (Medium priority). Phase 5 begins after that.
