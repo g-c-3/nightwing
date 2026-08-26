@@ -84,13 +84,20 @@ intentional, documented placeholder under Phase 8's `Hash` option below.
       checked every 2048 nodes; an iteration interrupted this way is
       discarded wholesale by `search_iterative_deepening()` rather than
       trusted even partially — see docs/DECISIONS.md, 2026-08-26 entry.
-- [ ] UCI `info` output during search: emit `info depth ... score cp ...
+- [x] UCI `info` output during search: emit `info depth ... score cp ...
       nodes ... pv ...` per completed iterative-deepening iteration, using
-      data `SearchResult` already collects — **Medium priority.** Currently
-      `uci.cpp` only ever emits the final `bestmove` line; most GUIs still
+      data `SearchResult` already collects — **Medium priority.** Previously
+      `uci.cpp` only ever emitted the final `bestmove` line; most GUIs still
       function without live search feedback, but some tournament managers
-      or strict UCI validators may flag its absence, and there's no
-      principal-variation display.
+      or strict UCI validators may flag its absence, and there was no
+      principal-variation display. Implemented via a new
+      `SearchResult::pv` (reconstructed by walking the TT — search.cpp's
+      `extract_pv()`, since no triangular-PV-array bookkeeping is
+      threaded through `negamax()`'s own recursion) and a new
+      `IterationCallback` (search.h) `search_iterative_deepening()`
+      invokes once per genuinely completed iteration; `uci.cpp`'s
+      `emit_info()` formats it, including `score mate N` (not `cp`) once
+      a mate is found — see docs/DECISIONS.md, 2026-08-26 (2) entry.
 
 ## Phase 5 — Eval Expansion & Tuning
 - [ ] Mobility eval
@@ -163,4 +170,4 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Phase 4 complete.** **Current: the Priority Fixes section above** (external code review, 2026-08-25) — mid-search time checks (High priority) complete; next task: UCI `info` output (Medium priority). Phase 5 begins after that.
+**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Phase 4 complete.** **The Priority Fixes section above is complete** (external code review, 2026-08-25 — both mid-search time checks and UCI `info` output done). **Current: Phase 5 — Eval Expansion & Tuning**, starting with Mobility eval.
