@@ -84,3 +84,25 @@ jobs:
       - name: Test
         working-directory: build
         run: ctest --output-on-failure --build-config ${{ matrix.build_type }}
+
+      # `ctest --output-on-failure` (the step above) only ever prints a
+      # test's own stdout when that test FAILS -- for the regression
+      # bench (tests/bench_tests.cpp, `[bench]` tag; docs/ROADMAP.md's
+      # own "node-count/strength tracked in SESSIONS.md per change"
+      # practice), the whole point is reading its printed `BENCH ...`
+      # node-count lines from a PASSING run, which the step above can
+      # never surface -- this was silently true from the day that
+      # practice was adopted, only noticed once a session actually went
+      # looking for those lines in a real CI log and found nothing (see
+      # docs/SESSIONS.md, 2026-08-26 (3)/(4)). `-V` (verbose) forces
+      # ctest to print a test's output regardless of pass/fail. Scoped to
+      # a single matrix leg (Linux Release, chosen arbitrarily among the
+      # six -- search is deterministic, so node counts are the same
+      # figures the OS/build-type wouldn't be expected to change) rather
+      # than repeated six times: the bench numbers are read by a human
+      # updating docs/SESSIONS.md, not asserted on by any test, so one
+      # copy of them is all that's ever actually useful.
+      - name: Print regression bench (Linux Release only — see comment above)
+        if: matrix.os_name == 'Linux' && matrix.build_type == 'Release'
+        working-directory: build
+        run: ctest -R bench -V --build-config ${{ matrix.build_type }}
