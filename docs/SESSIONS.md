@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+## 2026-08-26 (7) — Session 40: Session 39 (King safety) confirmed green on a fresh CI run; regression bench captured
+
+**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms (Linux/macOS/Windows × Debug/Release), that Session 39's King safety work builds clean and passes 100% of tests everywhere (232 tests on Linux/Windows, 230 on macOS — the same 2-test BMI2-gated-hooks/ARM-runner gap noted in Session 37, unrelated to this session). Regression bench (Linux Release, depth 6, via the `ctest -R bench -V` step added in Session 37):
+
+```
+BENCH startpos            depth=6  nodes=1380   score=-1     best_move=a2a4
+BENCH kiwipete             depth=6  nodes=17016  score=28     best_move=e2a6
+BENCH quiet_middlegame     depth=6  nodes=7703   score=6      best_move=a2a3
+BENCH endgame_mate_in_3    depth=6  nodes=58098  score=31995  best_move=a1c1
+BENCH TOTAL                depth=6  nodes=84197
+```
+
+**Comparison against Session 38's baseline (`nodes=91786` TOTAL, pre-King-safety):** total nodes dropped to `84197` (roughly 8% fewer) — a real, expected consequence of King safety changing move ordering and pruning decisions throughout the tree, not itself concerning (docs/ROADMAP.md's "node-count/strength tracked... per change" practice exists precisely to make a change like this visible, not to flag it as wrong by default). More notable: `startpos`'s score moved from `71` to `-1` and its best move from `e2e4` to `a2a4`; `quiet_middlegame`'s score moved from `-32` to `6` and its best move from `f3e5` to `a2a3`; `kiwipete`'s score shifted slightly (`30`→`28`) with its best move unchanged; `endgame_mate_in_3` is essentially unchanged (still finds the same mate). **Read as expected, not alarming:** King safety's constants are explicitly first-draft hand estimates, not yet Texel-tuned (docs/DECISIONS.md, 2026-08-26 (6), same caveat every eval term added this phase carries) — a brand-new, uncalibrated term is exactly the kind of change that can flip a shallow (depth 6) fixed-depth search's top move in an otherwise-balanced, quiet position, since the position's other terms leave the choice close to begin with. `a2a4`/`a2a3` as "best" at depth 6 are not being treated as genuine opening-theory claims (this is a raw bench comparison of hand-tuned constants, not a strength measurement) — they're flagged here only as a data point for whenever the eventual Texel tuner (a later Phase 5 item) runs, not as something to chase down or reverse now. No test failed, and the hand-derived math backing King safety's own dedicated tests (Session 39) was independently re-checked, not just re-trusted, before writing this paragraph.
+
+**Bugs fixed:** None.
+
+**Decisions made:** None new.
+
+**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **Bishop pair, rook on open/semi-open file, rook on 7th rank** — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 39's own next-start-point guidance. Once implemented and confirmed green, run the regression bench again and compare its `BENCH TOTAL nodes=` figure against this entry's `84197` (depth 6, Linux Release) the same way this entry compared against Session 38's. Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-26 (6) — Session 39: King safety implemented — Phase 5's second item done, Bishop pair/rook-file terms next
 
 **What was built:** Phase 5's second item (docs/ROADMAP.md): a new king safety evaluation term. New `src/eval/king_safety.h`/`src/eval/king_safety.cpp` add `king_safety_value()`, summing three components per side: a flat per-pawn pawn-shield bonus, an open/semi-open-file-near-the-king penalty, and an attacker-weighting penalty scaled by which enemy knights/bishops/rooks/queens threaten the king's immediate zone. Wired into `eval::evaluate()` (`eval.cpp`) as a third uncached term, alongside Mobility eval (Session 36). Every constant is deliberately MG-heavy/EG-light — the opposite tapering direction from Mobility eval's own constants, on purpose (see docs/DECISIONS.md, 2026-08-26 (6), for the full reasoning on this and every other design choice this session made). `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated for the new files. `tests/king_safety_tests.cpp` (new, 5 tests) covers starting-position symmetry, shielded-vs-bare, a strict closed > semi-open > fully-open file ordering, an attacking-queen comparison, and a defensive missing-king edge case — every expected numeric outcome hand-derived square-by-square before being written, the same discipline Session 36's `mobility_tests.cpp` established.
