@@ -9,7 +9,10 @@
 // values to cache — see docs/DECISIONS.md) plus mobility (eval/
 // mobility.h — ROADMAP.md Phase 5's "Mobility eval" item) plus king
 // safety (eval/king_safety.h — ROADMAP.md Phase 5's "King safety"
-// item). The rest of Phase 5's terms land incrementally after this.
+// item) plus bishop pair / rook-on-open-or-semi-open-file / rook-on-
+// 7th-rank (eval/piece_bonuses.h — ROADMAP.md Phase 5's "Bishop pair,
+// rook on open/semi-open file, rook on 7th rank" item). The rest of
+// Phase 5's terms land incrementally after this.
 
 #include "board/board.h"
 #include "eval/pawn_tt.h"
