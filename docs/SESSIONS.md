@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+## 2026-08-27 (2) — Session 42: Session 41 (Bishop pair / rook files / rook 7th rank) confirmed green on a fresh CI run; regression bench captured
+
+**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms (Linux/macOS/Windows × Debug/Release), that Session 41's piece-bonuses work builds clean and passes 100% of tests everywhere (237 tests on Linux/Windows, 235 on macOS — the same 2-test BMI2-gated-hooks/ARM-runner gap noted in Sessions 37/40, unrelated to this session). Regression bench (Linux Release, depth 6, via the `ctest -R bench -V` step):
+
+```
+BENCH startpos            depth=6  nodes=3067   score=2      best_move=b1a3
+BENCH kiwipete             depth=6  nodes=16454  score=59     best_move=e2a6
+BENCH quiet_middlegame     depth=6  nodes=9978   score=-13    best_move=f3e5
+BENCH endgame_mate_in_3    depth=6  nodes=58132  score=31995  best_move=a1c1
+BENCH TOTAL                depth=6  nodes=87631
+```
+
+**Comparison against Session 40's baseline (`nodes=84197` TOTAL, pre-piece-bonuses):** total nodes rose to `87631` (roughly 4% more) — a real, expected consequence of the new bishop-pair/rook-file/rook-7th-rank term changing move ordering and pruning decisions throughout the tree (docs/ROADMAP.md's "node-count/strength tracked... per change" practice exists precisely to make a change like this visible, not to flag it as wrong by default). `startpos`'s score moved from `-1` to `2` and its best move from `a2a4` to `b1a3`; `quiet_middlegame`'s score moved from `6` to `-13` and its best move from `a2a3` to `f3e5`; `kiwipete`'s score shifted more noticeably (`28`→`59`) with its best move unchanged (`e2a6`); `endgame_mate_in_3` is essentially unchanged (still finds the same mate, nodes `58098`→`58132`). **Read as expected, not alarming:** the new term's constants are explicitly first-draft hand estimates, not yet Texel-tuned (docs/DECISIONS.md, 2026-08-27 (1), same caveat every eval term added this phase carries) — kiwipete's score shift is the largest of any single-session bench delta so far this phase, plausibly because kiwipete's own starting position has both sides' bishop pairs and rooks on semi-open files already in play, giving this particular new term more surface area to affect than the quieter startpos/quiet_middlegame positions. Not treated as a genuine strength claim in either direction (this is a raw bench comparison of hand-tuned constants at fixed depth 6, not a strength measurement) — flagged here only as a data point for whenever the eventual Texel tuner (a later Phase 5 item) runs.
+
+**Bugs fixed:** None.
+
+**Decisions made:** None new.
+
+**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **Knight outposts** — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 41's own next-start-point guidance. Once implemented and confirmed green, run the regression bench again and compare its `BENCH TOTAL nodes=` figure against this entry's `87631` (depth 6, Linux Release) the same way this entry compared against Session 40's. Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-27 (1) — Session 41: Bishop pair / rook-on-open-or-semi-open-file / rook-on-7th-rank implemented — Phase 5's third item done, Knight outposts next
 
 **What was built:** Phase 5's third unchecked item (docs/ROADMAP.md): a new grouped positional-bonus evaluation term. New `src/eval/piece_bonuses.h`/`src/eval/piece_bonuses.cpp` add `piece_bonus_value()`, summing three components per side: a flat bishop-pair bonus, a per-rook open/semi-open-file bonus, and a per-rook 7th-rank bonus. Wired into `eval::evaluate()` (`eval.cpp`) as a fourth uncached term, alongside Mobility eval (Session 36) and King safety (Session 39). `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated for the new files. `tests/piece_bonuses_tests.cpp` (new, 5 tests) covers starting-position symmetry, bishop pair vs. a single bishop, a strict open > semi-open > closed file ordering, a 7th-rank rook vs. the same rook off the 7th rank, and additive stacking of the open-file and 7th-rank bonuses on a single rook — every expected outcome hand-derived from the constants before being written, the same discipline Sessions 36/39 established for mobility_tests.cpp/king_safety_tests.cpp.
