@@ -41,6 +41,8 @@ src/
 │   ├── eval.cpp/.h             # top-level eval, tapered eval
 │   ├── psqt.cpp/.h             # piece-square tables
 │   ├── pawns.cpp/.h            # pawn structure eval
+│   ├── pawn_tt.cpp/.h          # pawn hash table (caches pawns.cpp results)
+│   ├── mobility.cpp/.h         # mobility eval
 │   ├── king_safety.cpp/.h
 │   └── endgame.cpp/.h          # KPK/KRK/etc. heuristics
 ├── uci/

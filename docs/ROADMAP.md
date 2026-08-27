@@ -100,7 +100,15 @@ intentional, documented placeholder under Phase 8's `Hash` option below.
       a mate is found — see docs/DECISIONS.md, 2026-08-26 (2) entry.
 
 ## Phase 5 — Eval Expansion & Tuning
-- [ ] Mobility eval
+- [x] Mobility eval — knight/bishop/rook/queen pseudo-mobility (squares
+      attacked, excluding own-occupied squares), flat per-square-per-piece-
+      type Score bonus rather than a diminishing-returns table indexed by
+      count (a deliberate first-cut simplification, matching Pawn
+      structure's own preference for a handful of simple additive
+      constants over a larger tuned table before a real tuner exists);
+      king and pawns excluded (king activity/safety is its own separate
+      item below; pawns are already scored via material + Pawn structure).
+      See src/eval/mobility.h/.cpp and docs/DECISIONS.md.
 - [ ] King safety (pawn shield, open files near king, attacker weighting)
 - [x] Pawn structure (passed, isolated, doubled, backward, connected) — implemented ahead of Mobility/King safety above, specifically to give Phase 3's Pawn hash table item real values to cache; see docs/DECISIONS.md
 - [ ] Bishop pair, rook on open/semi-open file, rook on 7th rank
@@ -170,4 +178,4 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Phase 4 complete.** **The Priority Fixes section above is complete** (external code review, 2026-08-25 — both mid-search time checks and UCI `info` output done). **Current: Phase 5 — Eval Expansion & Tuning**, starting with Mobility eval.
+**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Phase 4 complete.** **The Priority Fixes section above is complete** (external code review, 2026-08-25 — both mid-search time checks and UCI `info` output done). **Current: Phase 5 — Eval Expansion & Tuning** — Mobility eval done; next task: King safety.
