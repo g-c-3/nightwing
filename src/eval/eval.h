@@ -6,8 +6,9 @@
 // doubled, backward, connected pawns — ROADMAP.md Phase 5's "Pawn
 // structure" item, implemented ahead of Phase 5's other items
 // specifically to give ROADMAP.md Phase 3's "Pawn hash table" item real
-// values to cache — see docs/DECISIONS.md). Mobility, king safety, and
-// the rest of Phase 5's terms land incrementally after this.
+// values to cache — see docs/DECISIONS.md) plus mobility (eval/
+// mobility.h — ROADMAP.md Phase 5's "Mobility eval" item). King safety
+// and the rest of Phase 5's terms land incrementally after this.
 
 #include "board/board.h"
 #include "eval/pawn_tt.h"
@@ -38,6 +39,16 @@ namespace nightwing::eval {
 /// to nullptr, which just means "always recompute pawn structure" —
 /// existing callers/tests are unaffected and still correct, just without
 /// the cache's speedup.
+///
+/// Precondition: board::init_masks() AND board::init_magic_bitboards()
+/// have both been called. Before eval/mobility.h's mobility_value() term
+/// existed, evaluate() only needed init_masks() (material/PSQT/pawn
+/// structure never touch a sliding-piece attack table) — every other
+/// caller in this codebase already calls both as part of the mandatory
+/// startup sequence (ARCHITECTURE.md) regardless, since move generation
+/// needs magic bitboards too, so this was never actually reachable as a
+/// real bug, but a test calling evaluate() in isolation without both
+/// would now silently read uninitialized attack tables.
 [[nodiscard]] int evaluate(const board::Position& pos, PawnHashTable* pawn_tt = nullptr) noexcept;
 
 } // namespace nightwing::eval

@@ -49,6 +49,14 @@ struct Score {
         return {-mg, -eg};
     }
 
+    /// Scales both halves by `scalar` -- e.g. eval/mobility.cpp uses this
+    /// to turn "N attacked squares" into "N times this piece type's own
+    /// per-square bonus" without hand-expanding the multiplication on
+    /// both `mg` and `eg` at every call site.
+    [[nodiscard]] constexpr Score operator*(int scalar) const noexcept {
+        return {mg * scalar, eg * scalar};
+    }
+
     [[nodiscard]] constexpr bool operator==(const Score& other) const noexcept {
         return mg == other.mg && eg == other.eg;
     }
