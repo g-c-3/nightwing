@@ -11,8 +11,10 @@
 // safety (eval/king_safety.h — ROADMAP.md Phase 5's "King safety"
 // item) plus bishop pair / rook-on-open-or-semi-open-file / rook-on-
 // 7th-rank (eval/piece_bonuses.h — ROADMAP.md Phase 5's "Bishop pair,
-// rook on open/semi-open file, rook on 7th rank" item). The rest of
-// Phase 5's terms land incrementally after this.
+// rook on open/semi-open file, rook on 7th rank" item) plus knight
+// outposts (eval/knight_outposts.h — ROADMAP.md Phase 5's "Knight
+// outposts" item). The rest of Phase 5's terms land incrementally after
+// this.
 
 #include "board/board.h"
 #include "eval/pawn_tt.h"
