@@ -7,8 +7,9 @@
 // structure" item, implemented ahead of Phase 5's other items
 // specifically to give ROADMAP.md Phase 3's "Pawn hash table" item real
 // values to cache — see docs/DECISIONS.md) plus mobility (eval/
-// mobility.h — ROADMAP.md Phase 5's "Mobility eval" item). King safety
-// and the rest of Phase 5's terms land incrementally after this.
+// mobility.h — ROADMAP.md Phase 5's "Mobility eval" item) plus king
+// safety (eval/king_safety.h — ROADMAP.md Phase 5's "King safety"
+// item). The rest of Phase 5's terms land incrementally after this.
 
 #include "board/board.h"
 #include "eval/pawn_tt.h"

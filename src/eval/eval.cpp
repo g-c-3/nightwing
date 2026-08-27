@@ -3,6 +3,7 @@
 #include "eval/eval.h"
 
 #include "board/zobrist.h"
+#include "eval/king_safety.h"
 #include "eval/mobility.h"
 #include "eval/pawns.h"
 #include "eval/psqt.h"
@@ -76,13 +77,14 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt) noexcept {
         }
     }
 
-    // Mobility (eval/mobility.h) is NOT cached the way pawn structure
-    // is: piece placement -- unlike pawn structure -- changes on
-    // essentially every move, so a position-keyed cache here would see
-    // a near-100% miss rate and just add bookkeeping overhead with no
-    // real hit-rate payoff, unlike the pawn hash table's genuinely
-    // stable key.
-    return taper(score + pawn_score + mobility_value(pos), compute_phase(pos));
+    // Mobility (eval/mobility.h) and king safety (eval/king_safety.h)
+    // are NOT cached the way pawn structure is: piece placement --
+    // unlike pawn structure -- changes on essentially every move, so a
+    // position-keyed cache here would see a near-100% miss rate and
+    // just add bookkeeping overhead with no real hit-rate payoff, unlike
+    // the pawn hash table's genuinely stable key.
+    return taper(score + pawn_score + mobility_value(pos) + king_safety_value(pos),
+                 compute_phase(pos));
 }
 
 } // namespace nightwing::eval
