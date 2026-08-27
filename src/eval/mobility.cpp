@@ -8,6 +8,7 @@
 
 #include "board/attacks.h"
 #include "board/bitboard.h"
+#include "board/masks.h"
 
 namespace nightwing::eval {
 namespace {
