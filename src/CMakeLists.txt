@@ -16,6 +16,7 @@ add_library(nightwing_lib STATIC
     eval/pawns.cpp
     eval/pawn_tt.cpp
     eval/mobility.cpp
+    eval/king_safety.cpp
     eval/eval.cpp
     search/ordering.cpp
     search/quiescence.cpp
