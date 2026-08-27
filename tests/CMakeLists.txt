@@ -19,6 +19,7 @@ add_executable(nightwing_tests
     perft_tests.cpp
     eval_tests.cpp
     pawns_tests.cpp
+    mobility_tests.cpp
     pawn_tt_tests.cpp
     ordering_tests.cpp
     quiescence_tests.cpp

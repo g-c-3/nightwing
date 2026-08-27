@@ -5,6 +5,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "board/attacks.h"
 #include "board/board.h"
 #include "board/fen.h"
 #include "board/masks.h"
@@ -79,7 +80,16 @@ TEST_CASE("PawnHashTable: clear() removes every previously stored entry", "[eval
 TEST_CASE("evaluate: using a pawn hash table never changes the result, on either the first "
           "(miss) or second (cached hit) call",
           "[eval][pawn_tt]") {
+    // init_magic_bitboards() is genuinely required as of eval/
+    // mobility.h's mobility_value() term (docs/DECISIONS.md, ROADMAP.md
+    // Phase 5's "Mobility eval" item): start_position() below has a full
+    // complement of bishops/rooks/queens, and evaluate() now calls
+    // board::bishop_attacks()/rook_attacks()/queen_attacks() for each of
+    // them, which read the magic-bitboard tables this populates —
+    // init_masks() alone was already required before this term existed
+    // (pawn structure's own attack-table use) and remains required too.
     init_masks();
+    init_magic_bitboards();
 
     Position pos = start_position();
     const int without_tt = evaluate(pos, nullptr);
@@ -95,7 +105,14 @@ TEST_CASE("evaluate: using a pawn hash table never changes the result, on either
 TEST_CASE("evaluate: pawn hash table transparency holds for a position with a real "
           "pawn-structure imbalance too, not just the symmetric starting position",
           "[eval][pawn_tt]") {
+    // Not strictly required for THIS specific FEN (no bishops/rooks/
+    // queens on it, so mobility_value()'s sliding-piece loops never
+    // actually execute) -- included anyway for consistency with the
+    // test just above and so this test stays correct if the position
+    // is ever changed to include a slider, rather than relying on a
+    // reader noticing it currently happens to be safe without it.
     init_masks();
+    init_magic_bitboards();
 
     // White has doubled e-pawns (e2, e4), Black has none -- same shape
     // as tests/pawns_tests.cpp's doubled-pawn test, reused here since
