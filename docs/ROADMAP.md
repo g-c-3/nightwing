@@ -109,7 +109,15 @@ intentional, documented placeholder under Phase 8's `Hash` option below.
       king and pawns excluded (king activity/safety is its own separate
       item below; pawns are already scored via material + Pawn structure).
       See src/eval/mobility.h/.cpp and docs/DECISIONS.md.
-- [ ] King safety (pawn shield, open files near king, attacker weighting)
+- [x] King safety (pawn shield, open files near king, attacker weighting)
+      — three simple additive components: a flat per-pawn bonus for own
+      pawns in a 3-file × 2-rank shield zone in front of the king; a
+      penalty per fully-open or semi-open file among the king's own
+      file and its two neighbors; a penalty scaled by enemy knights/
+      bishops/rooks/queens attacking the king's immediate zone, weighted
+      by piece type. Deliberately MG-heavy/EG-light in every constant
+      (the opposite tapering direction from Mobility eval, on purpose —
+      see docs/DECISIONS.md). See src/eval/king_safety.h/.cpp.
 - [x] Pawn structure (passed, isolated, doubled, backward, connected) — implemented ahead of Mobility/King safety above, specifically to give Phase 3's Pawn hash table item real values to cache; see docs/DECISIONS.md
 - [ ] Bishop pair, rook on open/semi-open file, rook on 7th rank
 - [ ] Knight outposts
@@ -178,4 +186,4 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Phase 4 complete.** **The Priority Fixes section above is complete** (external code review, 2026-08-25 — both mid-search time checks and UCI `info` output done). **Current: Phase 5 — Eval Expansion & Tuning** — Mobility eval done; next task: King safety.
+**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Phase 4 complete.** **The Priority Fixes section above is complete** (external code review, 2026-08-25 — both mid-search time checks and UCI `info` output done). **Current: Phase 5 — Eval Expansion & Tuning** — Mobility eval and King safety both done; next task: Bishop pair, rook on open/semi-open file, rook on 7th rank.
