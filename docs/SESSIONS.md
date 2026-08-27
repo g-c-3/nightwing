@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+## 2026-08-27 (4) — Session 44: Session 43 (Knight outposts) confirmed green on a fresh CI run; regression bench captured — near-identical node counts, read as expected given how rarely the term fires
+
+**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms (Linux/macOS/Windows × Debug/Release), that Session 43's knight-outposts work builds clean and passes 100% of tests everywhere (242 tests on Linux/Windows, 240 on macOS — the same BMI2-gated-hooks/ARM-runner gap noted since Session 37, unrelated to this session). Regression bench (Linux Release, depth 6, via the `ctest -R bench -V` step):
+
+```
+BENCH startpos            depth=6  nodes=3067   score=2      best_move=b1a3
+BENCH kiwipete             depth=6  nodes=16457  score=59     best_move=e2a6
+BENCH quiet_middlegame     depth=6  nodes=9978   score=-13    best_move=f3e5
+BENCH endgame_mate_in_3    depth=6  nodes=58132  score=31995  best_move=a1c1
+BENCH TOTAL                depth=6  nodes=87634
+```
+
+**Comparison against Session 42's baseline (`nodes=87631` TOTAL, pre-knight-outposts):** total nodes barely moved at all (`87631`→`87634`, a 3-node difference, entirely within `kiwipete`), every score and best move identical to Session 42's own reading. **Read as expected, not a red flag:** unlike Mobility or King safety (both of which touch essentially every node, since every piece has SOME mobility and every king has SOME safety-relevant surroundings), a knight-outpost bonus only fires when a specific three-part condition is met — pawn-defended, pawn-unreachable, AND in the [3,5] relative-rank window — a narrow, specific pattern these four particular bench positions (startpos, kiwipete, quiet_middlegame, endgame_mate_in_3, all fixed early/mid-game or simple endgame setups) apparently rarely or never satisfy at depth 6. This is the smallest bench delta of any eval-term addition so far this phase (docs/DECISIONS.md's own running comparisons: Mobility ~+8%, King safety ~-8%, piece bonuses ~+4%) — not evidence the term is broken or inert in general (`tests/knight_outposts_tests.cpp`'s own 5 tests independently confirm it fires correctly on hand-built qualifying positions), just evidence these four particular fixed bench positions don't happen to contain many outpost-qualifying knights within a depth-6 search. Not treated as a strength claim in either direction (this is a raw bench comparison of hand-tuned constants at fixed depth 6, not a strength measurement); flagged here only as a data point for whenever the eventual Texel tuner (a later Phase 5 item) runs, and as a note that this term's own low-impact bench footprint on these specific positions shouldn't be read as low impact in general play, where outpost patterns are common.
+
+**Bugs fixed:** None.
+
+**Decisions made:** None new.
+
+**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **Space evaluation** — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 43's own next-start-point guidance. Once implemented and confirmed green, run the regression bench again and compare its `BENCH TOTAL nodes=` figure against this entry's `87634` (depth 6, Linux Release) the same way this entry compared against Session 42's. Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-27 (3) — Session 43: Knight outposts implemented — Phase 5's fourth item done, Space evaluation next
 
 **What was built:** Phase 5's fourth unchecked item (docs/ROADMAP.md): a new knight-outpost evaluation term. New `src/eval/knight_outposts.h`/`src/eval/knight_outposts.cpp` add `knight_outpost_value()`, scoring a flat bonus for each own knight standing on a square that's pawn-defended, unreachable by any enemy pawn (current or future), and within a relative-rank window near enemy territory. Wired into `eval::evaluate()` (`eval.cpp`) as a fifth uncached term, alongside Mobility (Session 36), King safety (Session 39), and the bishop-pair/rook-file/rook-7th-rank bonuses (Session 41). `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated for the new files. `tests/knight_outposts_tests.cpp` (new, 5 tests) covers starting-position zero, a defended-vs-undefended e5 knight comparison (with an exact expected `Score{18,10}` check, not just an ordering comparison), an enemy-pawn disqualification case, a rank-window exclusion case, and a Black-side sign-convention check — every expected outcome hand-derived from the constants and mask definitions before being written, the same discipline every eval-term session this phase has followed.
