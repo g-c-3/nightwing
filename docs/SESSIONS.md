@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+## 2026-08-28 (6) — Session 50: Session 49 (King tropism) confirmed green on a fresh CI run; regression bench captured — mixed per-position deltas, net increase
+
+**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms (Linux/macOS/Windows × Debug/Release), that Session 49's king-tropism work builds clean and passes 100% of tests everywhere (257 tests on Linux/Windows, 255 on macOS — the same BMI2-gated-hooks/ARM-runner gap noted since Session 37, unrelated to this session). Regression bench (Linux Release, depth 6, via the `ctest -R bench -V` step):
+
+```
+BENCH startpos            depth=6  nodes=1765   score=-8     best_move=d2d4
+BENCH kiwipete             depth=6  nodes=11515  score=63     best_move=e2a6
+BENCH quiet_middlegame     depth=6  nodes=14911  score=-52    best_move=f3e5
+BENCH endgame_mate_in_3    depth=6  nodes=65438  score=31995  best_move=a1c1
+BENCH TOTAL                depth=6  nodes=93629
+```
+
+**Comparison against Session 48's baseline (`nodes=80628` TOTAL, pre-king-tropism):** total nodes rose noticeably (`80628`→`93629`, roughly +16%), but the per-position picture is mixed rather than uniform: `startpos` and `kiwipete` both DROPPED (`2701`→`1765` and `12073`→`11515` respectively, `startpos`'s best move also changing from `b1c3` to `d2d4` and its score flipping sign, `62`→`-8`), while `quiet_middlegame` nearly DOUBLED (`7698`→`14911`, score `-3`→`-52`) and `endgame_mate_in_3` rose moderately (`58156`→`65438`, score/best-move unchanged — still finds the same mate). **Read as expected, not alarming, though the largest and least uniform shift of any term this phase:** king tropism directly reshapes move ordering around piece-to-enemy-king proximity across the whole game, and unlike every penalty-style term added so far (piece bonuses, threats), this is the first PURELY positional bonus this phase applied to EVERY minor/major piece on the board simultaneously, every single node — a broader footprint than Knight outposts' or Space's narrow triggers, closer in scope to Mobility's own original addition. `endgame_mate_in_3`'s node-count rise, despite `kTropismUnitBonus`'s own `eg` component being smaller than its `mg` one, is consistent with the term still applying (just more weakly) via `eval::taper()`'s blend rather than vanishing outright the way Space's `eg=0` design does — not itself surprising, just worth noting as a data point distinguishing the two mg-leaning terms' actual endgame behavior. Not treated as a strength claim in either direction (raw bench comparison of hand-tuned constants at fixed depth 6, not a strength measurement); flagged here only as a data point for the eventual Texel tuner, which will need to weigh this term's own broad per-node footprint against the others already in place.
+
+**Bugs fixed:** None.
+
+**Decisions made:** None new.
+
+**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **Trapped piece penalties** — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 49's own next-start-point guidance. Once implemented and confirmed green, run the regression bench again and compare its `BENCH TOTAL nodes=` figure against this entry's `93629` (depth 6, Linux Release) the same way this entry compared against Session 48's. Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-28 (5) — Session 49: King tropism implemented — Phase 5's seventh item done, Trapped piece penalties next
 
 **What was built:** Phase 5's seventh unchecked item (docs/ROADMAP.md): a new king-tropism evaluation term. New `src/eval/king_tropism.h`/`src/eval/king_tropism.cpp` add `king_tropism_value()`, scoring a linear Chebyshev-distance-based bonus for each own knight/bishop/rook/queen based on proximity to the enemy king, using piece-type weights reused verbatim from eval/king_safety.h's own existing attack-unit scheme. Wired into `eval::evaluate()` (`eval.cpp`) as an eighth uncached term, alongside Mobility (Session 36), King safety (Session 39), the bishop-pair/rook-file/rook-7th-rank bonuses (Session 41), Knight outposts (Session 43), Space (Session 45), and Threats (Session 47). `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated for the new files. `tests/king_tropism_tests.cpp` (new, 5 tests) covers starting-position symmetry, a closer-vs-farther distance comparison (with the farther case landing exactly on the formula's own zero-contribution boundary), a queen-vs-knight weight-ratio check (exactly 4x at the same distance), an explicit maximum-distance boundary test, and an additive-stacking test — every expected outcome hand-derived from the distance formula and constants before being written, the same discipline every eval-term session this phase has followed.
