@@ -12,6 +12,7 @@
 #include "eval/psqt.h"
 #include "eval/space.h"
 #include "eval/threats.h"
+#include "eval/trapped_pieces.h"
 #include "eval/score.h"
 
 namespace nightwing::eval {
@@ -85,15 +86,16 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt) noexcept {
     // Mobility (eval/mobility.h), king safety (eval/king_safety.h), the
     // bishop-pair/rook-file/rook-7th-rank bonuses (eval/piece_bonuses.h),
     // knight outposts (eval/knight_outposts.h), space (eval/space.h),
-    // threats (eval/threats.h), and king tropism (eval/king_tropism.h)
-    // are NOT cached the way pawn structure is: piece placement --
-    // unlike pawn structure -- changes on essentially every move, so a
-    // position-keyed cache here would see a near-100% miss rate and
-    // just add bookkeeping overhead with no real hit-rate payoff,
-    // unlike the pawn hash table's genuinely stable key.
+    // threats (eval/threats.h), king tropism (eval/king_tropism.h), and
+    // trapped piece penalties (eval/trapped_pieces.h) are NOT cached the
+    // way pawn structure is: piece placement -- unlike pawn structure --
+    // changes on essentially every move, so a position-keyed cache here
+    // would see a near-100% miss rate and just add bookkeeping overhead
+    // with no real hit-rate payoff, unlike the pawn hash table's
+    // genuinely stable key.
     return taper(score + pawn_score + mobility_value(pos) + king_safety_value(pos) +
                      piece_bonus_value(pos) + knight_outpost_value(pos) + space_value(pos) +
-                     threats_value(pos) + king_tropism_value(pos),
+                     threats_value(pos) + king_tropism_value(pos) + trapped_piece_value(pos),
                  compute_phase(pos));
 }
 

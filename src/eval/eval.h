@@ -17,7 +17,9 @@
 // Phase 5's "Space evaluation" item) plus threats evaluation (eval/
 // threats.h — ROADMAP.md Phase 5's "Threats evaluation" item) plus king
 // tropism (eval/king_tropism.h — ROADMAP.md Phase 5's "King tropism"
-// item). The rest of Phase 5's terms land incrementally after this.
+// item) plus trapped piece penalties (eval/trapped_pieces.h —
+// ROADMAP.md Phase 5's "Trapped piece penalties" item). The rest of
+// Phase 5's terms land incrementally after this.
 
 #include "board/board.h"
 #include "eval/pawn_tt.h"
