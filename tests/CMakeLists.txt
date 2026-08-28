@@ -25,6 +25,7 @@ add_executable(nightwing_tests
     knight_outposts_tests.cpp
     space_tests.cpp
     threats_tests.cpp
+    king_tropism_tests.cpp
     pawn_tt_tests.cpp
     ordering_tests.cpp
     quiescence_tests.cpp
