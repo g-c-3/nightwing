@@ -20,6 +20,7 @@ add_library(nightwing_lib STATIC
     eval/piece_bonuses.cpp
     eval/knight_outposts.cpp
     eval/space.cpp
+    eval/threats.cpp
     eval/eval.cpp
     search/ordering.cpp
     search/quiescence.cpp
