@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+## 2026-08-28 (2) — Session 46: Session 45 (Space evaluation) confirmed green on a fresh CI run; regression bench captured
+
+**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms (Linux/macOS/Windows × Debug/Release), that Session 45's space-evaluation work builds clean and passes 100% of tests everywhere (247 tests on Linux/Windows, 245 on macOS — the same BMI2-gated-hooks/ARM-runner gap noted since Session 37, unrelated to this session). Regression bench (Linux Release, depth 6, via the `ctest -R bench -V` step):
+
+```
+BENCH startpos            depth=6  nodes=3067   score=2      best_move=b1a3
+BENCH kiwipete             depth=6  nodes=16700  score=60     best_move=e2a6
+BENCH quiet_middlegame     depth=6  nodes=9988   score=-13    best_move=f3e5
+BENCH endgame_mate_in_3    depth=6  nodes=58132  score=31995  best_move=a1c1
+BENCH TOTAL                depth=6  nodes=87887
+```
+
+**Comparison against Session 44's baseline (`nodes=87634` TOTAL, pre-space-evaluation):** total nodes rose modestly (`87634`→`87887`, roughly +0.3%), with `kiwipete` accounting for nearly all of the change (`16457`→`16700`, score `59`→`60`) and `quiet_middlegame` shifting by a similarly small amount (`9978`→`9988`, score unchanged at `-13`); `startpos` and `endgame_mate_in_3` are unchanged. **Read as expected, not alarming:** consistent with Session 44's own observation about Knight outposts, a term whose bonus only applies within a specific fixed zone (here, the c-f/relative-ranks-2-4 squares) will naturally have more effect on positions where that zone is contested — kiwipete's own well-developed, semi-open middlegame structure plausibly has more central-zone occupancy/attack activity for `space_value()` to actually register than the quieter three other bench positions. This continues to be a smaller bench delta than Mobility's or King safety's own additions (docs/DECISIONS.md's running comparisons), which is itself broadly consistent with `kSpaceSquareBonus`'s own smaller per-square magnitude (`{2,0}`) relative to those two terms' constants. Not treated as a strength claim in either direction (raw bench comparison of hand-tuned constants at fixed depth 6, not a strength measurement); flagged here only as a data point for the eventual Texel tuner.
+
+**Bugs fixed:** None.
+
+**Decisions made:** None new.
+
+**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **Threats evaluation (hanging/attacked pieces, pieces attacked by pawns)** — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 45's own next-start-point guidance. Once implemented and confirmed green, run the regression bench again and compare its `BENCH TOTAL nodes=` figure against this entry's `87887` (depth 6, Linux Release) the same way this entry compared against Session 44's. Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-28 (1) — Session 45: Space evaluation implemented — Phase 5's fifth item done, Threats evaluation next
 
 **What was built:** Phase 5's fifth unchecked item (docs/ROADMAP.md): a new space-evaluation term. New `src/eval/space.h`/`src/eval/space.cpp` add `space_value()`, scoring a flat bonus per safe (pawn-free, unattacked-by-an-enemy-pawn) square within a fixed 12-square zone (c-f files, relative ranks 2-4) per side. Wired into `eval::evaluate()` (`eval.cpp`) as a sixth uncached term, alongside Mobility (Session 36), King safety (Session 39), the bishop-pair/rook-file/rook-7th-rank bonuses (Session 41), and Knight outposts (Session 43). `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated for the new files. `tests/space_tests.cpp` (new, 5 tests) covers a bare-board balance check, a starting-position balance check (via a different route than the bare-board case — own-pawn occupancy rather than an entirely empty zone), an own-pawn-occupancy disqualification, an enemy-pawn-attack disqualification isolated from any own-occupancy side effect, and an additive-stacking check combining both mechanisms — every expected outcome hand-derived from the zone definition and constants before being written, the same discipline every eval-term session this phase has followed.
