@@ -23,6 +23,7 @@ add_executable(nightwing_tests
     king_safety_tests.cpp
     piece_bonuses_tests.cpp
     knight_outposts_tests.cpp
+    space_tests.cpp
     pawn_tt_tests.cpp
     ordering_tests.cpp
     quiescence_tests.cpp
