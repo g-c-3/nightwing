@@ -121,7 +121,7 @@ intentional, documented placeholder under Phase 8's `Hash` option below.
 - [x] Pawn structure (passed, isolated, doubled, backward, connected) — implemented ahead of Mobility/King safety above, specifically to give Phase 3's Pawn hash table item real values to cache; see docs/DECISIONS.md
 - [x] Bishop pair, rook on open/semi-open file, rook on 7th rank
 - [x] Knight outposts
-- [ ] Space evaluation
+- [x] Space evaluation
 - [ ] Threats evaluation (hanging/attacked pieces, pieces attacked by pawns)
 - [ ] King tropism (piece proximity to enemy king in the attack)
 - [ ] Trapped piece penalties
@@ -186,4 +186,4 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Phase 4 complete.** **The Priority Fixes section above is complete** (external code review, 2026-08-25 — both mid-search time checks and UCI `info` output done). **Current: Phase 5 — Eval Expansion & Tuning** — Mobility eval, King safety, Bishop pair/rook-on-open-or-semi-open-file/rook-on-7th-rank, and Knight outposts are all done; next task: Space evaluation.
+**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Phase 4 complete.** **The Priority Fixes section above is complete** (external code review, 2026-08-25 — both mid-search time checks and UCI `info` output done). **Current: Phase 5 — Eval Expansion & Tuning** — Mobility eval, King safety, Bishop pair/rook-on-open-or-semi-open-file/rook-on-7th-rank, Knight outposts, and Space evaluation are all done; next task: Threats evaluation (hanging/attacked pieces, pieces attacked by pawns).
