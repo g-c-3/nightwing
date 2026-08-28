@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+## 2026-08-28 (4) — Session 48: Session 47 (Threats evaluation) confirmed green on a fresh CI run; regression bench captured — the largest node-count shift of any eval term this phase, as anticipated
+
+**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms (Linux/macOS/Windows × Debug/Release), that Session 47's threats-evaluation work builds clean and passes 100% of tests everywhere (252 tests on Linux/Windows, 250 on macOS — the same BMI2-gated-hooks/ARM-runner gap noted since Session 37, unrelated to this session). Regression bench (Linux Release, depth 6, via the `ctest -R bench -V` step):
+
+```
+BENCH startpos            depth=6  nodes=2701   score=62     best_move=b1c3
+BENCH kiwipete             depth=6  nodes=12073  score=60     best_move=e2a6
+BENCH quiet_middlegame     depth=6  nodes=7698   score=-3     best_move=g1h1
+BENCH endgame_mate_in_3    depth=6  nodes=58156  score=31995  best_move=a1c1
+BENCH TOTAL                depth=6  nodes=80628
+```
+
+**Comparison against Session 46's baseline (`nodes=87887` TOTAL, pre-threats-evaluation):** total nodes DROPPED noticeably (`87887`→`80628`, roughly -8%) — the largest single-term bench delta of this entire phase so far (compare Mobility's own first-term shift, King safety's roughly -8% in the other direction, and the much smaller Knight outposts/Space deltas noted in Sessions 44/46). `startpos`'s score moved substantially (`2`→`62`) with a different best move (`b1a3`→`b1c3`); `quiet_middlegame`'s best move also changed (`f3e5`→`g1h1`) with its score shifting less dramatically (`-13`→`-3`); `kiwipete` barely moved (`16700`→`12073` nodes is actually a large node-count drop despite the score staying near-identical, `59`→`60` was Session 46's own change, now `60` again — same score, notably fewer nodes to reach it); `endgame_mate_in_3` is essentially unchanged. **Read as expected, not alarming, and specifically anticipated in Session 47's own entry:** unlike Knight outposts or Space (each gated behind a narrow structural condition), a term that penalizes ANY undefended attacked piece or ANY piece a pawn attacks is relevant in a large fraction of real positions throughout a normal search tree — a genuinely different order of eval-tree impact than the last two terms, which is exactly why Session 47 flagged in advance that a larger delta here "shouldn't be treated as suspicious on its own." The node-count DROP (rather than a rise, unlike most previous additions) is also plausible on its own terms: a term that penalizes hanging/pawn-attacked pieces more strongly discourages moves that walk into such threats, which can sharpen move ordering and improve alpha-beta cutoff efficiency, reducing nodes searched for the same depth — though this is offered as a plausible read, not a confirmed mechanism, since no profiling was done to verify it. Not treated as a strength claim in either direction (raw bench comparison of hand-tuned constants at fixed depth 6, not a strength measurement); flagged here only as a data point for the eventual Texel tuner.
+
+**Bugs fixed:** None.
+
+**Decisions made:** None new.
+
+**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **King tropism (piece proximity to enemy king in the attack)** — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 47's own next-start-point guidance. Once implemented and confirmed green, run the regression bench again and compare its `BENCH TOTAL nodes=` figure against this entry's `80628` (depth 6, Linux Release) the same way this entry compared against Session 46's. Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-28 (3) — Session 47: Threats evaluation implemented — Phase 5's sixth item done, King tropism next
 
 **What was built:** Phase 5's sixth unchecked item (docs/ROADMAP.md): a new threats-evaluation term. New `src/eval/threats.h`/`src/eval/threats.cpp` add `threats_value()`, scoring two independent, stacking penalties for a side's own knights/bishops/rooks/queens: an unconditional penalty for being attacked by an enemy pawn, and a boolean hanging-piece penalty for being attacked by anything at all with zero own defenders. Wired into `eval::evaluate()` (`eval.cpp`) as a seventh uncached term, alongside Mobility (Session 36), King safety (Session 39), the bishop-pair/rook-file/rook-7th-rank bonuses (Session 41), Knight outposts (Session 43), and Space (Session 45). `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated for the new files. `tests/threats_tests.cpp` (new, 5 tests) covers starting-position zero, an isolated pawn-attack-penalty test (defended piece, exact equality against the named constant), an isolated hanging-penalty test (undefended piece attacked by a rook), a stacking test (both conditions on the same piece), and a defended-despite-attacked test confirming the hanging penalty never fires when any own defender exists — every expected outcome hand-derived from the constants and attack patterns before being written, the same discipline every eval-term session this phase has followed.
