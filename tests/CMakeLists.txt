@@ -30,6 +30,7 @@ add_executable(nightwing_tests
     tempo_tests.cpp
     material_imbalance_tests.cpp
     pawn_tt_tests.cpp
+    eval_cache_tests.cpp
     ordering_tests.cpp
     quiescence_tests.cpp
     search_tests.cpp
