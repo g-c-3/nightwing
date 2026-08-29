@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+## 2026-08-29 (6) — Session 56: Session 55 (Material imbalance table) confirmed green on a fresh CI run; small regression-bench delta against the post-compute_phase()-fix baseline, as expected from a narrow term
+
+**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms, that Session 55's Material imbalance table builds clean and passes 100% of tests everywhere: 277/277 on Linux/Windows, 275/275 on macOS (the same BMI2-gated-hooks/ARM-runner gap noted since Session 37) — the total rose from Session 54's 271/269 by exactly 6, matching `material_imbalance_tests.cpp`'s 6 new TEST_CASEs exactly. Regression bench (Linux Release, depth 6):
+
+```
+BENCH startpos            depth=6  nodes=1274   score=114    best_move=a2a4
+BENCH kiwipete             depth=6  nodes=8185   score=100    best_move=e2a6
+BENCH quiet_middlegame     depth=6  nodes=6591   score=0      best_move=g1h1
+BENCH endgame_mate_in_3    depth=6  nodes=64987  score=31995  best_move=a1c1
+BENCH TOTAL                depth=6  nodes=81037
+```
+
+**Compared against Session 54's `81328` baseline (the correct comparison point per docs/DECISIONS.md 2026-08-29 (2) — this is the first bench captured since that fix, so this is the first "normal," directly comparable incremental-term delta in a while):** total nodes dropped slightly (`81328`→`81037`, roughly -0.36%) — a small delta, in line with expectations for a term that only changes anything when a side both has a same-piece-type pair (bishop or knight) AND some pawns are already off the board, a real but narrower-than-average combination of conditions to hit within a depth-6 search tree from these four particular starting positions. Per-position: `startpos` is completely unchanged (`1274` nodes, `114` score, `a2a4` best move, all identical) — no line explored within this shallow a search from the opening position apparently hit the "pair-plus-missing-pawns" combination in a way that shifted any pruning decision. `kiwipete` (`8738`→`8185` nodes, score `75`→`100`) and `quiet_middlegame` (`6329`→`6591` nodes, score `7`→`0`) both moved modestly with their best moves unchanged (`e2a6`, `g1h1` respectively) — plausible, unconfirmed read: both are messier, more piece-dense middlegame positions where a bishop or knight pair is more likely to actually be present partway down some search lines. `endgame_mate_in_3` is unchanged again (`64987`, `31995`, `a1c1`, all identical) — the same forced-mate-dominated-by-mate-distance-scoring pattern already seen not moving under the last two terms' additions either (Trapped piece penalties, Session 52; this fix itself surprisingly did move it, Session 54, since that was a phase-direction correction rather than a bounded term).
+
+**Bugs fixed:** None.
+
+**Decisions made:** None new.
+
+**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **Eval cache** (optional performance optimization, separate from TT) — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 55's own next-start-point guidance, which already flagged this as a different KIND of task (explicitly "optional" in the item's own wording) than the run of eval-term additions so far — worth confirming scope/value before assuming it should be built the same way. Once implemented and confirmed green, compare its own bench delta against THIS entry's `81037` (depth 6, Linux Release, TOTAL) — the current correct baseline for future incremental comparisons. Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-29 (5) — Session 55: Material imbalance table implemented — Phase 5's tenth item done, Eval cache next
 
 **What was built:** The tenth unchecked Phase 5 item (docs/ROADMAP.md): a new `material_imbalance_value()` (new files `src/eval/material_imbalance.h`/`src/eval/material_imbalance.cpp`) scoring exactly the two cases the ROADMAP item's own wording names -- bishop pair and knight pair -- each scaled by how many pawns (both colors combined) have left the board relative to the starting 16. Bishop pair gets an ADDITIONAL bonus (`kBishopPairPerMissingPawn = {2, 3}` per missing pawn) on top of `eval/piece_bonuses.h`'s existing flat bishop-pair bonus (Session 41) -- deliberately additive, not a replacement. Knight pair gets a PENALTY of the same shape (`kKnightPairPerMissingPawn = {-2, -2}`), growing in the SAME direction as the bishop-pair bonus (both scale up as pawns disappear) rather than the opposite -- full reasoning for that non-obvious symmetric-direction choice in docs/DECISIONS.md, 2026-08-29 (4). Wired into `eval::evaluate()` (`eval.cpp`) as an eleventh uncached term. `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated. `tests/material_imbalance_tests.cpp` (new, 6 tests): starting-position zero, White bishop-pair-with-no-pawns exact value, White knight-pair-with-no-pawns exact (negative) value, single-bishop-scores-zero boundary, linear scaling at half the pawns off, and Black-side sign negation.
