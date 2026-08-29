@@ -55,11 +55,28 @@ namespace nightwing::eval {
     return phase > kMaxPhase ? kMaxPhase : phase;
 }
 
-int evaluate(const board::Position& pos, PawnHashTable* pawn_tt) noexcept {
+int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval_cache) noexcept {
     using board::Color;
     using board::Piece;
     using board::PieceType;
     using board::Square;
+
+    // Eval cache (eval/eval_cache.h): probed first, keyed on the FULL
+    // position (pos.zobrist_hash, already incrementally maintained --
+    // no extra hash computation needed, unlike pawn_tt's own
+    // board::compute_pawn_hash() below). A hit means this exact
+    // position's evaluate() result was already computed -- return it
+    // immediately, skipping every term below (including any pawn_tt
+    // probe) entirely. See eval_cache.h's header comment for why a real
+    // hit rate exists here (transpositions, and the same node's static
+    // eval sometimes being requested more than once within a single
+    // negamax() call -- search.cpp's razoring/futility pruning).
+    if (eval_cache != nullptr) {
+        const auto [hit, cached] = eval_cache->probe(pos.zobrist_hash);
+        if (hit) {
+            return cached;
+        }
+    }
 
     Score score;
 
@@ -107,11 +124,17 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt) noexcept {
     // genuinely stable key. The tempo bonus (eval/tempo.h) was never a
     // caching candidate in the first place -- it's already a single
     // field lookup and branch, cheaper than a cache probe would be.
-    return taper(score + pawn_score + mobility_value(pos) + king_safety_value(pos) +
-                     piece_bonus_value(pos) + knight_outpost_value(pos) + space_value(pos) +
-                     threats_value(pos) + king_tropism_value(pos) + trapped_piece_value(pos) +
-                     tempo_value(pos) + material_imbalance_value(pos),
-                 compute_phase(pos));
+    const int result = taper(score + pawn_score + mobility_value(pos) + king_safety_value(pos) +
+                                  piece_bonus_value(pos) + knight_outpost_value(pos) +
+                                  space_value(pos) + threats_value(pos) + king_tropism_value(pos) +
+                                  trapped_piece_value(pos) + tempo_value(pos) +
+                                  material_imbalance_value(pos),
+                              compute_phase(pos));
+
+    if (eval_cache != nullptr) {
+        eval_cache->store(pos.zobrist_hash, result);
+    }
+    return result;
 }
 
 } // namespace nightwing::eval

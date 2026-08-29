@@ -21,8 +21,12 @@
 // ROADMAP.md Phase 5's "Trapped piece penalties" item) plus a tempo
 // bonus (eval/tempo.h — ROADMAP.md Phase 5's "Tempo bonus" item) plus a
 // material imbalance table (eval/material_imbalance.h — ROADMAP.md
-// Phase 5's "Material imbalance table" item). The rest of Phase 5's
-// terms land incrementally after this.
+// Phase 5's "Material imbalance table" item) plus an optional eval
+// cache (eval/eval_cache.h — ROADMAP.md Phase 5's "Eval cache
+// (optional performance optimization, separate from TT)" item),
+// caching evaluate()'s own full result keyed on the full position
+// rather than any one term. The rest of Phase 5's terms land
+// incrementally after this.
 //
 // compute_phase() (below) was moved out of eval.cpp's anonymous
 // namespace and declared here on 2026-08-29 specifically so it can be
@@ -34,6 +38,7 @@
 // undetected until now.
 
 #include "board/board.h"
+#include "eval/eval_cache.h"
 #include "eval/pawn_tt.h"
 
 namespace nightwing::eval {
@@ -74,6 +79,20 @@ namespace nightwing::eval {
 /// existing callers/tests are unaffected and still correct, just without
 /// the cache's speedup.
 ///
+/// `eval_cache`, if non-null, is probed FIRST, before any of the above:
+/// on a hit (keyed on `pos.zobrist_hash`, the FULL position, already
+/// incrementally maintained — no extra hash computation needed), this
+/// function returns the cached result immediately, skipping every term
+/// below entirely, including any `pawn_tt` probe. On a miss, the full
+/// computation proceeds exactly as it would with `eval_cache == nullptr`,
+/// and the final result is stored into `eval_cache` before returning —
+/// see eval/eval_cache.h for the full rationale on why this is a
+/// genuinely different, complementary cache to `pawn_tt` (full position
+/// vs. pawn-structure-only key) and why a real hit rate exists despite
+/// most individual terms changing on nearly every move. Defaults to
+/// nullptr, meaning "no eval cache" — existing callers/tests are
+/// unaffected and still correct, just without this cache's speedup.
+///
 /// Precondition: board::init_masks() AND board::init_magic_bitboards()
 /// have both been called. Before eval/mobility.h's mobility_value() term
 /// existed, evaluate() only needed init_masks() (material/PSQT/pawn
@@ -83,6 +102,7 @@ namespace nightwing::eval {
 /// needs magic bitboards too, so this was never actually reachable as a
 /// real bug, but a test calling evaluate() in isolation without both
 /// would now silently read uninitialized attack tables.
-[[nodiscard]] int evaluate(const board::Position& pos, PawnHashTable* pawn_tt = nullptr) noexcept;
+[[nodiscard]] int evaluate(const board::Position& pos, PawnHashTable* pawn_tt = nullptr,
+                            EvalCache* eval_cache = nullptr) noexcept;
 
 } // namespace nightwing::eval
