@@ -18,13 +18,34 @@
 // threats.h — ROADMAP.md Phase 5's "Threats evaluation" item) plus king
 // tropism (eval/king_tropism.h — ROADMAP.md Phase 5's "King tropism"
 // item) plus trapped piece penalties (eval/trapped_pieces.h —
-// ROADMAP.md Phase 5's "Trapped piece penalties" item). The rest of
-// Phase 5's terms land incrementally after this.
+// ROADMAP.md Phase 5's "Trapped piece penalties" item) plus a tempo
+// bonus (eval/tempo.h — ROADMAP.md Phase 5's "Tempo bonus" item). The
+// rest of Phase 5's terms land incrementally after this.
+//
+// compute_phase() (below) was moved out of eval.cpp's anonymous
+// namespace and declared here on 2026-08-29 specifically so it can be
+// tested directly -- it previously computed the game phase backwards
+// (full starting material mapped to phase 0, i.e. taper()'s eg term,
+// rather than kMaxPhase/mg as every term's own mg/eg tapering
+// direction was designed assuming); see docs/DECISIONS.md, 2026-08-29
+// (2) for the full account of the bug, the fix, and why it went
+// undetected until now.
 
 #include "board/board.h"
 #include "eval/pawn_tt.h"
 
 namespace nightwing::eval {
+
+/// Computes the current game phase in [0, kMaxPhase] (eval/score.h)
+/// from remaining non-pawn material on the board: kMaxPhase means
+/// "full starting non-pawn material still on the board, fully
+/// middlegame" (taper() then selects each term's mg value in full);
+/// 0 means "no non-pawn material left, fully endgame" (taper() then
+/// selects each term's eg value in full). Exposed here (rather than
+/// staying an eval.cpp implementation detail) so eval_tests.cpp can
+/// pin this exact direction directly -- see this file's own header
+/// comment for why that mattered.
+[[nodiscard]] int compute_phase(const board::Position& pos) noexcept;
 
 /// Evaluates `pos` and returns a centipawn score from White's
 /// perspective: positive means White stands better, negative means
