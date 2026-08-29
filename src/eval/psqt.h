@@ -21,6 +21,32 @@
 
 namespace nightwing::eval {
 
+/// Material values (mg, eg), Tomasz Michniewski's "Simplified Evaluation
+/// Function" baseline (this file's header comment) -- named constants
+/// rather than literals inline in material_value()'s switch below,
+/// matching every other eval module's own established convention
+/// (`inline constexpr Score kXxxBonus/kXxxPenalty = {...}`, e.g. eval/
+/// tempo.h's kTempoBonus, eval/pawns.h's kIsolatedPawnPenalty) --
+/// ROADMAP.md Phase 5's "All terms as named tunable constants" item,
+/// closing what turned out to be the one remaining gap: an audit of
+/// every eval/*.cpp scoring line (docs/DECISIONS.md, this entry) found
+/// these five were the only ones still written as raw literals directly
+/// in a `return` statement rather than a named constant a future Texel/
+/// SPSA tuner (this same ROADMAP phase's next unchecked item) can
+/// enumerate and adjust the same uniform way it will every other term.
+/// `eg` currently equals `mg` for every piece (Michniewski's baseline
+/// doesn't taper material) -- kept as separate named mg/mg pairs rather
+/// than a single scalar specifically so the tuner can later split them
+/// independently, the same reason every other Score-typed constant in
+/// this codebase already carries both fields even where the two
+/// currently happen to match (e.g. eval/material_imbalance.h's
+/// kKnightPairPerMissingPawn's own doc comment on this point).
+inline constexpr Score kPawnValue = {100, 100};
+inline constexpr Score kKnightValue = {320, 320};
+inline constexpr Score kBishopValue = {330, 330};
+inline constexpr Score kRookValue = {500, 500};
+inline constexpr Score kQueenValue = {900, 900};
+
 /// Material value (mg, eg) for one piece of `type`, color-agnostic
 /// (the caller negates for Black — see eval.cpp). `eg` currently equals
 /// `mg` for every type (Michniewski's baseline doesn't taper material);
@@ -29,15 +55,15 @@ namespace nightwing::eval {
 [[nodiscard]] constexpr Score material_value(board::PieceType type) noexcept {
     switch (type) {
         case board::PieceType::Pawn:
-            return {100, 100};
+            return kPawnValue;
         case board::PieceType::Knight:
-            return {320, 320};
+            return kKnightValue;
         case board::PieceType::Bishop:
-            return {330, 330};
+            return kBishopValue;
         case board::PieceType::Rook:
-            return {500, 500};
+            return kRookValue;
         case board::PieceType::Queen:
-            return {900, 900};
+            return kQueenValue;
         case board::PieceType::King:
         case board::PieceType::None:
         default:
