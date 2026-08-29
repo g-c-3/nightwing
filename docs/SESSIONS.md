@@ -4,7 +4,23 @@ Newest entry at top.
 
 ---
 
-## 2026-08-30 (2) — Session 57 (cont'd): All terms as named tunable constants (Phase 5, twelfth item) — audit found and fixed one gap, eval/psqt.h's material_value()
+## 2026-08-30 (3) — Session 57 (cont'd): CI build break fix — eval/eval_cache.cpp missing from src/CMakeLists.txt, all 6 platforms failing to link
+
+**What was built:** Diagnosed a full CI failure across all 6 platform/config jobs (Linux/Windows/macOS, Release/Debug) from uploaded CI log ZIPs — every job failed at the LINK step (not compile) with "undefined reference"/"unresolved external symbol" errors for every `EvalCache` member function (`EvalCache::EvalCache`, `probe`, `store`). Root cause: `src/CMakeLists.txt`'s `add_library(nightwing_lib ...)` sources list was missing `eval/eval_cache.cpp` — the file itself and every file that calls into it were correctly present and correct in the live repo, but this one line hadn't made it into what was actually committed after the Eval cache session (2026-08-30 (1)), even though the accompanying `tests/CMakeLists.txt` change (registering `eval_cache_tests.cpp`) had. Fixed by adding the missing line to `src/CMakeLists.txt`.
+
+**Bugs fixed:** CI build/link failure on all 6 platforms (not a code bug — `EvalCache`'s own implementation was correct throughout; see docs/DECISIONS.md's new 2026-08-30 (3) entry for the full account of why this surfaced at link time only, and why it passed the delivering session's own local verification).
+
+**Decisions made:** None beyond the fix itself — see docs/DECISIONS.md.
+
+**Verification:** Fetched the live repository fresh (not a sandbox copy with other files overlaid) and applied only the one-line `src/CMakeLists.txt` fix. Clean configure, clean build of every target (`nightwing_lib`, `nightwing`, `nightwing_bench`, `nightwing_tests`) with zero errors. Full test suite — **all 289 test cases, 52,380 assertions, passed**, with the same regression-bench totals already established for this commit (`startpos`/`kiwipete`/`quiet_middlegame`/`endgame_mate_in_3` = `1274`/`8185`/`6591`/`64987` nodes, TOTAL `81037`).
+
+**Not yet done / left for next session:** Confirm this fix produces a green CI run on the actual GitHub Actions runners once `src/CMakeLists.txt` is committed and pushed — the fresh-clone-plus-one-line-fix verification above stands in for that in the meantime.
+
+**Next session start point:** Confirm green CI (all 6 platforms) for this fix, then move to ROADMAP.md Phase 5's next unchecked item: "Texel/SPSA tuner module (self-play data generation + gradient descent)."
+
+---
+
+
 
 **What was built:** Audited every scoring line across all 13 `src/eval/*.cpp` modules for raw numeric literals not backed by a named constant. Found one real gap: `eval/psqt.h`'s `material_value()` returned raw literals (`{100,100}`, `{320,320}`, `{330,330}`, `{500,500}`, `{900,900}`) directly instead of named constants, unlike every other term in the codebase. Fixed with five new named constants (`kPawnValue`/`kKnightValue`/`kBishopValue`/`kRookValue`/`kQueenValue`) that `material_value()`'s switch now returns. Pure internal refactor — signature, behavior, and every caller (`quiescence.cpp`, `see.cpp`, `ordering.cpp`) unchanged.
 
