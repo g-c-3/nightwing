@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+## 2026-08-29 (4) — Session 54: Session 53 (Tempo bonus + the compute_phase() fix) confirmed green on a fresh CI run; a genuinely new regression-bench baseline captured, NOT comparable to any prior session's numbers
+
+**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms, that Session 53's work (Tempo bonus, and — far more consequentially — the `compute_phase()` direction fix, docs/DECISIONS.md 2026-08-29 (2)/(3)) builds clean and passes 100% of tests everywhere: 271/271 on Linux/Windows, 269/269 on macOS (the same BMI2-gated-hooks/ARM-runner gap noted since Session 37). The total rose from Session 52's 262/260 by exactly 9 on every platform, matching this session's new test cases exactly: `tempo_tests.cpp`'s 5 new TEST_CASEs plus `eval_tests.cpp`'s 4 new ones (3 `compute_phase()` direction tests plus the end-to-end centralized-king regression case) — the pre-existing "starting position is exactly balanced" test was renamed/updated in place, not added, so it contributes 0 to this count. Fresh regression bench (Linux Release, depth 6):
+
+```
+BENCH startpos            depth=6  nodes=1274   score=114    best_move=a2a4
+BENCH kiwipete             depth=6  nodes=8738   score=75     best_move=e2a6
+BENCH quiet_middlegame     depth=6  nodes=6329   score=7      best_move=g1h1
+BENCH endgame_mate_in_3    depth=6  nodes=64987  score=31995  best_move=a1c1
+BENCH TOTAL                depth=6  nodes=81328
+```
+
+**This is a fresh baseline, not a delta against Session 50's `93629` or Session 52's `90967`** — per docs/DECISIONS.md 2026-08-29 (2)'s own explicit instruction, restated here since it's the whole point of this entry. That said, the SHAPE of the change is worth recording as confirmation the fix did what it was supposed to, not as a magnitude comparison: two of the four positions' best moves actually changed (`startpos`: `d2d4`→`a2a4`; `quiet_middlegame`: `f3e5`→`g1h1`) — real, visible search-tree/move-choice differences, exactly what a tapering-direction fix (rather than a bounded single-term addition, none of which changed a single best move across this entire phase's history until now) would be expected to produce. `endgame_mate_in_3` — the position Session 53's own next-start-point note specifically flagged as the one most likely to show a visible shift from this exact fix, since its remaining material is almost entirely pawns/kings and its eval weighting flips from wrongly-mg to correctly-eg there — moved from `65438` to `64987` nodes, a real but modest change (the position is dominated by mate-distance scoring regardless of eval weighting once the forced mate is found, tempering how much even a full tapering-direction reversal can move its node count). `kiwipete`'s best move (`e2a6`) is unchanged, plausibly because it's already a fairly balanced middlegame-ish position with several roughly comparable options where a shift in one hand-crafted term's weighting doesn't cross a best-move threshold — offered as a plausible read only, not confirmed by deeper analysis.
+
+**Bugs fixed:** None this session (Session 53's own bug fix is what's being confirmed here).
+
+**Decisions made:** None new.
+
+**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **Material imbalance table** (e.g. bishop pair/knight pair value shifts with pawn count, per Stockfish-classic style) — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 53's own next-start-point guidance. Once implemented and confirmed green, compare its own bench delta against THIS entry's `81328` (depth 6, Linux Release, TOTAL) — this is now the correct baseline for every future incremental term-addition comparison going forward, the same role Session 50's `93629` played before the compute_phase() fix superseded it. Say "Continue" or "Start" to proceed.
+
+---
+
 ## 2026-08-29 (3) — Session 53: Tempo bonus implemented (Phase 5's ninth item) — but this session is really about a critical compute_phase() bug found and fixed while verifying it, which retroactively invalidates every prior regression-bench baseline this phase
 
 **What was built:** Two things, discovered in sequence within this one session.
