@@ -28,6 +28,7 @@ add_executable(nightwing_tests
     king_tropism_tests.cpp
     trapped_pieces_tests.cpp
     tempo_tests.cpp
+    material_imbalance_tests.cpp
     pawn_tt_tests.cpp
     ordering_tests.cpp
     quiescence_tests.cpp
