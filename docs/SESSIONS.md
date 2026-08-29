@@ -4,7 +4,31 @@ Newest entry at top.
 
 ---
 
-## 2026-08-30 (1) — Session 57: Eval cache (Phase 5, eleventh item) — full-position result cache keyed on the Zobrist hash, wired into evaluate()/quiescence()/negamax()/search_root()
+## 2026-08-30 (2) — Session 57 (cont'd): All terms as named tunable constants (Phase 5, twelfth item) — audit found and fixed one gap, eval/psqt.h's material_value()
+
+**What was built:** Audited every scoring line across all 13 `src/eval/*.cpp` modules for raw numeric literals not backed by a named constant. Found one real gap: `eval/psqt.h`'s `material_value()` returned raw literals (`{100,100}`, `{320,320}`, `{330,330}`, `{500,500}`, `{900,900}`) directly instead of named constants, unlike every other term in the codebase. Fixed with five new named constants (`kPawnValue`/`kKnightValue`/`kBishopValue`/`kRookValue`/`kQueenValue`) that `material_value()`'s switch now returns. Pure internal refactor — signature, behavior, and every caller (`quiescence.cpp`, `see.cpp`, `ordering.cpp`) unchanged.
+
+**Bugs fixed:** None — this was a naming/consistency gap, not a behavioral bug (identical values returned before and after).
+
+**Decisions made:** See docs/DECISIONS.md's new 2026-08-30 (2) entry — why base material values were the most important gap to catch (foundation for the next ROADMAP item, the Texel/SPSA tuner); why the seven PSQT tables and `kPassedPawnBonus[8]` already satisfy "named tunable constant" at the table level, needing no per-cell naming; why small geometric/structural literals (shield-zone/space-zone loop bounds) are out of scope, being "which squares," not "how much."
+
+**Verification:** Same fresh-checkout-plus-overlay method as this session's earlier eval-cache work. `nightwing_lib`/`nightwing`/`nightwing_bench` build clean, zero warnings. Full test suite — **all 289 test cases, 52,380 assertions, passed**, identical count to before this change (no tests added, none needed, for a same-behavior refactor). Regression bench (Linux Release, depth 6) identical in every field to the prior baseline:
+
+```
+BENCH startpos            depth=6  nodes=1274   score=114    best_move=a2a4
+BENCH kiwipete             depth=6  nodes=8185   score=100    best_move=e2a6
+BENCH quiet_middlegame     depth=6  nodes=6591   score=0      best_move=g1h1
+BENCH endgame_mate_in_3    depth=6  nodes=64987  score=31995  best_move=a1c1
+BENCH TOTAL                depth=6  nodes=81037
+```
+
+**Not yet done / left for next session:** CI hasn't confirmed either of this session's two commits (Eval cache, and this tunable-constants fix) on the actual GitHub Actions runners yet — this sandbox's own build/test runs stand in for that, same as recent sessions.
+
+**Next session start point:** Confirm green CI (all 6 platforms) for both of this session's commits, then move to ROADMAP.md Phase 5's next unchecked item: "Texel/SPSA tuner module (self-play data generation + gradient descent)."
+
+---
+
+
 
 **What was built:** `EvalCache` (new `src/eval/eval_cache.h`/`.cpp`), caching `eval::evaluate()`'s complete, final result keyed on a position's full Zobrist hash — modeled on `PawnHashTable` (single-entry-per-slot, unconditional replacement, power-of-2 KB sizing) but caching the WHOLE eval result rather than one term. `evaluate()` gained an optional `eval_cache` parameter, probed first (short-circuits everything on a hit) and stored into on a miss. Threaded through `quiescence()`/`quiescence_impl()` and `negamax()`/`search_root()` the same way `pawn_tt` already is — every recursive call site, both `evaluate()` calls inside `negamax()` (razoring, futility), the quiescence delegation, and both top-level entry points (which each construct one fresh instance per call, `kDefaultEvalCacheSizeKB = 2048`). See docs/DECISIONS.md for the full design rationale, in particular the concrete same-node double-`evaluate()`-call finding (razoring and futility pruning independently evaluating the identical unchanged position when both conditions apply at one node) that justified the work regardless of transposition-driven hit rate.
 
