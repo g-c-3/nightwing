@@ -4,7 +4,31 @@ Newest entry at top.
 
 ---
 
-## 2026-08-29 (6) — Session 56: Session 55 (Material imbalance table) confirmed green on a fresh CI run; small regression-bench delta against the post-compute_phase()-fix baseline, as expected from a narrow term
+## 2026-08-30 (1) — Session 57: Eval cache (Phase 5, eleventh item) — full-position result cache keyed on the Zobrist hash, wired into evaluate()/quiescence()/negamax()/search_root()
+
+**What was built:** `EvalCache` (new `src/eval/eval_cache.h`/`.cpp`), caching `eval::evaluate()`'s complete, final result keyed on a position's full Zobrist hash — modeled on `PawnHashTable` (single-entry-per-slot, unconditional replacement, power-of-2 KB sizing) but caching the WHOLE eval result rather than one term. `evaluate()` gained an optional `eval_cache` parameter, probed first (short-circuits everything on a hit) and stored into on a miss. Threaded through `quiescence()`/`quiescence_impl()` and `negamax()`/`search_root()` the same way `pawn_tt` already is — every recursive call site, both `evaluate()` calls inside `negamax()` (razoring, futility), the quiescence delegation, and both top-level entry points (which each construct one fresh instance per call, `kDefaultEvalCacheSizeKB = 2048`). See docs/DECISIONS.md for the full design rationale, in particular the concrete same-node double-`evaluate()`-call finding (razoring and futility pruning independently evaluating the identical unchanged position when both conditions apply at one node) that justified the work regardless of transposition-driven hit rate.
+
+**Bugs fixed:** None — new feature, no pre-existing bug involved.
+
+**Decisions made:** See docs/DECISIONS.md's new 2026-08-30 (1) entry — full-position Zobrist-hash keying (not a coarser key); `int16_t` storage (matching `TTEntry::score`'s reasoning); mandatory-reference threading through `negamax()`/`search_root()` (no default, unlike `evaluate()`'s/`quiescence()`'s own optional-pointer parameters, since every in-file caller already has a real instance); 2048 KB default size (larger than the pawn hash table's 512 KB, since this cache's working set isn't bounded as tightly, but still far smaller than the main TT, matching the ROADMAP item's own "separate from TT" framing).
+
+**Verification:** Built and tested against a fully fresh repository checkout with every touched file overlaid (this sandbox's compiler/CMake access, same method as recent sessions). `nightwing_lib`/`nightwing`/`nightwing_bench` all build clean, zero warnings, `-Wall -Wextra -Wpedantic`. A UCI smoke test (`go depth 8` from two different positions) ran the real search path end to end with sane scores and legal PVs. Full test suite (Catch2, fetched live via FetchContent) — **all 289 test cases, 52,380 assertions, passed**, including the 12 new `eval_cache_tests.cpp` cases (table mechanics mirroring `pawn_tt_tests.cpp`'s own pattern, `evaluate()` transparency on both a miss and a cached hit, full-position keying confirming two different same-material positions never collide, and a combined `pawn_tt`+`eval_cache` interaction test). Regression bench (Linux Release, depth 6) — identical to Session 56's baseline in every field, exactly as expected for a transparent, deterministic cache that changes zero search decisions:
+
+```
+BENCH startpos            depth=6  nodes=1274   score=114    best_move=a2a4
+BENCH kiwipete             depth=6  nodes=8185   score=100    best_move=e2a6
+BENCH quiet_middlegame     depth=6  nodes=6591   score=0      best_move=g1h1
+BENCH endgame_mate_in_3    depth=6  nodes=64987  score=31995  best_move=a1c1
+BENCH TOTAL                depth=6  nodes=81037
+```
+
+**Not yet done / left for next session:** CI hasn't confirmed this session's work on the actual GitHub Actions runners yet (this sandbox's own build/test run stands in for that, same as recent sessions) — next session should start by confirming a green CI run across all 6 platforms once these files are committed and pushed, the same pattern as Session 56 confirming Session 55.
+
+**Next session start point:** Confirm green CI (all 6 platforms) for this session's Eval cache commit, then move to ROADMAP.md Phase 5's next unchecked item: "All terms as named tunable constants (per DECISIONS.md)."
+
+---
+
+
 
 **What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms, that Session 55's Material imbalance table builds clean and passes 100% of tests everywhere: 277/277 on Linux/Windows, 275/275 on macOS (the same BMI2-gated-hooks/ARM-runner gap noted since Session 37) — the total rose from Session 54's 271/269 by exactly 6, matching `material_imbalance_tests.cpp`'s 6 new TEST_CASEs exactly. Regression bench (Linux Release, depth 6):
 

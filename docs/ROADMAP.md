@@ -127,7 +127,7 @@ intentional, documented placeholder under Phase 8's `Hash` option below.
 - [x] Trapped piece penalties
 - [x] Tempo bonus (small fixed bonus for side to move)
 - [x] Material imbalance table (e.g. bishop pair / knight pair value shifts with pawn count, per Stockfish-classic style)
-- [ ] Eval cache (optional performance optimization, separate from TT)
+- [x] Eval cache (optional performance optimization, separate from TT) — full-position cache keyed on the Zobrist hash, wired into evaluate()/quiescence()/negamax(); see docs/DECISIONS.md
 - [ ] All terms as named tunable constants (per DECISIONS.md)
 - [ ] Texel/SPSA tuner module (self-play data generation + gradient descent)
 - [ ] Tuned weights committed, before/after strength comparison logged
@@ -186,4 +186,4 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Phase 4 complete.** **The Priority Fixes section above is complete** (external code review, 2026-08-25 — both mid-search time checks and UCI `info` output done). **Current: Phase 5 — Eval Expansion & Tuning** — Mobility eval, King safety, Bishop pair/rook-on-open-or-semi-open-file/rook-on-7th-rank, Knight outposts, Space evaluation, Threats evaluation, King tropism, Trapped piece penalties, Tempo bonus, and Material imbalance table are all done; next task: Eval cache (optional performance optimization, separate from TT).
+**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Phase 4 complete.** **The Priority Fixes section above is complete** (external code review, 2026-08-25 — both mid-search time checks and UCI `info` output done). **Current: Phase 5 — Eval Expansion & Tuning** — Mobility eval, King safety, Bishop pair/rook-on-open-or-semi-open-file/rook-on-7th-rank, Knight outposts, Space evaluation, Threats evaluation, King tropism, Trapped piece penalties, Tempo bonus, Material imbalance table, and Eval cache are all done; next task: All terms as named tunable constants (per DECISIONS.md).
