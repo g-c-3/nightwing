@@ -7,6 +7,7 @@
 
 #include "board/movegen.h"
 #include "eval/eval.h"
+#include "eval/eval_cache.h"
 #include "eval/pawn_tt.h"
 #include "eval/psqt.h" // eval::material_value() -- delta pruning's captured-piece value below
 #include "search/ordering.h" // mvv_lva_score() -- reused here for a simple capture-only ordering pass
@@ -127,7 +128,7 @@ void order_captures_first(MoveList& moves, const Position& pos) noexcept {
 
 int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& nodes,
                      bool include_checks, int qs_ply, eval::PawnHashTable* pawn_tt,
-                     SearchLimits* limits) noexcept {
+                     eval::EvalCache* eval_cache, SearchLimits* limits) noexcept {
     // Mid-search time-budget interruption (search.h's SearchLimits):
     // fast-path bail if a shallower quiescence/negamax() frame already
     // noticed the deadline has passed, mirroring negamax()'s own
@@ -169,7 +170,7 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         // even if `us_in_check` (there's no better cheap alternative at
         // this depth, and this branch is not expected to be reached in
         // normal play).
-        const int white_relative = eval::evaluate(pos, pawn_tt);
+        const int white_relative = eval::evaluate(pos, pawn_tt, eval_cache);
         return pos.side_to_move == Color::White ? white_relative : -white_relative;
     }
 
@@ -180,7 +181,7 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         // position is already good enough to beat beta with no more
         // moves played, or better than anything found so far, that's a
         // real, legitimate baseline score, not a placeholder.
-        const int white_relative = eval::evaluate(pos, pawn_tt);
+        const int white_relative = eval::evaluate(pos, pawn_tt, eval_cache);
         best = pos.side_to_move == Color::White ? white_relative : -white_relative;
         if (best >= beta) {
             return best;
@@ -280,7 +281,8 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         UndoInfo undo;
         board::make_move(pos, move, undo);
         const int score = -quiescence_impl(pos, -beta, -alpha, ply + 1, nodes,
-                                            /*include_checks=*/false, qs_ply + 1, pawn_tt, limits);
+                                            /*include_checks=*/false, qs_ply + 1, pawn_tt,
+                                            eval_cache, limits);
         board::unmake_move(pos, move, undo);
 
         if (limits != nullptr && limits->stopped) {
@@ -309,9 +311,10 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
 } // namespace
 
 int quiescence(Position& pos, int alpha, int beta, int ply, std::uint64_t& nodes,
-               bool include_checks, eval::PawnHashTable* pawn_tt, SearchLimits* limits) noexcept {
+               bool include_checks, eval::PawnHashTable* pawn_tt, eval::EvalCache* eval_cache,
+               SearchLimits* limits) noexcept {
     return quiescence_impl(pos, alpha, beta, ply, nodes, include_checks, /*qs_ply=*/0, pawn_tt,
-                            limits);
+                            eval_cache, limits);
 }
 
 } // namespace nightwing::search

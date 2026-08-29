@@ -19,6 +19,7 @@
 #include <cstdint>
 
 #include "board/board.h"
+#include "eval/eval_cache.h"
 #include "eval/pawn_tt.h"
 #include "search/search.h" // SearchLimits -- mid-search time-budget interruption
 
@@ -65,6 +66,12 @@ namespace nightwing::search {
 /// recomputes pawn structure fresh every call, as before this
 /// parameter existed).
 ///
+/// `eval_cache`, if non-null, is likewise forwarded to every
+/// eval::evaluate() call this function makes -- see eval/eval_cache.h
+/// and eval/eval.h's doc comment on evaluate()'s own `eval_cache`
+/// parameter. Defaults to nullptr, meaning "no eval cache" (evaluate()
+/// just always recomputes, as before this parameter existed).
+///
 /// `limits`, if non-null, is the same mid-search time-budget
 /// interruption state negamax() threads through (search.h's
 /// SearchLimits, search.cpp's own comments) -- quiescence search can
@@ -81,6 +88,7 @@ namespace nightwing::search {
 [[nodiscard]] int quiescence(board::Position& pos, int alpha, int beta, int ply,
                               std::uint64_t& nodes, bool include_checks,
                               eval::PawnHashTable* pawn_tt = nullptr,
+                              eval::EvalCache* eval_cache = nullptr,
                               SearchLimits* limits = nullptr) noexcept;
 
 } // namespace nightwing::search
