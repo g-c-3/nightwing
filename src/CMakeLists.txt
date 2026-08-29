@@ -24,6 +24,7 @@ add_library(nightwing_lib STATIC
     eval/king_tropism.cpp
     eval/trapped_pieces.cpp
     eval/tempo.cpp
+    eval/material_imbalance.cpp
     eval/eval.cpp
     search/ordering.cpp
     search/quiescence.cpp
