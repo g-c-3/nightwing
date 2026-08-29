@@ -19,8 +19,10 @@
 // tropism (eval/king_tropism.h — ROADMAP.md Phase 5's "King tropism"
 // item) plus trapped piece penalties (eval/trapped_pieces.h —
 // ROADMAP.md Phase 5's "Trapped piece penalties" item) plus a tempo
-// bonus (eval/tempo.h — ROADMAP.md Phase 5's "Tempo bonus" item). The
-// rest of Phase 5's terms land incrementally after this.
+// bonus (eval/tempo.h — ROADMAP.md Phase 5's "Tempo bonus" item) plus a
+// material imbalance table (eval/material_imbalance.h — ROADMAP.md
+// Phase 5's "Material imbalance table" item). The rest of Phase 5's
+// terms land incrementally after this.
 //
 // compute_phase() (below) was moved out of eval.cpp's anonymous
 // namespace and declared here on 2026-08-29 specifically so it can be

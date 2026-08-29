@@ -6,6 +6,7 @@
 #include "eval/king_safety.h"
 #include "eval/king_tropism.h"
 #include "eval/knight_outposts.h"
+#include "eval/material_imbalance.h"
 #include "eval/mobility.h"
 #include "eval/pawns.h"
 #include "eval/piece_bonuses.h"
@@ -96,8 +97,9 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt) noexcept {
     // Mobility (eval/mobility.h), king safety (eval/king_safety.h), the
     // bishop-pair/rook-file/rook-7th-rank bonuses (eval/piece_bonuses.h),
     // knight outposts (eval/knight_outposts.h), space (eval/space.h),
-    // threats (eval/threats.h), king tropism (eval/king_tropism.h), and
-    // trapped piece penalties (eval/trapped_pieces.h) are NOT cached the
+    // threats (eval/threats.h), king tropism (eval/king_tropism.h),
+    // trapped piece penalties (eval/trapped_pieces.h), and the material
+    // imbalance table (eval/material_imbalance.h) are NOT cached the
     // way pawn structure is: piece placement -- unlike pawn structure --
     // changes on essentially every move, so a position-keyed cache here
     // would see a near-100% miss rate and just add bookkeeping overhead
@@ -108,7 +110,7 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt) noexcept {
     return taper(score + pawn_score + mobility_value(pos) + king_safety_value(pos) +
                      piece_bonus_value(pos) + knight_outpost_value(pos) + space_value(pos) +
                      threats_value(pos) + king_tropism_value(pos) + trapped_piece_value(pos) +
-                     tempo_value(pos),
+                     tempo_value(pos) + material_imbalance_value(pos),
                  compute_phase(pos));
 }
 
