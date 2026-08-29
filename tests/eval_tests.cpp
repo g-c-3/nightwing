@@ -17,6 +17,7 @@
 #include "eval/eval.h"
 #include "eval/psqt.h"
 #include "eval/score.h"
+#include "eval/tempo.h"
 
 using namespace nightwing::board;
 using namespace nightwing::eval;
@@ -57,9 +58,20 @@ Position empty_position(Color stm = Color::White) {
 
 } // namespace
 
-TEST_CASE("evaluate: starting position is exactly balanced", "[eval]") {
+TEST_CASE("evaluate: starting position is balanced apart from the tempo bonus -- White (to "
+          "move) scores exactly kTempoBonus, tapered at the starting phase",
+          "[eval]") {
     init_all();
-    REQUIRE(evaluate(start_position()) == 0);
+    // Every OTHER term is symmetric on the starting position (material,
+    // PSQT, pawn structure, mobility, king safety, etc. all cancel
+    // between mirrored White/Black setups) -- the tempo bonus (eval/
+    // tempo.h, ROADMAP.md Phase 5's "Tempo bonus" item) is the sole
+    // exception, and is exactly why this is no longer literally 0 as
+    // of that term's addition (previously: REQUIRE(evaluate(...) == 0)
+    // ). taper()'d explicitly via compute_phase() rather than asserting
+    // a bare kTempoBonus.mg literal, so this stays correct automatically
+    // if kTempoBonus or compute_phase() itself ever changes.
+    REQUIRE(evaluate(start_position()) == taper(kTempoBonus, compute_phase(start_position())));
 }
 
 TEST_CASE("evaluate: a lone extra White pawn favors White", "[eval]") {
@@ -136,4 +148,63 @@ TEST_CASE("evaluate: a bare kings position stays within a small bound", "[eval]"
     const int score = evaluate(pos);
     REQUIRE(score > -100);
     REQUIRE(score < 100);
+}
+
+TEST_CASE("compute_phase: starting position (full non-pawn material) is exactly kMaxPhase, not "
+          "0 -- pins the direction a prior bug (docs/DECISIONS.md, 2026-08-29 (2)) got backwards",
+          "[eval][score]") {
+    init_all();
+    REQUIRE(compute_phase(start_position()) == kMaxPhase);
+}
+
+TEST_CASE("compute_phase: a bare kings position (no non-pawn material at all) is exactly 0",
+          "[eval][score]") {
+    init_all();
+    Position pos = parse_fen("8/8/8/4k3/8/3K4/8/8 w - - 0 1");
+    REQUIRE(compute_phase(pos) == 0);
+}
+
+TEST_CASE("compute_phase: removing a single piece decreases phase by exactly that piece type's "
+          "own phase weight",
+          "[eval][score]") {
+    init_all();
+    // Starting position minus one White queen: phase should drop by
+    // exactly kQueenPhase from the full kMaxPhase baseline -- a direct,
+    // minimal check that the function counts UP from present material
+    // (the fixed direction) rather than down from kMaxPhase (the
+    // previous, buggy direction), which would have shown the opposite
+    // sign of change here.
+    Position pos = start_position();
+    pos.remove_piece(make_square(3, 0)); // d1, White queen
+    REQUIRE(compute_phase(pos) == kMaxPhase - kQueenPhase);
+}
+
+TEST_CASE("evaluate: with compute_phase() fixed, the starting position taper()s to (very close "
+          "to) each term's mg value, not its eg value",
+          "[eval][score]") {
+    init_all();
+    // A direct end-to-end regression check for the compute_phase() fix
+    // itself (docs/DECISIONS.md, 2026-08-29 (2)): king centralization
+    // is mg-penalized/eg-rewarded (already established just above, and
+    // king safety/tropism are also mg-heavier per their own docs/
+    // DECISIONS.md entries) -- so with the phase direction fixed, a
+    // centralized White king should score WORSE than a back-rank White
+    // king at the actual game start (full material, i.e. compute_phase()
+    // returning kMaxPhase and taper() therefore weighting mg heavily),
+    // not better. Under the previous (buggy) direction, start position
+    // resolved to phase 0 -- fully eg-weighted -- which would have made
+    // this comparison come out backwards.
+    Position back_rank = empty_position();
+    back_rank.place_piece(make_square(4, 0), Piece::WhiteKing);  // e1
+    back_rank.place_piece(make_square(4, 7), Piece::BlackKing);  // e8
+    back_rank.place_piece(make_square(3, 0), Piece::WhiteQueen); // d1
+    back_rank.place_piece(make_square(3, 7), Piece::BlackQueen); // d8
+
+    Position centralized = empty_position();
+    centralized.place_piece(make_square(4, 3), Piece::WhiteKing); // e4
+    centralized.place_piece(make_square(4, 7), Piece::BlackKing); // e8
+    centralized.place_piece(make_square(3, 0), Piece::WhiteQueen); // d1
+    centralized.place_piece(make_square(3, 7), Piece::BlackQueen); // d8
+
+    REQUIRE(evaluate(centralized) < evaluate(back_rank));
 }
