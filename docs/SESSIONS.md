@@ -4,7 +4,31 @@ Newest entry at top.
 
 ---
 
-## 2026-08-30 (3) — Session 57 (cont'd): CI build break fix — eval/eval_cache.cpp missing from src/CMakeLists.txt, all 6 platforms failing to link
+## 2026-08-30 (4) — Session 58: Texel/SPSA tuner module, part 1 of 2 — self-play data generation (new tuner::selfplay module, nightwing_selfplay executable)
+
+**What was built:** New `nightwing::tuner` module (`src/tuner/selfplay.h`/`selfplay.cpp`, new `src/tuner/` directory) — plays engine-vs-itself games via `search::search_fixed_depth()`, with a short random opening (reusing `support::Xorshift64Star`) as each game's only diversity source, samples "quiet" positions (not in check, next move not a capture, never during the random opening) and labels each with the game's final result (White's perspective, matching CPW's Texel Tuning Method convention). New `nightwing_selfplay` executable (`src/tuner/selfplay_main.cpp`) runs a batch and writes a `<fen>;<result>` training-data file to stdout. This is ONLY the "self-play data generation" half of the ROADMAP item — the gradient-descent tuning loop over eval's named constants is a deliberate, documented follow-up (needs a runtime-mutable parameter-vector abstraction over eval that doesn't exist yet; see docs/DECISIONS.md).
+
+**Bugs fixed:** None — new feature.
+
+**Decisions made:** See docs/DECISIONS.md's new 2026-08-30 (4) entry — why the two ROADMAP sub-parts are split across sessions (precedent: 2026-08-21 (1)'s pawn-hash-table/pawn-structure split); why diversity comes only from a short random opening, not randomness throughout each game (preserves `search_fixed_depth()`'s determinism and this module's own reproducibility); why "quiet position" sampling uses a simple not-in-check/not-a-capture filter (CPW's Texel Tuning Method guidance); why a `max_plies` safety-net draw exists alongside checkmate/stalemate/50-move/threefold-repetition (insufficient-material detection is a not-yet-built Phase 6 item); the `<fen>;<result>` file format choice (semicolon avoids ambiguity with FEN's own internal spaces).
+
+**Verification:** Fresh repository checkout with every new/changed file overlaid, both Release and Debug (ASan+UBSan) configurations. `nightwing_lib`/`nightwing`/`nightwing_bench`/`nightwing_selfplay`/`nightwing_tests` all build clean, zero warnings, both configs. `nightwing_selfplay` run by hand end to end (5 games) — well-formed training-data output confirmed. Full test suite: **Release — all 298 test cases, 52,715 assertions, passed. Debug/ASan/UBSan — identical: 298 test cases, 52,715 assertions, passed.** (Up from Session 57's 289/52,380 — the 9 new `[selfplay]` tests and their 335 assertions account for the difference.) The 9 new tests run in under 1s (Release) / ~13s (Debug/ASan/UBSan) — well within CI's existing budget. Regression bench (Linux Release, depth 6) identical in every field to the established baseline, as expected for a change that adds a new, separate tool without touching search/eval:
+
+```
+BENCH startpos            depth=6  nodes=1274   score=114    best_move=a2a4
+BENCH kiwipete             depth=6  nodes=8185   score=100    best_move=e2a6
+BENCH quiet_middlegame     depth=6  nodes=6591   score=0      best_move=g1h1
+BENCH endgame_mate_in_3    depth=6  nodes=64987  score=31995  best_move=a1c1
+BENCH TOTAL                depth=6  nodes=81037
+```
+
+**Not yet done / left for next session:** CI hasn't confirmed this session's work on the actual GitHub Actions runners yet — this sandbox's own build/test runs (both configs) stand in for that in the meantime. **Reminder, given Session 57's CI break:** double-check both `src/CMakeLists.txt` (new `tuner/selfplay.cpp` line and `nightwing_selfplay` executable target) and `tests/CMakeLists.txt` (new `selfplay_tests.cpp` line) actually get committed this time.
+
+**Next session start point:** Confirm green CI (all 6 platforms) for this session's commit, then build part 2 of the Texel/SPSA tuner item: the gradient-descent tuning loop, starting with the runtime-mutable parameter-vector abstraction over eval's currently-`constexpr` named constants that it needs as a prerequisite (docs/DECISIONS.md's new entry has the full rationale for why this wasn't attempted alongside self-play generation).
+
+---
+
+
 
 **What was built:** Diagnosed a full CI failure across all 6 platform/config jobs (Linux/Windows/macOS, Release/Debug) from uploaded CI log ZIPs — every job failed at the LINK step (not compile) with "undefined reference"/"unresolved external symbol" errors for every `EvalCache` member function (`EvalCache::EvalCache`, `probe`, `store`). Root cause: `src/CMakeLists.txt`'s `add_library(nightwing_lib ...)` sources list was missing `eval/eval_cache.cpp` — the file itself and every file that calls into it were correctly present and correct in the live repo, but this one line hadn't made it into what was actually committed after the Eval cache session (2026-08-30 (1)), even though the accompanying `tests/CMakeLists.txt` change (registering `eval_cache_tests.cpp`) had. Fixed by adding the missing line to `src/CMakeLists.txt`.
 
