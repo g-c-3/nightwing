@@ -41,6 +41,7 @@
 
 #include "board/board.h"
 #include "board/move.h"
+#include "eval/psqt.h"
 
 namespace nightwing::search {
 
@@ -205,11 +206,27 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// detection still works fully within the search tree itself, just
 /// without awareness of anything that happened before `pos`.
 ///
+/// `material_weights`, if non-null, is forwarded to every
+/// eval::evaluate()/quiescence() call this search makes, at every node,
+/// INSTEAD OF the compiled-in material constants (eval/psqt.h's
+/// MaterialWeights, and eval::evaluate()'s own doc comment on this
+/// parameter) — the entry point tuner::match (src/tuner/match.h) uses
+/// to have one side of a match search under a different weight vector
+/// than the other, and the not-yet-fully-built gradient-descent tuner
+/// itself never needed (tuner::tune's own compute_loss() calls
+/// eval::evaluate() directly, bypassing search entirely — a raw static
+/// eval at the labeled position is exactly what Texel's Tuning Method
+/// wants, not a searched score). Defaults to nullptr, meaning "use the
+/// compiled-in constants" — every existing caller is entirely
+/// unaffected.
+///
 /// Precondition: `depth >= 1`, and init_masks()/init_magic_bitboards()
 /// have been called (movegen's precondition, transitively — see
 /// board/movegen.h).
 [[nodiscard]] SearchResult search_fixed_depth(board::Position& pos, int depth,
-                                               std::span<const std::uint64_t> game_history = {});
+                                               std::span<const std::uint64_t> game_history = {},
+                                               const eval::MaterialWeights* material_weights =
+                                                   nullptr);
 
 /// Runs iterative deepening: searches at depth = 1, 2, 3, ... up to
 /// `max_depth`, keeping the most recently *completed* iteration's
@@ -247,8 +264,12 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// iteration — see IterationCallback's own doc comment above for the
 /// full contract (including why the depth-1 iteration always fires it,
 /// and why an interrupted iteration never does).
+/// `material_weights`: same meaning and default as search_fixed_depth()'s
+/// parameter of the same name — see that function's doc comment. Shared
+/// across every depth iteration of this one call, same as `pos` itself.
 [[nodiscard]] SearchResult search_iterative_deepening(
     board::Position& pos, int max_depth, int time_limit_ms = 0,
-    std::span<const std::uint64_t> game_history = {}, IterationCallback on_iteration = nullptr);
+    std::span<const std::uint64_t> game_history = {}, IterationCallback on_iteration = nullptr,
+    const eval::MaterialWeights* material_weights = nullptr);
 
 } // namespace nightwing::search

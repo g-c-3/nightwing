@@ -21,6 +21,7 @@
 #include "board/board.h"
 #include "eval/eval_cache.h"
 #include "eval/pawn_tt.h"
+#include "eval/psqt.h"
 #include "search/search.h" // SearchLimits -- mid-search time-budget interruption
 
 namespace nightwing::search {
@@ -72,6 +73,14 @@ namespace nightwing::search {
 /// parameter. Defaults to nullptr, meaning "no eval cache" (evaluate()
 /// just always recomputes, as before this parameter existed).
 ///
+/// `material_weights`, if non-null, is likewise forwarded to every
+/// eval::evaluate() call this function makes -- see eval::evaluate()'s
+/// own doc comment on this parameter, and search.h's
+/// search_fixed_depth()'s own doc comment on why tuner::match
+/// (src/tuner/match.h) is this parameter's real caller. Defaults to
+/// nullptr, meaning "use the compiled-in material constants," same as
+/// every other caller of this function today.
+///
 /// `limits`, if non-null, is the same mid-search time-budget
 /// interruption state negamax() threads through (search.h's
 /// SearchLimits, search.cpp's own comments) -- quiescence search can
@@ -89,6 +98,7 @@ namespace nightwing::search {
                               std::uint64_t& nodes, bool include_checks,
                               eval::PawnHashTable* pawn_tt = nullptr,
                               eval::EvalCache* eval_cache = nullptr,
+                              const eval::MaterialWeights* material_weights = nullptr,
                               SearchLimits* limits = nullptr) noexcept;
 
 } // namespace nightwing::search

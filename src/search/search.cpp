@@ -700,6 +700,21 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
 /// default the way evaluate()'s/quiescence()'s own optional pointer
 /// parameters still support for callers outside this file (tests, etc).
 ///
+/// `material_weights` is forwarded to every eval::evaluate()/
+/// quiescence() call this function and its own recursive calls make
+/// (the razoring/futility eval::evaluate() calls below, and the
+/// depth<=0 quiescence() delegation) — see eval::evaluate()'s own doc
+/// comment on this parameter, and search.h's search_fixed_depth()'s own
+/// doc comment on why tuner::match (src/tuner/match.h) is this
+/// parameter's real caller. A mandatory pointer (not defaulted) for the
+/// identical reason `pawn_tt`/`eval_cache` aren't either at this
+/// internal-call-site level — every negamax() call site in this file
+/// already threads a real value through (nullptr is a perfectly valid
+/// value to thread, meaning "no override," but it's threaded
+/// EXPLICITLY at every site, not defaulted) — search.h's own public
+/// search_fixed_depth()/search_iterative_deepening() are where this
+/// parameter actually defaults to nullptr for external callers.
+///
 /// `limits`, if non-null, is the mid-search time-budget interruption
 /// state (search.h's SearchLimits) this call and every recursive call
 /// it makes -- the NMP/razoring/ProbCut/singular-extension probes
@@ -713,8 +728,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             ContinuationHistoryTable& cont_history, board::PieceType prev_piece,
             board::Square prev_to, std::span<const std::uint64_t> game_history,
             std::array<std::uint64_t, kMaxPly>& path, eval::PawnHashTable& pawn_tt,
-            eval::EvalCache& eval_cache, bool allow_null_move = true,
-            SearchLimits* limits = nullptr) {
+            eval::EvalCache& eval_cache, const eval::MaterialWeights* material_weights,
+            bool allow_null_move = true, SearchLimits* limits = nullptr) {
     // Mid-search time-budget interruption fast path (search.h's
     // SearchLimits doc comment has the full contract): checked before
     // anything else, including the depth <= 0 quiescence delegation
@@ -738,7 +753,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // quiescence.h's own doc comment on why quiescence search
         // participates in the same interruption scheme.
         return quiescence(pos, alpha, beta, ply, nodes, /*include_checks=*/true, &pawn_tt,
-                           &eval_cache, limits);
+                           &eval_cache, material_weights, limits);
     }
 
     // Periodic deadline check (search.h's SearchLimits doc comment,
@@ -863,7 +878,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         const int null_score = -negamax(pos, depth - 1 - reduction, -beta, -beta + 1, ply + 1, nodes,
                                          tt, killers, history, cont_history,
                                          /*prev_piece=*/board::PieceType::None, /*prev_to=*/0,
-                                         game_history, path, pawn_tt, eval_cache,
+                                         game_history, path, pawn_tt, eval_cache, material_weights,
                                          /*allow_null_move=*/false, limits);
         board::unmake_null_move(pos, null_undo);
         // A probe interrupted mid-search (limits->stopped) returns a
@@ -889,11 +904,12 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // terminal status) and only return early if THAT result
     // independently confirms the same conclusion.
     if (!in_check(pos) && depth <= kRazorMaxDepth && alpha < kMateThreshold) {
-        const int white_relative = eval::evaluate(pos, &pawn_tt, &eval_cache);
+        const int white_relative = eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights);
         const int razor_static_eval = us == Color::White ? white_relative : -white_relative;
         if (razor_static_eval + kRazorMargins[static_cast<std::size_t>(depth)] <= alpha) {
             const int razor_score = quiescence(pos, alpha, beta, ply, nodes,
-                                                /*include_checks=*/true, &pawn_tt, &eval_cache, limits);
+                                                /*include_checks=*/true, &pawn_tt, &eval_cache,
+                                                material_weights, limits);
             if ((limits == nullptr || !limits->stopped) && razor_score <= alpha) {
                 return razor_score;
             }
@@ -944,7 +960,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             const int probcut_score =
                 -negamax(pos, depth - kProbCutReduction, -probcut_beta, -probcut_beta + 1, ply + 1,
                          nodes, tt, killers, history, cont_history, probcut_moved_piece,
-                         probcut_move.to(), game_history, path, pawn_tt, eval_cache,
+                         probcut_move.to(), game_history, path, pawn_tt, eval_cache, material_weights,
                          /*allow_null_move=*/true, limits);
             board::unmake_move(pos, probcut_move, probcut_undo);
             if (limits != nullptr && limits->stopped) {
@@ -982,7 +998,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         !us_in_check && depth <= kFutilityMaxDepth && alpha < kMateThreshold;
     int static_eval = 0;
     if (futility_may_apply) {
-        const int white_relative = eval::evaluate(pos, &pawn_tt, &eval_cache);
+        const int white_relative = eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights);
         static_eval = us == Color::White ? white_relative : -white_relative;
     }
     const bool futility_prune_node =
@@ -1039,8 +1055,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 const int alt_score =
                     -negamax(pos, singular_depth, -singular_beta, -singular_beta + 1, ply + 1, nodes,
                              tt, killers, history, cont_history, alt_moved_piece, alt_move.to(),
-                             game_history, path, pawn_tt, eval_cache, /*allow_null_move=*/true,
-                             limits);
+                             game_history, path, pawn_tt, eval_cache, material_weights,
+                             /*allow_null_move=*/true, limits);
                 board::unmake_move(pos, alt_move, alt_undo);
                 if (limits != nullptr && limits->stopped) {
                     // Truncated subtree -- stop the verification loop
@@ -1104,7 +1120,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // ordering.
             score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt, killers,
                               history, cont_history, moved_piece, move.to(), game_history, path,
-                              pawn_tt, eval_cache, /*allow_null_move=*/true, limits);
+                              pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits);
         } else {
             // Futility pruning (CPW "Futility Pruning", this function's
             // header comment): a node-level condition -- computed once,
@@ -1177,8 +1193,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // below.
             score = -negamax(pos, depth - 1 + extension - reduction, -alpha - 1, -alpha, ply + 1,
                               nodes, tt, killers, history, cont_history, moved_piece, move.to(),
-                              game_history, path, pawn_tt, eval_cache, /*allow_null_move=*/true,
-                              limits);
+                              game_history, path, pawn_tt, eval_cache, material_weights,
+                              /*allow_null_move=*/true, limits);
             if ((limits == nullptr || !limits->stopped) && reduction > 0 && score > alpha) {
                 // The reduced probe suggested this move might actually
                 // be good -- not trustworthy on its own (a shallower
@@ -1191,12 +1207,14 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 // the only thing that ever sets extension > 0).
                 score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, ply + 1, nodes, tt,
                                   killers, history, cont_history, moved_piece, move.to(), game_history,
-                                  path, pawn_tt, eval_cache, /*allow_null_move=*/true, limits);
+                                  path, pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
+                                  limits);
             }
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt,
                                   killers, history, cont_history, moved_piece, move.to(), game_history,
-                                  path, pawn_tt, eval_cache, /*allow_null_move=*/true, limits);
+                                  path, pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
+                                  limits);
             }
         }
 
@@ -1382,7 +1400,11 @@ std::vector<Move> extract_pv(Position pos, const TranspositionTable& tt, Move ro
 /// -- see eval/eval.h's doc comment on evaluate()'s own `pawn_tt`
 /// parameter for what it's for. `eval_cache`: threaded straight through
 /// the same way -- see eval/eval_cache.h and negamax()'s own header
-/// comment. `cont_history`: threaded through to
+/// comment. `material_weights`: threaded straight through the same way
+/// too -- see eval::evaluate()'s and negamax()'s own header comments on
+/// this parameter, and search.h's search_fixed_depth()'s own doc
+/// comment on why tuner::match is this parameter's real caller.
+/// `cont_history`: threaded through to
 /// every negamax() call below alongside killers/history (search/
 /// ordering.h's ContinuationHistoryTable) -- but this function's OWN
 /// order_moves() call (below) always passes board::PieceType::None for
@@ -1417,7 +1439,8 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
                           ContinuationHistoryTable& cont_history,
                           std::span<const std::uint64_t> game_history,
                           std::array<std::uint64_t, kMaxPly>& path, eval::PawnHashTable& pawn_tt,
-                          eval::EvalCache& eval_cache, SearchLimits* limits = nullptr) {
+                          eval::EvalCache& eval_cache, const eval::MaterialWeights* material_weights,
+                          SearchLimits* limits = nullptr) {
     SearchResult result;
 
     MoveList moves;
@@ -1498,15 +1521,17 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         if (i == 0 || depth == 1) {
             score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt, killers,
                               history, cont_history, moved_piece, move.to(), game_history, path,
-                              pawn_tt, eval_cache, /*allow_null_move=*/true, limits);
+                              pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits);
         } else {
             score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, 1, result.nodes, tt,
                               killers, history, cont_history, moved_piece, move.to(), game_history,
-                              path, pawn_tt, eval_cache, /*allow_null_move=*/true, limits);
+                              path, pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
+                              limits);
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt,
                                   killers, history, cont_history, moved_piece, move.to(), game_history,
-                                  path, pawn_tt, eval_cache, /*allow_null_move=*/true, limits);
+                                  path, pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
+                                  limits);
             }
         }
 
@@ -1587,7 +1612,8 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
 
 } // namespace
 
-SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::uint64_t> game_history) {
+SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::uint64_t> game_history,
+                                 const eval::MaterialWeights* material_weights) {
     assert(depth >= 1 && "search_fixed_depth: depth must be at least 1");
 
     // Fresh, private tables for this one call (see tt.h's header
@@ -1618,12 +1644,13 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
     // search_iterative_deepening() below and docs/DECISIONS.md's
     // aspiration-windows entry) -- always the full window.
     return search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history, cont_history,
-                        game_history, path, pawn_tt, eval_cache);
+                        game_history, path, pawn_tt, eval_cache, material_weights);
 }
 
 SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_limit_ms,
                                          std::span<const std::uint64_t> game_history,
-                                         IterationCallback on_iteration) {
+                                         IterationCallback on_iteration,
+                                         const eval::MaterialWeights* material_weights) {
     assert(max_depth >= 1 && "search_iterative_deepening: max_depth must be at least 1");
 
     const auto start_time = std::chrono::steady_clock::now();
@@ -1664,7 +1691,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // to aspirate around (see the depth-2-onward loop below).
     tt.new_search();
     SearchResult result = search_root(pos, 1, -kInfinity, kInfinity, tt, killers, history,
-                                       cont_history, game_history, path, pawn_tt, eval_cache);
+                                       cont_history, game_history, path, pawn_tt, eval_cache,
+                                       material_weights);
     std::uint64_t total_nodes = result.nodes;
 
     // Position already over (checkmate/stalemate at the root): every
@@ -1742,7 +1770,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             for (;;) {
                 next = search_root(pos, depth, window_alpha, window_beta, tt, killers, history,
                                     cont_history, game_history, path, pawn_tt, eval_cache,
-                                    &limits);
+                                    material_weights, &limits);
 
                 if (limits.stopped) {
                     // Interrupted mid-retry -- see the post-loop
@@ -1785,7 +1813,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             }
         } else {
             next = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history, cont_history,
-                                game_history, path, pawn_tt, eval_cache, &limits);
+                                game_history, path, pawn_tt, eval_cache, material_weights, &limits);
         }
 
         // `next.nodes` reflects real work done regardless of whether
