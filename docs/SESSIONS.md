@@ -4,7 +4,31 @@ Newest entry at top.
 
 ---
 
-## 2026-08-30 (4) — Session 58: Texel/SPSA tuner module, part 1 of 2 — self-play data generation (new tuner::selfplay module, nightwing_selfplay executable)
+## 2026-08-30 (5) — Session 59: Texel/SPSA tuner module, part 2 of 2 — gradient-descent tuning loop over eval::MaterialWeights (new tuner::tune module, nightwing_tune executable), plus the runtime-mutable material-weights abstraction it needed
+
+**What was built:** The "gradient descent" half of ROADMAP.md's Texel/SPSA tuner item, completing it. Built the runtime-mutable parameter-vector abstraction Session 58 identified as a prerequisite, scoped to material values only: `eval::MaterialWeights` (`src/eval/psqt.h`), `default_material_weights()`, and an optional override parameter threaded through `material_value()` and `eval::evaluate()`. New `nightwing::tuner::tune` module (`src/tuner/tune.h`/`tune.cpp`) — Texel's Tuning Method MSE loss (`compute_loss()`) and full-batch finite-difference gradient descent (`tune()`) over an enumerable 10-field parameter table (`kMaterialParameters`). New `nightwing_tune` executable reads self-play training data from stdin, prints tuned weights and the loss curve. Ran the complete real pipeline end to end: `nightwing_selfplay` piped into `nightwing_tune` on genuine self-play data — loss decreased monotonically with sensible movement in every material weight.
+
+**Bugs fixed:** None in shipped code — two mistakes were caught and fixed during this session's own development/verification before anything was finalized: (1) an `EvalCache` test sentinel value outside `int16_t` range, silently wrapping on store; (2) an initial `learning_rate` default (1.0) that produced a tuning run where the loss never visibly changed, because the resulting per-iteration weight movement was too small to ever cross `material_value()`'s integer-rounding boundary. Both are detailed in docs/DECISIONS.md.
+
+**Decisions made:** See docs/DECISIONS.md's new 2026-08-30 (5) entry — why the runtime-mutable abstraction was scoped to material values only, not every eval term; why `eval_cache` must never be consulted when a `material_weights` override is active (a real correctness hazard: stale results from a different weight vector); why `MaterialWeights` fields are `double`, not `int`; why finite-difference (not analytic) gradients were chosen even though material's own gradient is trivially linear; the empirically-derived `learning_rate`/`finite_diff_epsilon` defaults and the numerical mechanism behind why they matter; why `sigmoid_scale` (Texel's K) is a fixed default, not fit from data.
+
+**Verification:** Fresh repository checkout with every new/changed file overlaid, both Release and Debug (ASan+UBSan) configurations. `nightwing_lib`/`nightwing`/`nightwing_bench`/`nightwing_selfplay`/`nightwing_tune`/`nightwing_tests` all build clean, zero warnings, both configs. Full test suite: **all 314 test cases, 52,815 assertions, passed**, both configurations (up from Session 58's 298/52,715 — 16 new tests: 10 in `tune_tests.cpp`, 6 in `eval_tests.cpp`). Real end-to-end pipeline run by hand: `nightwing_selfplay 30 7 3 6 80` (30 games) piped into `nightwing_tune 40` — 1,526 sampled positions, loss 0.015331 → 0.015026, strictly monotonic, all five material weights showing sensible, bounded movement. Regression bench (Linux Release, depth 6) identical in every field to the established baseline — every new parameter defaults to leaving `evaluate()`'s behavior completely unchanged:
+
+```
+BENCH startpos            depth=6  nodes=1274   score=114    best_move=a2a4
+BENCH kiwipete             depth=6  nodes=8185   score=100    best_move=e2a6
+BENCH quiet_middlegame     depth=6  nodes=6591   score=0      best_move=g1h1
+BENCH endgame_mate_in_3    depth=6  nodes=64987  score=31995  best_move=a1c1
+BENCH TOTAL                depth=6  nodes=81037
+```
+
+**Not yet done / left for next session:** CI hasn't confirmed this session's work on the actual GitHub Actions runners yet. **Reminder, given Session 57's CI break:** double-check `src/CMakeLists.txt` (new `tuner/tune.cpp` line and `nightwing_tune` executable target) and `tests/CMakeLists.txt` (new `tune_tests.cpp` line) actually land in the commit.
+
+**Next session start point:** Confirm green CI (all 6 platforms) for this session's commit, then start ROADMAP.md Phase 5's final item: "Tuned weights committed, before/after strength comparison logged" — a real, large-scale self-play + tuning pass (likely thousands of games, not this session's 30-game smoke test) against the current material-only tuner, a strength comparison (before/after tuned weights) logged in the docs, and the resulting values hand-transcribed into `eval/psqt.h`'s `kPawnValue`/etc. constants. Expanding tuner coverage beyond material values (PSQT, pawn structure, mobility, ...) is natural follow-on work but not required to close out this specific item.
+
+---
+
+
 
 **What was built:** New `nightwing::tuner` module (`src/tuner/selfplay.h`/`selfplay.cpp`, new `src/tuner/` directory) — plays engine-vs-itself games via `search::search_fixed_depth()`, with a short random opening (reusing `support::Xorshift64Star`) as each game's only diversity source, samples "quiet" positions (not in check, next move not a capture, never during the random opening) and labels each with the game's final result (White's perspective, matching CPW's Texel Tuning Method convention). New `nightwing_selfplay` executable (`src/tuner/selfplay_main.cpp`) runs a batch and writes a `<fen>;<result>` training-data file to stdout. This is ONLY the "self-play data generation" half of the ROADMAP item — the gradient-descent tuning loop over eval's named constants is a deliberate, documented follow-up (needs a runtime-mutable parameter-vector abstraction over eval that doesn't exist yet; see docs/DECISIONS.md).
 
