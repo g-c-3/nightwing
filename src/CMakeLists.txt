@@ -33,6 +33,7 @@ add_library(nightwing_lib STATIC
     search/see.cpp
     search/tt.cpp
     uci/uci.cpp
+    tuner/selfplay.cpp
 )
 
 target_include_directories(nightwing_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -101,3 +102,6 @@ target_link_libraries(nightwing PRIVATE nightwing_lib)
 
 add_executable(nightwing_bench bench.cpp)
 target_link_libraries(nightwing_bench PRIVATE nightwing_lib)
+
+add_executable(nightwing_selfplay tuner/selfplay_main.cpp)
+target_link_libraries(nightwing_selfplay PRIVATE nightwing_lib)
