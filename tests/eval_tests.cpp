@@ -208,3 +208,116 @@ TEST_CASE("evaluate: with compute_phase() fixed, the starting position taper()s 
 
     REQUIRE(evaluate(centralized) < evaluate(back_rank));
 }
+
+TEST_CASE("default_material_weights: matches kPawnValue/kKnightValue/.../kQueenValue exactly",
+          "[eval][psqt][tuner]") {
+    const MaterialWeights defaults = default_material_weights();
+    REQUIRE(defaults.pawn_mg == static_cast<double>(kPawnValue.mg));
+    REQUIRE(defaults.pawn_eg == static_cast<double>(kPawnValue.eg));
+    REQUIRE(defaults.knight_mg == static_cast<double>(kKnightValue.mg));
+    REQUIRE(defaults.knight_eg == static_cast<double>(kKnightValue.eg));
+    REQUIRE(defaults.bishop_mg == static_cast<double>(kBishopValue.mg));
+    REQUIRE(defaults.bishop_eg == static_cast<double>(kBishopValue.eg));
+    REQUIRE(defaults.rook_mg == static_cast<double>(kRookValue.mg));
+    REQUIRE(defaults.rook_eg == static_cast<double>(kRookValue.eg));
+    REQUIRE(defaults.queen_mg == static_cast<double>(kQueenValue.mg));
+    REQUIRE(defaults.queen_eg == static_cast<double>(kQueenValue.eg));
+}
+
+TEST_CASE("material_value: passing default_material_weights() as an explicit override "
+          "reproduces the no-override result exactly",
+          "[eval][psqt][tuner]") {
+    const MaterialWeights defaults = default_material_weights();
+    for (const PieceType type : {PieceType::Pawn, PieceType::Knight, PieceType::Bishop,
+                                  PieceType::Rook, PieceType::Queen, PieceType::King}) {
+        REQUIRE(material_value(type, &defaults).mg == material_value(type).mg);
+        REQUIRE(material_value(type, &defaults).eg == material_value(type).eg);
+    }
+}
+
+TEST_CASE("material_value: a modified MaterialWeights changes the corresponding piece's value, "
+          "and no other piece's",
+          "[eval][psqt][tuner]") {
+    MaterialWeights weights = default_material_weights();
+    weights.knight_mg = 275.0;
+    weights.knight_eg = 260.0;
+
+    REQUIRE(material_value(PieceType::Knight, &weights).mg == 275);
+    REQUIRE(material_value(PieceType::Knight, &weights).eg == 260);
+    // Every other piece is untouched.
+    REQUIRE(material_value(PieceType::Pawn, &weights).mg == kPawnValue.mg);
+    REQUIRE(material_value(PieceType::Bishop, &weights).mg == kBishopValue.mg);
+    REQUIRE(material_value(PieceType::Rook, &weights).mg == kRookValue.mg);
+    REQUIRE(material_value(PieceType::Queen, &weights).mg == kQueenValue.mg);
+}
+
+TEST_CASE("material_value: King and None always return {0, 0}, even with a MaterialWeights "
+          "override supplied",
+          "[eval][psqt][tuner]") {
+    MaterialWeights weights = default_material_weights();
+    weights.pawn_mg = 12345.0; // an absurd value -- confirms King/None ignore weights entirely
+
+    REQUIRE(material_value(PieceType::King, &weights).mg == 0);
+    REQUIRE(material_value(PieceType::King, &weights).eg == 0);
+    REQUIRE(material_value(PieceType::None, &weights).mg == 0);
+    REQUIRE(material_value(PieceType::None, &weights).eg == 0);
+}
+
+TEST_CASE("evaluate: a MaterialWeights override changes evaluate()'s result exactly as "
+          "expected for an imbalanced position",
+          "[eval][tuner]") {
+    init_all();
+    // White has an extra knight; Black is otherwise identical -- a
+    // direct, easy-to-hand-verify case for evaluate()'s material_weights
+    // parameter, mirroring this file's own existing "a lone extra White
+    // pawn favors White" style of test.
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(4, 7), Piece::BlackKing);
+    pos.place_piece(make_square(1, 0), Piece::WhiteKnight);
+
+    const int default_eval = evaluate(pos, nullptr, nullptr, nullptr);
+
+    MaterialWeights doubled_knight = default_material_weights();
+    doubled_knight.knight_mg = kKnightValue.mg * 2.0;
+    doubled_knight.knight_eg = kKnightValue.eg * 2.0;
+    const int doubled_eval = evaluate(pos, nullptr, nullptr, &doubled_knight);
+
+    // Doubling the extra knight's own value should increase White's
+    // evaluated advantage by roughly one more knight's worth (not
+    // exactly, since PSQT/mobility/etc. also contribute and aren't held
+    // perfectly constant across taper() rounding, but the direction and
+    // rough magnitude are exact/predictable here).
+    REQUIRE(doubled_eval > default_eval);
+    REQUIRE(doubled_eval - default_eval >= kKnightValue.mg - 5); // generous slack for taper/PSQT
+}
+
+TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a MaterialWeights "
+          "override is supplied, even if a real EvalCache pointer is also passed",
+          "[eval][eval_cache][tuner]") {
+    init_all();
+    Position pos = start_position();
+
+    EvalCache cache(2048);
+    // Poison the cache with a deliberately WRONG value for this exact
+    // position's key, standing in for "a stale result computed under a
+    // different weight vector" (evaluate()'s own doc comment on this
+    // parameter's interaction with eval_cache). If evaluate() incorrectly
+    // consulted eval_cache while material_weights is set, it would
+    // return this poisoned value instead of a freshly computed one.
+    cache.store(pos.zobrist_hash, 12345);
+
+    const MaterialWeights weights = default_material_weights();
+    const int result = evaluate(pos, nullptr, &cache, &weights);
+    REQUIRE(result != 12345);
+    REQUIRE(result == evaluate(pos, nullptr, nullptr, &weights));
+
+    // And the poisoned entry must still be sitting there afterward,
+    // confirming evaluate() didn't overwrite it with a fresh (correct)
+    // value either -- eval_cache must be left completely untouched, not
+    // merely "not trusted for the return value."
+    const auto [hit, cached] = cache.probe(pos.zobrist_hash);
+    REQUIRE(hit);
+    REQUIRE(cached == 12345);
+}
+
