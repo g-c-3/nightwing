@@ -4,7 +4,31 @@ Newest entry at top.
 
 ---
 
-## 2026-08-30 (5) — Session 59: Texel/SPSA tuner module, part 2 of 2 — gradient-descent tuning loop over eval::MaterialWeights (new tuner::tune module, nightwing_tune executable), plus the runtime-mutable material-weights abstraction it needed
+## 2026-08-30 (6) — Session 60: Strength-comparison match harness (new tuner::match module) — required threading eval::MaterialWeights all the way through search first
+
+**What was built:** Threaded `eval::MaterialWeights` (Session 59) all the way through `search::negamax()`/`search::search_root()`/`search::quiescence()`/`quiescence_impl()` and the public `search_fixed_depth()`/`search_iterative_deepening()` APIs — previously the override only reached a single `eval::evaluate()` call, not every leaf-level static-eval call inside an actual search tree, so a search couldn't yet genuinely PLAY under different weights. New `tuner::match` module (`src/tuner/match.h`/`match.cpp`) — `play_match()` plays games between two `MaterialWeights` vectors using this newly-threaded search, alternating colors each game; `MatchResult` reports win/draw/loss plus `score_a()`/`elo_diff()`. New `nightwing_match` executable. Ran the complete three-stage pipeline end to end for the first time: `nightwing_selfplay` → `nightwing_tune` → `nightwing_match`.
+
+**Bugs fixed:** None in shipped code — two mistakes caught and fixed during this session's own test-writing: a floating-point exact-equality assertion that failed on a ~3e-14 rounding difference (fixed with an epsilon comparison), and a SEGFAULT in a hand-built `Position` test fixture caused by `Position`'s default constructor not safely initializing `castling_rights`/`en_passant_square` on its own (fixed by using the same local `empty_position()` helper `eval_tests.cpp` already established for exactly this reason — a real, pre-existing hazard flagged in docs/DECISIONS.md for future test-writers, not fixed at its source in `board::Position` itself).
+
+**Decisions made:** See docs/DECISIONS.md's new 2026-08-30 (6) entry — why search-level threading was a genuine, not-yet-satisfied prerequisite (not redundant with Session 59's eval-level threading); a real, honest scope boundary discovered by direct inspection: `search/see.cpp`/`search/ordering.cpp` both still use unweighted material values, so SEE/move-ordering stay tactically identical between the two sides of a match regardless of their different eval weights — flagged as real follow-on work, not silently glossed over; why `match`'s game loop deliberately duplicates rather than shares `selfplay`'s; why colors alternate every game.
+
+**Verification:** Fresh repository checkout with every new/changed file overlaid, both Release and Debug (ASan+UBSan) configurations. `nightwing_lib`/`nightwing`/`nightwing_bench`/`nightwing_selfplay`/`nightwing_tune`/`nightwing_match`/`nightwing_tests` all build clean, zero warnings, both configs — including the large mechanical search-layer threading change, which compiled clean on the first attempt. Full test suite: **all 323 test cases, 52,836 assertions, passed**, both configurations (up from Session 59's 314/52,815 — 9 new tests in `match_tests.cpp`). Real end-to-end pipeline run by hand: 30 self-play games → 40 tuning iterations → 12-game match (tuned weights vs. defaults), every stage correctly consuming the previous one's output. Regression bench (Linux Release, depth 6) identical to the established baseline:
+
+```
+BENCH startpos            depth=6  nodes=1274   score=114    best_move=a2a4
+BENCH kiwipete             depth=6  nodes=8185   score=100    best_move=e2a6
+BENCH quiet_middlegame     depth=6  nodes=6591   score=0      best_move=g1h1
+BENCH endgame_mate_in_3    depth=6  nodes=64987  score=31995  best_move=a1c1
+BENCH TOTAL                depth=6  nodes=81037
+```
+
+**Not yet done / left for next session:** CI hasn't confirmed this session's work on the actual GitHub Actions runners yet. **Reminder, given Session 57's CI break:** double-check `src/CMakeLists.txt` (new `tuner/match.cpp` line and `nightwing_match` executable target) and `tests/CMakeLists.txt` (new `match_tests.cpp` line) actually land in the commit. The full ROADMAP.md Phase 5 final item is still not closed out — this session built the strength-comparison *infrastructure* only; a real large-scale run, committing the resulting weights, and logging the comparison are all still to come. Extending `material_weights` into SEE/move-ordering (docs/DECISIONS.md's own scope-boundary note) is real follow-on work worth doing before treating match results as fully faithful for subtle (non-extreme) weight differences.
+
+**Next session start point:** Confirm green CI (all 6 platforms) for this session's commit, then run ROADMAP.md Phase 5's final item for real: a large-scale `nightwing_selfplay` run (thousands of games, not this session's 30-game smoke test) piped into `nightwing_tune`, a `nightwing_match` comparison against the current defaults logged with its actual result, and — if the tuned weights come out ahead — hand-transcribing them into `eval/psqt.h`'s `kPawnValue`/etc. constants to close out Phase 5 entirely.
+
+---
+
+
 
 **What was built:** The "gradient descent" half of ROADMAP.md's Texel/SPSA tuner item, completing it. Built the runtime-mutable parameter-vector abstraction Session 58 identified as a prerequisite, scoped to material values only: `eval::MaterialWeights` (`src/eval/psqt.h`), `default_material_weights()`, and an optional override parameter threaded through `material_value()` and `eval::evaluate()`. New `nightwing::tuner::tune` module (`src/tuner/tune.h`/`tune.cpp`) — Texel's Tuning Method MSE loss (`compute_loss()`) and full-batch finite-difference gradient descent (`tune()`) over an enumerable 10-field parameter table (`kMaterialParameters`). New `nightwing_tune` executable reads self-play training data from stdin, prints tuned weights and the loss curve. Ran the complete real pipeline end to end: `nightwing_selfplay` piped into `nightwing_tune` on genuine self-play data — loss decreased monotonically with sensible movement in every material weight.
 
