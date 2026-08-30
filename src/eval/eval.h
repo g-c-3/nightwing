@@ -40,6 +40,7 @@
 #include "board/board.h"
 #include "eval/eval_cache.h"
 #include "eval/pawn_tt.h"
+#include "eval/psqt.h"
 
 namespace nightwing::eval {
 
@@ -93,6 +94,28 @@ namespace nightwing::eval {
 /// nullptr, meaning "no eval cache" — existing callers/tests are
 /// unaffected and still correct, just without this cache's speedup.
 ///
+/// `material_weights`, if non-null, is forwarded to the internal
+/// material_value() call INSTEAD OF its own kPawnValue/.../kQueenValue
+/// constants (eval/psqt.h's MaterialWeights, and material_value()'s own
+/// doc comment on this parameter) — this is the entry point the not-
+/// yet-fully-built gradient-descent tuner (ROADMAP.md Phase 5's Texel/
+/// SPSA tuner item; src/tuner/tune.h) uses to compute evaluate() at a
+/// candidate weight vector other than the compiled-in defaults, without
+/// needing a second copy of this function. `pawn_tt` behaves completely
+/// normally when `material_weights` is set (pawn structure doesn't
+/// depend on material values at all), but `eval_cache` is DELIBERATELY
+/// NEVER consulted at all — probed or stored — whenever
+/// `material_weights != nullptr`, even if a real `eval_cache` pointer
+/// is also passed: `eval_cache` is keyed purely on `pos.zobrist_hash`,
+/// which says nothing about which weight vector produced whatever
+/// result might already be cached under that key — honoring it here
+/// would silently return a stale result computed under a DIFFERENT
+/// weight vector, an eval tuner's worst-case failure mode (confidently
+/// wrong tuned values with no obvious symptom; see docs/DECISIONS.md,
+/// this parameter's introducing entry). Defaults to nullptr, meaning
+/// "use the compiled-in constants" — every existing caller (all of
+/// search/eval, every existing test) is entirely unaffected.
+///
 /// Precondition: board::init_masks() AND board::init_magic_bitboards()
 /// have both been called. Before eval/mobility.h's mobility_value() term
 /// existed, evaluate() only needed init_masks() (material/PSQT/pawn
@@ -103,6 +126,7 @@ namespace nightwing::eval {
 /// real bug, but a test calling evaluate() in isolation without both
 /// would now silently read uninitialized attack tables.
 [[nodiscard]] int evaluate(const board::Position& pos, PawnHashTable* pawn_tt = nullptr,
-                            EvalCache* eval_cache = nullptr) noexcept;
+                            EvalCache* eval_cache = nullptr,
+                            const MaterialWeights* material_weights = nullptr) noexcept;
 
 } // namespace nightwing::eval

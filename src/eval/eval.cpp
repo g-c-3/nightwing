@@ -55,7 +55,8 @@ namespace nightwing::eval {
     return phase > kMaxPhase ? kMaxPhase : phase;
 }
 
-int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval_cache) noexcept {
+int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval_cache,
+             const MaterialWeights* material_weights) noexcept {
     using board::Color;
     using board::Piece;
     using board::PieceType;
@@ -71,7 +72,15 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     // hit rate exists here (transpositions, and the same node's static
     // eval sometimes being requested more than once within a single
     // negamax() call -- search.cpp's razoring/futility pruning).
-    if (eval_cache != nullptr) {
+    //
+    // DELIBERATELY SKIPPED WHENEVER material_weights IS SET (this
+    // function's own doc comment on that parameter has the full
+    // rationale): eval_cache's key says nothing about which weight
+    // vector produced a cached result, so honoring it under a
+    // different-than-default weight vector could silently return a
+    // stale result from a different vector entirely.
+    const bool eval_cache_usable = (eval_cache != nullptr) && (material_weights == nullptr);
+    if (eval_cache_usable) {
         const auto [hit, cached] = eval_cache->probe(pos.zobrist_hash);
         if (hit) {
             return cached;
@@ -88,7 +97,7 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
 
         const PieceType type = board::piece_type_of(piece);
         const Color color = board::color_of(piece);
-        const Score term = material_value(type) + psqt_value(piece, sq);
+        const Score term = material_value(type, material_weights) + psqt_value(piece, sq);
 
         if (color == Color::White) {
             score += term;
@@ -131,7 +140,7 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
                                   material_imbalance_value(pos),
                               compute_phase(pos));
 
-    if (eval_cache != nullptr) {
+    if (eval_cache_usable) {
         eval_cache->store(pos.zobrist_hash, result);
     }
     return result;
