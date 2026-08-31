@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-08-31 (7) — Added `EndgameSignature::KBPK`, a bucket the original Session 64 classifier turned out to be missing
+
+**Decision:** Added a seventh bucket, `EndgameSignature::KBPK`, to `eval::classify_endgame()` (`src/eval/endgame.h`/`.cpp`) — one side has exactly one bishop and at least one pawn, the other side is completely bare (no pawns, no pieces at all), zero knights/rooks/queens anywhere. Classification is piece-counts-only; it does NOT check pawn file, pawn count beyond "at least one," or bishop-vs-corner-square color — those judgments belong to the bucket's consumer (`eval::minor_piece_endgame_value()`, `src/eval/minor_piece_endgame.h`/`.cpp`, this same session), matching the "classification only, judgment later" split every other bucket already follows.
+
+**Rationale:** ROADMAP.md's "Minor piece endgames" item explicitly names "wrong-bishop-corner draw detection" as one of its three clauses, but the original six-bucket classifier from Session 64 had no bucket covering this material configuration at all — a genuine gap, not a deliberate scope decision, discovered while starting this session's work. Notably, this gap was already anticipated in writing: `endgame.cpp`'s own `is_light_square()` helper, written in Session 64, carried a comment saying it might need promoting to a shared header "if a later Phase 6 item (e.g. a future 'wrong bishop corner' signature) needs it more broadly" — Session 64 correctly foresaw the shape of this gap without yet filling it in. Extending a previously-"complete" file (`endgame.h`/`.cpp`, together with their own test file) is consistent with this project's general practice of fixing found gaps rather than working around them — the same posture Phase 5's own material-value literal-constant fix took for a comparable situation.
+
+**Alternatives considered:**
+- *Detect the wrong-bishop-corner pattern without a classifier bucket, inline inside `minor_piece_endgame.cpp` using raw piece-count checks against `pos` directly:* rejected — this would leave `eval::classify_endgame()`'s own header comment (which frames itself as "the" single source of truth for endgame material-bucket detection) silently incomplete for a case ROADMAP.md explicitly names, and would mean a second, parallel place doing the same kind of piece-counting classify_endgame() already exists to centralize.
+- *Defer wrong-bishop-corner entirely, the same way Vancura position recognition was deferred in Session 65 (see the 2026-08-31 (6) entry above):* rejected as unnecessary here — unlike Vancura's own genuinely different, harder-to-verify geometry, wrong-bishop-corner recognition needed only a straightforward piece-count bucket plus a reuse of the already-verified rule-of-the-square technique (eval/king_pawn_endgame.cpp), not a new, unverified pattern-matching approach. Deferral is for cases that are genuinely harder or riskier to get right, not a default response to "the classifier doesn't have a bucket for this yet."
+
+---
+
 ### 2026-08-31 (6) — Rook endgame patterns: Vancura position recognition deferred; Lucena/Philidor narrowed to the single-pawn case; Tarrasch's Rule applies generally
 
 **Decision:** `eval::rook_endgame_value()` (`src/eval/rook_endgame.h`/`.cpp`) implements three of ROADMAP.md's four named rook-endgame patterns — Tarrasch's Rule (rook behind a passed pawn, own or enemy), Lucena position recognition, and Philidor position recognition — as genuine geometric formulas, applying whenever `classify_endgame()` returns `EndgameSignature::RookEndgame`. Two scope decisions:

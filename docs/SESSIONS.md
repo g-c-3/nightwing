@@ -4,6 +4,30 @@ Newest entry at top.
 
 ---
 
+### Session 66 — 2026-08-31 — Minor piece endgame theory (Phase 6), plus a classifier gap fix
+
+**Built:**
+- `src/eval/endgame.h`/`.cpp`: added a new `EndgameSignature::KBPK` bucket (one side has a bishop and at least one pawn, the other side completely bare) — the original Session 64 six-bucket classifier had no bucket for this case at all, a gap `endgame.cpp`'s own `is_light_square()` comment had already anticipated in writing without yet filling in. See docs/DECISIONS.md, 2026-08-31 (7).
+- `tests/endgame_tests.cpp`: 4 new test cases covering the new KBPK bucket (White side, Black side with multiple pawns, and two fallthrough-to-None cases — defender has a pawn, defender has a bishop).
+- `src/eval/minor_piece_endgame.h`/`.cpp` (new): `eval::minor_piece_endgame_value()`, ROADMAP.md Phase 6's "Minor piece endgames" item. Dispatches across three `classify_endgame()` buckets — `KBPK` (wrong-bishop-corner draw detection, reusing the rule-of-the-square technique against the drawing corner rather than a pawn's promotion square, narrowed to single-rook-file-pawn(s) positions), `OppositeColoredBishops` (a per-pawn-count-difference drawish discount against whichever side leads, not a flat always-on bonus), and `KnightVsBishop` (a blocked/open mutual-pawn-pair structural bonus, favoring the knight in closed structures and the bishop in open ones). Four new public `Score` constants: `kWrongBishopCornerDrawPenalty`, `kOCBDrawishPenaltyPerExtraPawn`, `kKnightClosedPositionBonusPerBlockedPawn`, `kBishopOpenPositionBonusPerOpenPawn`.
+- `tests/minor_piece_endgame_tests.cpp` (new, 10 tests).
+- `src/eval/eval.h`/`.cpp`: new term wired into `evaluate()`'s additive sum; header comments updated to note this is now the third of three `classify_endgame()`-consuming terms, each paying its own redundant classifier call per node.
+- `src/CMakeLists.txt`: registered `eval/minor_piece_endgame.cpp`.
+- `tests/CMakeLists.txt`: registered `minor_piece_endgame_tests.cpp`.
+
+**Bugs fixed:** none in previously-shipped code — the KBPK classifier gap (above) was new-item discovery during this session's own work, not a regression in already-tested, already-shipped Session 64 code; Session 64's own six original buckets remain correct and unchanged, confirmed by re-running their existing tests (all still pass) before adding the seventh.
+
+**Decisions made:** one, logged in docs/DECISIONS.md dated 2026-08-31 (7) — extending the endgame classifier with a new bucket, rather than either detecting the pattern inline outside the classifier or deferring it the way Rook endgame patterns' own Vancura sub-pattern was deferred in Session 65.
+
+**Verification performed (no `cmake`/Catch2 available in this sandbox, same limitation as every prior session without a full toolchain):**
+- Full `nightwing_lib` source set (`board/`, `eval/`, `support/`, `search/`, `uci/`, `tuner/`) compiled clean via direct `g++ -std=c++20 -Wall -Wextra -Wpedantic` after every change in this session, zero warnings (one unused-variable warning caught and fixed mid-session, before being shipped).
+- All 10 planned `minor_piece_endgame_tests.cpp` scenarios, plus the 4 new `endgame_tests.cpp` KBPK scenarios, were first independently verified against the exact C++ branch logic via standalone Python simulations (catching one real labeling mistake — an early hand-picked "wrong bishop" test square that was actually the RIGHT bishop for that corner, since a1 and h8 are both dark squares on a real board, a fact this file's own test-file header comment now states explicitly as a result), then re-verified a second, independent way: standalone `g++`-compiled C++ drivers linking the real, compiled implementations — all 16 passed against the actual code.
+- Linked and ran the real `nightwing` UCI binary; smoke-tested a genuine wrong-bishop-corner FEN at real search depth and confirmed the eval score dropped from what plain material would otherwise show (roughly +350 to +450 cp for a bishop and pawn up) down to under +110 cp — the fortress-drawish signal firing correctly inside an actual search, not just in isolated unit tests. A control FEN with the RIGHT-colored bishop for its corner, and another with the defending king too far from the corner, both correctly showed ordinary large winning scores instead.
+
+**Next session start point:** Run "Start" to move to the next open Phase 6 item — `docs/ROADMAP.md`'s next unchecked bullet is "Fortress detection" as of this entry — confirm by reading ROADMAP.md's Phase 6 list directly, since bullet order there is the source of truth, not this sentence. Only two `EndgameSignature` buckets (`KRK`, `KBNK`) still have no real consumer at all; the KPK/KRK/KBNK "base heuristics" item further down Phase 6's list is the natural next consumer for those two specifically, worth checking whether it's a better next step than Fortress detection depending on how that item's own wording reads at that point. No open bugs or partial work left mid-file from this session; every touched file was completed, compiled, and tested before this session ended.
+
+---
+
 ### Session 65 — 2026-08-31 — King+pawn (KPK) and Rook endgame theory (Phase 6)
 
 **Built (King+pawn theory):**
