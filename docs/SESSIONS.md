@@ -4,6 +4,30 @@ Newest entry at top.
 
 ---
 
+### Session 65 — 2026-08-31 — King+pawn (KPK) endgame theory (Phase 6)
+
+**Built:**
+- `src/eval/king_pawn_endgame.h`/`.cpp` (new): `eval::king_pawn_endgame_value()`, ROADMAP.md Phase 6's "King+pawn theory" item. Applies whenever `eval::classify_endgame()` (Session 64) returns `EndgameSignature::KPK` — this is that classifier's first real consumer, closing out the "stays open until at least one of them actually does" checkbox left open in Session 64. Implements Rule of the Square, Key Squares, and direct Opposition as genuine formulas over the pawn's/kings' actual squares, not a case table. Four new public `Score` constants: `kUnstoppablePawnBonus`, `kRookPawnDrawishPenalty`, `kKeySquareBonus`, `kOppositionDrawishPenalty`.
+- `src/board/bitboard.h`: promoted `chebyshev_distance()` from a local helper in `eval/king_tropism.cpp` (its own documented revisit trigger — see docs/DECISIONS.md's 2026-08-31 (4bis) entry) to a shared function, now that `king_pawn_endgame.cpp` is a second caller.
+- `src/eval/king_tropism.cpp`: updated to call the now-shared `board::chebyshev_distance()`, local copy removed.
+- `src/eval/eval.h`/`.cpp`: new term wired into `evaluate()`'s additive sum; header comment updated with a note on the deliberately-accepted per-node cost of `king_pawn_endgame_value()` calling `classify_endgame()` on every node, including non-KPK ones.
+- `src/CMakeLists.txt`: registered `eval/king_pawn_endgame.cpp`.
+- `tests/CMakeLists.txt`: registered `king_pawn_endgame_tests.cpp`.
+- `tests/king_pawn_endgame_tests.cpp` (new, 9 tests): bare-kings and non-KPK fallthrough, unstoppable pawn (both colors, confirming the White-relative sign convention), rook-pawn draw, key-square bonus, opposition draw, opposition-wrong-side-to-move fallthrough, and a boundary case isolating the starting-rank double-step adjustment.
+
+**Bugs fixed:** none — this was new-feature work, no bug reports going into this session.
+
+**Decisions made:** two, both logged in docs/DECISIONS.md dated 2026-08-31 — (5) KPK theory scope is limited to direct opposition only (not distant/diagonal/full corresponding squares) and declines to guess a sign for the residual ambiguous case; (4bis) `chebyshev_distance()` promoted to `board/bitboard.h` on its second real caller.
+
+**Verification performed (no `cmake`/Catch2 available in this sandbox, same limitation as every prior session without a full toolchain):**
+- Full `nightwing_lib` source set (`board/`, `eval/`, `support/`, `search/`, `uci/`) compiled clean via direct `g++ -std=c++20 -Wall -Wextra -Wpedantic`, zero warnings, confirming the `bitboard.h`/`king_tropism.cpp` change didn't regress anything else depending on `board/bitboard.h`.
+- All 9 planned test scenarios were first independently verified against the exact C++ branch logic via a standalone Python simulation (catching two arithmetic mistakes in early hand-derived test squares before they were ever written into the `.cpp` file), then re-verified a second, independent way: a standalone `g++`-compiled C++ driver linking the real, compiled `king_pawn_endgame.cpp` — all 9 passed against the actual implementation, not just the Python model of it.
+- Linked and ran the real `nightwing` UCI binary; smoke-tested a real 6-ply search from the starting position (sane scores, no crash) and two real KPK positions (a rook-pawn near-draw and an opposition-blockade draw), both producing small, non-extreme scores consistent with "roughly balanced, not simply +1 pawn."
+
+**Next session start point:** Run "Start" to move to the next open Phase 6 item — `docs/ROADMAP.md`'s next unchecked bullet after "King+pawn theory" (rook endgame patterns is the next candidate as of this entry — confirm by reading ROADMAP.md's Phase 6 list directly, since bullet order there is the source of truth, not this sentence). No open bugs or partial work left mid-file from this session; every touched file was completed, compiled, and tested before this session ended.
+
+---
+
 ## 2026-08-31 (1) — Session 64: Phase 6 started — endgame material-signature classifier (classification half)
 
 **What was built:** `src/eval/endgame.h`/`.cpp` — `eval::EndgameSignature` (six buckets: `KPK`, `KRK`, `KBNK`, `RookEndgame`, `OppositeColoredBishops`, `KnightVsBishop`, plus `None`) and `eval::classify_endgame()`, which recognizes each purely from piece counts, which side each piece belongs to, and (for `OppositeColoredBishops`) bishop square color. Added `tests/endgame_tests.cpp` (18 test cases) — the dedicated endgame test suite ARCHITECTURE.md's own Module Layout/Testing Policy sections already named in advance. Wired both new files into `src/CMakeLists.txt`/`tests/CMakeLists.txt`.

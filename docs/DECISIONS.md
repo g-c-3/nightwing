@@ -4,6 +4,31 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-08-31 (5) — King+pawn (KPK) endgame theory: scope limited to direct opposition only, and to three specific classical techniques, not a full solver
+
+**Decision:** `eval::king_pawn_endgame_value()` (`src/eval/king_pawn_endgame.h`/`.cpp`) implements exactly three classical KPK techniques — Rule of the Square, Key Squares, and direct Opposition — as genuine algorithmic formulas over the pawn's and both kings' actual squares, applying only to positions `eval::classify_endgame()` recognizes as `EndgameSignature::KPK` (king + exactly one pawn, either side, vs. bare king). Two deliberate scope limits:
+
+1. Only DIRECT opposition (same file/rank, one square between) is checked. Distant opposition, diagonal opposition, and the fuller "corresponding squares" theory ROADMAP.md's own "King+pawn theory" item wording also names are NOT attempted.
+2. When the defending king catches the pawn (per the rule of the square) but neither a key square nor an opposition blockade resolves the outcome, the term applies no adjustment at all — it does not guess a direction.
+
+**Rationale:** Corresponding-squares theory beyond direct opposition is genuinely research-level (systematic computation of corresponding squares for an arbitrary king+pawn configuration is most cleanly done by retrograde analysis over the specific position — precisely the tablebase approach this entire project has ruled out as a hard constraint). Direct opposition is the specific, common case actually reachable by a short, closed-form formula, and is what almost every human-readable KPK explanation (CPW's own "Opposition" article included) leads with. Declining to resolve the ambiguous remainder (case 2 above) rather than picking an arbitrary sign was preferred because a wrong static-eval nudge in a shallow, easily-searched subtree (two kings and one pawn — at most a handful of legal moves at any node) is worse than no nudge: search itself resolves these positions perfectly well without help, since the branching factor is tiny. This mirrors the same "decline to overreach past what the technique actually decides" posture eval/material_imbalance.h's own header comment already takes for unlisted material combinations.
+
+**Alternatives considered:**
+- *Full retrograde KPK solver, generated once at build time as a static table:* rejected outright — this is functionally a small tablebase, and NO tablebase dependency of any kind (however small, however built) is a hard project constraint, not a placeholder.
+- *Implement distant/diagonal opposition and full corresponding squares now:* rejected for this session as materially higher complexity and risk of a subtly wrong formula (which would be worse than the current, narrower-but-verified scope) for a case classical search already handles fine on its own in this exact endgame's tiny branching factor. Left as a possible future refinement, not a checked-off "done, no further work" item — the ROADMAP.md item's checkbox note documents this scope limit explicitly rather than silently claiming full corresponding-squares coverage.
+- *Guess a direction (small bonus or small penalty) for the unresolved fallthrough case rather than Score{}:* rejected — no classical technique actually justifies a sign either way there, and an unjustified nudge risks being wrong more often than it's right, unlike every other constant in this file, each grounded in a specific, named technique.
+
+### 2026-08-31 (4bis) — `chebyshev_distance()` promoted from a local helper (`eval/king_tropism.cpp`) to a shared function (`board/bitboard.h`)
+
+**Decision:** Moved `chebyshev_distance(Square, Square)` out of `eval/king_tropism.cpp`'s anonymous namespace and into `board/bitboard.h` as a `constexpr` free function, updating `king_tropism.cpp`'s own call site to use `board::chebyshev_distance()`.
+
+**Rationale:** `king_tropism.cpp`'s own original header comment for this helper explicitly named its own revisit trigger: "promote to board/bitboard.h if a later Phase 6 item needs it more broadly." `eval::king_pawn_endgame_value()` (this session, see the entry above) is exactly that second, independent caller — it needs the identical king-to-square distance computation for the rule of the square. Promoting on the second real caller, not preemptively on the first, matches this codebase's established general precedent (`eval/king_safety.cpp`'s `shield_zone()` and `eval/space.cpp`'s `space_zone()` are both still local, single-caller helpers as of this session, deliberately not promoted, since neither has a second caller yet).
+
+**Alternatives considered:**
+- *Leave a second, separate local copy in `king_pawn_endgame.cpp`:* rejected — the whole point of that original header comment's own documented trigger was to avoid exactly this outcome once a second caller actually showed up.
+
+---
+
 ## 2026-08-31 (4) — Endgame material-signature classifier built as a standalone, unwired unit (Phase 6's first item, classification half only)
 
 **Decision:** Added `src/eval/endgame.h`/`.cpp` (`eval::EndgameSignature`, `eval::classify_endgame()`) — ARCHITECTURE.md's Module Layout already named this exact file pair and `tests/endgame_tests.cpp` in advance, so no path decision was needed, only the design inside it. `classify_endgame()` recognizes six buckets purely from piece counts and which side each piece belongs to (plus, for one bucket, bishop square color): `KPK`, `KRK`, `KBNK`, `RookEndgame`, `OppositeColoredBishops`, `KnightVsBishop`. Each maps directly to a specific clause in ROADMAP.md Phase 6's own remaining item wording — no speculative buckets beyond what those items already commit to. `classify_endgame()` is NOT called from `eval::evaluate()` or anywhere in `search/` yet.
