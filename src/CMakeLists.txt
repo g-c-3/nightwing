@@ -27,6 +27,7 @@ add_library(nightwing_lib STATIC
     eval/material_imbalance.cpp
     eval/endgame.cpp
     eval/king_pawn_endgame.cpp
+    eval/rook_endgame.cpp
     eval/eval_cache.cpp
     eval/eval.cpp
     search/ordering.cpp
