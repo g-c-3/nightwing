@@ -29,7 +29,13 @@
 // king_pawn_endgame.h — ROADMAP.md Phase 6's "King+pawn theory" item;
 // the first Phase 6 term, applying only to positions eval/endgame.h's
 // classify_endgame() recognizes as EndgameSignature::KPK, a no-op
-// Score{} everywhere else).
+// Score{} everywhere else) plus rook endgame theory (eval/
+// rook_endgame.h — ROADMAP.md Phase 6's "Rook endgame patterns" item;
+// the second Phase 6 term, applying only to EndgameSignature::
+// RookEndgame positions — Tarrasch's Rule generally, Lucena/Philidor
+// recognition further narrowed to the single-pawn textbook case; see
+// rook_endgame.h's own header comment for why Vancura recognition is
+// deliberately not included).
 //
 // compute_phase() (below) was moved out of eval.cpp's anonymous
 // namespace and declared here on 2026-08-29 specifically so it can be

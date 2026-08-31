@@ -12,6 +12,7 @@
 #include "eval/pawns.h"
 #include "eval/piece_bonuses.h"
 #include "eval/psqt.h"
+#include "eval/rook_endgame.h"
 #include "eval/space.h"
 #include "eval/tempo.h"
 #include "eval/threats.h"
@@ -126,35 +127,40 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     // knight outposts (eval/knight_outposts.h), space (eval/space.h),
     // threats (eval/threats.h), king tropism (eval/king_tropism.h),
     // trapped piece penalties (eval/trapped_pieces.h), the material
-    // imbalance table (eval/material_imbalance.h), and King+pawn
-    // endgame theory (eval/king_pawn_endgame.h) are NOT cached the way
-    // pawn structure is: piece placement -- unlike pawn structure --
-    // changes on essentially every move, so a position-keyed cache here
-    // would see a near-100% miss rate and just add bookkeeping overhead
-    // with no real hit-rate payoff, unlike the pawn hash table's
-    // genuinely stable key. The tempo bonus (eval/tempo.h) was never a
-    // caching candidate in the first place -- it's already a single
-    // field lookup and branch, cheaper than a cache probe would be.
+    // imbalance table (eval/material_imbalance.h), King+pawn endgame
+    // theory (eval/king_pawn_endgame.h), and rook endgame theory
+    // (eval/rook_endgame.h) are NOT cached the way pawn structure is:
+    // piece placement -- unlike pawn structure -- changes on essentially
+    // every move, so a position-keyed cache here would see a near-100%
+    // miss rate and just add bookkeeping overhead with no real hit-rate
+    // payoff, unlike the pawn hash table's genuinely stable key. The
+    // tempo bonus (eval/tempo.h) was never a caching candidate in the
+    // first place -- it's already a single field lookup and branch,
+    // cheaper than a cache probe would be.
     //
-    // king_pawn_endgame_value() runs classify_endgame() (eval/endgame.h)
-    // as its own first, internal check on every single call, including
-    // every position that is nowhere near a KPK endgame -- a real,
-    // deliberately-accepted per-node cost (a handful of popcount() calls
-    // over bitboards this function's own material loop above already
-    // touched, not reused between the two) rather than an optimization
-    // this session took on. Phase 6 is explicitly the "algorithmic
-    // endgame theory" phase, not a performance-tuning one
+    // king_pawn_endgame_value() AND rook_endgame_value() each run
+    // classify_endgame() (eval/endgame.h) as their own first, internal
+    // check on every single call, including every position that is
+    // nowhere near either endgame -- two now-redundant calls to the
+    // same classifier on every node, not just one, a real, deliberately-
+    // accepted per-node cost (a handful of popcount() calls over
+    // bitboards this function's own material loop above already
+    // touched, not reused between any of the three) rather than an
+    // optimization this phase took on. Phase 6 is explicitly the
+    // "algorithmic endgame theory" phase, not a performance-tuning one
     // (ARCHITECTURE.md's own Benchmarking Discipline section is a later,
-    // Phase 8 concern); revisit if a real bench run shows this
-    // classify_endgame() call is a measurable hot-path cost worth
-    // short-circuiting (e.g. gating it on a cheap total-material check
-    // computed once and shared, rather than every Phase 6 consumer
-    // re-deriving its own).
+    // Phase 8 concern); revisit if a real bench run shows these
+    // classify_endgame() calls are a measurable hot-path cost worth
+    // short-circuiting (e.g. computing it once here and passing the
+    // result to each consumer, rather than every Phase 6 consumer
+    // re-deriving its own) -- this becomes more attractive, not less,
+    // with each further Phase 6 item that adds its own consumer.
     const int result = taper(score + pawn_score + mobility_value(pos) + king_safety_value(pos) +
                                   piece_bonus_value(pos) + knight_outpost_value(pos) +
                                   space_value(pos) + threats_value(pos) + king_tropism_value(pos) +
                                   trapped_piece_value(pos) + tempo_value(pos) +
-                                  material_imbalance_value(pos) + king_pawn_endgame_value(pos),
+                                  material_imbalance_value(pos) + king_pawn_endgame_value(pos) +
+                                  rook_endgame_value(pos),
                               compute_phase(pos));
 
     if (eval_cache_usable) {
