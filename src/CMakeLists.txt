@@ -25,6 +25,7 @@ add_library(nightwing_lib STATIC
     eval/trapped_pieces.cpp
     eval/tempo.cpp
     eval/material_imbalance.cpp
+    eval/endgame.cpp
     eval/eval_cache.cpp
     eval/eval.cpp
     search/ordering.cpp
