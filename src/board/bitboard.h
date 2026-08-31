@@ -122,6 +122,27 @@ constexpr int pop_lsb(Bitboard& bb) noexcept {
     return sq;
 }
 
+/// Returns the Chebyshev (king-move) distance between `a` and `b`: the
+/// number of king moves it would take to travel from one square to the
+/// other, i.e. max(|file difference|, |rank difference|) — the standard
+/// distance metric for this concept (CPW's own "Distance" article:
+/// https://www.chessprogramming.org/Distance). Promoted here from a
+/// local helper in eval/king_tropism.cpp (2026-08-26 (3)) specifically
+/// per that helper's own documented revisit trigger — "promote to
+/// board/bitboard.h if a later Phase 6 item needs it more broadly" —
+/// now that eval/king_pawn_endgame.cpp (Phase 6's "King+pawn theory"
+/// item) is a second, independent caller needing the identical
+/// computation (king-vs-promotion-square distance for the rule of the
+/// square). king_tropism.cpp's own local copy was removed in the same
+/// change that added this one, not left as a parallel duplicate.
+[[nodiscard]] constexpr int chebyshev_distance(Square a, Square b) noexcept {
+    const int file_diff = file_of(a) - file_of(b);
+    const int rank_diff = rank_of(a) - rank_of(b);
+    const int abs_file_diff = file_diff < 0 ? -file_diff : file_diff;
+    const int abs_rank_diff = rank_diff < 0 ? -rank_diff : rank_diff;
+    return abs_file_diff > abs_rank_diff ? abs_file_diff : abs_rank_diff;
+}
+
 /// Returns an 8x8 ASCII-art rendering of `bb` (rank 8 at top, per
 /// convention), '1' for set squares and '.' for empty ones. Debug/test
 /// tool only — not used in the hot path.
