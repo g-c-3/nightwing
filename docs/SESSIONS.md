@@ -4,27 +4,33 @@ Newest entry at top.
 
 ---
 
-### Session 65 — 2026-08-31 — King+pawn (KPK) endgame theory (Phase 6)
+### Session 65 — 2026-08-31 — King+pawn (KPK) and Rook endgame theory (Phase 6)
 
-**Built:**
+**Built (King+pawn theory):**
 - `src/eval/king_pawn_endgame.h`/`.cpp` (new): `eval::king_pawn_endgame_value()`, ROADMAP.md Phase 6's "King+pawn theory" item. Applies whenever `eval::classify_endgame()` (Session 64) returns `EndgameSignature::KPK` — this is that classifier's first real consumer, closing out the "stays open until at least one of them actually does" checkbox left open in Session 64. Implements Rule of the Square, Key Squares, and direct Opposition as genuine formulas over the pawn's/kings' actual squares, not a case table. Four new public `Score` constants: `kUnstoppablePawnBonus`, `kRookPawnDrawishPenalty`, `kKeySquareBonus`, `kOppositionDrawishPenalty`.
 - `src/board/bitboard.h`: promoted `chebyshev_distance()` from a local helper in `eval/king_tropism.cpp` (its own documented revisit trigger — see docs/DECISIONS.md's 2026-08-31 (4bis) entry) to a shared function, now that `king_pawn_endgame.cpp` is a second caller.
 - `src/eval/king_tropism.cpp`: updated to call the now-shared `board::chebyshev_distance()`, local copy removed.
-- `src/eval/eval.h`/`.cpp`: new term wired into `evaluate()`'s additive sum; header comment updated with a note on the deliberately-accepted per-node cost of `king_pawn_endgame_value()` calling `classify_endgame()` on every node, including non-KPK ones.
-- `src/CMakeLists.txt`: registered `eval/king_pawn_endgame.cpp`.
-- `tests/CMakeLists.txt`: registered `king_pawn_endgame_tests.cpp`.
-- `tests/king_pawn_endgame_tests.cpp` (new, 9 tests): bare-kings and non-KPK fallthrough, unstoppable pawn (both colors, confirming the White-relative sign convention), rook-pawn draw, key-square bonus, opposition draw, opposition-wrong-side-to-move fallthrough, and a boundary case isolating the starting-rank double-step adjustment.
+- `tests/king_pawn_endgame_tests.cpp` (new, 9 tests).
+
+**Built (Rook endgame patterns):**
+- `src/eval/rook_endgame.h`/`.cpp` (new): `eval::rook_endgame_value()`, ROADMAP.md Phase 6's "Rook endgame patterns" item. Applies whenever `classify_endgame()` returns `EndgameSignature::RookEndgame` — the classifier's second real consumer. Implements Tarrasch's Rule (rook behind a passed pawn, own or enemy, at any pawn count) and, narrowed to the single-pawn textbook case, Lucena and Philidor position recognition. Vancura position recognition deliberately deferred — see docs/DECISIONS.md, 2026-08-31 (6). Four new public `Score` constants: `kRookBehindOwnPassedPawnBonus`, `kRookBehindEnemyPassedPawnBonus`, `kLucenaWinBonus`, `kPhilidorDrawPenalty`.
+- `tests/rook_endgame_tests.cpp` (new, 7 tests).
+
+**Built (shared, both items):**
+- `src/eval/eval.h`/`.cpp`: both new terms wired into `evaluate()`'s additive sum; header comments updated, including a note on the now-doubled deliberately-accepted per-node cost of two separate `classify_endgame()` calls per node.
+- `src/CMakeLists.txt`: registered `eval/king_pawn_endgame.cpp` and `eval/rook_endgame.cpp`.
+- `tests/CMakeLists.txt`: registered both new test files.
 
 **Bugs fixed:** none — this was new-feature work, no bug reports going into this session.
 
-**Decisions made:** two, both logged in docs/DECISIONS.md dated 2026-08-31 — (5) KPK theory scope is limited to direct opposition only (not distant/diagonal/full corresponding squares) and declines to guess a sign for the residual ambiguous case; (4bis) `chebyshev_distance()` promoted to `board/bitboard.h` on its second real caller.
+**Decisions made:** three, all logged in docs/DECISIONS.md dated 2026-08-31 — (5) KPK theory scope limited to direct opposition only, no guessed sign for the residual ambiguous case; (4bis) `chebyshev_distance()` promoted to `board/bitboard.h` on its second real caller; (6) rook-endgame Vancura recognition deferred, Lucena/Philidor narrowed to the single-pawn case, Tarrasch's Rule applies generally.
 
 **Verification performed (no `cmake`/Catch2 available in this sandbox, same limitation as every prior session without a full toolchain):**
-- Full `nightwing_lib` source set (`board/`, `eval/`, `support/`, `search/`, `uci/`) compiled clean via direct `g++ -std=c++20 -Wall -Wextra -Wpedantic`, zero warnings, confirming the `bitboard.h`/`king_tropism.cpp` change didn't regress anything else depending on `board/bitboard.h`.
-- All 9 planned test scenarios were first independently verified against the exact C++ branch logic via a standalone Python simulation (catching two arithmetic mistakes in early hand-derived test squares before they were ever written into the `.cpp` file), then re-verified a second, independent way: a standalone `g++`-compiled C++ driver linking the real, compiled `king_pawn_endgame.cpp` — all 9 passed against the actual implementation, not just the Python model of it.
-- Linked and ran the real `nightwing` UCI binary; smoke-tested a real 6-ply search from the starting position (sane scores, no crash) and two real KPK positions (a rook-pawn near-draw and an opposition-blockade draw), both producing small, non-extreme scores consistent with "roughly balanced, not simply +1 pawn."
+- Full `nightwing_lib` source set (`board/`, `eval/`, `support/`, `search/`, `uci/`, `tuner/`) compiled clean via direct `g++ -std=c++20 -Wall -Wextra -Wpedantic`, zero warnings, after each of the two items' changes — confirming neither regressed the other or anything else depending on `board/bitboard.h` or `eval/eval.h`/`.cpp`.
+- All 16 planned test scenarios (9 KPK + 7 rook-endgame) were first independently verified against the exact C++ branch logic via standalone Python simulations, then re-verified a second, independent way: standalone `g++`-compiled C++ drivers linking the real, compiled implementations — all 16 passed against the actual code, not just the Python models of it.
+- Linked and ran the real `nightwing` UCI binary multiple times across both items' changes; smoke-tested real searches from the starting position and from real KPK and rook-endgame FENs (rook-pawn near-draw, opposition-blockade draw, a Lucena-shaped position, a Philidor-shaped position) — all sane, non-crashing, non-extreme scores.
 
-**Next session start point:** Run "Start" to move to the next open Phase 6 item — `docs/ROADMAP.md`'s next unchecked bullet after "King+pawn theory" (rook endgame patterns is the next candidate as of this entry — confirm by reading ROADMAP.md's Phase 6 list directly, since bullet order there is the source of truth, not this sentence). No open bugs or partial work left mid-file from this session; every touched file was completed, compiled, and tested before this session ended.
+**Next session start point:** Run "Start" to move to the next open Phase 6 item — `docs/ROADMAP.md`'s next unchecked bullet is "Minor piece endgames" (wrong-bishop-corner draw detection, opposite-colored bishop fortress/drawish-tendency eval adjustment, knight vs. bishop endings weighted by pawn structure) as of this entry — confirm by reading ROADMAP.md's Phase 6 list directly, since bullet order there is the source of truth, not this sentence. That item's two sub-patterns each already have a matching `EndgameSignature` bucket ready to consume (`OppositeColoredBishops`, `KnightVsBishop`) from Session 64's classifier — no new classifier work needed, same situation King+pawn theory and Rook endgame patterns were both in this session. No open bugs or partial work left mid-file from this session; every touched file was completed, compiled, and tested before this session ended.
 
 ---
 

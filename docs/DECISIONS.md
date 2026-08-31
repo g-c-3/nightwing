@@ -4,6 +4,21 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-08-31 (6) — Rook endgame patterns: Vancura position recognition deferred; Lucena/Philidor narrowed to the single-pawn case; Tarrasch's Rule applies generally
+
+**Decision:** `eval::rook_endgame_value()` (`src/eval/rook_endgame.h`/`.cpp`) implements three of ROADMAP.md's four named rook-endgame patterns — Tarrasch's Rule (rook behind a passed pawn, own or enemy), Lucena position recognition, and Philidor position recognition — as genuine geometric formulas, applying whenever `classify_endgame()` returns `EndgameSignature::RookEndgame`. Two scope decisions:
+
+1. Vancura position recognition is NOT implemented in this session, despite being one of the four patterns this ROADMAP.md item names.
+2. Lucena and Philidor recognition are further narrowed, beyond `EndgameSignature::RookEndgame`'s own broad "any pawn count" bucket, to positions with exactly one pawn total on the board — the specific "rook + pawn vs. rook" scenario both patterns are classically about. Tarrasch's Rule carries no such narrowing — it's a per-pawn, per-rook geometric check that stays well-defined at any pawn count.
+
+**Rationale:** Vancura's own recognition criteria (a pawn on a specific non-rook file, a defending rook giving lateral checks from a particular file relative to the pawn, a defending king positioned to attack the pawn from the side) are a materially different geometric pattern from both Lucena's and Philidor's, not a small variation on either — encoding it correctly in the same session, without the same level of independent verification (Python-model cross-check plus a real compiled driver, the process used for every other pattern in this file and in `eval/king_pawn_endgame.cpp`) risked shipping a plausible-looking but wrong recognizer, which is worse for playing strength than simply not having Vancura recognition yet. This mirrors the same posture the 2026-08-31 (5) entry above already took for KPK's distant/diagonal opposition: a documented, honest partial scope beats a rushed, unverified full one. Narrowing Lucena/Philidor to the single-pawn case follows the same "narrowest version the item's own wording actually asks for" precedent `eval/material_imbalance.h`'s and `eval/king_pawn_endgame.h`'s own header comments already establish — a general multi-pawn rook endgame is a substantially harder, less geometrically clean-cut recognition problem neither classical pattern's own textbook framing (CPW's own "Lucena Position"/"Philidor Position" articles) actually addresses.
+
+**Alternatives considered:**
+- *Implement a best-effort Vancura recognizer anyway, even if less rigorously verified than the other patterns:* rejected — an eval term that fires on real positions with a plausible-but-wrong sign is worse than one that simply doesn't fire; ROADMAP.md's own checkbox for this item documents the deferral honestly rather than silently shipping a weaker, unflagged version of "done."
+- *Apply Lucena/Philidor's geometric checks to any pawn count, not just the single-pawn case:* rejected — with several pawns on the board, "the pawn" that Lucena/Philidor's own king/rook geometry is about becomes ambiguous (which pawn's promotion square, if several are advanced?), and the classical technique itself assumes the simplified single-extra-pawn scenario; applying the same formula to a multi-pawn position would frequently misfire.
+
+---
+
 ### 2026-08-31 (5) — King+pawn (KPK) endgame theory: scope limited to direct opposition only, and to three specific classical techniques, not a full solver
 
 **Decision:** `eval::king_pawn_endgame_value()` (`src/eval/king_pawn_endgame.h`/`.cpp`) implements exactly three classical KPK techniques — Rule of the Square, Key Squares, and direct Opposition — as genuine algorithmic formulas over the pawn's and both kings' actual squares, applying only to positions `eval::classify_endgame()` recognizes as `EndgameSignature::KPK` (king + exactly one pawn, either side, vs. bare king). Two deliberate scope limits:
