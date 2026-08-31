@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+## 2026-08-31 (2) — Session 63: Phase 5 closed — production tuning run (post-fix) reviewed, defaults retained
+
+**What was built:** No source code changed this session — this was a review/decision session. The re-dispatched `tuning-pipeline` workflow (Session 62's pawn-anchoring fix in place) completed and its artifact was reviewed: `tuned_weights.txt` showed `pawn_mg=100 pawn_eg=100` exactly (anchoring confirmed working at production scale), and `match_result.txt` showed `score_a=0.5088, elo_diff=6.1` — the untuned defaults nominally ahead of the tuned weights, within 1 standard error (~6.55 Elo) for a 400-game sample.
+
+**Bugs fixed:** None (no code touched).
+
+**Decisions made:** See docs/DECISIONS.md's new 2026-08-31 (3) entry — closed ROADMAP.md Phase 5's tuning item with the hand-set material defaults retained, `eval/psqt.h` unchanged. Rationale: two independent large-scale runs (Session 61's buggy one, Session 62's fixed one) both found the defaults statistically indistinguishable from the tuned alternative, and the SECOND (methodologically sound) run's nominal gap was smaller than the first's (6.1 Elo vs. 9.6 Elo) — consistent with the true difference being near zero, not consistent with "a real effect hiding in the noise." Alternatives considered and rejected: transcribing the tuned weights anyway; running a still-larger match to shrink the error bar further; leaving the item open pending more games. Full quantitative comparison table in that entry.
+
+**Verification:** N/A beyond re-confirming the artifact's own arithmetic (`score_a`/`elo_diff`/standard-error calculations checked by hand against `match_result.txt`'s raw `wins_a`/`wins_b`/`draws` counts) — no build or test run this session since no source changed.
+
+**Not yet done / left for next session:** ROADMAP.md Phase 5 is now fully complete. Phase 6 — Endgame Knowledge — is next: material-signature classifier, King+pawn theory (opposition/key squares/corresponding squares/rule of the square), rook endgame patterns (Lucena/Philidor/Vancura/rook-behind-passed-pawn), minor piece endgames (wrong-bishop-corner, opposite-colored-bishop fortress adjustment, knight-vs-bishop weighting), fortress pattern detection, zugzwang-aware search shaping, KPK/KRK/KBNK hand-built heuristics, and a dedicated endgame test suite (see ROADMAP.md, Phase 6, for full item list) — nothing in this phase started yet.
+
+**Next session start point:** Begin Phase 6's first item — the material-signature classifier (detect endgame material buckets at each node, route to specialized endgame reasoning when matched) — since every other Phase 6 item depends on this existing first to have somewhere to route into. Say "Start" to begin.
+
+---
+
 ## 2026-08-31 (1) — Session 62: fixed the tuner's pawn-value scale-degeneracy bug found in Session 61's production run
 
 **What was built:** An `anchored` flag on `tuner::MaterialParameterRef` (`src/tuner/tune.h`), set for `pawn_mg`/`pawn_eg` only. `tune()` (`src/tuner/tune.cpp`) now skips both the gradient probe and the update step for any anchored parameter, so pawn value is held exactly fixed at its starting value for an entire tuning run while the other eight `MaterialWeights` fields still tune normally. `nightwing_tune`'s stderr banner now states this explicitly.

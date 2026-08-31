@@ -4,6 +4,31 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+## 2026-08-31 (3) — Phase 5's tuning item closed with hand-set material defaults RETAINED, not the tuned weights
+
+**Decision:** ROADMAP.md Phase 5's final item ("Tuned weights committed, before/after strength comparison logged") is closed without changing `eval/psqt.h` — the compiled-in defaults (pawn 100, knight 320, bishop 330, rook 500, queen 900, both phases) stay exactly as they were. No source file changed as part of this decision; this entry and ROADMAP.md's own updated checkbox/status line are the only artifacts of it.
+
+**Rationale:** Two large-scale production `tuning-pipeline` runs now exist, the second with the (2) entry's pawn-anchoring bug fixed:
+
+| | Session 61 (buggy tuner) | Session 62 (fixed tuner) |
+|---|---|---|
+| tuned pawn (mg/eg) | 21.4 / 81.1 (collapsed) | 100 / 100 (anchored, as designed) |
+| match result | `score_a=0.5138, elo_diff=9.6` (defaults ahead) | `score_a=0.5088, elo_diff=6.1` (defaults ahead) |
+| 1 SE on that Elo gap (400 games) | ~6.3 | ~6.55 |
+
+Both runs, `score_a` is measuring `eval::default_material_weights()` (A) against that run's tuned weights (B) — A came out nominally ahead both times, though within noise both times (z≈1.5 and z≈0.9 respectively, neither exceeding the ~1.96 needed for 95% significance). The material finding here: fixing the tuner's known bug made the apparent gap SMALLER (9.6 → 6.1 Elo), not larger or unchanged — that's the direction a genuinely-near-zero true difference would push a noisy estimate as measurement quality improves, not the direction a real, drowned-out effect would push it. Combined with the two runs' tuned non-pawn weights landing close to each other (a soft but real "no wild disagreement" corroboration), the more defensible read of this data is "the hand-set defaults are already close to whatever this specific objective (depth-4 search, quiet self-play positions, material-only parameters, fixed `sigmoid_scale=400`) would converge to" rather than "a real improvement exists but remains statistically hidden."
+
+Spending a third, larger-still run (e.g. 2000+ match games) to shrink that ~6.5 Elo error bar further was considered and rejected for now: the marginal information gained (resolving a ~6 Elo question with more precision) is small relative to the CI compute cost of another full production run, and ROADMAP.md's own item wording ("strength comparison logged," not "weights improved") is satisfied by two logged, methodologically-sound comparisons that agree with each other.
+
+**Alternatives considered:**
+- Transcribe the Session 62 tuned weights anyway, on the reasoning that "some tuning is better than none" even without a demonstrated strength gain — rejected; committing an eval change specifically because it was measured NOT to help would be backwards, and the current defaults are simpler, canonical round numbers with no downside relative to the tuned alternative.
+- Run a much larger match (2000-5000 games) before deciding either way — rejected for now per the rationale above (diminishing information value for the compute cost); left as a legitimate option to revisit if a future session's own eval changes (e.g. extending the tunable parameter set beyond material) make re-testing material weights specifically worthwhile again.
+- Treat this as inconclusive and leave the ROADMAP item open indefinitely pending "enough" games to reach significance — rejected; a difference this small (if it exists at all) is very unlikely to be worth chasing further given this codebase's current eval sophistication (only material weights are tunable so far — PSQT/mobility/king-safety/etc. all still fixed constants), and the item's own wording doesn't require the comparison to resolve to "tuning wins" to count as done.
+
+**Status:** ROADMAP.md Phase 5 marked complete. `search/see.cpp`/`search/ordering.cpp` continuing to use unweighted material values (a pre-existing scope boundary, not something this decision touches) remains true and worth remembering if material tuning is ever revisited.
+
+---
+
 ## 2026-08-31 (2) — Pawn value anchored (not tuned) in `tuner::tune()`, fixing a scale-degeneracy bug found in the first production tuning run
 
 **Decision:** Added an `anchored` field to `MaterialParameterRef` (`src/tuner/tune.h`), set `true` for `pawn_mg`/`pawn_eg` only, `false` for the other eight `MaterialWeights` fields. `tune()` (`src/tuner/tune.cpp`) now skips both the finite-difference gradient probe and the update step entirely for any anchored parameter — it stays bit-identical to whatever `initial_weights` passed in for the whole run, not just arithmetically unchanged by a zero gradient. `nightwing_tune`'s stderr banner now states this explicitly at the start of every run.
