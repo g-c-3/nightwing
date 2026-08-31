@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+## 2026-08-31 (1) — Session 64: Phase 6 started — endgame material-signature classifier (classification half)
+
+**What was built:** `src/eval/endgame.h`/`.cpp` — `eval::EndgameSignature` (six buckets: `KPK`, `KRK`, `KBNK`, `RookEndgame`, `OppositeColoredBishops`, `KnightVsBishop`, plus `None`) and `eval::classify_endgame()`, which recognizes each purely from piece counts, which side each piece belongs to, and (for `OppositeColoredBishops`) bishop square color. Added `tests/endgame_tests.cpp` (18 test cases) — the dedicated endgame test suite ARCHITECTURE.md's own Module Layout/Testing Policy sections already named in advance. Wired both new files into `src/CMakeLists.txt`/`tests/CMakeLists.txt`.
+
+**Bugs fixed:** None in shipped code — one caught and fixed during test-writing, before it reached a commit: two `OppositeColoredBishops`/same-color test cases initially used c1+f8 as the "opposite colors" pair and c1+c8 as the "same colors" pair, backwards from their actual square colors (verified by direct computation: c1 dark, c8 light, f8 dark — so c1/c8 are the genuinely opposite pair, c1/f8 the genuinely same-colored pair). Caught by computing square colors independently rather than trusting the first hand-picked squares, before running the tests — not a shipped regression.
+
+**Decisions made:** See docs/DECISIONS.md's new 2026-08-31 (4) entry — full rationale for why the classifier is built and fully tested but NOT yet wired into `eval::evaluate()` or `search/` (nothing to route to until later Phase 6 items exist), the KBNK/KnightVsBishop same-side-check subtlety (a total-piece-count shortcut that's safe for KPK/KRK silently breaks for KBNK), and why bucket granularity stops where ROADMAP.md's own later-item wording stops (no Lucena/Philidor/Vancura sub-classification, no "wrong bishop corner" sub-case yet).
+
+**Verification:** Full repository tarball pulled fresh via `codeload.github.com`. Built locally (CMake + Ninja, `NIGHTWING_BUILD_TESTS=ON`, Catch2 via `FetchContent`). New tests: 18/18 passing (`[endgame]` tag). Full suite: **343 test cases, 52,867 assertions, all green** (up from 325/52,849 before this session — exactly the 18 new endgame test cases added, zero regressions elsewhere).
+
+**Not yet done / left for next session:** ROADMAP.md Phase 6's first item stays unchecked — only the classification half is done, not the "route to specialized endgame reasoning" half (there's no reasoning to route to yet). Next up per ROADMAP.md Phase 6's own item order: King+pawn theory (opposition, key squares, corresponding squares, the rule of the square) — the first item that will actually consume `classify_endgame()`'s `KPK` signature. `MinorPieceEndgame`/wrong-bishop-corner sub-case and RookEndgame's Lucena/Philidor/Vancura sub-classification remain unimplemented by design (docs/DECISIONS.md's new entry) — each belongs in ITS OWN later item's specialized-reasoning code, not the classifier.
+
+**Next session start point:** Begin Phase 6's second item — King+pawn theory. Read `src/eval/endgame.h` in full first (fresh this session, don't assume still in context) to consult `EndgameSignature::KPK` rather than re-deriving pawn-vs-king detection from scratch. Say "Start" to begin.
+
+---
+
 ## 2026-08-31 (2) — Session 63: Phase 5 closed — production tuning run (post-fix) reviewed, defaults retained
 
 **What was built:** No source code changed this session — this was a review/decision session. The re-dispatched `tuning-pipeline` workflow (Session 62's pawn-anchoring fix in place) completed and its artifact was reviewed: `tuned_weights.txt` showed `pawn_mg=100 pawn_eg=100` exactly (anchoring confirmed working at production scale), and `match_result.txt` showed `score_a=0.5088, elo_diff=6.1` — the untuned defaults nominally ahead of the tuned weights, within 1 standard error (~6.55 Elo) for a 400-game sample.
