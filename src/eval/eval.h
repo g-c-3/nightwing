@@ -35,7 +35,11 @@
 // RookEndgame positions — Tarrasch's Rule generally, Lucena/Philidor
 // recognition further narrowed to the single-pawn textbook case; see
 // rook_endgame.h's own header comment for why Vancura recognition is
-// deliberately not included).
+// deliberately not included) plus minor piece endgame theory (eval/
+// minor_piece_endgame.h — ROADMAP.md Phase 6's "Minor piece endgames"
+// item; the third Phase 6 term, dispatching across THREE buckets —
+// EndgameSignature::KBPK, ::OppositeColoredBishops, and
+// ::KnightVsBishop — one per clause in that item's own wording).
 //
 // compute_phase() (below) was moved out of eval.cpp's anonymous
 // namespace and declared here on 2026-08-29 specifically so it can be

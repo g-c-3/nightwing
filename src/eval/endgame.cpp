@@ -21,8 +21,13 @@ using board::Square;
 /// sum 0, dark, matching the real board) and h1 (file 7, rank 0, sum
 /// 7, light, also matching). Local to this file: only
 /// OppositeColoredBishops (endgame.h) needs a square's color right
-/// now; promote this to board/bitboard.h if a later Phase 6 item (e.g.
-/// a future "wrong bishop corner" signature) needs it more broadly.
+/// now -- KBPK (endgame.h, added Session 66, the "future wrong bishop
+/// corner signature" this comment used to say might need this function
+/// "more broadly") turned out NOT to need it after all: classify_endgame()
+/// deliberately classifies KBPK by piece counts alone, leaving the
+/// actual bishop-vs-corner-color judgment to that bucket's later
+/// consumer (see EndgameSignature::KBPK's own doc comment in
+/// endgame.h for why).
 [[nodiscard]] constexpr bool is_light_square(Square sq) noexcept {
     return ((board::file_of(sq) + board::rank_of(sq)) % 2) == 1;
 }
@@ -107,6 +112,24 @@ EndgameSignature classify_endgame(const Position& pos) noexcept {
             (w.bishops == 1 && w.knights == 0 && b.knights == 1 && b.bishops == 0);
         if (white_knight_black_bishop || white_bishop_black_knight) {
             return EndgameSignature::KnightVsBishop;
+        }
+    }
+
+    // KBPK: one side has exactly one bishop and at least one pawn, the
+    // other side is completely bare (checked explicitly below -- unlike
+    // KPK/KRK above, "at least one pawn" doesn't by itself make "vs.
+    // bare king" automatic, since the OTHER side could also have pawns
+    // of its own). Checked before OppositeColoredBishops/RookEndgame
+    // below since those both require pawns on potentially both sides,
+    // a case this bucket's own bare-defender requirement already rules
+    // out overlapping with.
+    if (total_knights == 0 && total_rooks == 0 && total_queens == 0) {
+        const bool white_side =
+            (w.bishops == 1 && w.pawns >= 1 && b.bishops == 0 && b.pawns == 0);
+        const bool black_side =
+            (b.bishops == 1 && b.pawns >= 1 && w.bishops == 0 && w.pawns == 0);
+        if (white_side || black_side) {
+            return EndgameSignature::KBPK;
         }
     }
 

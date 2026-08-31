@@ -94,6 +94,26 @@ enum class EndgameSignature : std::uint8_t {
     /// actual pawn-structure/king-position judgment a later item adds.
     RookEndgame,
 
+    /// One side has exactly one bishop and at least one pawn, the other
+    /// side is completely bare (no pawns, no pieces of any kind) --
+    /// zero knights/rooks/queens anywhere on the board. Feeds ROADMAP.md
+    /// Phase 6's "Minor piece endgames" item, specifically its
+    /// "wrong-bishop-corner draw detection" clause. Added Session 66,
+    /// after the original six-bucket set (Session 64) turned out to
+    /// have no bucket at all for this specific, already-anticipated
+    /// case -- endgame.cpp's own is_light_square() comment named this
+    /// exact gap in advance ("promote... if a later Phase 6 item (e.g.
+    /// a future 'wrong bishop corner' signature) needs it more
+    /// broadly"). Deliberately does NOT check pawn file(s) or count --
+    /// whether the specific pawn(s) present are actually a same-file,
+    /// promoting-on-the-bishop's-wrong-corner case is real positional
+    /// judgment for the later "Minor piece endgames" consumer to make,
+    /// the same "classification only, judgment later" split every
+    /// other bucket here already follows (RookEndgame doesn't
+    /// distinguish Lucena from Philidor internally either -- see this
+    /// file's own header comment).
+    KBPK,
+
     /// Each side has exactly one bishop, on OPPOSITE-colored squares,
     /// and neither side has any knight, rook, or queen (any pawn
     /// count) -- the classical "drawish tendency" bishop endgame. Feeds

@@ -8,6 +8,7 @@
 #include "eval/king_tropism.h"
 #include "eval/knight_outposts.h"
 #include "eval/material_imbalance.h"
+#include "eval/minor_piece_endgame.h"
 #include "eval/mobility.h"
 #include "eval/pawns.h"
 #include "eval/piece_bonuses.h"
@@ -128,8 +129,9 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     // threats (eval/threats.h), king tropism (eval/king_tropism.h),
     // trapped piece penalties (eval/trapped_pieces.h), the material
     // imbalance table (eval/material_imbalance.h), King+pawn endgame
-    // theory (eval/king_pawn_endgame.h), and rook endgame theory
-    // (eval/rook_endgame.h) are NOT cached the way pawn structure is:
+    // theory (eval/king_pawn_endgame.h), rook endgame theory (eval/
+    // rook_endgame.h), and minor piece endgame theory (eval/
+    // minor_piece_endgame.h) are NOT cached the way pawn structure is:
     // piece placement -- unlike pawn structure -- changes on essentially
     // every move, so a position-keyed cache here would see a near-100%
     // miss rate and just add bookkeeping overhead with no real hit-rate
@@ -138,11 +140,12 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     // first place -- it's already a single field lookup and branch,
     // cheaper than a cache probe would be.
     //
-    // king_pawn_endgame_value() AND rook_endgame_value() each run
-    // classify_endgame() (eval/endgame.h) as their own first, internal
-    // check on every single call, including every position that is
-    // nowhere near either endgame -- two now-redundant calls to the
-    // same classifier on every node, not just one, a real, deliberately-
+    // king_pawn_endgame_value(), rook_endgame_value(), AND
+    // minor_piece_endgame_value() each run classify_endgame() (eval/
+    // endgame.h) as their own first, internal check on every single
+    // call, including every position that is nowhere near any of the
+    // endgames they cover -- three now-redundant calls to the same
+    // classifier on every node, not just one, a real, deliberately-
     // accepted per-node cost (a handful of popcount() calls over
     // bitboards this function's own material loop above already
     // touched, not reused between any of the three) rather than an
@@ -160,7 +163,7 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
                                   space_value(pos) + threats_value(pos) + king_tropism_value(pos) +
                                   trapped_piece_value(pos) + tempo_value(pos) +
                                   material_imbalance_value(pos) + king_pawn_endgame_value(pos) +
-                                  rook_endgame_value(pos),
+                                  rook_endgame_value(pos) + minor_piece_endgame_value(pos),
                               compute_phase(pos));
 
     if (eval_cache_usable) {
