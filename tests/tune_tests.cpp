@@ -74,6 +74,19 @@ TEST_CASE("kMaterialParameters: covers exactly the 10 MaterialWeights fields, ea
     }
 }
 
+TEST_CASE("kMaterialParameters: pawn_mg/pawn_eg are anchored, every other field is not",
+          "[tuner][tune]") {
+    // Structural check on the table itself, independent of tune()'s own
+    // behavior (covered separately below) — this file's own "anchored"
+    // doc comment (tune.h) is only meaningful if these two specific
+    // fields, and only these two, are actually marked that way.
+    for (const MaterialParameterRef& param : kMaterialParameters) {
+        const bool should_be_anchored =
+            (param.member == &MaterialWeights::pawn_mg) || (param.member == &MaterialWeights::pawn_eg);
+        REQUIRE(param.anchored == should_be_anchored);
+    }
+}
+
 TEST_CASE("compute_loss: an empty position list returns 0.0 rather than dividing by zero",
           "[tuner][tune]") {
     const MaterialWeights weights = default_material_weights();
@@ -205,6 +218,54 @@ TEST_CASE("tune: a training set that consistently disagrees with the starting we
     // own comment above on why eg, not mg, carries the real signal at
     // this near-zero game phase).
     REQUIRE(result.weights.knight_eg < default_material_weights().knight_eg);
+}
+
+TEST_CASE("tune: pawn_mg/pawn_eg never move, even under training data that strongly disagrees "
+          "with the current pawn value, while a non-anchored weight in the same run still does",
+          "[tuner][tune]") {
+    init_all();
+    // White is up a knight AND two pawns, but every position is labeled
+    // a draw (0.5) -- a strong, consistent "your pawn value (and your
+    // knight value) are both too high" signal for BOTH kinds of
+    // material. Without anchoring, this exact setup is the kind of
+    // training signal that could plausibly justify moving pawn_mg/
+    // pawn_eg for real -- so this specifically confirms anchoring wins
+    // out over gradient signal, not just that it holds when there'd be
+    // no gradient anyway (unlike the bare-kings "all-neutral" test
+    // above, which can't distinguish "correctly anchored" from
+    // "coincidentally zero gradient").
+    Position pos;
+    pos.side_to_move = Color::White;
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(4, 7), Piece::BlackKing);
+    pos.place_piece(make_square(1, 0), Piece::WhiteKnight);
+    pos.place_piece(make_square(0, 1), Piece::WhitePawn);
+    pos.place_piece(make_square(2, 1), Piece::WhitePawn);
+    const std::string fen = to_fen(pos);
+
+    std::vector<SelfPlayPosition> positions;
+    for (int i = 0; i < 8; ++i) {
+        positions.push_back(SelfPlayPosition{fen, 0.5});
+    }
+
+    TuneConfig config; // production defaults
+    config.iterations = 30;
+    const MaterialWeights defaults = default_material_weights();
+    const TuneResult result = tune(positions, defaults, config);
+
+    // Anchored: exactly unchanged, not just "close to" -- tune() never
+    // touches these fields at all (tune.cpp's own comment on why the
+    // update step is skipped explicitly, not just left as a 0-gradient
+    // no-op).
+    REQUIRE(result.weights.pawn_mg == defaults.pawn_mg);
+    REQUIRE(result.weights.pawn_eg == defaults.pawn_eg);
+
+    // Not anchored: this same run's real gradient signal should still
+    // move knight_eg, same reasoning as the pre-existing
+    // knight-imbalance test above (low game phase here too -- one
+    // minor and two pawns is still well under a typical middlegame's
+    // non-pawn material).
+    REQUIRE(result.weights.knight_eg < defaults.knight_eg);
 }
 
 TEST_CASE("tune: TuneResult::initial_loss/final_loss match history.front()/history.back()",
