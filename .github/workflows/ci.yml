@@ -3,6 +3,32 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      selfplay_games:
+        description: "nightwing_selfplay: number of self-play games to generate training data from"
+        required: false
+        default: "5000"
+      selfplay_search_depth:
+        description: "nightwing_selfplay/nightwing_match: fixed search depth used for every move (shared by both tools so training/eval and the strength-comparison match use the same search strength)"
+        required: false
+        default: "4"
+      selfplay_random_opening_plies:
+        description: "nightwing_selfplay/nightwing_match: random plies played at the start of each game before real search takes over, for opening variety"
+        required: false
+        default: "8"
+      selfplay_max_plies:
+        description: "nightwing_selfplay/nightwing_match: safety cap on game length (plies) before a game is abandoned as a draw"
+        required: false
+        default: "200"
+      tune_iterations:
+        description: "nightwing_tune: finite-difference gradient descent iterations"
+        required: false
+        default: "200"
+      match_games:
+        description: "nightwing_match: number of games played between tuned weights and eval::default_material_weights()"
+        required: false
+        default: "400"
 
 jobs:
   build-and-test:
@@ -106,3 +132,91 @@ jobs:
         if: matrix.os_name == 'Linux' && matrix.build_type == 'Release'
         working-directory: build
         run: ctest -R bench -V --build-config ${{ matrix.build_type }}
+
+  # ROADMAP.md Phase 5's final item ("Tuned weights committed, before/after
+  # strength comparison logged") needs a real large-scale run: thousands of
+  # nightwing_selfplay games piped into nightwing_tune, then a
+  # nightwing_match comparison of the tuned weights against
+  # eval::default_material_weights(). This is compute-heavy (thousands of
+  # fixed-depth searches), not something to hand-run in a chat sandbox with
+  # per-command time limits — src/tuner/selfplay_main.cpp's,
+  # src/tuner/tune_main.cpp's, and src/tuner/match_main.cpp's own header
+  # comments already document the intended venue for this as "a GitHub
+  # Actions workflow_dispatch job", extending this project's existing
+  # "GitHub Actions handles ALL building" convention to "and ALL running of
+  # anything compute-heavy like this too" (see docs/DECISIONS.md's
+  # 2026-08-31 entry for this job itself). Manually triggered only
+  # (`workflow_dispatch`, not `push`/
+  # `pull_request`) since this is a deliberate, occasional data-generation
+  # run, not a per-commit correctness check — it doesn't gate CI and CI's
+  # own green status doesn't depend on it. Linux Release only: search is
+  # deterministic given a seed, so the OS/build-type matrix build-and-test
+  # already exists for isn't a meaningful axis for a strength-tuning run,
+  # and running this on all 6 legs would be 6x the compute for zero
+  # additional signal.
+  tuning-pipeline:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    name: Tuning pipeline (selfplay -> tune -> match)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Tests aren't needed for this job — it only runs the three tuner/
+      # executables (nightwing_selfplay/nightwing_tune/nightwing_match),
+      # none of which are part of the Catch2 test binary. Skipping
+      # NIGHTWING_BUILD_TESTS avoids an unnecessary Catch2 FetchContent +
+      # compile on a job that's already going to spend most of its time in
+      # the actual self-play/tune/match run below, not in the build step.
+      - name: Configure CMake (Release, no tests)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF
+
+      - name: Build tuner executables
+        run: cmake --build build --config Release --parallel --target nightwing_selfplay nightwing_tune nightwing_match
+
+      # Positional args, per each tool's own header comment:
+      #   nightwing_selfplay [num_games] [base_seed] [search_depth] [random_opening_plies] [max_plies]
+      #   nightwing_tune     [iterations] [learning_rate] [finite_diff_epsilon] [sigmoid_scale]
+      #   nightwing_match    [num_games] [base_seed] [search_depth] [random_opening_plies] [max_plies]
+      # base_seed is fixed (1) for both selfplay and match so a re-run of
+      # this workflow with unchanged inputs is exactly reproducible.
+      # nightwing_tune's own progress/loss-curve output goes to stderr, not
+      # stdout (match_main.cpp's own header comment) — tuned_weights.txt
+      # below only ever receives the five "pawn_mg=... pawn_eg=..." lines
+      # nightwing_match expects on its stdin.
+      - name: Run self-play -> tune -> match pipeline
+        working-directory: build
+        run: |
+          set -euo pipefail
+          echo "== nightwing_selfplay: ${{ inputs.selfplay_games }} games =="
+          ./src/nightwing_selfplay \
+            "${{ inputs.selfplay_games }}" 1 \
+            "${{ inputs.selfplay_search_depth }}" \
+            "${{ inputs.selfplay_random_opening_plies }}" \
+            "${{ inputs.selfplay_max_plies }}" \
+            > training_data.txt
+          wc -l training_data.txt
+
+          echo "== nightwing_tune: ${{ inputs.tune_iterations }} iterations =="
+          ./src/nightwing_tune "${{ inputs.tune_iterations }}" \
+            < training_data.txt > tuned_weights.txt
+          cat tuned_weights.txt
+
+          echo "== nightwing_match: tuned vs. default_material_weights(), ${{ inputs.match_games }} games =="
+          ./src/nightwing_match \
+            "${{ inputs.match_games }}" 1 \
+            "${{ inputs.selfplay_search_depth }}" \
+            "${{ inputs.selfplay_random_opening_plies }}" \
+            "${{ inputs.selfplay_max_plies }}" \
+            < tuned_weights.txt | tee match_result.txt
+
+      - name: Upload pipeline artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tuning-pipeline-results
+          path: |
+            build/training_data.txt
+            build/tuned_weights.txt
+            build/match_result.txt
+          retention-days: 30
