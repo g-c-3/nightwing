@@ -15,26 +15,6 @@ using board::PieceType;
 using board::Position;
 using board::Square;
 
-/// Returns the Chebyshev (king-move) distance between `a` and `b`: the
-/// number of king moves it would take to travel from one square to the
-/// other, i.e. max(|file difference|, |rank difference|) -- the
-/// standard distance metric for this concept (CPW's own "Distance"
-/// article: https://www.chessprogramming.org/Distance). Written as a
-/// small local helper rather than added to board/bitboard.h: no other
-/// eval/*.cpp file in this codebase currently needs a general
-/// square-to-square distance function, so promoting it to a shared
-/// header for a single caller isn't warranted yet -- the same
-/// "not worth promoting to a shared table/function for one caller"
-/// reasoning eval/king_safety.cpp's own shield_zone() and eval/
-/// space.cpp's own space_zone() already establish.
-[[nodiscard]] constexpr int chebyshev_distance(Square a, Square b) noexcept {
-    const int file_diff = board::file_of(a) - board::file_of(b);
-    const int rank_diff = board::rank_of(a) - board::rank_of(b);
-    const int abs_file_diff = file_diff < 0 ? -file_diff : file_diff;
-    const int abs_rank_diff = rank_diff < 0 ? -rank_diff : rank_diff;
-    return abs_file_diff > abs_rank_diff ? abs_file_diff : abs_rank_diff;
-}
-
 /// Returns the tropism weight for a piece of `pt` (only ever called
 /// with Knight/Bishop/Rook/Queen -- see king_tropism.cpp's own call
 /// site).
@@ -82,7 +62,7 @@ Score king_tropism_value(const Position& pos) noexcept {
             Bitboard pieces = pos.pieces(c, pt);
             while (pieces != 0) {
                 const Square sq = board::pop_lsb(pieces);
-                const int dist = chebyshev_distance(sq, enemy_king_sq);
+                const int dist = board::chebyshev_distance(sq, enemy_king_sq);
                 const int proximity = kTropismMaxDistance - dist;
                 if (proximity <= 0) {
                     continue;

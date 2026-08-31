@@ -25,8 +25,11 @@
 // cache (eval/eval_cache.h — ROADMAP.md Phase 5's "Eval cache
 // (optional performance optimization, separate from TT)" item),
 // caching evaluate()'s own full result keyed on the full position
-// rather than any one term. The rest of Phase 5's terms land
-// incrementally after this.
+// rather than any one term, plus King+pawn endgame theory (eval/
+// king_pawn_endgame.h — ROADMAP.md Phase 6's "King+pawn theory" item;
+// the first Phase 6 term, applying only to positions eval/endgame.h's
+// classify_endgame() recognizes as EndgameSignature::KPK, a no-op
+// Score{} everywhere else).
 //
 // compute_phase() (below) was moved out of eval.cpp's anonymous
 // namespace and declared here on 2026-08-29 specifically so it can be
