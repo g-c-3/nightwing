@@ -66,6 +66,9 @@ int main(int argc, char** argv) {
                   "finite_diff_epsilon=%g, sigmoid_scale=%g\n",
                   positions.size(), config.iterations, config.learning_rate,
                   config.finite_diff_epsilon, config.sigmoid_scale);
+    std::fprintf(stderr,
+                  "pawn_mg/pawn_eg are anchored (kMaterialParameters, tuner/tune.h) -- they will "
+                  "stay fixed at their starting value for this whole run.\n");
 
     if (positions.empty()) {
         std::fprintf(stderr,

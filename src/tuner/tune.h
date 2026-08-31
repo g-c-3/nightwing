@@ -23,7 +23,12 @@
 //
 // ALGORITHM: for each of `iterations` steps, computes a NUMERICAL
 // (finite-difference) gradient of compute_loss() with respect to every
-// parameter in kMaterialParameters (below) — not an analytic gradient.
+// NON-ANCHORED parameter in kMaterialParameters (below) — pawn_mg/
+// pawn_eg are anchored (kMaterialParameters' own comment has the full
+// rationale: fixing the pawn removes a flat, degenerate scaling
+// direction the loss surface otherwise has) and are never perturbed or
+// updated, staying exactly equal to whatever `initial_weights` passed
+// in for the whole run — not an analytic gradient.
 // Material's own contribution to evaluate() happens to be exactly
 // linear (each weight's analytic partial derivative would just be that
 // piece type's board-relative count), which would make an analytic
@@ -70,16 +75,48 @@ namespace nightwing::tuner {
 /// extending coverage to another eval module's terms would add that
 /// module's own fields to its own such table the same way, not change
 /// this one's shape.
+///
+/// `anchored`: if true, tune() (tune.cpp) never estimates a gradient
+/// for or updates this field — it stays exactly equal to whatever
+/// `initial_weights` passed it, for the entire run. See kMaterialParameters'
+/// own comment below for why pawn_mg/pawn_eg specifically are marked
+/// this way.
 struct MaterialParameterRef {
     const char* name;
     double eval::MaterialWeights::*member;
+    bool anchored = false;
 };
 
 /// Every MaterialWeights field, in declaration order — see
-/// MaterialParameterRef's own comment above.
+/// MaterialParameterRef's own comment above. pawn_mg/pawn_eg are
+/// `anchored = true`: Texel's Tuning Method (this file's own header
+/// comment) fits a weight vector against sigmoid(eval / sigmoid_scale)
+/// predictions, and since sigmoid_scale is a FIXED constant here, not
+/// itself fit from the data, the loss surface has a genuine flat
+/// direction along "scale every material weight down/up together" —
+/// scaling the whole vector barely changes any prediction as long as
+/// sigmoid_scale doesn't move to compensate, so gradient descent can
+/// drift the entire vector toward zero (or away from it) without
+/// actually improving the fit to real relative piece values. This was
+/// observed directly, not just theorized: a 2026-08-31 production run
+/// (5000 self-play games, 200 iterations) came back with pawn_mg fallen
+/// to ~21% of its starting value while every other piece fell only
+/// 10-20%, and the resulting weights scored no better in a 400-game
+/// match against the untuned defaults (docs/DECISIONS.md, this entry's
+/// own dated decision) — the textbook signature of this exact
+/// degeneracy, not a genuine finding about pawns being overvalued.
+/// Fixing pawn_mg/pawn_eg removes that flat direction entirely: every
+/// other weight is now implicitly expressed AS a multiple of the pawn,
+/// which is both the standard convention (piece values are
+/// conventionally quoted "in pawns") and, more importantly here, a
+/// hard anchor the optimizer can't drift. This is a cheap, standard fix
+/// for this well-known issue — the alternative (also fitting
+/// sigmoid_scale, CPW's own two-step recipe: fit K first, then the
+/// weights) is a reasonable future refinement but a strictly larger
+/// change than this session's scope called for.
 inline constexpr std::array<MaterialParameterRef, 10> kMaterialParameters = {{
-    {"pawn_mg", &eval::MaterialWeights::pawn_mg},
-    {"pawn_eg", &eval::MaterialWeights::pawn_eg},
+    {"pawn_mg", &eval::MaterialWeights::pawn_mg, /*anchored=*/true},
+    {"pawn_eg", &eval::MaterialWeights::pawn_eg, /*anchored=*/true},
     {"knight_mg", &eval::MaterialWeights::knight_mg},
     {"knight_eg", &eval::MaterialWeights::knight_eg},
     {"bishop_mg", &eval::MaterialWeights::bishop_mg},

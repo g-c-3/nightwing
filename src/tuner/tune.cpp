@@ -59,6 +59,16 @@ TuneResult tune(const std::vector<SelfPlayPosition>& positions,
         // but that's not a concern this module's first, material-only
         // version needs to solve yet.
         for (std::size_t i = 0; i < kMaterialParameters.size(); ++i) {
+            // Anchored parameters (kMaterialParameters' own comment: pawn_mg/
+            // pawn_eg, to remove the loss surface's flat scale-degeneracy
+            // direction) never move, so there's no point spending two
+            // compute_loss() passes estimating a gradient for one — leave
+            // it at exactly 0.0 and skip straight to the next parameter.
+            if (kMaterialParameters[i].anchored) {
+                gradient[i] = 0.0;
+                continue;
+            }
+
             const auto member = kMaterialParameters[i].member;
             const double original = result.weights.*member;
 
@@ -82,6 +92,14 @@ TuneResult tune(const std::vector<SelfPlayPosition>& positions,
         // coordinate descent than the gradient descent this module (and
         // ROADMAP.md's own wording) means to implement.
         for (std::size_t i = 0; i < kMaterialParameters.size(); ++i) {
+            // gradient[i] is already exactly 0.0 for an anchored parameter
+            // (the loop above), so this would be a no-op anyway -- skipped
+            // explicitly rather than relying on that, so an anchored
+            // field's value is provably never touched by this function at
+            // all, not just arithmetically unchanged by it.
+            if (kMaterialParameters[i].anchored) {
+                continue;
+            }
             const auto member = kMaterialParameters[i].member;
             result.weights.*member -= config.learning_rate * gradient[i];
         }
