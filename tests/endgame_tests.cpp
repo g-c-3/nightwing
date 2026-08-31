@@ -212,6 +212,55 @@ TEST_CASE("classify_endgame: two rooks on the same side is None, not RookEndgame
     REQUIRE(classify_endgame(pos) == EndgameSignature::None);
 }
 
+TEST_CASE("classify_endgame: KBPK -- White bishop plus one pawn, Black completely bare, is "
+          "recognized",
+          "[eval][endgame]") {
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(4, 7), Piece::BlackKing);
+    pos.place_piece(make_square(2, 0), Piece::WhiteBishop);
+    pos.place_piece(make_square(0, 5), Piece::WhitePawn);
+    REQUIRE(classify_endgame(pos) == EndgameSignature::KBPK);
+}
+
+TEST_CASE("classify_endgame: KBPK also recognized on Black's side instead, and with more than "
+          "one pawn",
+          "[eval][endgame]") {
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(4, 7), Piece::BlackKing);
+    pos.place_piece(make_square(5, 7), Piece::BlackBishop);
+    pos.place_piece(make_square(7, 3), Piece::BlackPawn);
+    pos.place_piece(make_square(6, 3), Piece::BlackPawn);
+    REQUIRE(classify_endgame(pos) == EndgameSignature::KBPK);
+}
+
+TEST_CASE("classify_endgame: bishop plus pawn is None, not KBPK, when the DEFENDING side also "
+          "has a pawn of its own -- KBPK specifically requires the other side to be completely "
+          "bare",
+          "[eval][endgame]") {
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(4, 7), Piece::BlackKing);
+    pos.place_piece(make_square(2, 0), Piece::WhiteBishop);
+    pos.place_piece(make_square(0, 5), Piece::WhitePawn);
+    pos.place_piece(make_square(3, 6), Piece::BlackPawn);
+    REQUIRE(classify_endgame(pos) == EndgameSignature::None);
+}
+
+TEST_CASE("classify_endgame: bishop plus pawn is None, not KBPK, when the defending side also "
+          "has a bishop of its own -- KBPK specifically requires the other side to have zero "
+          "bishops too, not just zero pawns",
+          "[eval][endgame]") {
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(4, 7), Piece::BlackKing);
+    pos.place_piece(make_square(2, 0), Piece::WhiteBishop);
+    pos.place_piece(make_square(0, 5), Piece::WhitePawn);
+    pos.place_piece(make_square(5, 7), Piece::BlackBishop);
+    REQUIRE(classify_endgame(pos) == EndgameSignature::None);
+}
+
 TEST_CASE("classify_endgame: a queen anywhere on the board rules out every bucket, even "
           "otherwise-matching material (e.g. a KPK-shaped position plus a queen)",
           "[eval][endgame]") {
