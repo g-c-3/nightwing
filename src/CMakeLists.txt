@@ -30,6 +30,7 @@ add_library(nightwing_lib STATIC
     eval/rook_endgame.cpp
     eval/minor_piece_endgame.cpp
     eval/fortress.cpp
+    eval/basic_mates.cpp
     eval/eval_cache.cpp
     eval/eval.cpp
     search/ordering.cpp
