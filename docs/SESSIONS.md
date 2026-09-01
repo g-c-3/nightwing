@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+### Session 67 — 2026-08-31 — Fortress pattern detection (Phase 6)
+
+**Built:**
+- `src/eval/fortress.h`/`.cpp` (new): `eval::fortress_value()`, ROADMAP.md Phase 6's "Fortress pattern detection" item. Deliberately does NOT call `eval::classify_endgame()` — the first Phase 6 term not gated on that classifier at all (see docs/DECISIONS.md, 2026-08-31 (8), for the full reasoning). Four structural checks (no queens; at most `kFortressMaxNonPawnPieces` non-pawn pieces combined; a nonzero material lead; at least `kFortressMinBlockedPawns` mutually-blocked pawns), then a proportional discount against whichever side leads — never a hard zero, never a sign flip.
+- `tests/fortress_tests.cpp` (new, 6 tests).
+- `src/eval/eval.h`/`.cpp`: new term wired into `evaluate()`'s additive sum; header comments updated to note this is the fourth Phase 6 term and the first that pays its own separate structural-scan cost rather than sharing `classify_endgame()`'s.
+- `src/CMakeLists.txt`: registered `eval/fortress.cpp`.
+- `tests/CMakeLists.txt`: registered `fortress_tests.cpp`.
+
+**Bugs fixed:** none — new-feature work, no regressions found in previously-shipped code.
+
+**Decisions made:** one, logged in docs/DECISIONS.md dated 2026-08-31 (8) — fortress detection stays classifier-independent and proportional-discount-based rather than either adding more `EndgameSignature` buckets or making a hard win/draw call the way the three earlier Phase 6 terms do for their own much narrower, exactly-defined patterns.
+
+**Verification performed (no `cmake`/Catch2 available in this sandbox, same limitation as every prior session without a full toolchain):**
+- Full `nightwing_lib` source set (`board/`, `eval/`, `support/`, `search/`, `uci/`, `tuner/`) compiled clean via direct `g++ -std=c++20 -Wall -Wextra -Wpedantic`, zero warnings.
+- All 6 planned test scenarios were first independently verified against the exact C++ branch logic via a standalone Python simulation, then re-verified a second, independent way: a standalone `g++`-compiled C++ driver linking the real, compiled `fortress.cpp` — all 6 passed against the actual code.
+- Linked and ran the real `nightwing` UCI binary; ran a real search on a rook-up FEN with pawns present but not mutually blocked, confirming the term correctly stayed silent there (an ordinary large material-based score, as expected — this scenario doesn't meet the blocked-pawn criterion) rather than mis-firing on a position that merely looks endgame-ish.
+
+**Next session start point:** Run "Start" to move to the next open Phase 6 item — `docs/ROADMAP.md`'s next unchecked bullet is "Zugzwang-aware search shaping" as of this entry — confirm by reading ROADMAP.md's Phase 6 list directly, since bullet order there is the source of truth, not this sentence. Note that item is a SEARCH change (`src/search/`), not an eval/ term the way every Phase 6 item so far has been — it belongs in a different part of the codebase than Sessions 64–67's own work, worth re-reading that item's exact wording carefully before starting, and likely worth reading `src/search/search.cpp`'s current null-move-pruning logic in full first (this session's own Tier-2-equivalent "read the file before changing it" rule applies just as much to search/ as it does to eval/). After that, the KPK/KRK/KBNK base-heuristics item is the natural next step for the two still-unconsumed classifier buckets (`KRK`, `KBNK`). No open bugs or partial work left mid-file from this session; every touched file was completed, compiled, and tested before this session ended.
+
+---
+
 ### Session 66 — 2026-08-31 — Minor piece endgame theory (Phase 6), plus a classifier gap fix
 
 **Built:**
