@@ -356,10 +356,98 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
 /// continuous, chronologically-ordered sequence ending at this node,
 /// walked backward here without ever materializing it as a single
 /// combined array.
+/// Returns true if `sq` is a light square. Re-derived locally rather
+/// than shared -- matches this codebase's established per-file
+/// convention for this exact computation (eval/endgame.cpp's and
+/// eval/minor_piece_endgame.cpp's own identical local helpers).
+[[nodiscard]] constexpr bool is_light_square(board::Square sq) noexcept {
+    return ((board::file_of(sq) + board::rank_of(sq)) % 2) == 1;
+}
+
+/// Returns true if neither side has enough material to force
+/// checkmate against ANY defense, cooperative or not -- FIDE Article
+/// 5.2.2's "dead position" concept, restricted to the standard,
+/// conservative material-only subset every serious chess engine
+/// checks (ROADMAP.md Phase 6's "draw detection refinement
+/// (insufficient material)" item). Three cases, all provably dead
+/// regardless of play:
+/// 1. Bare king vs. bare king.
+/// 2. King and a single minor piece (one knight OR one bishop) vs.
+///    bare king, either side -- a lone minor piece can never deliver
+///    checkmate together with its own king, period, regardless of
+///    what (if anything) the opponent has.
+/// 3. King and bishop vs. king and bishop, where BOTH bishops stand on
+///    the SAME square color.
+///
+/// Deliberately narrower than it might first appear worth being:
+/// king+minor vs. king+minor combinations OTHER than same-colored
+/// bishops (knight vs. knight, bishop vs. knight, or bishop vs. bishop
+/// on OPPOSITE colors) are NOT included here, even though neither
+/// side's own lone minor can unilaterally force mate either. This is
+/// deliberate, not an oversight: chess problem composers have
+/// constructed legal (if wildly impractical) helpmates in exactly
+/// those combinations, where the DEFENDING side's own piece
+/// cooperates to trap its own king -- meaning a checkmate is reachable
+/// by SOME legal move sequence, even though no side can ever FORCE
+/// one. FIDE's own Article 5.2.2 requires NO sequence of legal moves,
+/// cooperative or not, to reach checkmate -- same-colored bishops
+/// genuinely satisfy that (no helpmate construction is possible: the
+/// bishops can never contest the squares needed to trap a king when
+/// confined to one color complex each), while every combination left
+/// out above does not, strictly speaking, satisfy it. This matches the
+/// same standard, conservative convention essentially every serious
+/// chess engine and rules implementation already uses -- opposite-
+/// colored bishops, knight-vs-knight, and bishop-vs-knight combinations
+/// are correctly left to the 50-move rule (is_draw_by_rule()'s other
+/// check, just below) rather than an incorrect blanket auto-draw here.
+///
+/// Deliberately does NOT attempt the fully general "no sequence of
+/// legal moves can create a checkmate" test beyond these three
+/// material-only cases -- that general test can also depend on
+/// king/piece placement even with objectively adequate mating material
+/// (e.g. certain fortress-adjacent shapes), a genuinely different and
+/// much harder problem than this function's narrow, well-established
+/// material-only scope.
+[[nodiscard]] bool is_insufficient_material(const Position& pos) noexcept {
+    using board::PieceType;
+    // Any pawn, rook, or queen anywhere rules this out immediately --
+    // a lone rook or queen already suffices to force mate by itself,
+    // and a pawn can always eventually promote into one.
+    if (pos.pieces(Color::White, PieceType::Pawn) != 0 ||
+        pos.pieces(Color::Black, PieceType::Pawn) != 0 ||
+        pos.pieces(Color::White, PieceType::Rook) != 0 ||
+        pos.pieces(Color::Black, PieceType::Rook) != 0 ||
+        pos.pieces(Color::White, PieceType::Queen) != 0 ||
+        pos.pieces(Color::Black, PieceType::Queen) != 0) {
+        return false;
+    }
+
+    const int white_knights = board::popcount(pos.pieces(Color::White, PieceType::Knight));
+    const int black_knights = board::popcount(pos.pieces(Color::Black, PieceType::Knight));
+    const int white_bishops = board::popcount(pos.pieces(Color::White, PieceType::Bishop));
+    const int black_bishops = board::popcount(pos.pieces(Color::Black, PieceType::Bishop));
+    const int total_minors = white_knights + black_knights + white_bishops + black_bishops;
+
+    if (total_minors <= 1) {
+        return true; // bare kings, or king + single minor vs. bare king
+    }
+    if (total_minors == 2 && white_bishops == 1 && black_bishops == 1) {
+        const board::Square white_bishop_sq =
+            board::bitscan_forward(pos.pieces(Color::White, PieceType::Bishop));
+        const board::Square black_bishop_sq =
+            board::bitscan_forward(pos.pieces(Color::Black, PieceType::Bishop));
+        return is_light_square(white_bishop_sq) == is_light_square(black_bishop_sq);
+    }
+    return false;
+}
+
 [[nodiscard]] bool is_draw_by_rule(const Position& pos, std::uint64_t key, int ply,
                                     std::span<const std::uint64_t> game_history,
                                     const std::array<std::uint64_t, kMaxPly>& path) noexcept {
     if (pos.halfmove_clock >= 100) {
+        return true;
+    }
+    if (is_insufficient_material(pos)) {
         return true;
     }
     if (ply >= kMaxPly) {
@@ -390,14 +478,18 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
     return false;
 }
 
-/// Repetition and 50-move-rule detection (see is_draw_by_rule() just
-/// above) is checked immediately after the node-count increment, before
-/// even mate distance pruning's clamp — deliberately the very first
-/// thing this function does at a real (depth >= 1) node. Two reasons for
-/// going first: it's the cheapest possible check (no movegen, no TT
-/// probe), and — more importantly — a position that's a draw by
-/// repetition was very possibly reached through a *different* path last
-/// time the search (or a previous iterative-deepening iteration) visited
+/// Repetition, 50-move-rule, AND insufficient-material detection (see
+/// is_draw_by_rule() just above -- the third of these is
+/// is_insufficient_material(), just above that) is checked immediately
+/// after the node-count increment, before even mate distance pruning's
+/// clamp — deliberately the very first thing this function does at a
+/// real (depth >= 1) node. Two reasons for going first: it's among the
+/// cheapest possible checks (no movegen, no TT probe -- the
+/// insufficient-material check is a handful of popcount() calls, the
+/// repetition walk is bounded by halfmove_clock), and — more
+/// importantly — a position that's a draw by repetition was very
+/// possibly reached through a *different* path last time the search
+/// (or a previous iterative-deepening iteration) visited
 /// this same Zobrist key, so any cached TT entry for it isn't safe to
 /// trust here (the well-known "Graph History Interaction" problem: a TT
 /// entry doesn't know which path reached it). Checking and returning
