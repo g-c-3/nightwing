@@ -4,6 +4,31 @@ Newest entry at top.
 
 ---
 
+### Session 68 — 2026-08-31 — Zugzwang-aware search shaping (Phase 6) -- Phase 6's first search/ change, and a real Catch2 test setup
+
+**Built:**
+- `src/eval/endgame.h`: added `is_zugzwang_prone(EndgameSignature)`, flagging only `RookEndgame`. Header comment updated -- this file now has consumers in both `eval/` (four terms) and, for the first time, `search/` (one).
+- `src/search/search.cpp`: negamax()'s NMP block now reduces its null-move probe's reduction amount `R` (floored at a minimum) whenever `eval::is_zugzwang_prone(eval::classify_endgame(pos))` flags the current node, instead of leaving null-move pruning fully unbiased there. Two new constants, `kZugzwangReductionDecrease`/`kZugzwangMinReduction`. The pre-existing, stronger `non_pawn_material == 0` guard (KPK) is untouched -- this is a new, softer, additional lever, not a replacement for it.
+- `tests/endgame_tests.cpp`: 1 new case, exact-value checks on `is_zugzwang_prone()` across all seven `EndgameSignature` values.
+- `tests/search_tests.cpp`: 1 new case, a real RookEndgame-material FEN searched with the bias active, confirming no crash/hang/nonsense result (same honest scope as the file's own pre-existing KPK NMP guard test).
+- Docs (this entry, ROADMAP.md, docs/DECISIONS.md 2026-08-31 (9)).
+
+**Infrastructure change worth flagging on its own:** this session fetched Catch2's amalgamated single-header/source (`catch_amalgamated.hpp`/`.cpp`, v3.5.2, via `raw.githubusercontent.com`, an allowed sandbox domain) and used it to compile and run the ENTIRE existing test suite for real -- 360 test cases, 26,819 assertions, `perft_tests.cpp` through `search_tests.cpp` through every Phase 5/6 eval test, all green -- rather than the hand-rolled hard-coded hand-verified hand-compiled hard-coded assert()-based drivers Sessions 65-67 relied on in the absence of `cmake`. This is a meaningfully stronger verification standard than every earlier session in this project's history had access to, and is worth knowing about for future sessions in a similar no-`cmake` sandbox: fetching Catch2's amalgamated distribution directly is a viable path to a real `ctest`-equivalent run without `cmake` itself.
+
+**Bugs fixed:** none -- new-feature work, no regressions found anywhere in the full 360-case suite.
+
+**Decisions made:** one, logged in docs/DECISIONS.md dated 2026-08-31 (9) -- RookEndgame-only flagging, a reduced-not-skipped null-move probe, and an explicitly accepted, empirically-verified node-count regression in flagged positions (per ARCHITECTURE.md's own Testing Policy requirement to track such regressions here when they occur).
+
+**Verification performed:**
+- The full real-Catch2 run described above: 360/360 test cases green, including every pre-existing `search_tests.cpp` case (mate-in-3 regression tests with NMP/LMR/LMP/futility/razoring/IIR all simultaneously active) with this session's NMP change applied -- no correctness regression anywhere in the existing suite.
+- `is_zugzwang_prone()`'s exact return value confirmed for all seven `EndgameSignature` values via a standalone compiled driver, before being written into the permanent Catch2 test.
+- An empirical before/after node-count comparison: a real RookEndgame FEN searched at depths 4-8 with this session's actual change, and again with a control build (the bias's own code short-circuited to a no-op, everything else byte-identical) -- node counts higher with the bias active at shallow depths (confirming the mechanism genuinely engages), best scores IDENTICAL at every depth between the two builds (confirming no correctness regression from the change itself, independent of the broader 360-case suite run).
+- Linked and ran the real `nightwing` UCI binary on the same RookEndgame FEN at depth 8 -- sane, non-crashing, legal output.
+
+**Next session start point:** Run "Start" to move to the next open Phase 6 item -- `docs/ROADMAP.md`'s next (and, as of this entry, LAST remaining) unchecked Phase 6 bullet is "Hand-built base heuristics carried over: KPK, KRK, KBNK exact-play rules (algorithmic, not lookup-table), draw detection refinement (insufficient material)" -- confirm by reading ROADMAP.md's Phase 6 list directly, since bullet order there is the source of truth, not this sentence. Note this item's own wording says "KPK, KRK, KBNK exact-play rules" -- KPK already has real algorithmic theory (Sessions 65's king_pawn_endgame.cpp) but not yet exact, provably-correct play (a real distinction worth re-reading this item's exact wording carefully for); KRK and KBNK are this project's last two `EndgameSignature` buckets with no consumer at all. After that, Phase 6 is complete except for the two lower-priority items further down ROADMAP.md's list ("Dedicated endgame test suite" and the optional opening book), worth checking whether either should be picked up before moving to Phase 7. The Catch2 amalgamated-header setup this session used lives only in this sandbox's `/tmp` and `/home/claude` (`catch_amalgamated.hpp`/`.cpp`, plus an `include/catch2/catch_test_macros.hpp` shim in the sandbox's `fullrepo` copy) -- not part of the repo itself, and NOT committed as a deliverable this session (the project's actual CMake-based Catch2 integration, via `tests/CMakeLists.txt`, is unaffected and remains how the real CI build gets its Catch2); a future no-`cmake` sandbox session can re-fetch the same two files the same way if it wants the same stronger verification standard again. No open bugs or partial work left mid-file from this session; every touched file was completed, compiled, and tested before this session ended.
+
+---
+
 ### Session 67 — 2026-08-31 — Fortress pattern detection (Phase 6)
 
 **Built:**
