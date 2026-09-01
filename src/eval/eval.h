@@ -39,7 +39,13 @@
 // minor_piece_endgame.h — ROADMAP.md Phase 6's "Minor piece endgames"
 // item; the third Phase 6 term, dispatching across THREE buckets —
 // EndgameSignature::KBPK, ::OppositeColoredBishops, and
-// ::KnightVsBishop — one per clause in that item's own wording).
+// ::KnightVsBishop — one per clause in that item's own wording) plus
+// fortress pattern detection (eval/fortress.h — ROADMAP.md Phase 6's
+// "Fortress pattern detection" item; the fourth Phase 6 term, and the
+// first that deliberately does NOT consult classify_endgame() at all —
+// see fortress.h's own header comment for why a general, cross-
+// material-shape structural heuristic doesn't fit that classifier's
+// bucket-based approach).
 //
 // compute_phase() (below) was moved out of eval.cpp's anonymous
 // namespace and declared here on 2026-08-29 specifically so it can be
