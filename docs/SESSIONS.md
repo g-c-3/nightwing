@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+### Session 69 — 2026-08-31 — KRK/KBNK basic-mate technique + insufficient-material draw detection (Phase 6's final item) — Phase 6 complete
+
+**Built:**
+- `src/eval/basic_mates.h`/`.cpp` (new): `eval::basic_mate_value()`, covering ROADMAP.md's final Phase 6 item's KRK/KBNK clauses — this project's last two `EndgameSignature` buckets with no consumer at all. KRK: a generic edge-push term (defending king toward any edge) plus a king-proximity term. KBNK: the same two terms plus the one genuinely KBNK-specific addition — a bishop-color-matching corner term (only the two corners the attacking bishop actually controls count; the other two accomplish nothing, which is exactly why this endgame is famously "the hardest of the basic mates"). Five new public `Score` constants.
+- `src/search/search.cpp`: new `is_insufficient_material()`, wired into the existing `is_draw_by_rule()` alongside 50-move-rule and repetition detection. Recognizes bare kings, king+single-minor vs. bare king, and same-colored-bishop-pair vs. bare-king pairs as automatic draws — deliberately NOT knight-vs-knight, bishop-vs-knight, or opposite-colored-bishop combinations (see docs/DECISIONS.md, 2026-08-31 (10), for the helpmate-construction reason those aren't safe to auto-draw).
+- `src/eval/eval.h`/`.cpp`: `basic_mate_value()` wired into `evaluate()`'s additive sum; header comments updated for the fourth `classify_endgame()`-consuming eval term.
+- `src/CMakeLists.txt`/`tests/CMakeLists.txt`: registered the new files.
+- `tests/basic_mates_tests.cpp` (new, 7 tests) and 3 new `tests/search_tests.cpp` cases (insufficient-material draw detection, including a case confirming two-knights-vs-king is correctly NOT auto-drawn).
+
+**Bugs fixed:** none in previously-shipped code — new-feature work, no regressions anywhere in the full suite.
+
+**Decisions made:** one, logged in docs/DECISIONS.md dated 2026-08-31 (10) — the insufficient-material list's exact scope (and why a broader, initially-appealing version was specifically rejected mid-session once its correctness problem was found), plus the decision not to build a second, separate KPK mechanism under this item's own name.
+
+**Verification performed:**
+- The full real-Catch2 suite (same setup as Session 68 — `catch_amalgamated.hpp`/`.cpp` fetched via `raw.githubusercontent.com`) compiled and run end-to-end after every change this session: 370 test cases, 26,829 assertions, all green, including every pre-existing Phase 5/6 eval test and every `search_tests.cpp` case with the new `is_insufficient_material()` check now live on every real search.
+- Every `basic_mates_tests.cpp` scenario (exact KRK/KBNK formula values, a corner-color right-vs-wrong comparison, both sign-convention checks) was independently verified against the exact C++ branch logic via a standalone Python simulation before being written into the permanent test file.
+- Linked and ran the real `nightwing` UCI binary on real KRK, KBNK, and insufficient-material FENs — sane, non-crashing search output in all three (a real rook-endgame-technique-looking move sequence in the KRK case, a real bishop/knight-coordination sequence in the KBNK case, and a score that correctly drops to exactly 0 once the search reaches a real node past the insufficient-material check, while still showing raw material at the shallower depth that only reaches a leaf-eval, not yet the check itself — matching the exact same "child node, not root static eval" mechanism the pre-existing 50-move-rule test already relies on).
+
+**Next session start point:** Phase 6 is now complete. Two lower-priority Phase 6 items remain genuinely open in ROADMAP.md but don't block moving on — "Dedicated endgame test suite" (curated known-tricky K+P/rook-ending positions with known-correct results, its own CI test file per ARCHITECTURE.md's Testing Policy) and the optional opening book. Run "Start" to begin whichever of those, or Phase 7 (Multithreading, starting with Lazy SMP), is preferred — confirm by reading ROADMAP.md's own current top-level phase order directly, since that ordering (not this sentence) is the source of truth for which comes next by default. No open bugs or partial work left mid-file from this session; every touched file was completed, compiled, and tested before this session ended.
+
+---
+
 ### Session 68 — 2026-08-31 — Zugzwang-aware search shaping (Phase 6) -- Phase 6's first search/ change, and a real Catch2 test setup
 
 **Built:**
