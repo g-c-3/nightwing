@@ -743,6 +743,42 @@ TEST_CASE("search_fixed_depth: 50-move rule forces a draw score one quiet ply af
     REQUIRE(result.score == kDrawScore);
 }
 
+TEST_CASE("search_fixed_depth: insufficient material (king and a single knight vs. bare king) "
+          "forces a draw score at the root immediately, no captures or waiting required -- "
+          "is_insufficient_material() (search.cpp)",
+          "[search][insufficient-material]") {
+    init_all();
+    Position pos = parse_fen("7k/8/8/8/8/8/8/N6K w - - 0 1");
+    const SearchResult result = search_fixed_depth(pos, 2);
+    REQUIRE(result.score == kDrawScore);
+}
+
+TEST_CASE("search_fixed_depth: insufficient material (bishops on both sides, SAME square "
+          "color) forces a draw score at the root immediately",
+          "[search][insufficient-material]") {
+    init_all();
+    // White Bc1 (file 2, rank 0 -- dark), Black Bf8 (file 5, rank 7 --
+    // also dark). Same color, no pawns anywhere -- the one two-minor
+    // case is_insufficient_material() recognizes.
+    Position pos = parse_fen("5b1k/8/8/8/8/8/8/2B4K w - - 0 1");
+    const SearchResult result = search_fixed_depth(pos, 2);
+    REQUIRE(result.score == kDrawScore);
+}
+
+TEST_CASE("search_fixed_depth: two knights vs. bare king is NOT treated as insufficient "
+          "material -- score reflects the real material lead, not a forced draw -- confirms "
+          "is_insufficient_material()'s total_minors <= 1 threshold doesn't over-trigger on a "
+          "second minor for the SAME side",
+          "[search][insufficient-material]") {
+    init_all();
+    Position pos = parse_fen("7k/8/8/8/8/8/8/NN5K w - - 0 1");
+    const SearchResult result = search_fixed_depth(pos, 2);
+    // Two knights (roughly 320cp each) is a large, unambiguous material
+    // lead -- nowhere near kDrawScore (0) if the position is being
+    // evaluated normally rather than incorrectly force-drawn.
+    REQUIRE(result.score > 300);
+}
+
 TEST_CASE("search_fixed_depth: a position that already repeated once in game_history is "
           "recognized when the search revisits it, even though the losing side is down a "
           "whole queen",

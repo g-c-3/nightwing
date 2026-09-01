@@ -34,6 +34,7 @@ add_executable(nightwing_tests
     rook_endgame_tests.cpp
     minor_piece_endgame_tests.cpp
     fortress_tests.cpp
+    basic_mates_tests.cpp
     pawn_tt_tests.cpp
     eval_cache_tests.cpp
     ordering_tests.cpp
