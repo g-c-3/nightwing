@@ -16,6 +16,7 @@
 #include "board/masks.h"
 #include "board/movegen.h"
 #include "board/zobrist.h"
+#include "eval/endgame.h"
 #include "search/search.h"
 
 using namespace nightwing::board;
@@ -446,6 +447,29 @@ TEST_CASE("search_fixed_depth: a pure king-and-pawn endgame (no non-pawn materia
     // returning a nonsensical result.
     Position pos = parse_fen("4k3/8/4K3/4P3/8/8/8/8 w - - 0 1");
     const SearchResult result = search_fixed_depth(pos, 5);
+    REQUIRE_FALSE(result.best_move.is_null());
+    REQUIRE(result.score > -kMateThreshold);
+    REQUIRE(result.score < kMateThreshold);
+}
+
+TEST_CASE("search_fixed_depth: a genuine RookEndgame-material position (both sides have one "
+          "rook plus pawns) still searches successfully with the zugzwang-aware null-move bias "
+          "active -- same honest scope as the KPK NMP guard test above: this doesn't (and, "
+          "without a reference engine, can't) prove tablebase-correctness, only that the biased "
+          "code path is genuinely exercised without crashing, hanging, or returning a "
+          "nonsensical result",
+          "[search][nmp][zugzwang]") {
+    init_all();
+    // Both sides have exactly one rook plus several pawns -- a real
+    // eval::EndgameSignature::RookEndgame position (confirmed directly
+    // below), so eval::is_zugzwang_prone() flags it and search.cpp's
+    // negamax() NMP block reduces R by kZugzwangReductionDecrease at
+    // every one of this search's own nodes, rather than skipping null-
+    // move pruning outright (unlike the KPK test above) or leaving it
+    // fully unbiased (unlike a typical middlegame position).
+    Position pos = parse_fen("2r1k3/pp3ppp/8/8/8/8/PP3PPP/2R1K3 b - - 0 1");
+    REQUIRE(nightwing::eval::classify_endgame(pos) == nightwing::eval::EndgameSignature::RookEndgame);
+    const SearchResult result = search_fixed_depth(pos, 6);
     REQUIRE_FALSE(result.best_move.is_null());
     REQUIRE(result.score > -kMateThreshold);
     REQUIRE(result.score < kMateThreshold);

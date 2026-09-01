@@ -271,3 +271,16 @@ TEST_CASE("classify_endgame: a queen anywhere on the board rules out every bucke
     pos.place_piece(make_square(3, 0), Piece::WhiteQueen);
     REQUIRE(classify_endgame(pos) == EndgameSignature::None);
 }
+
+TEST_CASE("is_zugzwang_prone: true for RookEndgame, false for every other signature including "
+          "None -- added Session 68 for ROADMAP.md's Zugzwang-aware search shaping item",
+          "[eval][endgame]") {
+    REQUIRE(is_zugzwang_prone(EndgameSignature::RookEndgame));
+    REQUIRE_FALSE(is_zugzwang_prone(EndgameSignature::None));
+    REQUIRE_FALSE(is_zugzwang_prone(EndgameSignature::KPK));
+    REQUIRE_FALSE(is_zugzwang_prone(EndgameSignature::KRK));
+    REQUIRE_FALSE(is_zugzwang_prone(EndgameSignature::KBNK));
+    REQUIRE_FALSE(is_zugzwang_prone(EndgameSignature::KBPK));
+    REQUIRE_FALSE(is_zugzwang_prone(EndgameSignature::OppositeColoredBishops));
+    REQUIRE_FALSE(is_zugzwang_prone(EndgameSignature::KnightVsBishop));
+}
