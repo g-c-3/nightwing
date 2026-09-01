@@ -7,18 +7,20 @@
 // This file is deliberately scoped to CLASSIFICATION ONLY, not the
 // actual specialized endgame reasoning itself: it answers "which
 // recognized endgame material bucket, if any, does this position fall
-// into," as a plain enum, and every subsequent Phase 6 item (King+pawn
-// theory, rook endgame patterns, minor piece endgames, fortress
-// detection, zugzwang-aware search shaping, the KPK/KRK/KBNK base
-// heuristics) is expected to consult classify_endgame() and act on
-// whichever EndgameSignature it returns -- none of THAT consuming code
-// exists yet (there's nothing to route to until each of those items
-// lands), so classify_endgame() is not yet called from eval::evaluate()
-// or anywhere in search/. Building and thoroughly testing the
-// classifier as its own, currently-unwired unit first mirrors this
-// codebase's own established "self-contained piece before its
-// consumer" precedent (docs/DECISIONS.md's tuner/selfplay.h entry, for
-// a different pair of modules).
+// into," as a plain enum. Original framing (Session 64): every
+// subsequent Phase 6 item was expected to consult classify_endgame()
+// once built, and none of that consuming code existed yet. As of
+// Session 68, four real consumers exist: eval::king_pawn_endgame_value()
+// (Session 65), eval::rook_endgame_value() (Session 65), eval::
+// minor_piece_endgame_value() (Session 66) -- all in eval/, calling
+// classify_endgame() directly -- and, for the first time, one in
+// search/ instead: search/search.cpp's negamax() NMP block consults
+// this file's own is_zugzwang_prone() (Session 68), which itself
+// takes an EndgameSignature already produced by a classify_endgame()
+// call negamax() makes directly. eval::fortress_value() (Session 67)
+// is Phase 6's one deliberate exception -- see eval/fortress.h's own
+// header comment for why that term does NOT consult this classifier
+// at all.
 //
 // SCOPE: every bucket below corresponds directly to a specific clause
 // in ROADMAP.md's own Phase 6 item wording -- this enum is sized to
@@ -29,12 +31,14 @@
 // precedent eval/material_imbalance.h's own header comment already
 // established for a different eval term. In particular, finer-grained
 // distinctions WITHIN a bucket -- Lucena vs. Philidor vs. Vancura
-// within RookEndgame, or "wrong bishop corner" within a future KBPK
-// signature this file doesn't yet have -- are left to each later Phase
-// 6 item's own positional judgment once it consults that bucket, not
-// pre-built into the classifier now. A position that doesn't match any
-// bucket below returns EndgameSignature::None and falls through to
-// ordinary eval::evaluate() untouched, same as today.
+// within RookEndgame, or "wrong bishop corner" within KBPK (added
+// Session 66, after this SCOPE note originally described it as "a
+// future ... signature this file doesn't yet have") -- are left to
+// each later Phase 6 item's own positional judgment once it consults
+// that bucket, not pre-built into the classifier itself. A position
+// that doesn't match any bucket below returns EndgameSignature::None
+// and falls through to ordinary eval::evaluate() untouched, same as
+// today.
 //
 // Classification is by PIECE COUNTS (board::popcount() over
 // board::Position::pieces()), which side each piece belongs to, and,
@@ -148,5 +152,32 @@ enum class EndgameSignature : std::uint8_t {
 /// tempo.h's own tempo_value() and eval/material_imbalance.h's own
 /// material_imbalance_value()).
 [[nodiscard]] EndgameSignature classify_endgame(const board::Position& pos) noexcept;
+
+/// Returns true if `sig` is a material signature this codebase treats
+/// as zugzwang-prone enough to bias null-move pruning against (ROADMAP.md
+/// Phase 6's "Zugzwang-aware search shaping" item: "bias search ... in
+/// positions flagged as zugzwang-prone by material signature" — this
+/// function IS that flagging, consumed by search/search.cpp's negamax()
+/// NMP block, not by any eval/*.cpp term). Deliberately narrow: as of
+/// this addition, only EndgameSignature::RookEndgame is flagged.
+///
+/// EndgameSignature::KPK is intentionally NOT flagged here, even though
+/// it's the classic textbook zugzwang case (CPW's own framing) — that
+/// case is already fully handled, independently of this function
+/// entirely, by negamax()'s own pre-existing `non_pawn_material` guard
+/// (search.cpp), which skips null-move pruning OUTRIGHT whenever the
+/// side to move has no non-pawn, non-king material at all — the
+/// correct, stronger response for a case where null-move pruning is
+/// actually UNSOUND (passing can be strictly worse than any real move),
+/// not merely worth being more cautious around. Flagging KPK here too
+/// would be harmless (that outright guard already prevents the NMP
+/// block from ever reaching the point where this function's answer
+/// would matter) but redundant, so it's left out.
+///
+/// See docs/DECISIONS.md for why RookEndgame specifically, and why no
+/// other bucket, was chosen for this first cut.
+[[nodiscard]] constexpr bool is_zugzwang_prone(EndgameSignature sig) noexcept {
+    return sig == EndgameSignature::RookEndgame;
+}
 
 } // namespace nightwing::eval
