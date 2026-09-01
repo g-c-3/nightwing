@@ -9,6 +9,7 @@
 #include <span>
 
 #include "board/movegen.h"
+#include "eval/endgame.h"
 #include "eval/eval.h"
 #include "eval/eval_cache.h"
 #include "eval/pawn_tt.h"
@@ -96,6 +97,25 @@ constexpr int kNullMoveMinDepth = 3;        // don't bother below this remaining
 constexpr int kNullMoveReduction = 2;       // R for depth < kNullMoveBigReductionDepth
 constexpr int kNullMoveBigReductionDepth = 6;
 constexpr int kNullMoveBigReduction = 3;    // R for depth >= kNullMoveBigReductionDepth
+
+/// Zugzwang-aware null-move bias (ROADMAP.md Phase 6's "Zugzwang-aware
+/// search shaping" item; see eval/endgame.h's own is_zugzwang_prone()
+/// doc comment for which material signatures this applies to and why).
+/// Subtracted from whichever of kNullMoveReduction/kNullMoveBigReduction
+/// the NMP block below would otherwise use, at any node
+/// eval::is_zugzwang_prone() flags -- giving the null-move probe MORE
+/// remaining depth (a smaller R) there, so it searches closer to what a
+/// real move's own child would see rather than trusting as shallow a
+/// probe as usual, without disabling null-move pruning outright the way
+/// the pre-existing `non_pawn_material` guard does for the stronger,
+/// unsound-not-just-risky KPK case. Never taken below
+/// kZugzwangMinReduction -- R must stay at least 1 for the null-move
+/// probe's own depth formula (`depth - 1 - reduction`) to still mean
+/// anything as a reduced-depth search rather than a full-depth one in
+/// disguise. Not yet tuned, same caveat as kNullMoveReduction/
+/// kNullMoveBigReduction above.
+constexpr int kZugzwangReductionDecrease = 1;
+constexpr int kZugzwangMinReduction = 1;
 
 /// Late move reductions (CPW "Late Move Reductions", negamax()'s move
 /// loop below) constants. Same "simple, hand-verifiable two-tier
@@ -865,14 +885,31 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // WORSE option than any real move, making the technique unsound
     // there); and a mate-range beta (a reduced-depth null-move probe
     // stumbling onto what looks like a mate score isn't a trustworthy
-    // claim of an actual forced mate at full depth).
+    // claim of an actual forced mate at full depth). Beyond that hard
+    // guard, a SOFTER zugzwang bias also applies just below (the `if
+    // (eval::is_zugzwang_prone(...))` check right after `reduction` is
+    // first computed) -- material signatures that are merely
+    // zugzwang-PRONE rather than provably unsound for NMP altogether
+    // (ROADMAP.md's own "Zugzwang-aware search shaping" item) get a
+    // smaller reduction instead of being skipped outright.
     const bool non_pawn_material =
         (pos.pieces(us, board::PieceType::Knight) | pos.pieces(us, board::PieceType::Bishop) |
          pos.pieces(us, board::PieceType::Rook) | pos.pieces(us, board::PieceType::Queen)) != 0;
     if (allow_null_move && depth >= kNullMoveMinDepth && beta < kMateThreshold && non_pawn_material &&
         !in_check(pos)) {
-        const int reduction =
+        int reduction =
             depth >= kNullMoveBigReductionDepth ? kNullMoveBigReduction : kNullMoveReduction;
+        // Zugzwang-aware bias (ROADMAP.md Phase 6's "Zugzwang-aware
+        // search shaping" item; see this file's own kZugzwangReductionDecrease
+        // doc comment above and eval/endgame.h's is_zugzwang_prone() for
+        // the full rationale): a smaller R here for material signatures
+        // flagged as zugzwang-prone, so the probe searches closer to
+        // full depth instead of trusting as shallow a reduced-depth
+        // check as usual in exactly the material shapes most likely to
+        // make "passing" a misleadingly good-looking option.
+        if (eval::is_zugzwang_prone(eval::classify_endgame(pos))) {
+            reduction = std::max(reduction - kZugzwangReductionDecrease, kZugzwangMinReduction);
+        }
         UndoInfo null_undo;
         board::make_null_move(pos, null_undo);
         const int null_score = -negamax(pos, depth - 1 - reduction, -beta, -beta + 1, ply + 1, nodes,
