@@ -3,6 +3,7 @@
 #include "eval/eval.h"
 
 #include "board/zobrist.h"
+#include "eval/basic_mates.h"
 #include "eval/fortress.h"
 #include "eval/king_pawn_endgame.h"
 #include "eval/king_safety.h"
@@ -132,9 +133,10 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     // imbalance table (eval/material_imbalance.h), King+pawn endgame
     // theory (eval/king_pawn_endgame.h), rook endgame theory (eval/
     // rook_endgame.h), minor piece endgame theory (eval/
-    // minor_piece_endgame.h), and fortress detection (eval/fortress.h)
-    // are NOT cached the way pawn structure is: piece placement --
-    // unlike pawn structure -- changes on essentially every move, so a
+    // minor_piece_endgame.h), fortress detection (eval/fortress.h), and
+    // KRK/KBNK basic-mate technique (eval/basic_mates.h) are NOT cached
+    // the way pawn structure is: piece placement -- unlike pawn
+    // structure -- changes on essentially every move, so a
     // position-keyed cache here would see a near-100% miss rate and
     // just add bookkeeping overhead with no real hit-rate payoff,
     // unlike the pawn hash table's genuinely stable key. The tempo
@@ -142,26 +144,26 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     // place -- it's already a single field lookup and branch, cheaper
     // than a cache probe would be.
     //
-    // king_pawn_endgame_value(), rook_endgame_value(), AND
-    // minor_piece_endgame_value() each run classify_endgame() (eval/
-    // endgame.h) as their own first, internal check on every single
-    // call, including every position that is nowhere near any of the
-    // endgames they cover -- three now-redundant calls to the same
-    // classifier on every node, not just one, a real, deliberately-
-    // accepted per-node cost (a handful of popcount() calls over
-    // bitboards this function's own material loop above already
-    // touched, not reused between any of the three) rather than an
+    // king_pawn_endgame_value(), rook_endgame_value(),
+    // minor_piece_endgame_value(), AND basic_mate_value() each run
+    // classify_endgame() (eval/endgame.h) as their own first, internal
+    // check on every single call, including every position that is
+    // nowhere near any of the endgames they cover -- four now-redundant
+    // calls to the same classifier on every node, not just one, a real,
+    // deliberately-accepted per-node cost (a handful of popcount() calls
+    // over bitboards this function's own material loop above already
+    // touched, not reused between any of the four) rather than an
     // optimization this phase took on. fortress_value() deliberately
     // does NOT call classify_endgame() at all (see eval/fortress.h's
     // own header comment for why) -- it pays its own separate,
     // comparable per-node cost (its own popcount()/bitboard scan) that
-    // isn't shared with the other three either. Phase 6 is explicitly
+    // isn't shared with the other four either. Phase 6 is explicitly
     // the "algorithmic endgame theory" phase, not a performance-tuning
     // one (ARCHITECTURE.md's own Benchmarking Discipline section is a
     // later, Phase 8 concern); revisit if a real bench run shows any of
     // this is a measurable hot-path cost worth short-circuiting (e.g.
     // computing classify_endgame() once here and passing the result to
-    // each of its three consumers, and/or gating fortress_value()
+    // each of its four consumers, and/or gating fortress_value()
     // itself behind a cheap early-out check computed once and shared)
     // -- this becomes more attractive, not less, with each further
     // Phase 6 item that adds its own consumer.
@@ -171,7 +173,7 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
                                   trapped_piece_value(pos) + tempo_value(pos) +
                                   material_imbalance_value(pos) + king_pawn_endgame_value(pos) +
                                   rook_endgame_value(pos) + minor_piece_endgame_value(pos) +
-                                  fortress_value(pos),
+                                  fortress_value(pos) + basic_mate_value(pos),
                               compute_phase(pos));
 
     if (eval_cache_usable) {

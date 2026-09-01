@@ -45,7 +45,12 @@
 // first that deliberately does NOT consult classify_endgame() at all —
 // see fortress.h's own header comment for why a general, cross-
 // material-shape structural heuristic doesn't fit that classifier's
-// bucket-based approach).
+// bucket-based approach) plus KRK/KBNK basic-mate technique (eval/
+// basic_mates.h — ROADMAP.md Phase 6's final item, "Hand-built base
+// heuristics carried over"; the fifth Phase 6 term, covering that
+// item's KRK/KBNK clauses specifically — see basic_mates.h's own
+// header comment for where that item's KPK and insufficient-material
+// clauses are actually handled instead).
 //
 // compute_phase() (below) was moved out of eval.cpp's anonymous
 // namespace and declared here on 2026-08-29 specifically so it can be
