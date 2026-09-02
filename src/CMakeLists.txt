@@ -47,6 +47,16 @@ add_library(nightwing_lib STATIC
 
 target_include_directories(nightwing_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(nightwing_lib PUBLIC nightwing_warnings)
+
+# Lazy SMP (ROADMAP.md Phase 7) uses std::thread/std::mutex directly in
+# src/search/search.cpp and src/search/tt.cpp -- on platforms where the
+# threading support library isn't linked in implicitly (notably glibc
+# Linux, where -pthread is required rather than optional), std::thread's
+# constructor throws/aborts at runtime without this. PUBLIC so every
+# executable target below (nightwing, nightwing_bench, etc.), which all
+# link nightwing_lib, gets it transitively.
+find_package(Threads REQUIRED)
+target_link_libraries(nightwing_lib PUBLIC Threads::Threads)
 target_compile_features(nightwing_lib PUBLIC cxx_std_20)
 
 # board/attacks.cpp's magic bitboard table generation (init_magic_bitboards())
