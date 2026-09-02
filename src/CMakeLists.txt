@@ -38,6 +38,7 @@ add_library(nightwing_lib STATIC
     search/search.cpp
     search/see.cpp
     search/tt.cpp
+    book/book.cpp
     uci/uci.cpp
     tuner/selfplay.cpp
     tuner/tune.cpp
