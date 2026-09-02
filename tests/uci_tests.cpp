@@ -18,6 +18,7 @@
 #include "board/masks.h"
 #include "board/movegen.h"
 #include "board/zobrist.h"
+#include "book/book.h"
 #include "uci/uci.h"
 
 using namespace nightwing::board;
@@ -156,7 +157,15 @@ TEST_CASE("uci: 'go depth' emits an 'info depth' line, with score/nodes/pv field
           "'bestmove'",
           "[uci]") {
     init_all();
-    const std::string out = run_uci({"position startpos", "go depth 2", "quit"});
+    // "startpos moves g1h3" rather than bare "startpos": src/book/
+    // book.h's opening book (ROADMAP.md's optional "small curated
+    // opening book" item) answers a bare startpos "go" immediately from
+    // book, with no "info depth" line at all -- this test is about
+    // verifying a real search's own info-line formatting, not about
+    // book behavior, so it deliberately starts one ply outside the book
+    // (g1h3/Nh3 isn't the first move of any curated line -- confirmed
+    // via tests/book_tests.cpp's own identical out-of-book example).
+    const std::string out = run_uci({"position startpos moves g1h3", "go depth 2", "quit"});
 
     const std::size_t info_idx = out.find("info depth");
     REQUIRE(info_idx != std::string::npos);
@@ -178,7 +187,11 @@ TEST_CASE("uci: 'go depth N' for N >= 2 emits one 'info depth' line per complete
           "increasing depth order",
           "[uci]") {
     init_all();
-    const std::string out = run_uci({"position startpos", "go depth 3", "quit"});
+    // "startpos moves g1h3", not bare "startpos" -- see the depth-2
+    // info-line test just above for why (src/book/book.h's opening
+    // book would otherwise answer immediately with no info lines at
+    // all for a bare startpos "go").
+    const std::string out = run_uci({"position startpos moves g1h3", "go depth 3", "quit"});
 
     // Depths 1, 2, and 3 should each produce their own "info depth <d>"
     // line: search_iterative_deepening()'s IterationCallback (search/
@@ -318,4 +331,23 @@ TEST_CASE("uci: a full self-play-style exchange (uci/isready/position/go, twice)
         idx += 9;
     }
     REQUIRE(count == 2);
+}
+
+TEST_CASE("uci: with the opening book initialized (matching src/main.cpp's own real startup "
+          "sequence), a bare 'position startpos' + 'go' answers immediately from book -- exact "
+          "bestmove, no 'info depth' line at all",
+          "[uci][book]") {
+    init_all();
+    nightwing::book::init_book();
+    const std::string out = run_uci({"position startpos", "go depth 5", "quit"});
+
+    // src/book/book.h's own tests/book_tests.cpp already confirms the
+    // start position's book move is deterministically "e2e4" (the Ruy
+    // Lopez line, listed first in book.cpp's curated_lines(), via
+    // init_book()'s first-line-wins tie-break) -- this test's job is
+    // specifically confirming uci.cpp's own handle_go() actually wires
+    // that module in correctly end to end, not re-deriving which move
+    // it is.
+    REQUIRE(contains(out, "bestmove e2e4"));
+    REQUIRE_FALSE(contains(out, "info depth"));
 }
