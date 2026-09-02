@@ -44,6 +44,7 @@ add_executable(nightwing_tests
     search_tests.cpp
     see_tests.cpp
     tt_tests.cpp
+    lazy_smp_tests.cpp
     uci_tests.cpp
     bench_tests.cpp
     selfplay_tests.cpp
