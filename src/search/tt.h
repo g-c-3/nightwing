@@ -30,32 +30,47 @@
 // spec (sizing, replacement scheme, cache layout) -- only its lifetime
 // is the interim simplification.
 //
-// THREAD-SAFETY NOTE (see docs/DECISIONS.md, Lazy SMP entry, ROADMAP.md
-// Phase 7): as of Lazy SMP, one TranspositionTable instance is shared
-// (by reference) across the main search thread and every Lazy SMP
-// helper thread for the same search_iterative_deepening() call, so
-// probe()/store() must themselves be safe to call concurrently from
-// multiple threads on the same instance. This is done with coarse
-// STRIPED LOCKING: a fixed-size array of std::mutex, each guarding a
-// contiguous range of buckets (see lock_for()), NOT true lock-free
-// synchronization -- ARCHITECTURE.md's "lock-free once multithreaded"
-// target and ROADMAP.md Phase 7's own separate "Lock-free TT for
-// concurrent access" item are both still open. Striped locking was
-// chosen as the correctness-first interim step because it needed zero
-// changes to TTEntry/TTBucket's existing, already-shipped 16-byte/
-// 64-byte cache-line layout (a real lock-free redesign, e.g. XOR-
-// checksum tricks over atomic word-sized loads/stores, changes that
-// layout's semantics and deserves its own dedicated item/session, not
-// a rushed add-on here) -- see docs/DECISIONS.md for the full
-// rationale and alternatives considered. `current_age_` is
-// std::atomic for the same reason: new_search() (called by the main
-// thread only) writes it while probe()/store() (called by every
-// thread) read it, with no other synchronization between those sites.
+// THREAD-SAFETY NOTE (see docs/DECISIONS.md, 2026-09-03 (2), and
+// ROADMAP.md Phase 7's "Lock-free TT for concurrent access" item): one
+// TranspositionTable instance is shared (by reference) across the main
+// search thread and every Lazy SMP helper thread for the same
+// search_iterative_deepening() call, so probe()/store() must be safe to
+// call concurrently from multiple threads on the same instance -- with
+// NO locking at all, per this item's own name. This is the classic CPW
+// "Shared Hash Table" XOR-checksum technique (also the scheme real
+// engines including Stockfish have shipped): each TTEntry (see below)
+// holds its packed data in one atomic 64-bit word, and a SECOND atomic
+// 64-bit word holding `key XOR data` instead of the raw key. A reader
+// loads both words (in either order -- see probe()'s own comment for
+// why the order doesn't matter for safety), XORs them back together,
+// and compares the result against the position's real Zobrist key: if
+// they match, the entry is trusted as genuine; if not, it's treated
+// exactly like a miss. Why this is safe under concurrent writes: each
+// individual 64-bit word is read/written as one indivisible atomic
+// unit (std::atomic<std::uint64_t>, guaranteed lock-free on every
+// platform this project targets -- see the static_assert below), so
+// there is no way to observe a WORD torn mid-write, only a possible
+// mismatch between the two words if a reader's two loads straddle a
+// writer's two stores (old key_xor_data + new data, or vice versa). A
+// straddled mismatch fails the XOR-equality check above with
+// overwhelming probability (the same 64-bit-birthday-paradox margin
+// this file already relies on for key==0 meaning "empty"), so it's
+// reported as a safe miss, never as corrupt data used as if it were
+// real. Two THREADS WRITING THE SAME ENTRY CONCURRENTLY is the one case
+// this doesn't cleanly resolve: the final state can end up being one
+// writer's data word paired with the other writer's key_xor_data word,
+// which will never again XOR-match anyone's key -- that specific slot
+// is effectively lost (a permanent miss) until the next store()
+// overwrites it outright. This is the accepted, standard trade-off of
+// this exact technique in the published literature and in real
+// shipping engines: it never returns wrong data, it can only lose an
+// entry early. `current_age_` is std::atomic for the same underlying
+// reason (see its own comment): new_search() (main thread only) writes
+// it while probe()/store() (every thread) read it.
 
 #include <array>
 #include <atomic>
 #include <cstdint>
-#include <mutex>
 #include <vector>
 
 #include "board/move.h"
@@ -96,52 +111,47 @@ struct TTProbeResult {
 
 /// Single transposition-table entry -- deliberately exactly 16 bytes so
 /// four fit in one 64-byte cache line (see TranspositionTable::TTBucket).
+///
+/// Lock-free layout (see this file's header comment's THREAD-SAFETY
+/// NOTE): rather than storing `key`/`move_raw`/`score`/`depth`/
+/// `bound_and_age` as separate plain fields the way a single-threaded-
+/// only design would, every field except the raw key is packed into
+/// one atomic 64-bit `data` word, and the raw key itself is never
+/// stored directly -- only `key XOR data`, in `key_xor_data`. This
+/// isn't a cosmetic repacking: it's what lets probe()/store() detect a
+/// torn concurrent read/write using only two independent atomic word
+/// accesses, with no lock at all. See tt.cpp's pack_data()/unpack_*()
+/// free functions for the exact bit layout, and probe()/store() for how
+/// the two words are combined and validated.
 struct TTEntry {
-    /// Full 64-bit Zobrist hash of the stored position. 0 is reserved as
-    /// the "empty slot" sentinel -- a real position hashing to exactly 0
-    /// is astronomically unlikely with a well-seeded 64-bit PRNG
-    /// (standard practice; see CPW's discussion of TT key storage) -- so
-    /// a freshly-constructed/cleared table (all entries zeroed) is
-    /// correctly "everything empty" with no separate per-entry flag
-    /// needed.
-    std::uint64_t key = 0;
+    /// `stored_key XOR data` (see this struct's own comment above and
+    /// the header comment's THREAD-SAFETY NOTE) -- NOT the raw key by
+    /// itself. 0 in both `key_xor_data` and `data` together (an
+    /// untouched, cleared entry) reads back as an implicit key of 0,
+    /// which is reserved as the "empty slot" sentinel exactly as it was
+    /// before this XOR scheme existed -- a real position hashing to
+    /// exactly 0 is astronomically unlikely with a well-seeded 64-bit
+    /// PRNG (standard practice; CPW's discussion of TT key storage).
+    std::atomic<std::uint64_t> key_xor_data{0};
 
-    /// Best/refutation move found at this entry, packed via
-    /// board::Move::raw(). Default (0) is board::Move()'s null-move
-    /// sentinel -- meaningful only alongside a non-zero key.
-    std::uint16_t move_raw = 0;
-
-    /// Score, already mate-distance-adjusted to be independent of which
-    /// ply it was stored from (see tt.cpp's store()/probe() for the
-    /// exact adjustment) so it's meaningful when later probed from a
-    /// DIFFERENT ply than it was stored at. Fits comfortably in
-    /// int16_t: kMateScore (32000) and all realistic eval magnitudes
-    /// are well within [-32768, 32767].
-    std::int16_t score = 0;
-
-    /// Remaining search depth this entry was stored at -- a probe can
-    /// only be trusted for a cutoff if this is >= the CURRENT node's
-    /// required remaining depth (a shallower stored search doesn't
-    /// prove enough about a deeper request).
-    std::uint8_t depth = 0;
-
-    /// Packed: low 2 bits = Bound, high 6 bits = age/generation (see
-    /// TranspositionTable::new_search()). Packed into one byte
-    /// specifically to keep this struct at exactly 16 bytes -- see the
-    /// static_assert below.
-    std::uint8_t bound_and_age = 0;
-
-    [[nodiscard]] constexpr Bound bound() const noexcept {
-        return static_cast<Bound>(bound_and_age & 0x3);
-    }
-    [[nodiscard]] constexpr std::uint8_t age() const noexcept {
-        return static_cast<std::uint8_t>(bound_and_age >> 2);
-    }
+    /// Every OTHER field (move, score, depth, bound+age), packed into
+    /// one atomic 64-bit word -- see tt.cpp's pack_data()/unpack_*()
+    /// for the exact bit layout. Read/written as a single atomic unit
+    /// specifically so a concurrent reader/writer race can only ever
+    /// produce a whole-word-old or whole-word-new value for THIS word,
+    /// never a bit-level torn mixture of both.
+    std::atomic<std::uint64_t> data{0};
 };
 
 static_assert(sizeof(TTEntry) == 16,
               "TTEntry must be exactly 16 bytes so 4 fit in one 64-byte "
               "cache line -- see ARCHITECTURE.md's Transposition Table row");
+static_assert(std::atomic<std::uint64_t>::is_always_lock_free,
+              "TTEntry's lock-free XOR-checksum scheme (this file's header "
+              "comment's THREAD-SAFETY NOTE) depends on std::atomic<std::uint64_t> "
+              "itself being lock-free on every platform this project targets -- "
+              "if this ever fires, a real per-word lock would silently sneak back "
+              "in via libatomic on that platform, defeating the whole point.");
 
 /// Transposition table: a power-of-2-sized array of 4-entry buckets (one
 /// 64-byte cache line each), indexed by the low bits of a position's
@@ -172,7 +182,7 @@ public:
     /// (search.cpp), so the age+depth replacement scheme is genuinely
     /// exercised even though the table itself is currently short-lived
     /// (this file's header comment). Age wraps at 64 (6 bits, see
-    /// TTEntry::bound_and_age) -- not a practical concern given how few
+    /// tt.cpp's pack_data()) -- not a practical concern given how few
     /// generations a single top-level call produces today, but noted
     /// here for whoever eventually makes the table persistent across
     /// many real games' worth of searches.
@@ -191,10 +201,13 @@ public:
     /// Looks up `key`. `ply` translates a stored (storage-relative) mate
     /// score back to be relative to the CURRENT node -- see tt.cpp for
     /// the exact adjustment and why it's necessary (CPW "Score in TT").
-    /// Returns a result with `hit == false` if `key` isn't present.
-    /// Safe to call concurrently with other probe()/store() calls (any
-    /// thread, any key) -- see this file's header comment's THREAD-
-    /// SAFETY NOTE.
+    /// Returns a result with `hit == false` if `key` isn't present --
+    /// which, per this file's header comment's THREAD-SAFETY NOTE, also
+    /// covers the rare case of a genuinely-stored entry that a
+    /// concurrent store() was mid-write on: that's indistinguishable
+    /// from a real miss by design, and always safe to treat as one.
+    /// Lock-free: safe to call concurrently with any number of other
+    /// probe()/store() calls, any thread, any key, with no blocking.
     [[nodiscard]] TTProbeResult probe(std::uint64_t key, int ply) const noexcept;
 
     /// Stores a search result for `key`. `score` is relative to the
@@ -207,12 +220,13 @@ public:
     /// *other* positions' entries, prefers an empty slot, then an entry
     /// from an older search generation, then the entry with the
     /// smallest stored depth (CPW "Replacement Strategy": age-then-
-    /// depth-preferred). Safe to call concurrently with other probe()/
-    /// store() calls -- see this file's header comment's THREAD-SAFETY
-    /// NOTE; two concurrent store()s for the same key/bucket are
-    /// serialized by that key's stripe lock, so a bucket's 4 entries
-    /// never see a torn write from one store() interleaved with
-    /// another's.
+    /// depth-preferred). Lock-free: safe to call concurrently with any
+    /// number of other probe()/store() calls -- see this file's header
+    /// comment's THREAD-SAFETY NOTE for the one accepted edge case (two
+    /// threads storing to the exact same slot at the exact same instant
+    /// can leave that one slot as a guaranteed miss until the next
+    /// store() to it; never wrong data, only an occasional early loss
+    /// of one entry).
     void store(std::uint64_t key, int depth, int score, Bound bound,
                board::Move move, int ply) noexcept;
 
@@ -239,47 +253,12 @@ private:
     // slightly less optimal, never wrong in a way that corrupts data.
     std::atomic<std::uint8_t> current_age_{0};
 
-    // Striped locks guarding buckets_: `kMaxLockShards` mutexes, each
-    // covering every bucket whose low bits (after buckets_'s own index
-    // mask) match that shard -- see this file's header comment's
-    // THREAD-SAFETY NOTE for why striped locking rather than a lock-free
-    // redesign (deferred to ROADMAP.md Phase 7's own "Lock-free TT" item)
-    // or one single table-wide mutex (rejected: would serialize every
-    // probe/store across the whole table, defeating most of Lazy SMP's
-    // point even more than per-shard locking already costs -- see
-    // docs/DECISIONS.md). Sized to the SMALLER of a fixed cap and the
-    // table's own bucket count, so a deliberately tiny test-only table
-    // (num_buckets() == 1, tests/tt_tests.cpp) doesn't allocate more
-    // locks than buckets. Both `kMaxLockShards` and buckets_.size() are
-    // powers of 2 (see round_down_power_of_2(), tt.cpp), so their min is
-    // too -- lock_for() reuses the same "mask the low bits" indexing
-    // buckets_ already uses.
-    static constexpr std::size_t kMaxLockShards = 1024;
-    mutable std::vector<std::mutex> shard_locks_;
-
     [[nodiscard]] TTBucket& bucket_for(std::uint64_t key) noexcept {
         return buckets_[key & (buckets_.size() - 1)];
     }
     [[nodiscard]] const TTBucket& bucket_for(std::uint64_t key) const noexcept {
         return buckets_[key & (buckets_.size() - 1)];
     }
-
-    /// The stripe lock guarding `key`'s bucket -- see `shard_locks_`'s
-    /// own comment above. Both probe() and store() lock this same
-    /// mutex for a given key, so they (and any two calls that happen to
-    /// hash to the same stripe) are mutually exclusive; calls whose
-    /// keys land in different stripes proceed fully concurrently.
-    [[nodiscard]] std::mutex& lock_for(std::uint64_t key) const noexcept {
-        return shard_locks_[key & (shard_locks_.size() - 1)];
-    }
-
-    /// Fills `e` with a new stored result, applying the mate-distance
-    /// storage adjustment and tagging it with `age_now` (the caller's
-    /// already-loaded snapshot of current_age_ -- see store()'s own
-    /// comment on why write_entry() takes it as a parameter rather than
-    /// re-reading the atomic itself).
-    void write_entry(TTEntry& e, std::uint64_t key, int depth, int score, Bound bound,
-                      board::Move move, int ply, std::uint8_t age_now) const noexcept;
 };
 
 } // namespace nightwing::search
