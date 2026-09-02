@@ -4,6 +4,32 @@ Newest entry at top.
 
 ---
 
+### Session 70 — 2026-08-31 — Dedicated endgame test suite + opening book (Phase 6's two remaining low-priority items) — Phase 6 fully complete
+
+**Built (endgame test suite):**
+- `tests/endgame_suite_tests.cpp` (new, 9 tests): exercises the FULL engine (`search::search_fixed_depth()`) end to end on KPK, KBPK (wrong bishop corner), insufficient material, KRK, KBNK, the canonical Lucena position, a Philidor-pattern position, and an opposite-colored-bishops-vs-same-colored-bishops comparison. Every expected result was confirmed against this project's own actual compiled engine (real search, real depth) before being written into the test file, not assumed from theory alone. The Lucena position uses a real, independently sourced canonical FEN (English Wikipedia's "Lucena position" article) with a best-move assertion (1.Rc1) matching that same source's own documented main line — and the engine's own found move matched it exactly on the first real search run, unprompted.
+
+**Built (opening book):**
+- `src/book/book.h`/`.cpp` (new module, new `src/book/` directory): a small curated opening book. Entries are plain UCI move sequences (`curated_lines()`) covering well-established main-line openings; `init_book()` replays each line through real legal move generation at startup, deriving every book position's Zobrist hash by construction rather than any hand-maintained table.
+- `src/uci/uci.cpp`: `handle_go()` now consults the book first, unconditionally (no options infrastructure exists to gate it — see docs/DECISIONS.md, 2026-08-31 (11)); a book hit answers immediately with `bestmove`, no `info depth` line.
+- `src/main.cpp`: `book::init_book()` added to the startup sequence, after the mandatory board-subsystem init.
+- `src/CMakeLists.txt`: registered `book/book.cpp`.
+- `tests/book_tests.cpp` (new, 4 tests) plus one new UCI-integration test in `tests/uci_tests.cpp` confirming the book works end-to-end through the real UCI loop the way `src/main.cpp` actually uses it.
+- `tests/uci_tests.cpp`: two PRE-EXISTING tests (`info depth` line formatting/ordering) updated to start from a position one ply outside the book, since a bare startpos `go` no longer runs a real search at all now that the book intercepts it — their own actual intent (verifying real search info-line output) is unaffected; see docs/DECISIONS.md for why this was the right fix rather than adding a way to disable the book.
+
+**Bugs fixed:** none in previously-shipped code. The two `uci_tests.cpp` updates above are not bug fixes — they're existing tests correctly updated for a genuine, intentional behavior change (the book intercepting `go` at book positions), caught immediately by the full Catch2 suite run this session's own infrastructure enables.
+
+**Decisions made:** one, logged in docs/DECISIONS.md dated 2026-08-31 (11) — no opening-book on/off toggle (and why), and updating the two affected tests directly rather than adding any book-bypass mechanism to keep them passing unmodified.
+
+**Verification performed:**
+- The full real-Catch2 suite (same setup as Sessions 68-69) compiled and run after every change: 384 test cases, 26,850 assertions, all green — including a SECOND full run with `--order rand` (a different, randomized test-case execution order) specifically to rule out any hidden cross-test static-state dependency in this session's own sandbox process (the two `uci_tests.cpp` failures this session actually found and fixed were exactly this kind of issue, caught by running the real, full suite rather than assumed away).
+- Every `endgame_suite_tests.cpp` position and its expected result, and every `book_tests.cpp` scenario, was independently confirmed via a standalone compiled driver against the real implementation before being written into its permanent test file — including, for the endgame suite specifically, actually running this project's own compiled `nightwing` UCI binary on each position at real search depths first, rather than assuming a theoretical result would automatically hold once encoded as a test.
+- Linked and ran the real `nightwing` UCI binary directly (not just the test binary): confirmed a bare `position startpos` + `go` answers instantly with `bestmove e2e4` and no search at all; confirmed a position one ply outside the book runs a normal, real iterative-deepening search with proper `info depth` output; confirmed following a real book line (1.e4 e5 2.Nf3 Nc6) continues correctly with the matching book move (3.Bb5).
+
+**Next session start point:** Phase 6 is now fully complete, including both of its previously-open low-priority items. Run "Start" to begin Phase 7 (Multithreading — Lazy SMP is that phase's first item per `docs/ROADMAP.md`) — confirm by reading ROADMAP.md's own Phase 7 section directly for its current item order and any notes, since that section (not this sentence) is the source of truth. No open bugs or partial work left mid-file from this session; every touched file was completed, compiled, and tested (including the full real-Catch2 suite, twice, in two different execution orders) before this session ended.
+
+---
+
 ### Session 69 — 2026-08-31 — KRK/KBNK basic-mate technique + insufficient-material draw detection (Phase 6's final item) — Phase 6 complete
 
 **Built:**
