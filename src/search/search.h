@@ -33,6 +33,7 @@
 // search/ordering.h) current per-call, not yet persistent-global,
 // lifetime.
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -123,6 +124,28 @@ struct SearchLimits {
     /// notices `deadline` has passed. Never reset within one
     /// SearchLimits instance's lifetime.
     bool stopped = false;
+
+    /// Second, independent way to request interruption, alongside (not
+    /// instead of) `deadline`/`has_deadline` above -- added for Lazy SMP
+    /// (ROADMAP.md Phase 7, search.cpp's search_iterative_deepening()):
+    /// a helper thread's own SearchLimits has no fixed `deadline` of its
+    /// own to search against (it's bounded by `max_depth` and by the
+    /// main thread finishing, not by wall-clock time), so it's told to
+    /// stop by the main thread flipping this shared atomic to `true`
+    /// once the main thread's own iterative-deepening loop is done. The
+    /// SAME periodic check (search.cpp/quiescence.cpp, gated by node
+    /// count exactly like the deadline check) also checks this, when
+    /// non-null, and sets `stopped` exactly the same way a passed
+    /// deadline would -- everything downstream of `stopped` (the
+    /// bounded, non-surgical unwind described above) is unaffected by
+    /// *which* of the two conditions triggered it. `nullptr` (the
+    /// default) means "no external stop signal for this call" -- every
+    /// existing caller (none of which pass a non-null value) is
+    /// unaffected. Relaxed atomic: this is a cooperative, best-effort
+    /// "stop soon" signal checked only periodically (kTimeCheckNodeInterval,
+    /// search.cpp), not a value anything else's correctness depends on
+    /// ordering against.
+    std::atomic<bool>* external_stop = nullptr;
 };
 
 /// Result of a search — either a single fixed-depth call or a full
@@ -267,9 +290,60 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// `material_weights`: same meaning and default as search_fixed_depth()'s
 /// parameter of the same name — see that function's doc comment. Shared
 /// across every depth iteration of this one call, same as `pos` itself.
+///
+/// `num_threads` (ROADMAP.md Phase 7, "Lazy SMP implementation"):
+/// values <= 1 (the default) behave EXACTLY as before this parameter
+/// existed — no thread is spawned, the whole call runs single-threaded
+/// on the calling thread, byte-for-byte the same code path this
+/// function always ran. Values > 1 spawn `num_threads - 1` additional
+/// "helper" threads once the mandatory, always-unconditional depth-1
+/// iteration above has produced a real `best_move` (search_root() on
+/// `pos` itself, still on the calling thread) — the calling thread then
+/// continues running its OWN iterative-deepening loop (identical logic
+/// to the single-threaded path: aspiration windows, `on_iteration`,
+/// `time_limit_ms`) exactly as it always has, while each helper thread
+/// searches the SAME root position, from its own PRIVATE copy of `pos`
+/// (board::Position is a value type; a stack copy is taken on the
+/// calling thread, one per helper, before that helper starts running —
+/// see search.cpp for why the copy must happen there and not inside the
+/// helper's own thread function) and its own private killers/history/
+/// continuation-history/pawn-hash/eval-cache tables (all per-thread —
+/// see this file's own comments on why those tables persist across
+/// iterations even single-threaded; sharing them across threads instead
+/// would need their own thread-safety story with no clear benefit, since
+/// their whole value is ordering hints for a search that's already
+/// running), through a plain (no aspiration window) depth 1..max_depth
+/// loop of their own, deliberately simplified relative to the calling
+/// thread's own loop (Lazy SMP's classic "helper threads just widen the
+/// tree explored, not replicate the primary search's every refinement"
+/// framing — see docs/DECISIONS.md). The one thing every thread
+/// genuinely SHARES is the transposition table `tt` (search/tt.h,
+/// TranspositionTable — safe for exactly this concurrent use, see its
+/// own THREAD-SAFETY NOTE): a helper thread's own discoveries land in
+/// `tt` where the calling thread's own search can (and, that's the
+/// whole point of Lazy SMP, often does) benefit from them via ordinary
+/// TT probes, without either thread's search logic needing to know
+/// helpers exist at all. Helper threads are signaled to stop (a shared
+/// `std::atomic<bool>`, checked via SearchLimits::external_stop) once
+/// the calling thread's own loop finishes, then joined, before this
+/// function returns — the returned SearchResult's `best_move`/`score`/
+/// `pv` are always the CALLING thread's own result (helpers never
+/// influence them directly, only indirectly via `tt`), while `nodes` is
+/// the sum of every thread's node count (calling thread's own cumulative
+/// total, matching the `num_threads <= 1` convention, PLUS every helper
+/// thread's own total) — the right denominator for `bench`/NPS
+/// reporting (ROADMAP.md Phase 8) once multiple threads are genuinely
+/// doing the reported work. If `pos` has no legal moves at all (the
+/// depth-1 call's own early return, above), no helper thread is ever
+/// spawned — there is nothing for one to search either.
+///
+/// No UCI `Threads` option exists yet to let a user configure this —
+/// that's ROADMAP.md Phase 7's own, separate "Thread count UCI option"
+/// item; every current caller (src/uci/uci.cpp, the tuner) passes the
+/// default (1) and is unaffected by this parameter's addition.
 [[nodiscard]] SearchResult search_iterative_deepening(
     board::Position& pos, int max_depth, int time_limit_ms = 0,
     std::span<const std::uint64_t> game_history = {}, IterationCallback on_iteration = nullptr,
-    const eval::MaterialWeights* material_weights = nullptr);
+    const eval::MaterialWeights* material_weights = nullptr, int num_threads = 1);
 
 } // namespace nightwing::search

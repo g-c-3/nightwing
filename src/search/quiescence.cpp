@@ -142,15 +142,23 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
 
     ++nodes;
 
-    // Periodic deadline check, same node-count granularity and
-    // rationale as negamax()'s own (search.cpp's kTimeCheckNodeInterval
-    // comment) -- checked after `nodes` is up to date so both
-    // negamax()'s and quiescence()'s own counters contribute to the
-    // same shared periodicity.
-    if (limits != nullptr && limits->has_deadline && (nodes & kTimeCheckNodeMask) == 0 &&
-        std::chrono::steady_clock::now() >= limits->deadline) {
-        limits->stopped = true;
-        return 0;
+    // Periodic deadline/external-stop check, same node-count granularity
+    // and rationale as negamax()'s own (search.cpp's kTimeCheckNodeInterval
+    // comment, and its own comment on the two independent trigger
+    // conditions -- a passed `deadline`, or Lazy SMP's `external_stop`)
+    // -- checked after `nodes` is up to date so both negamax()'s and
+    // quiescence()'s own counters contribute to the same shared
+    // periodicity.
+    if (limits != nullptr && (nodes & kTimeCheckNodeMask) == 0) {
+        const bool deadline_passed =
+            limits->has_deadline && std::chrono::steady_clock::now() >= limits->deadline;
+        const bool externally_stopped =
+            limits->external_stop != nullptr &&
+            limits->external_stop->load(std::memory_order_relaxed);
+        if (deadline_passed || externally_stopped) {
+            limits->stopped = true;
+            return 0;
+        }
     }
 
     const bool us_in_check = in_check(pos);

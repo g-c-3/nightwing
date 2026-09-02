@@ -4,9 +4,12 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <span>
+#include <thread>
+#include <utility>
 
 #include "board/movegen.h"
 #include "eval/endgame.h"
@@ -868,16 +871,27 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                            &eval_cache, material_weights, limits);
     }
 
-    // Periodic deadline check (search.h's SearchLimits doc comment,
-    // this file's kTimeCheckNodeInterval comment above): checked after
-    // `nodes` is incremented so the shared counter's periodicity is
-    // consistent regardless of how deep in the tree this particular
-    // call happens to be.
+    // Periodic deadline/external-stop check (search.h's SearchLimits
+    // doc comment, this file's kTimeCheckNodeInterval comment above):
+    // checked after `nodes` is incremented so the shared counter's
+    // periodicity is consistent regardless of how deep in the tree this
+    // particular call happens to be. Two independent trigger conditions
+    // -- a passed wall-clock `deadline` (the original mechanism), or a
+    // Lazy SMP helper thread's `external_stop` flag having been raised
+    // by the main thread (search.h's own doc comment on that field) --
+    // either one sets `stopped` the same way; everything downstream of
+    // `stopped` doesn't care which one fired.
     ++nodes;
-    if (limits != nullptr && limits->has_deadline && (nodes & kTimeCheckNodeMask) == 0 &&
-        std::chrono::steady_clock::now() >= limits->deadline) {
-        limits->stopped = true;
-        return 0;
+    if (limits != nullptr && (nodes & kTimeCheckNodeMask) == 0) {
+        const bool deadline_passed =
+            limits->has_deadline && std::chrono::steady_clock::now() >= limits->deadline;
+        const bool externally_stopped =
+            limits->external_stop != nullptr &&
+            limits->external_stop->load(std::memory_order_relaxed);
+        if (deadline_passed || externally_stopped) {
+            limits->stopped = true;
+            return 0;
+        }
     }
 
     const std::uint64_t key = pos.zobrist_hash;
@@ -1776,10 +1790,81 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
                         game_history, path, pawn_tt, eval_cache, material_weights);
 }
 
+namespace {
+
+/// One Lazy SMP helper thread's own search loop (ROADMAP.md Phase 7,
+/// search.h's search_iterative_deepening() doc comment has the full
+/// contract). Runs entirely on the helper thread this is invoked on;
+/// `pos` here is already that thread's own PRIVATE copy (moved in by
+/// the caller -- see search_iterative_deepening() below for why the
+/// copy itself must happen on the calling thread, before this function
+/// starts running concurrently with anything else). `tt` is the one
+/// object genuinely shared with the main thread and every other helper
+/// (safe for exactly this -- search/tt.h's THREAD-SAFETY NOTE); every
+/// other table here is this thread's own, private, and never touched by
+/// any other thread. `stop`, when observed true, ends this helper's
+/// loop at the next depth boundary AND (via SearchLimits::external_stop
+/// below) mid-iteration, the same bounded-unwind way a deadline does
+/// (search.h's SearchLimits doc comment). `nodes_out` receives this
+/// helper's own total node count once it's done, for the caller to fold
+/// into the overall SearchResult -- a plain (non-atomic) uint64_t is
+/// fine here since each helper thread writes to its own, distinct
+/// `nodes_out` slot (see the caller's per-helper storage below), never
+/// one shared across threads.
+void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
+                          std::span<const std::uint64_t> game_history,
+                          const eval::MaterialWeights* material_weights,
+                          const std::atomic<bool>& stop, std::uint64_t& nodes_out) {
+    KillerTable killers;
+    HistoryTable history;
+    ContinuationHistoryTable cont_history;
+    std::array<std::uint64_t, kMaxPly> path{};
+    eval::PawnHashTable pawn_tt(kDefaultPawnTTSizeKB);
+    eval::EvalCache eval_cache(kDefaultEvalCacheSizeKB);
+
+    std::uint64_t total_nodes = 0;
+    for (int depth = 1; depth <= max_depth; ++depth) {
+        if (stop.load(std::memory_order_relaxed)) {
+            break;
+        }
+
+        // Deliberately simpler than the main thread's own loop: always
+        // the full (-inf, +inf) window (no aspiration windows -- Lazy
+        // SMP helpers exist to widen/diversify what's been explored via
+        // the shared TT, not to replicate the primary search's every
+        // refinement; see docs/DECISIONS.md and search.h's own doc
+        // comment on this function's caller). `tt.new_search()` is NOT
+        // called here -- only the main thread ages the shared table
+        // (once per ITS OWN depth iteration), matching the "one writer"
+        // half of current_age_'s thread-safety story (search/tt.h).
+        SearchLimits limits;
+        limits.has_deadline = false;
+        // const_cast: SearchLimits::external_stop is a non-const
+        // pointer (negamax()/quiescence() only ever read through it),
+        // but `stop` itself is held const here since this function
+        // never writes it -- only the main thread does (see the
+        // caller). Safe: no write ever happens through this pointer.
+        limits.external_stop = const_cast<std::atomic<bool>*>(&stop);
+
+        const SearchResult r = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history,
+                                            cont_history, game_history, path, pawn_tt, eval_cache,
+                                            material_weights, &limits);
+        total_nodes += r.nodes;
+
+        if (limits.stopped) {
+            break;
+        }
+    }
+    nodes_out = total_nodes;
+}
+
+} // namespace
+
 SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_limit_ms,
                                          std::span<const std::uint64_t> game_history,
                                          IterationCallback on_iteration,
-                                         const eval::MaterialWeights* material_weights) {
+                                         const eval::MaterialWeights* material_weights,
+                                         int num_threads) {
     assert(max_depth >= 1 && "search_iterative_deepening: max_depth must be at least 1");
 
     const auto start_time = std::chrono::steady_clock::now();
@@ -1841,6 +1926,40 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // comment.
     if (on_iteration) {
         on_iteration(result);
+    }
+
+    // Lazy SMP (ROADMAP.md Phase 7, search.h's own doc comment on this
+    // function's `num_threads` parameter has the full contract): spawn
+    // helper threads now, once depth 1 has proven there's real work
+    // (the early return above), and before the calling thread's own
+    // depth-2-onward loop starts mutating `pos` again via search_root()
+    // -- each helper's private Position COPY is taken here, on the
+    // calling thread, synchronously, one at a time, each one strictly
+    // before that helper's thread is even constructed (let alone
+    // running) and strictly before the NEXT helper's own copy is taken
+    // -- so every copy of `pos` happens while `pos` is guaranteed
+    // quiescent (search_root() always restores it before returning),
+    // with no concurrent mutation from either the calling thread (which
+    // hasn't reached its own next search_root() call yet) or any other
+    // helper (which only ever touches its OWN private copy, never
+    // `pos` itself). Constructing the copy inside the helper thread's
+    // own function body instead would race against the calling
+    // thread's very next search_root() call, which is exactly the kind
+    // of data race this ordering avoids.
+    const int effective_threads = num_threads < 1 ? 1 : num_threads;
+    std::atomic<bool> smp_stop{false};
+    std::vector<std::thread> helpers;
+    std::vector<std::uint64_t> helper_nodes;
+    if (effective_threads > 1) {
+        const std::size_t n = static_cast<std::size_t>(effective_threads - 1);
+        helpers.reserve(n);
+        helper_nodes.assign(n, 0);
+        for (std::size_t i = 0; i < n; ++i) {
+            Position helper_pos = pos; // synchronous copy on the calling thread -- see above
+            helpers.emplace_back(run_lazy_smp_helper, std::move(helper_pos), max_depth,
+                                  std::ref(tt), game_history, material_weights, std::cref(smp_stop),
+                                  std::ref(helper_nodes[i]));
+        }
     }
 
     for (int depth = 2; depth <= max_depth; ++depth) {
@@ -1980,6 +2099,25 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
         result.nodes = total_nodes;
         if (on_iteration) {
             on_iteration(result);
+        }
+    }
+
+    // Lazy SMP: the calling thread's own loop above is done (whether by
+    // reaching max_depth, running out of time, or being interrupted) --
+    // tell every helper thread to stop at its own next check (the same
+    // periodic check negamax()/quiescence() already do for `deadline`,
+    // now also checking `smp_stop` via SearchLimits::external_stop —
+    // search.h's own doc comment), join them, and fold each one's own
+    // node count into the total this call reports. No-op (empty
+    // `helpers`) when `effective_threads <= 1`, matching this whole
+    // block's absence before this parameter existed.
+    if (!helpers.empty()) {
+        smp_stop.store(true, std::memory_order_relaxed);
+        for (std::thread& helper : helpers) {
+            helper.join();
+        }
+        for (std::uint64_t n : helper_nodes) {
+            total_nodes += n;
         }
     }
 

@@ -2,6 +2,9 @@
 
 #include "search/tt.h"
 
+#include <algorithm>
+#include <mutex>
+
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <xmmintrin.h>
 #endif
@@ -62,19 +65,34 @@ TranspositionTable::TranspositionTable(std::size_t size_mb) {
     const std::size_t total_bytes = size_mb * 1024ULL * 1024ULL;
     const std::size_t max_buckets = total_bytes / sizeof(TTBucket);
     buckets_.resize(round_down_power_of_2(max_buckets));
+    // See tt.h's shard_locks_ comment: never more shards than buckets
+    // (both powers of 2, so the min is too). std::vector<std::mutex>'s
+    // sized constructor value-initializes each element in place -- no
+    // per-element move/copy required, only vector's own internal buffer
+    // is (trivially) transferred by this move-assignment.
+    shard_locks_ = std::vector<std::mutex>(std::min(buckets_.size(), kMaxLockShards));
 }
 
 void TranspositionTable::clear() noexcept {
+    // Not itself made concurrency-safe against a simultaneous probe()/
+    // store() from another thread -- see tt.h's header comment: clear()
+    // is a whole-table reset (UCI `ucinewgame`, tests), never called
+    // while a Lazy SMP search is actually in flight on this table.
     for (TTBucket& bucket : buckets_) {
         for (TTEntry& entry : bucket.entries) {
             entry = TTEntry{};
         }
     }
-    current_age_ = 0;
+    current_age_.store(0, std::memory_order_relaxed);
 }
 
 void TranspositionTable::new_search() noexcept {
-    current_age_ = static_cast<std::uint8_t>((current_age_ + 1) & 0x3F); // 6 bits (see TTEntry::bound_and_age)
+    // 6 bits (see TTEntry::bound_and_age); relaxed load+store is fine
+    // here -- see current_age_'s own doc comment in tt.h for why a
+    // torn/stale read by a concurrent probe()/store() is harmless.
+    const std::uint8_t next =
+        static_cast<std::uint8_t>((current_age_.load(std::memory_order_relaxed) + 1) & 0x3F);
+    current_age_.store(next, std::memory_order_relaxed);
 }
 
 void TranspositionTable::prefetch(std::uint64_t key) const noexcept {
@@ -89,6 +107,10 @@ void TranspositionTable::prefetch(std::uint64_t key) const noexcept {
 }
 
 TTProbeResult TranspositionTable::probe(std::uint64_t key, int ply) const noexcept {
+    // See tt.h's THREAD-SAFETY NOTE: this stripe lock is also taken by
+    // store() for the same key, so a probe() never observes a
+    // partially-written entry from a concurrent store().
+    std::scoped_lock lock(lock_for(key));
     const TTBucket& bucket = bucket_for(key);
     for (const TTEntry& entry : bucket.entries) {
         if (entry.bound() != Bound::None && entry.key == key) {
@@ -106,7 +128,15 @@ TTProbeResult TranspositionTable::probe(std::uint64_t key, int ply) const noexce
 
 void TranspositionTable::store(std::uint64_t key, int depth, int score, Bound bound,
                                 board::Move move, int ply) noexcept {
+    // See tt.h's THREAD-SAFETY NOTE.
+    std::scoped_lock lock(lock_for(key));
     TTBucket& bucket = bucket_for(key);
+    // One load for this whole store() call, not re-read per candidate
+    // entry below -- current_age_ changes at most once per depth
+    // iteration (new_search()), so a single snapshot is exactly as
+    // correct as re-loading it repeatedly, and avoids extra atomic
+    // traffic while this stripe's lock is held.
+    const std::uint8_t age_now = current_age_.load(std::memory_order_relaxed);
 
     for (TTEntry& entry : bucket.entries) {
         if (entry.bound() != Bound::None && entry.key == key) {
@@ -115,10 +145,10 @@ void TranspositionTable::store(std::uint64_t key, int depth, int score, Bound bo
             // stale from an older generation -- otherwise leave the
             // existing, more valuable entry alone rather than
             // overwriting it with worse data.
-            if (depth < entry.depth && entry.age() == current_age_) {
+            if (depth < entry.depth && entry.age() == age_now) {
                 return;
             }
-            write_entry(entry, key, depth, score, bound, move, ply);
+            write_entry(entry, key, depth, score, bound, move, ply, age_now);
             return;
         }
     }
@@ -132,23 +162,24 @@ void TranspositionTable::store(std::uint64_t key, int depth, int score, Bound bo
             replace = &entry;
             break;
         }
-        if (entry.age() != current_age_ && replace->age() == current_age_) {
+        if (entry.age() != age_now && replace->age() == age_now) {
             replace = &entry; // any older-generation entry beats a current-generation one
         } else if (entry.age() == replace->age() && entry.depth < replace->depth) {
             replace = &entry; // among same-age candidates, evict the shallowest
         }
     }
-    write_entry(*replace, key, depth, score, bound, move, ply);
+    write_entry(*replace, key, depth, score, bound, move, ply, age_now);
 }
 
 void TranspositionTable::write_entry(TTEntry& e, std::uint64_t key, int depth, int score,
-                                      Bound bound, board::Move move, int ply) const noexcept {
+                                      Bound bound, board::Move move, int ply,
+                                      std::uint8_t age_now) const noexcept {
     e.key = key;
     e.move_raw = move.raw();
     e.score = static_cast<std::int16_t>(adjust_mate_score_for_storage(score, ply));
     e.depth = static_cast<std::uint8_t>(depth < 0 ? 0 : depth);
     e.bound_and_age = static_cast<std::uint8_t>(
-        (static_cast<std::uint8_t>(bound) & 0x3) | static_cast<std::uint8_t>(current_age_ << 2));
+        (static_cast<std::uint8_t>(bound) & 0x3) | static_cast<std::uint8_t>(age_now << 2));
 }
 
 } // namespace nightwing::search
