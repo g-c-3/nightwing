@@ -17,8 +17,8 @@ Standard chess engine, C++20, classical (non-NNUE, non-Syzygy) design philosophy
 | Move ordering | TT move → captures (MVV-LVA + SEE) → killers → history heuristic → counter-moves |
 | Eval | Hand-crafted eval (HCE): material, piece-square tables (tapered mg/eg), mobility, king safety, pawn structure (passed/isolated/doubled/backward), hand-built endgame heuristics |
 | Eval tuning | Texel tuning (gradient descent on eval weights vs. game outcomes) — added once eval has enough terms (Phase 5) |
-| Transposition table | Single global TT, power-of-2 sized, Zobrist hashing, age + depth replacement scheme; cache-line-aligned entries (16 bytes, 4 entries per 64-byte line), explicit prefetch on probe; lock-free once multithreaded |
-| Multithreading | Lazy SMP (Phase 7) — deferred until single-threaded search is perft/bench verified stable |
+| Transposition table | Currently one private TT per top-level search call, not yet the eventual single persistent global (see `src/search/tt.h`'s LIFETIME NOTE — tied to the still-open UCI `Hash` option, ROADMAP.md Phase 8); power-of-2 sized, Zobrist hashing, age + depth replacement scheme; cache-line-aligned entries (16 bytes, 4 entries per 64-byte line), explicit prefetch on probe. Safe for concurrent Lazy SMP use as of Phase 7's first item via coarse striped locking (`src/search/tt.h`'s THREAD-SAFETY NOTE) — genuinely lock-free is still a separate, open Phase 7 item |
+| Multithreading | Lazy SMP (Phase 7) — first item (helper threads sharing the TT, `search_iterative_deepening()`'s `num_threads` parameter) landed Session 71; lock-free TT and a UCI `Threads` option are still open, separate Phase 7 items |
 | Protocol | UCI (Universal Chess Interface) |
 | No NNUE | Hard constraint — do not add |
 | No tablebases | Hard constraint — do not add Syzygy or any external TB; hand-built endgame heuristics substitute |
