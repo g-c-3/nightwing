@@ -21,12 +21,22 @@
 //     already finished and printed `bestmove`.
 //   - Pondering (`go ponder`, `ponderhit`): needs the same async
 //     machinery as `stop`, plus its own logic on top; not attempted.
+//
+// `go` now also consults src/book/book.h's small curated opening book
+// FIRST, before any of the above depth/time-control logic even runs
+// (handle_go(), below) -- ROADMAP.md's optional "small curated opening
+// book" item. Since no setoption/UCI-options infrastructure exists
+// (previous paragraph), book usage has no toggle and is simply always
+// on; see book.h's own header comment for why an opening book, unlike
+// a tablebase, doesn't need one to stay consistent with this project's
+// hard no-tablebase constraint.
 
 #include "uci/uci.h"
 
 #include <cstdint>
 #include <functional>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -36,6 +46,7 @@
 #include "board/fen.h"
 #include "board/movegen.h"
 #include "board/move.h"
+#include "book/book.h"
 #include "search/search.h"
 
 namespace nightwing::uci {
@@ -254,6 +265,21 @@ void emit_info(const search::SearchResult& result, std::ostream& out) {
 /// for how it's built.
 void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
                const std::vector<std::string>& tokens, std::ostream& out) {
+    // Opening book (src/book/book.h, ROADMAP.md's optional "small
+    // curated opening book" item): consulted first, unconditionally --
+    // no setoption/UCI-options infrastructure exists yet to gate this
+    // behind an "OwnBook"-style toggle (this file's own header comment
+    // already notes setoption is accepted but ignored entirely). A book
+    // hit skips search entirely and answers immediately -- no `info
+    // depth ...` line is emitted for it, since no depth was actually
+    // searched; a `bestmove` alone is a fully valid UCI response.
+    const std::optional<std::string> book_move = book::book_move(pos);
+    if (book_move.has_value()) {
+        out << "bestmove " << *book_move << '\n';
+        out.flush();
+        return;
+    }
+
     int max_depth = 0;
     int time_limit_ms = 0;
     bool have_depth = false;
