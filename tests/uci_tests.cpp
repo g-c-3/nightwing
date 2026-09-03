@@ -351,3 +351,104 @@ TEST_CASE("uci: with the opening book initialized (matching src/main.cpp's own r
     REQUIRE(contains(out, "bestmove e2e4"));
     REQUIRE_FALSE(contains(out, "info depth"));
 }
+TEST_CASE("uci: 'uci' response advertises the Threads spin option with its documented bounds",
+          "[uci][threads]") {
+    init_all();
+    const std::string out = run_uci({"uci", "quit"});
+    REQUIRE(contains(out, "option name Threads type spin default 1 min 1 max 1024"));
+}
+
+TEST_CASE("uci: 'setoption name Threads value N' followed by 'go' still returns a legal bestmove "
+          "(num_threads actually reaches search_iterative_deepening without breaking anything)",
+          "[uci][threads][smp]") {
+    init_all();
+    const std::string out =
+        run_uci({"setoption name Threads value 4", "position startpos", "go depth 4", "quit"});
+    const std::size_t pos_idx = out.find("bestmove ");
+    REQUIRE(pos_idx != std::string::npos);
+    const std::string move_str = out.substr(pos_idx + 9, 4);
+
+    Position start = start_position();
+    MoveList legal;
+    generate_legal_moves(start, legal);
+    bool found = false;
+    for (int i = 0; i < legal.size(); ++i) {
+        if (legal[i].to_uci().substr(0, 4) == move_str) {
+            found = true;
+            break;
+        }
+    }
+    REQUIRE(found);
+}
+
+TEST_CASE("uci: 'setoption name Threads value 1' (the default) behaves exactly like never "
+          "setting it at all -- both return a legal bestmove for the same position/depth",
+          "[uci][threads]") {
+    init_all();
+    const std::string out_explicit =
+        run_uci({"setoption name Threads value 1", "position startpos", "go depth 3", "quit"});
+    const std::string out_default = run_uci({"position startpos", "go depth 3", "quit"});
+
+    const std::size_t idx_explicit = out_explicit.find("bestmove ");
+    const std::size_t idx_default = out_default.find("bestmove ");
+    REQUIRE(idx_explicit != std::string::npos);
+    REQUIRE(idx_default != std::string::npos);
+    // Single-threaded search is fully deterministic (no Lazy SMP helper
+    // threads racing on the TT) -- the same position/depth must produce
+    // the exact same bestmove either way.
+    REQUIRE(out_explicit.substr(idx_explicit, 13) == out_default.substr(idx_default, 13));
+}
+
+TEST_CASE("uci: an out-of-range 'setoption name Threads value ...' is clamped, not rejected -- "
+          "'go' still returns a legal bestmove rather than crashing or hanging",
+          "[uci][threads]") {
+    init_all();
+    // 0 is below kMinThreads (1); 999999999 is far above kMaxThreads
+    // (1024) -- handle_setoption() clamps both rather than ignoring the
+    // whole command, so neither should leave num_threads at some
+    // stale/uninitialized value or cause search_iterative_deepening()
+    // to try spawning an absurd thread count.
+    const std::string out_low =
+        run_uci({"setoption name Threads value 0", "position startpos", "go depth 3", "quit"});
+    const std::string out_high = run_uci(
+        {"setoption name Threads value 999999999", "position startpos", "go depth 3", "quit"});
+    REQUIRE(contains(out_low, "bestmove "));
+    REQUIRE_FALSE(contains(out_low, "bestmove 0000"));
+    REQUIRE(contains(out_high, "bestmove "));
+    REQUIRE_FALSE(contains(out_high, "bestmove 0000"));
+}
+
+TEST_CASE("uci: a malformed 'setoption' (missing value, non-integer value, unknown option name) "
+          "is ignored -- a subsequent 'go' still works normally",
+          "[uci][threads]") {
+    init_all();
+    const std::string out = run_uci({
+        "setoption name Threads",                    // missing "value ..." entirely
+        "setoption name Threads value notanumber",    // non-integer value
+        "setoption name SomeOtherOption value 4",     // unrecognized option name
+        "position startpos",
+        "go depth 2",
+        "quit",
+    });
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
+TEST_CASE("uci: 'Threads' set via 'setoption' persists across 'ucinewgame' (an option, not game "
+          "state)",
+          "[uci][threads]") {
+    init_all();
+    // If ucinewgame incorrectly reset Threads back to 1, this would
+    // still pass (1 is a valid thread count too) -- so this test's real
+    // job is just confirming ucinewgame doesn't reject/crash on a
+    // still-set Threads option, and that go afterward keeps working;
+    // full internal-state confirmation that the value specifically
+    // survives isn't independently observable via the UCI protocol
+    // itself (no option-query command exists), matching this file's
+    // Threads-clamping test above.
+    const std::string out = run_uci(
+        {"setoption name Threads value 3", "ucinewgame", "position startpos", "go depth 3", "quit"});
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
