@@ -4,6 +4,25 @@ Newest entry at top.
 
 ---
 
+### Session 74 — 2026-09-03 — Thread count UCI option (Phase 7's third item)
+
+**Built:**
+- `src/uci/uci.cpp`: new `kMinThreads`/`kMaxThreads` constants (1 / 1024). New `handle_setoption()`: parses `setoption name <name...> value <value...>` positionally (last `name`/`value` token pair, tolerant of a multi-word name even though `Threads` itself is one word), recognizes only `Threads`, clamps to `[kMinThreads, kMaxThreads]`, silently ignores any other option name or a malformed line. `run()`: new `num_threads` session-lifetime local (default `kMinThreads`), NOT reset by `ucinewgame`; `uci` response now emits `option name Threads type spin default 1 min 1 max 1024`; new `setoption` dispatch branch calling `handle_setoption()`. `handle_go()` gained a `num_threads` parameter, passed straight through as `search::search_iterative_deepening()`'s own `num_threads` argument. File header comment updated (the old blanket "no options exist yet" note no longer applies).
+- `tests/uci_tests.cpp`: 6 new tests (`[threads]` tag, one also `[smp]`) — the advertised `uci` option string itself; `setoption name Threads value 4` followed by `go` still returning a legal bestmove; `value 1` behaving identically to never setting the option at all (single-threaded search is deterministic, so both runs must produce the exact same bestmove); out-of-range values (0 and 999999999) clamped rather than rejected, confirmed by `go` still returning a legal move afterward; a malformed `setoption` (missing value, non-integer value, unrecognized option name) leaving a later `go` unaffected; and `Threads` surviving a `ucinewgame` in between.
+
+**Bugs fixed:** none — new-feature work, no defects found in previously-shipped code.
+
+**Decisions made:** one, logged in docs/DECISIONS.md dated 2026-09-03 (4) — the `Threads` bounds and why 1024, clamping over rejecting out-of-range values, persistence across `ucinewgame`, and three alternatives considered (an `OwnBook` toggle added in the same session, a generic options registry, and resetting `Threads` on `ucinewgame`) and why each was deferred/rejected.
+
+**Verification performed:**
+- Every touched file compiled clean under `g++ -std=c++20 -Wall -Wextra -Wpedantic`.
+- A full CMake Debug build (ASan/UBSan active, real Catch2) compiled with zero warnings.
+- Full real-Catch2 suite run: 416 test cases (410 previously-existing + 6 new), 52,969 assertions (52,955 + 14 new), all green — `bench` node counts/scores byte-for-byte identical to Sessions 71–73's own baselines (startpos 1274, kiwipete 8185, quiet_middlegame 6591, endgame_mate_in_3 64979/score 31995), confirming zero behavioral change to anything besides the new option itself. The 6 new `[threads]`-tagged tests specifically re-run in isolation, all passing.
+
+**Next session start point:** Phase 7's first three items (Lazy SMP, Lock-free TT, Thread count UCI option) are complete; Session 73 separately fixed a macOS-specific stack-overflow bug found in CI along the way (still pending real-CI confirmation as of that session's own entry — check whether a fresh push/CI run has confirmed macOS green before assuming it's fully closed out). Two Phase 7 items remain: "Pondering" and "Verify no strength regression vs. single-threaded at equal single-thread depth" — read ROADMAP.md's own Phase 7 section directly first, since that section (not this sentence) is the source of truth for which of those two to start next and their own full descriptions. No open bugs or partial work left mid-file from this session.
+
+---
+
 ### Session 73 — 2026-09-03 — Bugfix: Lazy SMP helper threads stack-overflowing on macOS CI (Bus error)
 
 **Context:** CI logs for the commit covering Sessions 71–72 (uploaded, GitHub Actions run 91292621513) showed macOS Debug and macOS Release both failing exactly the same 4 tests — `tests/lazy_smp_tests.cpp`'s 4 `num_threads > 1` cases — with `Bus error`/`Subprocess killed`, while Linux Debug/Release, Windows Debug/Release, and the `num_threads == 1` test all passed cleanly everywhere, every time.
