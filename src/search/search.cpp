@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cassert>
 #include <chrono>
+#include <memory>
 #include <span>
 #include <thread>
 #include <utility>
@@ -1816,8 +1817,28 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
                           const eval::MaterialWeights* material_weights,
                           const std::atomic<bool>& stop, std::uint64_t& nodes_out) {
     KillerTable killers;
-    HistoryTable history;
-    ContinuationHistoryTable cont_history;
+    // Heap-allocated, not stack locals: HistoryTable and
+    // ContinuationHistoryTable together are roughly 176KB
+    // (HistoryTable: kNumColors*64*64 ints ~= 32KB; ContinuationHistoryTable:
+    // kNumPieceTypes*64*kNumPieceTypes*64 ints ~= 144KB) -- fine on the
+    // MAIN thread's own stack (this function's caller's counterparts to
+    // these two tables, in search_iterative_deepening() below, stay
+    // stack-allocated exactly as before), but a genuinely new OS thread
+    // created via std::thread does NOT get the main thread's stack size
+    // on every platform: POSIX only guarantees implementation-defined
+    // sizing for a newly created thread absent an explicit request, and
+    // in practice this is 512KB by default on macOS (vs 8MB on Linux, a
+    // 16x difference) -- 176KB of fixed locals alone already eats over
+    // a third of that budget before negamax()'s own recursive frames
+    // are added on top, and did in fact overflow it in CI (macOS
+    // Debug/Release specifically -- see docs/DECISIONS.md, 2026-09-03
+    // (3)). Heap allocation sidesteps the platform's thread-stack-size
+    // default entirely, rather than depending on it -- the more robust
+    // fix, since any future search/eval feature that adds a few more KB
+    // of per-node stack usage would otherwise silently reopen the exact
+    // same margin-of-headroom problem.
+    auto history = std::make_unique<HistoryTable>();
+    auto cont_history = std::make_unique<ContinuationHistoryTable>();
     std::array<std::uint64_t, kMaxPly> path{};
     eval::PawnHashTable pawn_tt(kDefaultPawnTTSizeKB);
     eval::EvalCache eval_cache(kDefaultEvalCacheSizeKB);
@@ -1846,8 +1867,8 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
         // caller). Safe: no write ever happens through this pointer.
         limits.external_stop = const_cast<std::atomic<bool>*>(&stop);
 
-        const SearchResult r = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history,
-                                            cont_history, game_history, path, pawn_tt, eval_cache,
+        const SearchResult r = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history,
+                                            *cont_history, game_history, path, pawn_tt, eval_cache,
                                             material_weights, &limits);
         total_nodes += r.nodes;
 
