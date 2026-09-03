@@ -4,6 +4,25 @@ Newest entry at top.
 
 ---
 
+### Session 73 — 2026-09-03 — Bugfix: Lazy SMP helper threads stack-overflowing on macOS CI (Bus error)
+
+**Context:** CI logs for the commit covering Sessions 71–72 (uploaded, GitHub Actions run 91292621513) showed macOS Debug and macOS Release both failing exactly the same 4 tests — `tests/lazy_smp_tests.cpp`'s 4 `num_threads > 1` cases — with `Bus error`/`Subprocess killed`, while Linux Debug/Release, Windows Debug/Release, and the `num_threads == 1` test all passed cleanly everywhere, every time.
+
+**Built:** nothing new — a bugfix session, see docs/DECISIONS.md, 2026-09-03 (3), for the full root-cause writeup and the confirmed (not just theorized) fix.
+
+**Bugs fixed:** `search::run_lazy_smp_helper()`'s (`src/search/search.cpp`) own `HistoryTable`/`ContinuationHistoryTable`, together ~176 KiB, were declared as thread-stack locals — fine on the main thread (which gets a large default stack on every platform this project targets), unsafe on a genuinely new OS thread, where macOS's default is a fixed 512 KiB regardless of the process's own `ulimit -s`/`RLIMIT_STACK` (unlike Linux, where a new thread's default stack size tracks `RLIMIT_STACK`, typically 8 MiB) — 176 KiB of fixed locals plus `search_root()`'s own recursive call stack overflowed that budget, surfacing as `SIGBUS` on macOS specifically. Fixed by `std::make_unique`-allocating both tables inside `run_lazy_smp_helper()` instead of declaring them as locals; every other Lazy SMP file/table is unaffected.
+
+**Decisions made:** one, logged in docs/DECISIONS.md dated 2026-09-03 (3) — heap allocation over an explicit large-stack-size thread-creation approach (a bigger, more invasive change, noted as a fallback if this pattern ever resurfaces with different offending locals) or shrinking the tables themselves (conflates an unrelated search-quality sizing decision with a stack-budget problem).
+
+**Verification performed:**
+- Every touched file compiled clean under `g++ -std=c++20 -Wall -Wextra -Wpedantic`.
+- A full CMake Debug build (ASan/UBSan active) compiled with zero warnings; the full real-Catch2 suite (410 test cases, 52,955 assertions) run clean, with `bench` node counts/scores byte-for-byte identical to Sessions 71–72's own baselines (startpos 1274, kiwipete 8185, quiet_middlegame 6591, endgame_mate_in_3 64979/score 31995) — confirming this fix changed zero observable search behavior. `[smp]`-tagged tests specifically re-run 4 additional times, all clean.
+- The bug and the fix were both DIRECTLY REPRODUCED, not just inferred from the CI log's signal name: a standalone ASan-instrumented harness spawned a `pthread` with `pthread_attr_setstacksize()` set to macOS's actual 512 KiB non-main-thread default (the spawning thread itself kept a normal large stack, mirroring macOS's real main-vs-new-thread asymmetry — a plain `ulimit -s` was tried first and rejected for this purpose, since it shrinks every thread uniformly and doesn't reproduce the platform's actual behavior). Running the OLD stack-locals pattern (via `search_fixed_depth()`, which shares the identical two-large-table-as-locals shape the old `run_lazy_smp_helper()` had) inside that constrained thread reproduced `AddressSanitizer: stack-overflow`, pinned to that exact function, on the first attempt. Running the NEW heap-allocated pattern (calling `search_root()` directly, `HistoryTable`/`ContinuationHistoryTable` both `std::make_unique`-allocated) inside the identical constrained thread completed all 6 depths cleanly with no crash. This sandbox has no macOS/ARM64 runner to reproduce the CI failure verbatim, but this repro isolates and confirms the exact mechanism CI's `Bus error` is consistent with, and confirms the fix removes it.
+
+**Next session start point:** this was a bugfix session slotted in ahead of Phase 7's third item; the fix is complete, verified (including a direct, isolated repro of both the bug and the fix under the same constrained-stack condition macOS's own default reproduces), and should be committed before this CI run's failure is expected to clear. Genuine confirmation on the real macOS runner still needs a fresh push/CI run — flag this as the one thing this session's own verification could not directly observe. Once that's confirmed green, run "Start" to begin Phase 7's third item, "Thread count UCI option" (docs/SESSIONS.md's Session 72 entry, and ROADMAP.md's own Phase 7 section, are still the source of truth for what comes next).
+
+---
+
 ### Session 72 — 2026-09-03 — Lock-free TT for concurrent access (Phase 7's second item)
 
 **Built:**
