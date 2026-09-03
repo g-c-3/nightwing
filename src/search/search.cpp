@@ -1885,7 +1885,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                                          std::span<const std::uint64_t> game_history,
                                          IterationCallback on_iteration,
                                          const eval::MaterialWeights* material_weights,
-                                         int num_threads) {
+                                         int num_threads, std::atomic<bool>* external_stop) {
     assert(max_depth >= 1 && "search_iterative_deepening: max_depth must be at least 1");
 
     const auto start_time = std::chrono::steady_clock::now();
@@ -1992,6 +1992,15 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                 break;
             }
         }
+        // `external_stop` (this function's own doc comment, search.h) —
+        // the between-iteration counterpart to the mid-iteration check
+        // threaded into `limits` below. Checked independently of
+        // `time_limit_ms`, since a pondering call (the canonical caller)
+        // passes `time_limit_ms == 0` (no deadline at all) and relies on
+        // this flag alone.
+        if (external_stop != nullptr && external_stop->load(std::memory_order_relaxed)) {
+            break;
+        }
 
         tt.new_search();
         SearchResult next;
@@ -2010,6 +2019,17 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
         if (limits.has_deadline) {
             limits.deadline = start_time + std::chrono::milliseconds(time_limit_ms);
         }
+        // `external_stop`, when the caller provided one (this function's
+        // own doc comment, search.h) — independent of `has_deadline`
+        // above; negamax()/quiescence() already check both conditions
+        // unconditionally once a non-null `limits` is threaded through
+        // (search.h's SearchLimits doc comment), so this alone is enough
+        // to make a mid-iteration external stop request work, with no
+        // further change needed in negamax()/quiescence() themselves.
+        // `nullptr` when the caller didn't pass one (every existing
+        // caller before this parameter existed) — behaviorally identical
+        // to before.
+        limits.external_stop = external_stop;
 
         // Aspiration windows (CPW "Aspiration Windows"): the previous
         // iteration's score is usually a good estimate of this

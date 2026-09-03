@@ -341,9 +341,38 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// that's ROADMAP.md Phase 7's own, separate "Thread count UCI option"
 /// item; every current caller (src/uci/uci.cpp, the tuner) passes the
 /// default (1) and is unaffected by this parameter's addition.
+///
+/// `external_stop` (ROADMAP.md Phase 7, "Pondering"): a second,
+/// independent way — alongside `time_limit_ms` — for the CALLING
+/// thread's own loop to be told to stop, from outside this call
+/// entirely. `nullptr` (the default) means "no external stop signal" —
+/// every existing caller (none of which pass a non-null value) sees
+/// zero behavioral change. When non-null, it's threaded into every
+/// depth-2-onward iteration's own SearchLimits alongside whatever
+/// `time_limit_ms`-derived deadline that iteration already has (the
+/// two conditions are independent — either one triggers the same
+/// bounded, non-surgical unwind described in SearchLimits' own doc
+/// comment above), and is also checked once between iterations
+/// (mirroring the existing `time_limit_ms > 0` between-iteration
+/// check), so a caller sitting on a separate thread can stop this
+/// call promptly even between two whole iterations, not just
+/// mid-iteration. This is exactly the missing piece Lazy SMP's own
+/// `smp_stop` (search.cpp, internal to this function, used to stop
+/// HELPER threads) didn't provide for the MAIN thread's own loop —
+/// `external_stop` is that same mechanism, exposed to this function's
+/// own caller instead of being purely internal. The canonical use is
+/// `go ponder`: src/uci/uci.cpp starts a background, effectively
+/// unbounded call (`time_limit_ms = 0`, a high `max_depth`) with its
+/// own `external_stop` pointer, so a later `ponderhit`/`stop` from the
+/// UCI loop's own command-reading thread can interrupt it — see
+/// docs/DECISIONS.md for the full pondering design and its accepted
+/// scope limitations. Distinct from, and unrelated to, the internal
+/// `smp_stop` atomic Lazy SMP already uses for helper threads — the two
+/// never share an instance and don't interact.
 [[nodiscard]] SearchResult search_iterative_deepening(
     board::Position& pos, int max_depth, int time_limit_ms = 0,
     std::span<const std::uint64_t> game_history = {}, IterationCallback on_iteration = nullptr,
-    const eval::MaterialWeights* material_weights = nullptr, int num_threads = 1);
+    const eval::MaterialWeights* material_weights = nullptr, int num_threads = 1,
+    std::atomic<bool>* external_stop = nullptr);
 
 } // namespace nightwing::search
