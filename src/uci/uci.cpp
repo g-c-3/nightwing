@@ -3,8 +3,12 @@
 // Deliberately out of scope for Phase 2's "basic UCI loop" (revisit
 // later phases, tracked informally here rather than duplicated across
 // every function that touches it):
-//   - setoption / Hash / Threads / any engine options: no options exist
-//     yet (no TT, single-threaded) — nothing to configure.
+//   - setoption / Hash / any other engine option: still no options
+//     exist besides `Threads` (added Session 74, ROADMAP.md Phase 7's
+//     "Thread count UCI option" item -- see handle_setoption() below) --
+//     no TT-size configuration yet, since the TT stays scoped per
+//     top-level search call rather than a persistent global (search/
+//     tt.h's own LIFETIME NOTE, tied to a still-open Phase 8 item).
 //   - True asynchronous `go infinite` + `stop`: would need a background
 //     search thread and a stop flag negamax() checks periodically. The
 //     stop-flag PIECE of that now exists (search.h's SearchLimits,
@@ -25,11 +29,12 @@
 // `go` now also consults src/book/book.h's small curated opening book
 // FIRST, before any of the above depth/time-control logic even runs
 // (handle_go(), below) -- ROADMAP.md's optional "small curated opening
-// book" item. Since no setoption/UCI-options infrastructure exists
-// (previous paragraph), book usage has no toggle and is simply always
-// on; see book.h's own header comment for why an opening book, unlike
-// a tablebase, doesn't need one to stay consistent with this project's
-// hard no-tablebase constraint.
+// book" item. This one has no `setoption`-driven toggle either (an
+// "OwnBook"-style option was considered alongside `Threads` above and
+// deferred -- see docs/DECISIONS.md, 2026-09-03 (4)) -- book usage stays
+// simply always on; see book.h's own header comment for why an opening
+// book, unlike a tablebase, doesn't need one to stay consistent with
+// this project's hard no-tablebase constraint.
 
 #include "uci/uci.h"
 
@@ -180,6 +185,26 @@ constexpr int kTimedSearchMaxDepth = 64;
 /// much slower Debug/sanitizer build.
 constexpr int kNoTimeControlDepth = 5;
 
+/// Bounds for the `Threads` UCI option (ROADMAP.md Phase 7, "Thread
+/// count UCI option") -- passed straight through as
+/// search::search_iterative_deepening()'s own `num_threads` parameter
+/// (search/search.h's doc comment on that parameter has the full Lazy
+/// SMP contract; search.cpp Sessions 71-73 for the implementation and a
+/// macOS-specific stack-overflow bugfix along the way). `kMinThreads`
+/// (1) matches search_iterative_deepening()'s own default and its
+/// "values <= 1 behave exactly as before this parameter existed"
+/// guarantee -- setting `Threads` to 1 (or never touching it at all)
+/// is bit-for-bit today's single-threaded behavior. `kMaxThreads`
+/// (1024) isn't a technical ceiling this engine's own implementation
+/// imposes (Lazy SMP helper threads are plain, unpooled std::thread
+/// instances, so nothing internally caps their count) -- it mirrors
+/// the same widely-used `Threads` option upper bound published UCI
+/// engines (e.g. Stockfish) commonly ship, purely as a sanity guard
+/// against a malformed or accidental `setoption ... value 999999999`
+/// spawning a number of threads no real machine could usefully run.
+constexpr int kMinThreads = 1;
+constexpr int kMaxThreads = 1024;
+
 /// Simple time allocation for `go wtime/btime/winc/binc` — no
 /// movestogo-aware tuning yet (see DECISIONS.md): budgets
 /// remaining_ms / 20 plus the increment, capped at remaining_ms / 2 so
@@ -249,6 +274,64 @@ void emit_info(const search::SearchResult& result, std::ostream& out) {
     out.flush();
 }
 
+/// Handles `setoption name <name...> value <value...>`. Only `Threads`
+/// (ROADMAP.md Phase 7) is a recognized option name -- every other name
+/// is silently ignored, matching this file's established robustness
+/// convention (this file's header comment; run()'s own trailing
+/// comment on unrecognized commands generally) rather than treating an
+/// unknown option as an error. `name`/`value` are matched positionally
+/// (the LAST `name`/`value` token pair in the line, per the UCI spec's
+/// own grammar allowing either to be multi-word) rather than assuming
+/// fixed token indices, even though `Threads` itself is a single word
+/// -- a small amount of generality here costs nothing and avoids a
+/// parser that would need revisiting the moment a second, multi-word-
+/// named option is ever added. A malformed line (`name`/`value` in the
+/// wrong order, `value` missing entirely, a non-integer value) is
+/// ignored, leaving `num_threads` at whatever it was before -- same
+/// robustness rationale as handle_position()/apply_uci_moves() above:
+/// a slightly malformed setoption from a GUI or script shouldn't crash
+/// the engine or corrupt otherwise-good prior state.
+void handle_setoption(int& num_threads, const std::vector<std::string>& tokens) {
+    std::size_t name_start = 0;
+    std::size_t name_end = 0;
+    std::size_t value_start = 0;
+    for (std::size_t i = 1; i < tokens.size(); ++i) {
+        if (tokens[i] == "name") {
+            name_start = i + 1;
+        } else if (tokens[i] == "value") {
+            name_end = i;
+            value_start = i + 1;
+        }
+    }
+    if (name_start == 0 || value_start == 0 || name_end <= name_start ||
+        value_start >= tokens.size()) {
+        return; // Malformed -- no name, no value, or value before name -- ignore.
+    }
+
+    std::string name;
+    for (std::size_t i = name_start; i < name_end; ++i) {
+        if (!name.empty()) {
+            name += ' ';
+        }
+        name += tokens[i];
+    }
+
+    if (name == "Threads") {
+        try {
+            int value = std::stoi(tokens[value_start]);
+            if (value < kMinThreads) {
+                value = kMinThreads;
+            } else if (value > kMaxThreads) {
+                value = kMaxThreads;
+            }
+            num_threads = value;
+        } catch (const std::exception&) {
+            // Non-integer value -- ignore, leaving num_threads unchanged.
+        }
+    }
+    // Any other option name: silently ignored (this function's own doc comment).
+}
+
 /// Handles `go [depth N] [movetime N] [wtime W btime B [winc I] [binc I]]`
 /// (any combination; unrecognized sub-options like `movestogo`/
 /// `infinite`/`ponder`/`mate`/`nodes` are accepted but ignored — see
@@ -263,8 +346,16 @@ void emit_info(const search::SearchResult& result, std::ostream& out) {
 /// the real game's history, not just whatever the search recalculates
 /// within its own tree — see handle_position()/apply_uci_moves() above
 /// for how it's built.
+///
+/// `num_threads` is likewise passed straight through as
+/// search_iterative_deepening()'s own `num_threads` parameter
+/// (search/search.h's doc comment has the full Lazy SMP contract) --
+/// run()'s own session-lifetime state, set via `setoption name Threads
+/// value <N>` (handle_setoption() above) and defaulting to 1 (today's
+/// pre-Lazy-SMP, single-threaded behavior) until a GUI/script
+/// explicitly requests more.
 void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
-               const std::vector<std::string>& tokens, std::ostream& out) {
+               const std::vector<std::string>& tokens, int num_threads, std::ostream& out) {
     // Opening book (src/book/book.h, ROADMAP.md's optional "small
     // curated opening book" item): consulted first, unconditionally --
     // no setoption/UCI-options infrastructure exists yet to gate this
@@ -344,10 +435,16 @@ void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
     // `on_iteration` (search/search.h's IterationCallback): emits one
     // `info depth ... score ... nodes ... pv ...` line per completed
     // iteration, live, before the final `bestmove` below -- see
-    // emit_info()'s own doc comment.
+    // emit_info()'s own doc comment. `material_weights` stays the
+    // compiled-in-constants default (nullptr) -- no UCI option exists
+    // to override it (search_fixed_depth()'s own doc comment covers
+    // that parameter's real use, the Texel/SPSA tuner, not this UCI
+    // loop). `num_threads` is this call's own new parameter, this
+    // function's own doc comment above.
     const search::SearchResult result = search::search_iterative_deepening(
         pos, max_depth, time_limit_ms, game_history,
-        [&out](const search::SearchResult& iteration_result) { emit_info(iteration_result, out); });
+        [&out](const search::SearchResult& iteration_result) { emit_info(iteration_result, out); },
+        /*material_weights=*/nullptr, num_threads);
 
     out << "bestmove ";
     if (result.best_move.is_null()) {
@@ -371,6 +468,14 @@ void run(std::istream& in, std::ostream& out) {
     // built and search/search.h's `game_history` doc comment for what
     // it's used for.
     std::vector<std::uint64_t> game_history;
+    // `Threads` UCI option's current value (ROADMAP.md Phase 7) --
+    // session-lifetime state, like `pos`/`game_history` above: set via
+    // `setoption` (handle_setoption()), read by every subsequent `go`
+    // (handle_go()), and -- unlike `pos`/`game_history` -- NOT reset by
+    // `ucinewgame` below, matching the UCI convention that engine
+    // OPTIONS persist across games within one session while game STATE
+    // does not.
+    int num_threads = kMinThreads;
     std::string line;
 
     while (std::getline(in, line)) {
@@ -383,6 +488,11 @@ void run(std::istream& in, std::ostream& out) {
         if (cmd == "uci") {
             out << "id name Nightwing\n";
             out << "id author g-c-3\n";
+            // `option name Threads type spin default <D> min <MIN> max <MAX>`:
+            // standard UCI `spin` option syntax -- kMinThreads/kMaxThreads's
+            // own doc comment above has the bounds' rationale.
+            out << "option name Threads type spin default " << kMinThreads << " min " << kMinThreads
+                << " max " << kMaxThreads << '\n';
             out << "uciok\n";
             out.flush();
         } else if (cmd == "isready") {
@@ -393,16 +503,20 @@ void run(std::istream& in, std::ostream& out) {
             game_history.clear();
         } else if (cmd == "position") {
             handle_position(pos, game_history, tokens);
+        } else if (cmd == "setoption") {
+            handle_setoption(num_threads, tokens);
         } else if (cmd == "go") {
-            handle_go(pos, game_history, tokens, out);
+            handle_go(pos, game_history, tokens, num_threads, out);
         } else if (cmd == "quit") {
             break;
         }
-        // stop, ponderhit, setoption, debug, register, and anything else
-        // unrecognized: silently ignored, per the UCI spec's expectation
-        // that engines ignore commands they don't understand — required
-        // for robustness against a GUI/script sending commands ahead of
-        // what this phase supports (see this file's header comment).
+        // stop, ponderhit, debug, register, and anything else
+        // unrecognized (including a `setoption` for any name besides
+        // `Threads` -- handle_setoption()'s own doc comment): silently
+        // ignored, per the UCI spec's expectation that engines ignore
+        // commands they don't understand — required for robustness
+        // against a GUI/script sending commands ahead of what this
+        // phase supports (see this file's header comment).
     }
 }
 
