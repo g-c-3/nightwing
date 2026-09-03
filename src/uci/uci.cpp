@@ -9,22 +9,27 @@
 //     no TT-size configuration yet, since the TT stays scoped per
 //     top-level search call rather than a persistent global (search/
 //     tt.h's own LIFETIME NOTE, tied to a still-open Phase 8 item).
-//   - True asynchronous `go infinite` + `stop`: would need a background
-//     search thread and a stop flag negamax() checks periodically. The
-//     stop-flag PIECE of that now exists (search.h's SearchLimits,
-//     since the mid-search-time-checks Priority Fix — docs/DECISIONS.md,
-//     2026-08-26) and IS what makes `go movetime`/`go wtime` actually
-//     respect their budget mid-iteration, but it's driven by an
-//     internal deadline computed once at the start of `go`, not by an
-//     externally-arriving `stop` command read from a second, concurrent
-//     input source — that still needs the background-thread half of
-//     this item, which doesn't exist. `go` still always runs
-//     synchronously to completion (or until its own internal deadline)
-//     before this loop reads its next line; `stop` is parsed but has no
-//     effect, since by the time it could arrive on `in`, `go` has
-//     already finished and printed `bestmove`.
-//   - Pondering (`go ponder`, `ponderhit`): needs the same async
-//     machinery as `stop`, plus its own logic on top; not attempted.
+//   - True asynchronous `go infinite` + `stop` FOR AN ORDINARY (non-
+//     ponder) `go`: still not attempted. A plain `go` (with or without
+//     a time control) still always runs synchronously to completion (or
+//     until its own internal deadline, search.h's SearchLimits) before
+//     this loop reads its next line; a `stop` sent while an ordinary
+//     `go` is in flight is parsed but has no effect, since by the time
+//     it could arrive on `in`, `go` has already finished and printed
+//     `bestmove`. `go infinite` (no depth/time control at all) falls
+//     back to this file's own kNoTimeControlDepth, same as a bare `go`
+//     — it does NOT actually run unboundedly the way the UCI spec's own
+//     "infinite" framing implies, since nothing besides an async `stop`
+//     could ever end it, and that doesn't exist for this path.
+//   - Pondering (`go ponder`, `ponderhit`, and `stop` while pondering)
+//     IS implemented (ROADMAP.md Phase 7) — see start_pondering()/
+//     handle_ponderhit()/handle_stop() below and docs/DECISIONS.md for
+//     the full design. This is the one place a background search
+//     thread and an externally-arriving `stop`/`ponderhit` genuinely
+//     coexist with this loop's own synchronous command reading right
+//     now — it does not generalize to ordinary `go`/`stop` above,
+//     which remain deliberately out of scope per this item's own
+//     narrower ROADMAP.md framing ("search side: handle `go ponder`...").
 //
 // `go` now also consults src/book/book.h's small curated opening book
 // FIRST, before any of the above depth/time-control logic even runs
@@ -38,6 +43,9 @@
 
 #include "uci/uci.h"
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <iostream>
@@ -45,6 +53,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "board/board.h"
@@ -226,6 +235,95 @@ constexpr int kMaxThreads = 1024;
     return budget;
 }
 
+/// Result of parsing `go`'s own depth/time-control tokens (used both by
+/// handle_go() for an ordinary `go`, and by start_pondering() below to
+/// save the SAME budget a non-ponder `go` from this position would have
+/// used, for later reuse once `ponderhit` arrives — see
+/// start_pondering()'s own doc comment).
+struct SearchBudget {
+    int max_depth = 0;
+    /// 0 means "no real time budget" (an explicit `depth N` with no
+    /// `movetime`, or no time control/depth at all — kNoTimeControlDepth
+    /// applies to `max_depth` in that case instead). A positive value is
+    /// a genuine millisecond budget, whether from `movetime` directly or
+    /// derived from `wtime`/`btime`/`winc`/`binc` via allocate_time_ms().
+    int time_limit_ms = 0;
+};
+
+/// Parses `go`'s own `[depth N] [movetime N] [wtime W btime B [winc I]
+/// [binc I]]` tokens (any combination; unrecognized sub-options like
+/// `movestogo`/`infinite`/`ponder`/`mate`/`nodes` are ignored here too,
+/// same as handle_go()'s own former inline version of this logic) into
+/// a concrete depth ceiling and millisecond budget — extracted into its
+/// own function so start_pondering() can compute and SAVE the same
+/// budget an ordinary (non-ponder) `go` from this exact position would
+/// have used, without actually applying it until `ponderhit` (see that
+/// function's own doc comment for why the budget can't just be applied
+/// immediately the way it is here).
+[[nodiscard]] SearchBudget compute_search_budget(const Position& pos,
+                                                   const std::vector<std::string>& tokens) {
+    SearchBudget budget;
+    bool have_depth = false;
+    bool have_movetime = false;
+    int wtime = -1;
+    int btime = -1;
+    int winc = 0;
+    int binc = 0;
+
+    for (std::size_t i = 1; i < tokens.size(); ++i) {
+        const std::string& tok = tokens[i];
+
+        auto next_int = [&]() -> int {
+            if (i + 1 < tokens.size()) {
+                try {
+                    return std::stoi(tokens[++i]);
+                } catch (const std::exception&) {
+                    return 0;
+                }
+            }
+            return 0;
+        };
+
+        if (tok == "depth") {
+            budget.max_depth = next_int();
+            have_depth = true;
+        } else if (tok == "movetime") {
+            budget.time_limit_ms = next_int();
+            have_movetime = true;
+        } else if (tok == "wtime") {
+            wtime = next_int();
+        } else if (tok == "btime") {
+            btime = next_int();
+        } else if (tok == "winc") {
+            winc = next_int();
+        } else if (tok == "binc") {
+            binc = next_int();
+        }
+    }
+
+    if (have_depth) {
+        if (budget.max_depth < 1) {
+            budget.max_depth = kNoTimeControlDepth; // Guard against a malformed "depth 0"/negative value.
+        }
+        // time_limit_ms is whatever movetime gave (possibly 0, i.e. no limit).
+    } else if (have_movetime) {
+        budget.max_depth = kTimedSearchMaxDepth;
+        // time_limit_ms is already set from movetime above.
+    } else {
+        const bool white_to_move = pos.side_to_move == board::Color::White;
+        const int remaining = white_to_move ? wtime : btime;
+        if (remaining >= 0) {
+            const int increment = white_to_move ? winc : binc;
+            budget.time_limit_ms = allocate_time_ms(remaining, increment);
+            budget.max_depth = kTimedSearchMaxDepth;
+        } else {
+            budget.max_depth = kNoTimeControlDepth;
+            budget.time_limit_ms = 0;
+        }
+    }
+    return budget;
+}
+
 /// Formats and writes one `info depth ... score cp/mate ... nodes ...
 /// pv ...` line to `out` for one completed search::search_iterative_
 /// deepening() iteration -- meant to be passed as that function's
@@ -371,66 +469,7 @@ void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
         return;
     }
 
-    int max_depth = 0;
-    int time_limit_ms = 0;
-    bool have_depth = false;
-    bool have_movetime = false;
-    int wtime = -1;
-    int btime = -1;
-    int winc = 0;
-    int binc = 0;
-
-    for (std::size_t i = 1; i < tokens.size(); ++i) {
-        const std::string& tok = tokens[i];
-
-        auto next_int = [&]() -> int {
-            if (i + 1 < tokens.size()) {
-                try {
-                    return std::stoi(tokens[++i]);
-                } catch (const std::exception&) {
-                    return 0;
-                }
-            }
-            return 0;
-        };
-
-        if (tok == "depth") {
-            max_depth = next_int();
-            have_depth = true;
-        } else if (tok == "movetime") {
-            time_limit_ms = next_int();
-            have_movetime = true;
-        } else if (tok == "wtime") {
-            wtime = next_int();
-        } else if (tok == "btime") {
-            btime = next_int();
-        } else if (tok == "winc") {
-            winc = next_int();
-        } else if (tok == "binc") {
-            binc = next_int();
-        }
-    }
-
-    if (have_depth) {
-        if (max_depth < 1) {
-            max_depth = kNoTimeControlDepth; // Guard against a malformed "depth 0" or negative value.
-        }
-        // time_limit_ms is whatever movetime gave (possibly 0, i.e. no limit).
-    } else if (have_movetime) {
-        max_depth = kTimedSearchMaxDepth;
-        // time_limit_ms is already set from movetime above.
-    } else {
-        const bool white_to_move = pos.side_to_move == board::Color::White;
-        const int remaining = white_to_move ? wtime : btime;
-        if (remaining >= 0) {
-            const int increment = white_to_move ? winc : binc;
-            time_limit_ms = allocate_time_ms(remaining, increment);
-            max_depth = kTimedSearchMaxDepth;
-        } else {
-            max_depth = kNoTimeControlDepth;
-            time_limit_ms = 0;
-        }
-    }
+    const SearchBudget budget = compute_search_budget(pos, tokens);
 
     // `on_iteration` (search/search.h's IterationCallback): emits one
     // `info depth ... score ... nodes ... pv ...` line per completed
@@ -442,7 +481,7 @@ void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
     // loop). `num_threads` is this call's own new parameter, this
     // function's own doc comment above.
     const search::SearchResult result = search::search_iterative_deepening(
-        pos, max_depth, time_limit_ms, game_history,
+        pos, budget.max_depth, budget.time_limit_ms, game_history,
         [&out](const search::SearchResult& iteration_result) { emit_info(iteration_result, out); },
         /*material_weights=*/nullptr, num_threads);
 
@@ -457,6 +496,286 @@ void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
     }
     out << '\n';
     out.flush();
+}
+
+/// True if `target` appears anywhere in `tokens` after index 0 (the
+/// command word itself) — used to detect `go ... ponder ...` amid
+/// `go`'s other, order-independent sub-options.
+[[nodiscard]] bool has_token(const std::vector<std::string>& tokens, const std::string& target) {
+    return std::find(tokens.begin() + 1, tokens.end(), target) != tokens.end();
+}
+
+/// All state for one in-flight `go ponder` search — a single instance
+/// lives for run()'s whole lifetime (ROADMAP.md Phase 7, "Pondering").
+/// Deliberately not copyable/movable (std::thread and std::atomic both
+/// aren't) — always held by reference, never returned or stored
+/// elsewhere.
+struct PonderState {
+    /// The background thread running the actual pondering search (see
+    /// start_pondering() below). Non-joinable when no ponder search is
+    /// in flight — every function here uses `thread.joinable()` as the
+    /// "is a search actually running" check, rather than a separate
+    /// bool, so there's exactly one source of truth.
+    std::thread thread;
+
+    /// Set to request the background search stop — checked both between
+    /// iterations and mid-iteration by search::search_iterative_
+    /// deepening()'s own `external_stop` parameter (search.h's doc
+    /// comment on that parameter has the full contract). Reset to
+    /// `false` at the start of every new start_pondering() call.
+    std::atomic<bool> stop{false};
+
+    /// When true, the background thread's own completion (see
+    /// start_pondering()'s lambda) skips writing `bestmove` to `out`
+    /// entirely — used only for the defensive "abandon a still-running
+    /// ponder search because an out-of-protocol command arrived"
+    /// path (abandon_pondering() below), never for a genuine
+    /// `ponderhit`/`stop`, both of which DO still produce a `bestmove`
+    /// per the UCI spec's own requirement that `stop` always yields one
+    /// (docs/DECISIONS.md has the full rationale for why `stop` still
+    /// prints even though the GUI is expected to discard it).
+    std::atomic<bool> suppress_output{false};
+
+    /// True from the moment start_pondering() launches the background
+    /// search until either handle_ponderhit() or abandon_pondering()
+    /// consumes it — used only to make handle_ponderhit() a safe no-op
+    /// if it arrives with no pondering search actually in flight (an
+    /// out-of-protocol `ponderhit`), since `thread.joinable()` alone
+    /// stays true even after ponderhit until the search eventually
+    /// finishes.
+    bool active = false;
+
+    /// The millisecond time budget an ORDINARY (non-ponder) `go` from
+    /// the same position would have used — computed once, up front, by
+    /// start_pondering() via compute_search_budget(), and consulted
+    /// only later, by handle_ponderhit() — see that function's own doc
+    /// comment for how it's applied. 0 means "no real time budget"
+    /// (compute_search_budget()'s own doc comment).
+    int saved_time_limit_ms = 0;
+};
+
+/// Unconditionally stops and joins any in-flight pondering search,
+/// discarding its result (never writing `bestmove`) — the defensive
+/// path for an out-of-protocol command arriving while `go ponder` is
+/// still running (a compliant GUI always sends `ponderhit` or `stop`
+/// first), matching this file's established convention of degrading
+/// gracefully rather than crashing or corrupting state on a malformed
+/// command sequence (this file's header comment; handle_position()'s/
+/// apply_uci_moves()'s own doc comments). A no-op if nothing is
+/// running. Called from run() ahead of `position`/`ucinewgame`/`go`
+/// (a second `go ponder` arriving while one is already active) and
+/// once, unconditionally, right before run() returns (covers `quit`
+/// and end-of-input alike) — std::thread's destructor calls
+/// std::terminate() on a still-joinable thread, so this is a hard
+/// correctness requirement, not just tidiness.
+void abandon_pondering(PonderState& ponder) {
+    if (!ponder.thread.joinable()) {
+        return;
+    }
+    ponder.suppress_output.store(true, std::memory_order_relaxed);
+    ponder.stop.store(true, std::memory_order_relaxed);
+    ponder.thread.join();
+    ponder.active = false;
+}
+
+/// Starts a `go ponder ...` search in the background (ROADMAP.md Phase
+/// 7, "Pondering — search side: handle `go ponder`"). Unlike an
+/// ordinary `go` (handle_go(), fully synchronous), this launches
+/// `ponder.thread` and returns immediately, so run()'s own command loop
+/// keeps reading further lines (the whole point — a later `ponderhit`
+/// or `stop` needs to reach handle_ponderhit()/handle_stop() while the
+/// search is still running, not after).
+///
+/// The background search itself runs with `time_limit_ms = 0` (no
+/// deadline at all) and a high `max_depth` (kTimedSearchMaxDepth) — it
+/// searches as deep as it profitably can for as long as it's allowed
+/// to run, which is exactly what pondering during the opponent's own
+/// thinking time is FOR — stopped only via `ponder.stop`
+/// (search::search_iterative_deepening()'s new `external_stop`
+/// parameter, search.h). Deliberately does NOT consult the opening
+/// book (src/book/book.h) the way handle_go() does — pondering on a
+/// book-covered position would have nothing to actually search, and
+/// this project's book has no toggle to check first without also
+/// gating this call's own behavior on it; see docs/DECISIONS.md for
+/// the full rationale.
+///
+/// The REAL time budget for the eventual answer — what an ordinary
+/// `go` from this exact position would have used — is computed once,
+/// up front, via compute_search_budget(), and saved into
+/// `ponder.saved_time_limit_ms` for handle_ponderhit() to apply later;
+/// it is NOT applied to the background search itself (see that
+/// function's own doc comment for exactly how/when it's used).
+///
+/// `pos` and `game_history` are both copied into the background
+/// thread's own closure rather than captured by reference — the same
+/// reason search.cpp's Lazy SMP helper threads (run_lazy_smp_helper())
+/// each get their own private Position copy: `pos`/`game_history` are
+/// run()'s own locals, which could in principle be touched again by a
+/// later command on the main thread (an out-of-protocol `position`
+/// while still pondering, handled by abandon_pondering() above) while
+/// this search is still running on its own thread — a private copy
+/// sidesteps that race entirely rather than depending on the caller
+/// always behaving.
+void start_pondering(Position& pos, const std::vector<std::uint64_t>& game_history,
+                      const std::vector<std::string>& tokens, int num_threads, std::ostream& out,
+                      PonderState& ponder) {
+    abandon_pondering(ponder); // Defensive: see this function's own doc comment above.
+
+    const SearchBudget budget = compute_search_budget(pos, tokens);
+    ponder.saved_time_limit_ms = budget.time_limit_ms;
+    ponder.stop.store(false, std::memory_order_relaxed);
+    ponder.suppress_output.store(false, std::memory_order_relaxed);
+    ponder.active = true;
+
+    Position ponder_pos = pos;
+    std::vector<std::uint64_t> ponder_history = game_history;
+    std::atomic<bool>* stop_ptr = &ponder.stop;
+    std::atomic<bool>* suppress_ptr = &ponder.suppress_output;
+
+    ponder.thread = std::thread([&out, num_threads, ponder_pos, ponder_history, stop_ptr,
+                                  suppress_ptr]() mutable {
+        const search::SearchResult result = search::search_iterative_deepening(
+            ponder_pos, kTimedSearchMaxDepth, /*time_limit_ms=*/0, ponder_history,
+            /*on_iteration=*/nullptr, /*material_weights=*/nullptr, num_threads, stop_ptr);
+        if (suppress_ptr->load(std::memory_order_relaxed)) {
+            return;
+        }
+        out << "bestmove ";
+        if (result.best_move.is_null()) {
+            out << "0000";
+        } else {
+            out << result.best_move.to_uci();
+        }
+        out << '\n';
+        out.flush();
+    });
+}
+
+/// Handles `ponderhit` — "continue as real search on `ponderhit`"
+/// (ROADMAP.md's own wording for this item). The background search
+/// started by start_pondering() keeps running exactly as it already
+/// was (no restart, no wasted work) — this function's only job is to
+/// hand it the REAL move's time budget (`ponder.saved_time_limit_ms`,
+/// computed up front by start_pondering() via compute_search_budget())
+/// so it eventually stops at a sensible point instead of continuing to
+/// chase kTimedSearchMaxDepth unbounded.
+///
+/// Because search::search_iterative_deepening()'s own deadline (when it
+/// has one at all) is fixed at the moment that call starts and can't be
+/// adjusted on an already-in-flight call, the budget is applied via a
+/// small, short-lived, detached watchdog thread that sleeps for the
+/// budgeted duration and then raises `ponder.stop` — the exact same
+/// flag the background search is already checking. This is an accepted
+/// simplification (see docs/DECISIONS.md for the full writeup): the
+/// budget applied is the one `go ponder`'s own `wtime`/`btime`/
+/// `movetime` tokens implied WHEN THE PONDER SEARCH STARTED, not a
+/// clock re-synced against however much of the opponent's own time has
+/// actually elapsed since then (this loop has no live channel for the
+/// GUI to resend updated clock values at `ponderhit` — the UCI spec's
+/// own `ponderhit` command carries no parameters at all).
+///
+/// If `go ponder` carried no real time budget at all (an explicit
+/// `depth N` with no `movetime`, or neither depth nor any time control
+/// — compute_search_budget()'s own doc comment, `saved_time_limit_ms ==
+/// 0`), there's no duration to hand off — `ponderhit` instead requests
+/// an immediate stop, taking whatever depth the background search has
+/// already reached rather than continuing toward kTimedSearchMaxDepth
+/// unconstrained (also documented in docs/DECISIONS.md as an accepted,
+/// narrower fallback rather than a fuller re-derivation of what a bare
+/// `go depth N`/`go` would have wanted).
+///
+/// A no-op if no pondering search is actually active (an out-of-
+/// protocol `ponderhit` with nothing running) — same defensive
+/// robustness convention as every other command handler in this file.
+void handle_ponderhit(PonderState& ponder) {
+    if (!ponder.active || !ponder.thread.joinable()) {
+        return;
+    }
+    ponder.active = false;
+
+    if (ponder.saved_time_limit_ms <= 0) {
+        ponder.stop.store(true, std::memory_order_relaxed);
+        return;
+    }
+
+    std::atomic<bool>* stop_ptr = &ponder.stop;
+    const int delay_ms = ponder.saved_time_limit_ms;
+    std::thread watchdog([stop_ptr, delay_ms]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+        stop_ptr->store(true, std::memory_order_relaxed);
+    });
+    // Detached, not joined: this thread's only job is a timed sleep
+    // followed by one atomic store, touching nothing that isn't kept
+    // alive for run()'s whole lifetime (`ponder.stop` itself) — and
+    // by the time it actually fires, the background search it signals
+    // is guaranteed to still be running (that's what makes it stop),
+    // which in turn is what run()'s own final abandon_pondering() call
+    // blocks on joining before run() can return — so this watchdog is
+    // always long gone (its own store already happened, its thread
+    // already exited) before `ponder.stop` could ever be destroyed.
+    watchdog.detach();
+}
+
+/// Handles `stop` while a pondering search is in flight — "discard and
+/// restart on `stop` + actual move" (ROADMAP.md's own wording): this
+/// function itself performs the "discard" half (stopping the search and
+/// letting its own thread still print the resulting `bestmove`, which
+/// the UCI spec requires even here — see PonderState::suppress_output's
+/// own doc comment for why this path does NOT suppress it, unlike
+/// abandon_pondering()'s defensive path). The "restart" half is simply
+/// the natural consequence of the UCI protocol from here: the GUI is
+/// expected to follow this with a fresh `position` (now including the
+/// opponent's REAL move, not the one this ponder search guessed) and a
+/// fresh `go` — ordinary, synchronous handle_go(), unaffected by
+/// anything in this function — once it's ready, no special handling
+/// needed on this file's side for that second half at all.
+///
+/// A no-op if no pondering search is actually active (`stop` arriving
+/// with nothing running, or after a search has already naturally
+/// finished/been ponderhit-then-completed) — same defensive robustness
+/// convention as every other command handler in this file. Blocks until
+/// the background thread has actually stopped and printed its
+/// `bestmove` (`thread.join()`), matching this file's existing
+/// synchronous, one-command-fully-handled-before-the-next-line-is-read
+/// convention for every OTHER command besides `go ponder` itself.
+void handle_stop(PonderState& ponder) {
+    if (!ponder.thread.joinable()) {
+        return;
+    }
+    ponder.active = false;
+    ponder.stop.store(true, std::memory_order_relaxed);
+    ponder.thread.join();
+}
+
+/// Waits out whatever pondering search is still running when run() is
+/// about to return, WITHOUT discarding a result that was already
+/// properly earned via `ponderhit`/`stop` — the tail-end counterpart to
+/// abandon_pondering() above, and NOT interchangeable with it. The two
+/// cases:
+///   - `ponder.active` still true: no `ponderhit`/`stop` ever arrived
+///     for this search at all (e.g. `go ponder` immediately followed by
+///     `quit`, or `in` simply running out of lines) — this is a genuine
+///     abandonment, so abandon_pondering() (suppressed output, forced
+///     stop) is the right call.
+///   - `ponder.active` already false: `handle_ponderhit()` or
+///     `handle_stop()` already ran for this search — `handle_stop()`
+///     itself already joins synchronously, so `ponder.thread` is only
+///     still joinable here in the `ponderhit` case, where the
+///     background search may simply not have finished yet (its own
+///     watchdog thread, handle_ponderhit(), hasn't fired, or the search
+///     itself hasn't noticed `ponder.stop` on its next periodic check).
+///     That's a properly-earned result already in flight, on its way to
+///     printing `bestmove` on its own — an ordinary, UNFORCED join is
+///     the right call here, not abandon_pondering()'s suppress-and-
+///     force-stop, which would silently swallow a `ponderhit`-triggered
+///     `bestmove` the caller specifically asked for and is entitled to.
+/// A no-op either way if nothing is running.
+void finish_pondering(PonderState& ponder) {
+    if (ponder.active) {
+        abandon_pondering(ponder);
+    } else if (ponder.thread.joinable()) {
+        ponder.thread.join();
+    }
 }
 
 } // namespace
@@ -476,6 +795,13 @@ void run(std::istream& in, std::ostream& out) {
     // OPTIONS persist across games within one session while game STATE
     // does not.
     int num_threads = kMinThreads;
+    // Pondering state (ROADMAP.md Phase 7) — session-lifetime, like
+    // `num_threads` above, though its own contents (the background
+    // thread, the stop flag) are reset per `go ponder` by
+    // start_pondering() itself, not by `ucinewgame` here (a pondering
+    // search is tied to one specific `go ponder` call, not the whole
+    // session the way `Threads` is) — see PonderState's own doc comment.
+    PonderState ponder;
     std::string line;
 
     while (std::getline(in, line)) {
@@ -499,25 +825,49 @@ void run(std::istream& in, std::ostream& out) {
             out << "readyok\n";
             out.flush();
         } else if (cmd == "ucinewgame") {
+            abandon_pondering(ponder); // A new game starting mid-ponder is out-of-protocol; degrade gracefully.
             pos = board::start_position();
             game_history.clear();
         } else if (cmd == "position") {
+            abandon_pondering(ponder); // Same rationale as ucinewgame above.
             handle_position(pos, game_history, tokens);
         } else if (cmd == "setoption") {
             handle_setoption(num_threads, tokens);
         } else if (cmd == "go") {
-            handle_go(pos, game_history, tokens, num_threads, out);
+            if (has_token(tokens, "ponder")) {
+                start_pondering(pos, game_history, tokens, num_threads, out, ponder);
+            } else {
+                handle_go(pos, game_history, tokens, num_threads, out);
+            }
+        } else if (cmd == "ponderhit") {
+            handle_ponderhit(ponder);
+        } else if (cmd == "stop") {
+            handle_stop(ponder);
         } else if (cmd == "quit") {
             break;
         }
-        // stop, ponderhit, debug, register, and anything else
-        // unrecognized (including a `setoption` for any name besides
-        // `Threads` -- handle_setoption()'s own doc comment): silently
-        // ignored, per the UCI spec's expectation that engines ignore
-        // commands they don't understand — required for robustness
-        // against a GUI/script sending commands ahead of what this
-        // phase supports (see this file's header comment).
+        // debug, register, and anything else unrecognized (including a
+        // `setoption` for any name besides `Threads` --
+        // handle_setoption()'s own doc comment): silently ignored, per
+        // the UCI spec's expectation that engines ignore commands they
+        // don't understand — required for robustness against a
+        // GUI/script sending commands ahead of what this phase supports
+        // (see this file's header comment).
     }
+
+    // Ensures no pondering search outlives run() itself -- std::thread's
+    // destructor calls std::terminate() on a still-joinable thread, so
+    // this is a hard correctness requirement covering every exit path
+    // (`quit`, or `in` simply running out of lines) uniformly, not just
+    // tidiness. Uses finish_pondering(), NOT abandon_pondering()
+    // directly -- see finish_pondering()'s own doc comment for why: a
+    // `ponderhit` that already properly earned its `bestmove` (just not
+    // finished printing it yet by the time `quit`/end-of-input arrives)
+    // must not be silently suppressed here the way a genuinely
+    // abandoned (never `ponderhit`/`stop`ped) search should be. A no-op
+    // on the overwhelmingly common path where nothing was pondering
+    // when the loop ended.
+    finish_pondering(ponder);
 }
 
 } // namespace nightwing::uci
