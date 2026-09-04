@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+### Session 77 — 2026-09-04 — Verify no strength regression vs. single-threaded at equal single-thread depth (Phase 7's last item — Phase 7 now complete)
+
+**Built:**
+- `src/search/search.h`/`.cpp`: `search_fixed_depth()` gained a `num_threads = 1` parameter (same meaning as `search_iterative_deepening()`'s own), spawning Lazy SMP helpers around its one fixed-depth `search_root()` call. Required a small structural change too: `run_lazy_smp_helper()` is defined later in the file than `search_fixed_depth()`, so a forward declaration (same anonymous namespace, real definition unchanged/unmoved) was added ahead of `search_fixed_depth()` rather than relocating either function.
+- `src/tuner/match.h`/`.cpp`: `MatchConfig` gained `threads_a`/`threads_b` fields (both default 1), threaded through `play_one_match_game()`/`play_match()`'s existing per-side selection logic (alongside the existing per-side `weights_white`/`weights_black` selection) into each side's own `search_fixed_depth()` call.
+- `tests/thread_regression_tests.cpp` (new, 5 tests, `[thread_regression]` tag): structural/plumbing checks for both capabilities above — `num_threads > 1` still returns a legal move at the requested depth; the `num_threads = 1` default leaves every existing call site unaffected; helper threads' own node counts actually fold into the reported total; a match with different thread counts per side runs to completion with no crash; `threads_a`/`threads_b` defaulting to 1/1 leaves `play_match()` byte-for-byte identical to before these fields existed.
+- Four real, dispatched `tuner::play_match()` runs (not unit tests) — the actual verification this item calls for. Full numbers, methodology, and the important "Lazy SMP's score at equal depth isn't bit-for-bit thread-count-invariant" finding that shaped this whole approach are logged in docs/DECISIONS.md, 2026-09-04 (3). Headline result: 1-vs-2/4/8-thread comparisons (400 games each, depth 4) plus a 1-vs-4-thread comparison at depth 5 (300 games) — every comparison favored the multi-threaded side by roughly 19–43 Elo, never a regression.
+
+**Bugs fixed:** none this session.
+
+**Decisions made:** logged in docs/DECISIONS.md, 2026-09-04 (3) — the `search_fixed_depth()`/`MatchConfig` extension design, the empirical non-invariance finding that motivated a statistical rather than exact-equality verification approach, the full match results table, and the alternatives considered (exact-equality assertions, a dedicated new module, a single comparison instead of three thread counts across two depths).
+
+**Verification performed:**
+- Every touched file compiled clean under `g++ -std=c++20 -Wall -Wextra -Wpedantic`.
+- Full suite (429 cases via this sandbox's own g++/Catch2-amalgamated harness) recompiled and rerun: all green, `bench` node counts/scores unchanged (startpos 1274, kiwipete 8185, quiet_middlegame 6591, endgame_mate_in_3 64979/score 31995) — confirming both new parameters' defaults leave every existing call site's behavior identical.
+- The 5 new `[thread_regression]`-tagged tests additionally recompiled and rerun standalone under `-fsanitize=address,undefined` (`board/attacks.cpp` separately compiled at `-O2`, same convention as every prior sanitizer check this project has run) — clean, no findings.
+- The four real match runs themselves (docs/DECISIONS.md's own table) were run directly against this session's own compiled engine, not assumed or estimated.
+
+**Next session start point:** Phase 7 is now fully complete. Read ROADMAP.md's own Phase 8 ("Polish & Tournament Readiness") section directly for its exact item list and pick the next one — no partial work or open bugs left from this session.
+
+---
+
 ### Session 76 — 2026-09-04 — Bugfix: pondering's background thread stack-overflowing on macOS CI (Bus error), same root cause as Session 73's Lazy SMP fix
 
 **Context:** CI logs for the commit covering Session 75 (uploaded, GitHub Actions run 91647071717) showed macOS Debug and macOS Release both failing exactly the same 6 tests — every `tests/pondering_tests.cpp` UCI-level case that actually spawns `start_pondering()`'s background thread (all 6 `go ponder ...` cases; the 2 pure `search_iterative_deepening()`-level `external_stop` tests, which never touch `src/uci/uci.cpp`'s own thread, passed everywhere) — with `Bus error` / ASan `BUS on unknown address`, while Linux Debug/Release and Windows Debug/Release all passed cleanly (426/426). Exactly the same signature, exactly the same platform split, as Session 73's own Lazy SMP stack-overflow bug.
