@@ -463,7 +463,7 @@ TEST_CASE("uci: 'uci' response advertises the Hash and Move Overhead spin option
           "[uci][hash][overhead]") {
     init_all();
     const std::string out = run_uci({"uci", "quit"});
-    REQUIRE(contains(out, "option name Hash type spin default 16 min 1 max 65536"));
+    REQUIRE(contains(out, "option name Hash type spin default 16 min 1 max 2048"));
     REQUIRE(contains(out, "option name Move Overhead type spin default 0 min 0 max 5000"));
 }
 
@@ -482,7 +482,9 @@ TEST_CASE("uci: an out-of-range 'setoption name Hash value ...' is clamped, not 
           "[uci][hash]") {
     init_all();
     // 0 is below kMinHashMB (1); 99999999 is far above kMaxHashMB
-    // (65536) -- handle_setoption() clamps both rather than ignoring the
+    // (2048, i.e. 2 GiB as of the CI-driven fix in docs/DECISIONS.md,
+    // 2026-09-05 -- originally 65536/64 GiB) -- handle_setoption()
+    // clamps both rather than ignoring the
     // whole command or attempting an absurd allocation.
     const std::string out_low =
         run_uci({"setoption name Hash value 0", "position startpos", "go depth 3", "quit"});
