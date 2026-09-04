@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 78 — 2026-09-04 — Bugfix: flaky Session-77 test on Release builds (CI)
+
+**Context:** CI logs (GitHub Actions run 91705244381, uploaded) showed Linux/macOS/Windows Release each failing exactly one test — Session 77's own `"search_fixed_depth: node counts fold in every helper thread's own contribution..."` — while all three Debug builds passed 100%. All other tests, all platforms: green.
+
+**Built:** nothing new — a bugfix session.
+
+**Bugs fixed:** `tests/thread_regression_tests.cpp`'s node-folding test asserted a strict `with_4_threads.nodes > with_1_thread.nodes`, implicitly assuming Lazy SMP helper threads always get OS-scheduled in time to complete at least one depth iteration (the only point `run_lazy_smp_helper()`, `src/search/search.cpp`, credits any nodes) before the main thread's own fast, single fixed-depth call finishes and stops them. True most of the time, not guaranteed — a fast Release build's depth-4 search on this test's own position can finish before 3 freshly-spawned threads even get their first scheduler timeslice, legitimately leaving their contribution at zero (directly reproduced: 4 of 5 repeated local runs contributed real extra nodes, the 5th didn't, matching CI's own intermittent-by-platform pattern). Not an engine bug — `search_fixed_depth()`'s own fold-in logic is correct either way. Fixed by weakening the assertion to `>=` (the actual, always-true guarantee: helper contributions are non-negative and only ever added, never subtracted) and rewriting the test's own name/comment to match. No production code changed.
+
+**Decisions made:** logged in docs/DECISIONS.md, 2026-09-04 (4) — full root-cause account, the measured contribution rate across depths 3–8, and why `>=` rather than trying to pick a "safer" depth (no depth offers a hard guarantee, only better odds).
+
+**Verification performed:** the fixed test rerun 8 consecutive times at `-O2` (Release-equivalent optimization) with zero failures. Full suite (429 cases) recompiled and rerun at `-O2`: all green, `bench` unchanged. Real helper participation under realistic conditions was separately, directly measured (not merely assumed) at every depth from 3 through 8 before choosing the fix.
+
+**Next session start point:** Phase 7 remains fully complete; this was a same-day CI-driven bugfix with no new roadmap item touched. Read ROADMAP.md's own Phase 8 section directly for its exact item list and pick the next one.
+
+---
+
 ### Session 77 — 2026-09-04 — Verify no strength regression vs. single-threaded at equal single-thread depth (Phase 7's last item — Phase 7 now complete)
 
 **Built:**
