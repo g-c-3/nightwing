@@ -243,13 +243,32 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// compiled-in constants" — every existing caller is entirely
 /// unaffected.
 ///
+/// `num_threads`: same meaning and default (1) as
+/// search_iterative_deepening()'s own parameter of the same name —
+/// `> 1` spawns that many Lazy SMP helper threads for this one fixed-
+/// depth call (search_root() is reused unchanged by both this function
+/// and search_iterative_deepening() itself, so the underlying threading
+/// mechanism is identical, just without the outer iterative-deepening
+/// loop around it). Added for ROADMAP.md Phase 7's own last item,
+/// "Verify no strength regression vs. single-threaded at equal single-
+/// thread depth": `src/tuner/match.h`'s MatchConfig::threads_a/
+/// threads_b thread this straight through, letting a real head-to-head
+/// match compare two thread counts at an IDENTICAL fixed search depth
+/// on both sides (the "equal single-thread depth" the item's own
+/// wording asks for) rather than conflating threading's effect on move
+/// QUALITY with its effect on search SPEED the way a time-based
+/// comparison would. Defaults to 1 — every existing caller (every test,
+/// tuner::selfplay, tuner::match's own pre-Session-77 callers) is
+/// unaffected.
+///
 /// Precondition: `depth >= 1`, and init_masks()/init_magic_bitboards()
 /// have been called (movegen's precondition, transitively — see
 /// board/movegen.h).
 [[nodiscard]] SearchResult search_fixed_depth(board::Position& pos, int depth,
                                                std::span<const std::uint64_t> game_history = {},
                                                const eval::MaterialWeights* material_weights =
-                                                   nullptr);
+                                                   nullptr,
+                                               int num_threads = 1);
 
 /// Runs iterative deepening: searches at depth = 1, 2, 3, ... up to
 /// `max_depth`, keeping the most recently *completed* iteration's

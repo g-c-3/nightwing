@@ -1756,8 +1756,28 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
 
 } // namespace
 
+namespace {
+// Forward declaration only -- the real definition is further down this
+// file (still the same anonymous namespace: unlike a named namespace,
+// an anonymous `namespace { ... }` block refers to the SAME unique,
+// internal-linkage namespace everywhere it's reopened within one
+// translation unit, so this declaration and that later definition are
+// one and the same entity, not two). Declared here, ahead of
+// search_fixed_depth() below, purely so that function (which now also
+// spawns Lazy SMP helpers -- see its own doc comment, search.h) can
+// call it without needing to be physically relocated after
+// search_iterative_deepening()'s own, much larger, block of helper
+// machinery -- keeping search_fixed_depth() in its original place in
+// the file, right after search_root(), was judged less disruptive to
+// this file's existing structure than moving it.
+void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
+                          std::span<const std::uint64_t> game_history,
+                          const eval::MaterialWeights* material_weights,
+                          const std::atomic<bool>& stop, std::uint64_t& nodes_out);
+} // namespace
+
 SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::uint64_t> game_history,
-                                 const eval::MaterialWeights* material_weights) {
+                                 const eval::MaterialWeights* material_weights, int num_threads) {
     assert(depth >= 1 && "search_fixed_depth: depth must be at least 1");
 
     // Fresh, private tables for this one call (see tt.h's header
@@ -1784,11 +1804,62 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
     // scoping/rationale as pawn_tt just above (see eval/eval_cache.h's
     // header comment).
     eval::EvalCache eval_cache(kDefaultEvalCacheSizeKB);
+
+    // Lazy SMP (ROADMAP.md Phase 7's own last item, "Verify no strength
+    // regression..." — search.h's own doc comment on this function's
+    // `num_threads` parameter has the full contract): same spawn/join
+    // pattern as search_iterative_deepening()'s own below, just wrapped
+    // around this function's single fixed-depth search_root() call
+    // instead of an outer iterative-deepening loop — there's no
+    // "between iterations" to spawn helpers ahead of here, so they're
+    // spawned immediately, before the one search_root() call below, and
+    // told to stop as soon as it returns. `run_lazy_smp_helper()` itself
+    // (this file, just above) has no knowledge of which of its two
+    // callers (this function or search_iterative_deepening()) started
+    // it — same helper function, same TT-sharing/heap-allocated-tables
+    // contract, either way.
+    const int effective_threads = num_threads < 1 ? 1 : num_threads;
+    std::atomic<bool> smp_stop{false};
+    std::vector<std::thread> helpers;
+    std::vector<std::uint64_t> helper_nodes;
+    if (effective_threads > 1) {
+        const std::size_t n = static_cast<std::size_t>(effective_threads - 1);
+        helpers.reserve(n);
+        helper_nodes.assign(n, 0);
+        for (std::size_t i = 0; i < n; ++i) {
+            Position helper_pos = pos; // synchronous copy on the calling thread -- same
+                                        // ordering rationale as search_iterative_deepening()'s
+                                        // own identical comment below.
+            helpers.emplace_back(run_lazy_smp_helper, std::move(helper_pos), depth, std::ref(tt),
+                                  game_history, material_weights, std::cref(smp_stop),
+                                  std::ref(helper_nodes[i]));
+        }
+    }
+
     // No previous iteration's score to aspirate around (see
     // search_iterative_deepening() below and docs/DECISIONS.md's
     // aspiration-windows entry) -- always the full window.
-    return search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history, cont_history,
-                        game_history, path, pawn_tt, eval_cache, material_weights);
+    SearchResult result = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history,
+                                       cont_history, game_history, path, pawn_tt, eval_cache,
+                                       material_weights);
+
+    // Same stop/join/fold-in-node-counts pattern as
+    // search_iterative_deepening()'s own below -- no-op (empty
+    // `helpers`) when `effective_threads <= 1`, matching this whole
+    // block's absence before this parameter existed.
+    if (!helpers.empty()) {
+        smp_stop.store(true, std::memory_order_relaxed);
+        for (std::thread& helper : helpers) {
+            helper.join();
+        }
+        std::uint64_t total_nodes = result.nodes;
+        for (std::uint64_t n : helper_nodes) {
+            total_nodes += n;
+        }
+        result.nodes = total_nodes;
+    }
+
+    return result;
 }
 
 namespace {
