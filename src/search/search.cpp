@@ -8,6 +8,7 @@
 #include <cassert>
 #include <chrono>
 #include <memory>
+#include <new>
 #include <span>
 #include <thread>
 #include <utility>
@@ -37,13 +38,6 @@ using board::UndoInfo;
 /// negation is undefined behavior.
 constexpr int kInfinity = 1'000'000;
 
-/// Placeholder default table size until the UCI `Hash` option
-/// (ROADMAP.md Phase 8) makes this configurable. Modest on purpose: each
-/// top-level search call currently constructs its own fresh table (see
-/// tt.h's header comment on lifetime), so this gets allocated/freed
-/// often rather than once for the engine's lifetime.
-constexpr std::size_t kDefaultTTSizeMB = 16;
-
 /// Placeholder default pawn hash table size, same lifetime caveat as
 /// kDefaultTTSizeMB just above -- KB, not MB, matching eval::PawnHashTable's
 /// constructor (eval/pawn_tt.h's header comment on why this table is
@@ -63,6 +57,49 @@ constexpr std::size_t kDefaultPawnTTSizeKB = 512;
 /// matching this cache's own "optional supplement, not the primary
 /// cache" scope (ROADMAP.md's own "separate from TT" wording).
 constexpr std::size_t kDefaultEvalCacheSizeKB = 2048;
+
+/// Constructs a TranspositionTable sized to `requested_mb` megabytes,
+/// falling back to progressively smaller sizes (halving each time) if
+/// the allocation itself throws std::bad_alloc, rather than letting
+/// that exception propagate and crash the engine -- a real, reachable
+/// failure mode now that the UCI `Hash` option (ROADMAP.md Phase 8,
+/// src/uci/uci.cpp's own kMinHashMB/kMaxHashMB) lets a GUI/script
+/// request a table as large as 64 GiB, which a genuinely memory-
+/// constrained machine may not be able to satisfy even though the
+/// value itself is within the option's advertised bounds -- an
+/// in-range `setoption` value crashing the engine on a small machine
+/// would be exactly the kind of surprising failure this project's
+/// existing "malformed/out-of-range input degrades gracefully, never
+/// crashes" convention (handle_setoption()'s own doc comment, uci.cpp)
+/// already applies to every OTHER option; this is that same convention
+/// extended to a value that's syntactically fine but too large for the
+/// actual machine to satisfy, discovered directly by this session's own
+/// test suite (a REQUIRE(...) fed a large, in-bounds Hash value
+/// throwing std::bad_alloc uncaught, before this function existed).
+/// Halves down to a hard floor of 1 MB before giving up and letting the
+/// exception propagate after all -- TranspositionTable's own
+/// constructor doc comment (tt.h) already guarantees a 1 MB request
+/// yields a genuinely usable (if minimal) 1-bucket table rather than an
+/// empty one, so 1 MB is a safe, meaningful place to stop trying
+/// smaller sizes; a machine unable to allocate even that is too
+/// memory-constrained to run this engine at all, a case worth letting
+/// fail loudly rather than silently pretending to succeed.
+[[nodiscard]] TranspositionTable make_transposition_table(std::size_t requested_mb) {
+    std::size_t size_mb = requested_mb < 1 ? 1 : requested_mb;
+    while (true) {
+        try {
+            return TranspositionTable(size_mb);
+        } catch (const std::bad_alloc&) {
+            if (size_mb <= 1) {
+                throw; // Nothing smaller left to try -- let it propagate.
+            }
+            size_mb /= 2;
+            if (size_mb < 1) {
+                size_mb = 1;
+            }
+        }
+    }
+}
 
 /// Starting half-width (centipawns) of the aspiration window
 /// search_iterative_deepening() centers on the previous iteration's
@@ -1777,16 +1814,20 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
 } // namespace
 
 SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::uint64_t> game_history,
-                                 const eval::MaterialWeights* material_weights, int num_threads) {
+                                 const eval::MaterialWeights* material_weights, int num_threads,
+                                 std::size_t hash_size_mb) {
     assert(depth >= 1 && "search_fixed_depth: depth must be at least 1");
 
     // Fresh, private tables for this one call (see tt.h's header
     // comment, which applies equally to KillerTable/HistoryTable/
-    // ContinuationHistoryTable -- search/ordering.h). kDefaultTTSizeMB
-    // is a placeholder until the UCI `Hash` option (ROADMAP.md Phase 8)
-    // makes table size configurable and the tables themselves
-    // persistent across calls.
-    TranspositionTable tt(kDefaultTTSizeMB);
+    // ContinuationHistoryTable -- search/ordering.h). `hash_size_mb`
+    // (defaulting to search.h's kDefaultTTSizeMB) is the UCI `Hash`
+    // option's value (ROADMAP.md Phase 8) -- the table itself is still
+    // constructed fresh per call, not yet a persistent global resized
+    // in place (tt.h's own LIFETIME NOTE). make_transposition_table()
+    // (above) falls back to a smaller size rather than crashing if
+    // `hash_size_mb` is too large for this machine to actually satisfy.
+    TranspositionTable tt = make_transposition_table(hash_size_mb);
     KillerTable killers;
     HistoryTable history;
     ContinuationHistoryTable cont_history;
@@ -1956,7 +1997,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                                          std::span<const std::uint64_t> game_history,
                                          IterationCallback on_iteration,
                                          const eval::MaterialWeights* material_weights,
-                                         int num_threads, std::atomic<bool>* external_stop) {
+                                         int num_threads, std::atomic<bool>* external_stop,
+                                         std::size_t hash_size_mb) {
     assert(max_depth >= 1 && "search_iterative_deepening: max_depth must be at least 1");
 
     const auto start_time = std::chrono::steady_clock::now();
@@ -1972,7 +2014,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // reasonable ordering bet for the next, deeper one, and letting them
     // persist is exactly how real engines use iterative deepening to
     // make each successive iteration cheaper.
-    TranspositionTable tt(kDefaultTTSizeMB);
+    TranspositionTable tt = make_transposition_table(hash_size_mb);
     KillerTable killers;
     // Heap-allocated, not stack locals -- see run_lazy_smp_helper()'s
     // own identical pattern and comment just above in this file for the

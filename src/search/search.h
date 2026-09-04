@@ -63,6 +63,20 @@ inline constexpr int kDrawScore = 0;
 /// thousands even with several extra queens on the board).
 inline constexpr int kMateThreshold = kMateScore - 1000;
 
+/// Default transposition-table size in megabytes, used by both
+/// search_fixed_depth() and search_iterative_deepening() below whenever
+/// their caller doesn't specify a `hash_size_mb` argument explicitly.
+/// Public (unlike the table-size constant it replaces, which used to
+/// live as an anonymous-namespace `constexpr` inside search.cpp before
+/// the UCI `Hash` option existed) specifically so src/uci/uci.cpp can
+/// reference the same value as its own `Hash` option's advertised
+/// default, rather than the two ever risking drifting apart -- see
+/// ROADMAP.md Phase 8, "Full UCI option set," and tt.h's own header
+/// comment on the TT's still-per-call (not yet persistent-global)
+/// lifetime, which this option's value feeds into every `go` call
+/// rather than a table actually being resized in place.
+inline constexpr std::size_t kDefaultTTSizeMB = 16;
+
 /// Shared state for mid-search time-budget interruption (ROADMAP.md
 /// Priority Fix, "Mid-search time checks" — promoted once its own
 /// documented revisit trigger, real `wtime`/`btime`/`movetime` UCI
@@ -264,11 +278,20 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// Precondition: `depth >= 1`, and init_masks()/init_magic_bitboards()
 /// have been called (movegen's precondition, transitively — see
 /// board/movegen.h).
+/// `hash_size_mb` (ROADMAP.md Phase 8, "Full UCI option set" -- the
+/// `Hash` sub-item specifically): sizes the fresh, private
+/// TranspositionTable this call constructs for itself (tt.h's own
+/// header comment -- the table is still scoped per top-level call, not
+/// a persistent global, so this parameter controls the size of each
+/// such call's own table, not an in-place resize of anything longer-
+/// lived). Defaults to kDefaultTTSizeMB, matching every pre-existing
+/// caller's behavior before this parameter existed.
 [[nodiscard]] SearchResult search_fixed_depth(board::Position& pos, int depth,
                                                std::span<const std::uint64_t> game_history = {},
                                                const eval::MaterialWeights* material_weights =
                                                    nullptr,
-                                               int num_threads = 1);
+                                               int num_threads = 1,
+                                               std::size_t hash_size_mb = kDefaultTTSizeMB);
 
 /// Runs iterative deepening: searches at depth = 1, 2, 3, ... up to
 /// `max_depth`, keeping the most recently *completed* iteration's
@@ -388,10 +411,15 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// scope limitations. Distinct from, and unrelated to, the internal
 /// `smp_stop` atomic Lazy SMP already uses for helper threads — the two
 /// never share an instance and don't interact.
+/// `hash_size_mb`: same meaning and default as search_fixed_depth()'s
+/// parameter of the same name above -- sizes this call's own fresh,
+/// private TranspositionTable, shared (per tt.h's THREAD-SAFETY NOTE)
+/// across the calling thread and every Lazy SMP helper thread this one
+/// call spawns.
 [[nodiscard]] SearchResult search_iterative_deepening(
     board::Position& pos, int max_depth, int time_limit_ms = 0,
     std::span<const std::uint64_t> game_history = {}, IterationCallback on_iteration = nullptr,
     const eval::MaterialWeights* material_weights = nullptr, int num_threads = 1,
-    std::atomic<bool>* external_stop = nullptr);
+    std::atomic<bool>* external_stop = nullptr, std::size_t hash_size_mb = kDefaultTTSizeMB);
 
 } // namespace nightwing::search
