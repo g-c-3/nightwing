@@ -3,12 +3,27 @@
 // Deliberately out of scope for Phase 2's "basic UCI loop" (revisit
 // later phases, tracked informally here rather than duplicated across
 // every function that touches it):
-//   - setoption / Hash / any other engine option: still no options
-//     exist besides `Threads` (added Session 74, ROADMAP.md Phase 7's
-//     "Thread count UCI option" item -- see handle_setoption() below) --
-//     no TT-size configuration yet, since the TT stays scoped per
-//     top-level search call rather than a persistent global (search/
-//     tt.h's own LIFETIME NOTE, tied to a still-open Phase 8 item).
+//   - setoption / engine options: `Threads` (added Session 74,
+//     ROADMAP.md Phase 7's "Thread count UCI option" item), `Hash`, and
+//     `Move Overhead` (both added under Phase 8's "Full UCI option set"
+//     item -- see handle_setoption() below) are all recognized. `Hash`
+//     changes the SIZE of the fresh, private TranspositionTable each
+//     top-level search call still constructs for itself, not an
+//     in-place resize of a persistent one -- the TT itself is still
+//     scoped per top-level search call rather than a persistent global
+//     (search/tt.h's own LIFETIME NOTE); making it genuinely persistent,
+//     with a `ucinewgame`-triggered clear, remains a separate, not-yet-
+//     started piece of that same Phase 8 item. `MultiPV` and `Ponder`
+//     are the two named-in-ROADMAP.md sub-items this pass did NOT
+//     implement: `MultiPV` needs real multi-line search support (root-
+//     move exclusion and a second, independent per-line search loop)
+//     that doesn't exist anywhere in this codebase yet, a substantial
+//     enough feature to warrant its own dedicated session rather than
+//     being folded in here; `Ponder` (the option ADVERTISEMENT, distinct
+//     from pondering ITSELF, which is already fully implemented below)
+//     is ROADMAP.md's own next, separate Phase 8 item ("Pondering —
+//     protocol side"), not part of "Full UCI option set" 's own item
+//     text.
 //   - True asynchronous `go infinite` + `stop` FOR AN ORDINARY (non-
 //     ponder) `go`: still not attempted. A plain `go` (with or without
 //     a time control) still always runs synchronously to completion (or
@@ -46,6 +61,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <iostream>
@@ -214,6 +230,50 @@ constexpr int kNoTimeControlDepth = 5;
 constexpr int kMinThreads = 1;
 constexpr int kMaxThreads = 1024;
 
+/// Bounds for the `Hash` UCI option (ROADMAP.md Phase 8, "Full UCI
+/// option set"), in megabytes -- passed straight through as
+/// search::search_iterative_deepening()'s/search::search_fixed_depth()'s
+/// own `hash_size_mb` parameter (search/search.h's doc comments on that
+/// parameter), which sizes the fresh, private TranspositionTable each
+/// top-level search call still constructs for itself (tt.h's own
+/// LIFETIME NOTE -- this option changes the size of each such table,
+/// not an in-place resize of a persistent one, since that part of
+/// tt.h's own eventual design is still a separate, unstarted piece of
+/// work). `kMinHashMB` (1) matches TranspositionTable's own constructor
+/// doc comment ("`size_mb` too small for even one bucket constructs a
+/// minimum 1-bucket table... rather than an unusable empty one" --
+/// tt.h), so 1 is a genuinely usable floor, not merely the smallest
+/// integer accepted. `kMaxHashMB` (65536, i.e. 64 GiB) is a sanity
+/// ceiling against a malformed or accidental `setoption ... value
+/// 999999999` attempting an unreasonably large allocation on every
+/// single `go` call (this table is rebuilt from scratch per call, not
+/// once at startup -- see tt.h's header comment -- so an oversized
+/// value here is paid repeatedly, not just once), mirroring
+/// `kMaxThreads`'s own "sanity guard, not a real technical ceiling"
+/// framing just above.
+constexpr int kMinHashMB = 1;
+constexpr int kMaxHashMB = 65536;
+
+/// Bounds for the `Move Overhead` UCI option (ROADMAP.md Phase 8, "Full
+/// UCI option set"), in milliseconds -- a fixed safety margin subtracted
+/// from every positive computed time budget (compute_search_budget()
+/// below) before it's handed to the search, so that GUI/network/
+/// protocol latency between this engine deciding to stop and its
+/// `bestmove` actually reaching the GUI doesn't itself cause a real
+/// clock overrun on a tightly-timed game. Applied uniformly to both an
+/// explicit `movetime` and a `wtime`/`btime`-derived budget (see
+/// compute_search_budget()'s own comment for why this is simpler, and
+/// no less defensible, than the narrower "wtime/btime only" convention
+/// some published engines use) -- deliberately NOT applied when there's
+/// no real time budget at all (`time_limit_ms == 0`, i.e. a bare `go`/
+/// `go depth N` with no time control), since there's nothing to trim a
+/// margin off of there. Default 0 (kMinMoveOverheadMs) preserves every
+/// pre-existing caller's exact behavior until a GUI/tournament manager
+/// explicitly requests a margin. `kMaxMoveOverheadMs` (5000ms) is a
+/// sanity ceiling, same rationale as kMaxThreads/kMaxHashMB above.
+constexpr int kMinMoveOverheadMs = 0;
+constexpr int kMaxMoveOverheadMs = 5000;
+
 /// Simple time allocation for `go wtime/btime/winc/binc` — no
 /// movestogo-aware tuning yet (see DECISIONS.md): budgets
 /// remaining_ms / 20 plus the increment, capped at remaining_ms / 2 so
@@ -260,8 +320,22 @@ struct SearchBudget {
 /// have used, without actually applying it until `ponderhit` (see that
 /// function's own doc comment for why the budget can't just be applied
 /// immediately the way it is here).
+///
+/// `move_overhead_ms` (ROADMAP.md Phase 8, "Full UCI option set" --
+/// `Move Overhead`, this file's own kMinMoveOverheadMs/kMaxMoveOverheadMs
+/// doc comment above has the full rationale): subtracted from whatever
+/// positive `time_limit_ms` this function would otherwise return, for
+/// BOTH the `movetime` branch and the `wtime`/`btime`-derived branch --
+/// floored at 1ms (never 0 or negative, which would mean "no limit" to
+/// every caller of this budget, the opposite of what a safety margin is
+/// for) so an overhead value close to or exceeding the raw computed
+/// budget still leaves the search a minimal, real amount of time rather
+/// than silently reverting to unbounded. Left untouched when
+/// `time_limit_ms` is already 0 (no real time budget at all -- nothing
+/// to trim a margin off of).
 [[nodiscard]] SearchBudget compute_search_budget(const Position& pos,
-                                                   const std::vector<std::string>& tokens) {
+                                                   const std::vector<std::string>& tokens,
+                                                   int move_overhead_ms = 0) {
     SearchBudget budget;
     bool have_depth = false;
     bool have_movetime = false;
@@ -321,6 +395,13 @@ struct SearchBudget {
             budget.time_limit_ms = 0;
         }
     }
+
+    if (budget.time_limit_ms > 0) {
+        budget.time_limit_ms -= move_overhead_ms;
+        if (budget.time_limit_ms < 1) {
+            budget.time_limit_ms = 1;
+        }
+    }
     return budget;
 }
 
@@ -372,24 +453,30 @@ void emit_info(const search::SearchResult& result, std::ostream& out) {
     out.flush();
 }
 
-/// Handles `setoption name <name...> value <value...>`. Only `Threads`
-/// (ROADMAP.md Phase 7) is a recognized option name -- every other name
-/// is silently ignored, matching this file's established robustness
-/// convention (this file's header comment; run()'s own trailing
-/// comment on unrecognized commands generally) rather than treating an
-/// unknown option as an error. `name`/`value` are matched positionally
-/// (the LAST `name`/`value` token pair in the line, per the UCI spec's
-/// own grammar allowing either to be multi-word) rather than assuming
-/// fixed token indices, even though `Threads` itself is a single word
-/// -- a small amount of generality here costs nothing and avoids a
-/// parser that would need revisiting the moment a second, multi-word-
-/// named option is ever added. A malformed line (`name`/`value` in the
-/// wrong order, `value` missing entirely, a non-integer value) is
-/// ignored, leaving `num_threads` at whatever it was before -- same
-/// robustness rationale as handle_position()/apply_uci_moves() above:
-/// a slightly malformed setoption from a GUI or script shouldn't crash
-/// the engine or corrupt otherwise-good prior state.
-void handle_setoption(int& num_threads, const std::vector<std::string>& tokens) {
+/// Handles `setoption name <name...> value <value...>`. Recognized
+/// option names, as of ROADMAP.md Phase 8's "Full UCI option set" item:
+/// `Threads` (ROADMAP.md Phase 7, unchanged from Session 74), `Hash`,
+/// and `Move Overhead` (both new this item -- kMinHashMB/kMaxHashMB and
+/// kMinMoveOverheadMs/kMaxMoveOverheadMs's own doc comments above have
+/// each option's full rationale). Every other name is silently ignored,
+/// matching this file's established robustness convention (this file's
+/// header comment; run()'s own trailing comment on unrecognized
+/// commands generally) rather than treating an unknown option as an
+/// error. `name`/`value` are matched positionally (the LAST `name`/
+/// `value` token pair in the line, per the UCI spec's own grammar
+/// allowing either to be multi-word) rather than assuming fixed token
+/// indices -- `Move Overhead` is itself the first genuinely multi-word
+/// option name this function has needed to recognize, so this generality
+/// (already present before this item, for forward-compatibility) now
+/// has a real, exercised use, not just a hypothetical one. A malformed
+/// line (`name`/`value` in the wrong order, `value` missing entirely, a
+/// non-integer value) is ignored, leaving every option at whatever it
+/// was before -- same robustness rationale as handle_position()/
+/// apply_uci_moves() above: a slightly malformed setoption from a
+/// GUI or script shouldn't crash the engine or corrupt otherwise-good
+/// prior state.
+void handle_setoption(int& num_threads, std::size_t& hash_size_mb, int& move_overhead_ms,
+                       const std::vector<std::string>& tokens) {
     std::size_t name_start = 0;
     std::size_t name_end = 0;
     std::size_t value_start = 0;
@@ -426,6 +513,30 @@ void handle_setoption(int& num_threads, const std::vector<std::string>& tokens) 
         } catch (const std::exception&) {
             // Non-integer value -- ignore, leaving num_threads unchanged.
         }
+    } else if (name == "Hash") {
+        try {
+            long long value = std::stoll(tokens[value_start]);
+            if (value < kMinHashMB) {
+                value = kMinHashMB;
+            } else if (value > kMaxHashMB) {
+                value = kMaxHashMB;
+            }
+            hash_size_mb = static_cast<std::size_t>(value);
+        } catch (const std::exception&) {
+            // Non-integer value -- ignore, leaving hash_size_mb unchanged.
+        }
+    } else if (name == "Move Overhead") {
+        try {
+            int value = std::stoi(tokens[value_start]);
+            if (value < kMinMoveOverheadMs) {
+                value = kMinMoveOverheadMs;
+            } else if (value > kMaxMoveOverheadMs) {
+                value = kMaxMoveOverheadMs;
+            }
+            move_overhead_ms = value;
+        } catch (const std::exception&) {
+            // Non-integer value -- ignore, leaving move_overhead_ms unchanged.
+        }
     }
     // Any other option name: silently ignored (this function's own doc comment).
 }
@@ -452,8 +563,17 @@ void handle_setoption(int& num_threads, const std::vector<std::string>& tokens) 
 /// value <N>` (handle_setoption() above) and defaulting to 1 (today's
 /// pre-Lazy-SMP, single-threaded behavior) until a GUI/script
 /// explicitly requests more.
+///
+/// `hash_size_mb`/`move_overhead_ms` (ROADMAP.md Phase 8, "Full UCI
+/// option set"): same run()-owned, `setoption`-driven session-lifetime
+/// state as `num_threads` -- the former is passed straight through as
+/// search_iterative_deepening()'s own `hash_size_mb` parameter
+/// (search/search.h), the latter is consumed by compute_search_budget()
+/// below (that function's own doc comment) before the search even
+/// starts.
 void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
-               const std::vector<std::string>& tokens, int num_threads, std::ostream& out) {
+               const std::vector<std::string>& tokens, int num_threads, std::size_t hash_size_mb,
+               int move_overhead_ms, std::ostream& out) {
     // Opening book (src/book/book.h, ROADMAP.md's optional "small
     // curated opening book" item): consulted first, unconditionally --
     // no setoption/UCI-options infrastructure exists yet to gate this
@@ -469,7 +589,7 @@ void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
         return;
     }
 
-    const SearchBudget budget = compute_search_budget(pos, tokens);
+    const SearchBudget budget = compute_search_budget(pos, tokens, move_overhead_ms);
 
     // `on_iteration` (search/search.h's IterationCallback): emits one
     // `info depth ... score ... nodes ... pv ...` line per completed
@@ -478,12 +598,14 @@ void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
     // compiled-in-constants default (nullptr) -- no UCI option exists
     // to override it (search_fixed_depth()'s own doc comment covers
     // that parameter's real use, the Texel/SPSA tuner, not this UCI
-    // loop). `num_threads` is this call's own new parameter, this
-    // function's own doc comment above.
+    // loop). `num_threads`/`hash_size_mb` are this call's own
+    // parameters, this function's own doc comment above; `external_stop`
+    // stays nullptr -- an ordinary (non-ponder) `go` has no external
+    // interruption source (this file's own header comment).
     const search::SearchResult result = search::search_iterative_deepening(
         pos, budget.max_depth, budget.time_limit_ms, game_history,
         [&out](const search::SearchResult& iteration_result) { emit_info(iteration_result, out); },
-        /*material_weights=*/nullptr, num_threads);
+        /*material_weights=*/nullptr, num_threads, /*external_stop=*/nullptr, hash_size_mb);
 
     out << "bestmove ";
     if (result.best_move.is_null()) {
@@ -616,12 +738,22 @@ void abandon_pondering(PonderState& ponder) {
 /// this search is still running on its own thread — a private copy
 /// sidesteps that race entirely rather than depending on the caller
 /// always behaving.
+///
+/// `hash_size_mb`/`move_overhead_ms` (ROADMAP.md Phase 8, "Full UCI
+/// option set"): same run()-owned, `setoption`-driven session-lifetime
+/// state handle_go() consumes — `hash_size_mb` is passed straight
+/// through to this call's own search_iterative_deepening() the same
+/// way; `move_overhead_ms` feeds into compute_search_budget() below
+/// when computing the REAL move's saved budget for handle_ponderhit()
+/// to apply later, exactly as it would for an ordinary `go` from this
+/// same position.
 void start_pondering(Position& pos, const std::vector<std::uint64_t>& game_history,
-                      const std::vector<std::string>& tokens, int num_threads, std::ostream& out,
+                      const std::vector<std::string>& tokens, int num_threads,
+                      std::size_t hash_size_mb, int move_overhead_ms, std::ostream& out,
                       PonderState& ponder) {
     abandon_pondering(ponder); // Defensive: see this function's own doc comment above.
 
-    const SearchBudget budget = compute_search_budget(pos, tokens);
+    const SearchBudget budget = compute_search_budget(pos, tokens, move_overhead_ms);
     ponder.saved_time_limit_ms = budget.time_limit_ms;
     ponder.stop.store(false, std::memory_order_relaxed);
     ponder.suppress_output.store(false, std::memory_order_relaxed);
@@ -632,11 +764,12 @@ void start_pondering(Position& pos, const std::vector<std::uint64_t>& game_histo
     std::atomic<bool>* stop_ptr = &ponder.stop;
     std::atomic<bool>* suppress_ptr = &ponder.suppress_output;
 
-    ponder.thread = std::thread([&out, num_threads, ponder_pos, ponder_history, stop_ptr,
-                                  suppress_ptr]() mutable {
+    ponder.thread = std::thread([&out, num_threads, hash_size_mb, ponder_pos, ponder_history,
+                                  stop_ptr, suppress_ptr]() mutable {
         const search::SearchResult result = search::search_iterative_deepening(
             ponder_pos, kTimedSearchMaxDepth, /*time_limit_ms=*/0, ponder_history,
-            /*on_iteration=*/nullptr, /*material_weights=*/nullptr, num_threads, stop_ptr);
+            /*on_iteration=*/nullptr, /*material_weights=*/nullptr, num_threads, stop_ptr,
+            hash_size_mb);
         if (suppress_ptr->load(std::memory_order_relaxed)) {
             return;
         }
@@ -795,6 +928,14 @@ void run(std::istream& in, std::ostream& out) {
     // OPTIONS persist across games within one session while game STATE
     // does not.
     int num_threads = kMinThreads;
+    // `Hash`/`Move Overhead` UCI options' current values (ROADMAP.md
+    // Phase 8, "Full UCI option set") -- session-lifetime state, exactly
+    // like `num_threads` above: set via `setoption` (handle_setoption()),
+    // read by every subsequent `go` (handle_go()/start_pondering()), and
+    // NOT reset by `ucinewgame` below, same "options persist, game state
+    // doesn't" convention `num_threads` already follows.
+    std::size_t hash_size_mb = search::kDefaultTTSizeMB;
+    int move_overhead_ms = kMinMoveOverheadMs;
     // Pondering state (ROADMAP.md Phase 7) — session-lifetime, like
     // `num_threads` above, though its own contents (the background
     // thread, the stop flag) are reset per `go ponder` by
@@ -819,6 +960,15 @@ void run(std::istream& in, std::ostream& out) {
             // own doc comment above has the bounds' rationale.
             out << "option name Threads type spin default " << kMinThreads << " min " << kMinThreads
                 << " max " << kMaxThreads << '\n';
+            // `Hash`/`Move Overhead` (ROADMAP.md Phase 8, "Full UCI
+            // option set") -- same standard `spin` syntax as `Threads`
+            // just above; kMinHashMB/kMaxHashMB and
+            // kMinMoveOverheadMs/kMaxMoveOverheadMs's own doc comments
+            // have each option's bounds rationale.
+            out << "option name Hash type spin default " << search::kDefaultTTSizeMB << " min "
+                << kMinHashMB << " max " << kMaxHashMB << '\n';
+            out << "option name Move Overhead type spin default " << kMinMoveOverheadMs << " min "
+                << kMinMoveOverheadMs << " max " << kMaxMoveOverheadMs << '\n';
             out << "uciok\n";
             out.flush();
         } else if (cmd == "isready") {
@@ -832,12 +982,14 @@ void run(std::istream& in, std::ostream& out) {
             abandon_pondering(ponder); // Same rationale as ucinewgame above.
             handle_position(pos, game_history, tokens);
         } else if (cmd == "setoption") {
-            handle_setoption(num_threads, tokens);
+            handle_setoption(num_threads, hash_size_mb, move_overhead_ms, tokens);
         } else if (cmd == "go") {
             if (has_token(tokens, "ponder")) {
-                start_pondering(pos, game_history, tokens, num_threads, out, ponder);
+                start_pondering(pos, game_history, tokens, num_threads, hash_size_mb,
+                                 move_overhead_ms, out, ponder);
             } else {
-                handle_go(pos, game_history, tokens, num_threads, out);
+                handle_go(pos, game_history, tokens, num_threads, hash_size_mb, move_overhead_ms,
+                          out);
             }
         } else if (cmd == "ponderhit") {
             handle_ponderhit(ponder);
