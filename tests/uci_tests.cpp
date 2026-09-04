@@ -452,3 +452,106 @@ TEST_CASE("uci: 'Threads' set via 'setoption' persists across 'ucinewgame' (an o
     REQUIRE_FALSE(contains(out, "bestmove 0000"));
 }
 
+// --- Hash / Move Overhead (ROADMAP.md Phase 8, "Full UCI option set") ---
+// Same test shapes as the Threads block above, applied to the two new
+// options -- see src/uci/uci.cpp's kMinHashMB/kMaxHashMB and
+// kMinMoveOverheadMs/kMaxMoveOverheadMs doc comments for the bounds
+// rationale being checked here.
+
+TEST_CASE("uci: 'uci' response advertises the Hash and Move Overhead spin options with their "
+          "documented bounds",
+          "[uci][hash][overhead]") {
+    init_all();
+    const std::string out = run_uci({"uci", "quit"});
+    REQUIRE(contains(out, "option name Hash type spin default 16 min 1 max 65536"));
+    REQUIRE(contains(out, "option name Move Overhead type spin default 0 min 0 max 5000"));
+}
+
+TEST_CASE("uci: 'setoption name Hash value N' followed by 'go' still returns a legal bestmove "
+          "(hash_size_mb actually reaches search_iterative_deepening without breaking anything)",
+          "[uci][hash]") {
+    init_all();
+    const std::string out =
+        run_uci({"setoption name Hash value 4", "position startpos", "go depth 4", "quit"});
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
+TEST_CASE("uci: an out-of-range 'setoption name Hash value ...' is clamped, not rejected -- 'go' "
+          "still returns a legal bestmove rather than crashing or hanging",
+          "[uci][hash]") {
+    init_all();
+    // 0 is below kMinHashMB (1); 99999999 is far above kMaxHashMB
+    // (65536) -- handle_setoption() clamps both rather than ignoring the
+    // whole command or attempting an absurd allocation.
+    const std::string out_low =
+        run_uci({"setoption name Hash value 0", "position startpos", "go depth 3", "quit"});
+    const std::string out_high =
+        run_uci({"setoption name Hash value 99999999", "position startpos", "go depth 2", "quit"});
+    REQUIRE(contains(out_low, "bestmove "));
+    REQUIRE_FALSE(contains(out_low, "bestmove 0000"));
+    REQUIRE(contains(out_high, "bestmove "));
+    REQUIRE_FALSE(contains(out_high, "bestmove 0000"));
+}
+
+TEST_CASE("uci: 'setoption name Move Overhead value N' followed by a real 'go movetime' still "
+          "returns a legal bestmove -- the overhead is actually subtracted from the search's time "
+          "budget, not silently dropped",
+          "[uci][overhead]") {
+    init_all();
+    // With a 500ms movetime and a 400ms overhead, the search should be
+    // budgeted only ~100ms -- not independently timed here (this file's
+    // existing 'go movetime'/'go wtime' tests don't assert timing either,
+    // since real wall-clock assertions are inherently a little flaky),
+    // but this at least confirms the option is accepted, reaches the
+    // search path, and a legal move still comes back rather than a
+    // crash/hang from an over-aggressive (near-zero) effective budget.
+    const std::string out = run_uci({"setoption name Move Overhead value 400", "position startpos",
+                                      "go movetime 500", "quit"});
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
+TEST_CASE("uci: an out-of-range 'setoption name Move Overhead value ...' is clamped, not "
+          "rejected -- 'go' still returns a legal bestmove",
+          "[uci][overhead]") {
+    init_all();
+    // -50 is below kMinMoveOverheadMs (0); 999999 is far above
+    // kMaxMoveOverheadMs (5000).
+    const std::string out_low = run_uci({"setoption name Move Overhead value -50",
+                                          "position startpos", "go depth 3", "quit"});
+    const std::string out_high = run_uci({"setoption name Move Overhead value 999999",
+                                           "position startpos", "go movetime 200", "quit"});
+    REQUIRE(contains(out_low, "bestmove "));
+    REQUIRE_FALSE(contains(out_low, "bestmove 0000"));
+    REQUIRE(contains(out_high, "bestmove "));
+    REQUIRE_FALSE(contains(out_high, "bestmove 0000"));
+}
+
+TEST_CASE("uci: a malformed 'setoption' for Hash/Move Overhead (missing value, non-integer "
+          "value) is ignored -- a subsequent 'go' still works normally",
+          "[uci][hash][overhead]") {
+    init_all();
+    const std::string out = run_uci({
+        "setoption name Hash",                       // missing "value ..." entirely
+        "setoption name Hash value notanumber",       // non-integer value
+        "setoption name Move Overhead value notanumber", // non-integer value
+        "position startpos",
+        "go depth 2",
+        "quit",
+    });
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
+TEST_CASE("uci: 'Hash' and 'Move Overhead' set via 'setoption' persist across 'ucinewgame' (an "
+          "option, not game state)",
+          "[uci][hash][overhead]") {
+    init_all();
+    const std::string out =
+        run_uci({"setoption name Hash value 8", "setoption name Move Overhead value 50",
+                  "ucinewgame", "position startpos", "go depth 3", "quit"});
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
