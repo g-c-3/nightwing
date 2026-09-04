@@ -64,8 +64,8 @@ constexpr std::size_t kDefaultEvalCacheSizeKB = 2048;
 /// that exception propagate and crash the engine -- a real, reachable
 /// failure mode now that the UCI `Hash` option (ROADMAP.md Phase 8,
 /// src/uci/uci.cpp's own kMinHashMB/kMaxHashMB) lets a GUI/script
-/// request a table as large as 64 GiB, which a genuinely memory-
-/// constrained machine may not be able to satisfy even though the
+/// request a table up to kMaxHashMB's own ceiling, which a genuinely
+/// memory-constrained machine may not be able to satisfy even though the
 /// value itself is within the option's advertised bounds -- an
 /// in-range `setoption` value crashing the engine on a small machine
 /// would be exactly the kind of surprising failure this project's
@@ -84,6 +84,29 @@ constexpr std::size_t kDefaultEvalCacheSizeKB = 2048;
 /// smaller sizes; a machine unable to allocate even that is too
 /// memory-constrained to run this engine at all, a case worth letting
 /// fail loudly rather than silently pretending to succeed.
+///
+/// IMPORTANT LIMITATION, discovered via real CI evidence (GitHub
+/// Actions run 91820797115, after this function was first written):
+/// this fallback ONLY helps when allocation failure actually surfaces
+/// as a catchable std::bad_alloc, which is not guaranteed. Under ASan
+/// (this project's Linux/macOS Debug builds -- CMakeLists.txt),
+/// `allocator_may_return_null=0` is ASan's own default, so a failed
+/// allocation calls ASan's own `Die()` and aborts the process directly
+/// -- std::bad_alloc is never thrown, so this function's catch block
+/// never runs. On a genuinely memory-constrained machine without ASan,
+/// the OS's own out-of-memory killer can send an uncatchable SIGKILL
+/// before malloc ever reports failure at all. Both were observed
+/// directly on this project's own CI (Linux Debug: ASan's
+/// "out-of-memory" abort; macOS Debug/Release: OS OOM-kill, 157 sec and
+/// 32 sec in respectively) after `kMaxHashMB` was originally set to 64
+/// GiB -- this function's fallback did NOT help in any of the three
+/// failing cases; only lowering `kMaxHashMB` itself (src/uci/uci.cpp's
+/// own doc comment on that constant has the full account) actually
+/// fixed it. This function remains genuinely useful defense-in-depth
+/// for the failure modes it CAN catch (e.g. a Release/non-ASan build
+/// where malloc failure is reported normally), but is not, by itself,
+/// a substitute for keeping `kMaxHashMB` realistic for the machines
+/// this engine actually runs on.
 [[nodiscard]] TranspositionTable make_transposition_table(std::size_t requested_mb) {
     std::size_t size_mb = requested_mb < 1 ? 1 : requested_mb;
     while (true) {
