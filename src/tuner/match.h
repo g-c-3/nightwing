@@ -24,7 +24,14 @@
 // (checkmate/stalemate/50-move/threefold-repetition/max_plies, the same
 // four end conditions, for the same reasons — selfplay.h's own header
 // comment on why a max_plies cap exists given insufficient-material
-// detection isn't built yet applies identically here).
+// detection isn't built yet applies identically here). MatchConfig's
+// own `threads_a`/`threads_b` fields (added ROADMAP.md Phase 7's own
+// last item — that struct's own doc comment on both has the full
+// rationale) let each side additionally use a different Lazy SMP
+// thread count at an otherwise-identical `search_depth` — with
+// `weights_a`/`weights_b` set to the SAME vector, this repurposes the
+// whole module into a threads-vs-threads comparison instead of (or
+// alongside) an eval-weights-vs-eval-weights one.
 //
 // WHY THIS IS A SEPARATE MODULE FROM tuner::selfplay, NOT A SHARED/
 // GENERALIZED GAME-PLAYING FUNCTION: selfplay.h's own game loop is
@@ -102,6 +109,25 @@ struct MatchConfig {
     /// tuner::SelfPlayConfig::max_plies (selfplay.h's own header
     /// comment on "WHY A max_plies SAFETY CAP EXISTS").
     int max_plies = 200;
+
+    /// Thread counts for weights_a's and weights_b's own moves,
+    /// respectively — threaded straight through to search_fixed_depth()
+    /// (search.h's own doc comment on its `num_threads` parameter).
+    /// Both default to 1 (single-threaded, this module's own original
+    /// behavior before these two fields existed) — every pre-existing
+    /// caller/test is unaffected. Added for ROADMAP.md Phase 7's own
+    /// last item, "Verify no strength regression vs. single-threaded at
+    /// equal single-thread depth": setting `threads_a = 1` and
+    /// `threads_b` to some larger count, with `weights_a`/`weights_b`
+    /// set to the SAME weight vector and `search_depth` left as-is (the
+    /// same fixed depth for both sides — the "equal single-thread
+    /// depth" the item's own wording asks for), turns this module into
+    /// exactly the head-to-head threading comparison that item calls
+    /// for, reusing this file's entire existing game-loop/Elo-estimate
+    /// machinery rather than needing a second, parallel module built
+    /// just for that one comparison.
+    int threads_a = 1;
+    int threads_b = 1;
 };
 
 /// Result of one play_match() call.

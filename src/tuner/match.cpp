@@ -45,7 +45,8 @@ using board::UndoInfo;
 /// why the two aren't shared code, despite the structural similarity).
 [[nodiscard]] double play_one_match_game(const eval::MaterialWeights& weights_white,
                                           const eval::MaterialWeights& weights_black,
-                                          std::uint64_t seed, const MatchConfig& config) {
+                                          int threads_white, int threads_black, std::uint64_t seed,
+                                          const MatchConfig& config) {
     support::Xorshift64Star rng(seed);
     Position pos = board::start_position();
     std::vector<std::uint64_t> repetition_history;
@@ -83,8 +84,9 @@ using board::UndoInfo;
         } else {
             const eval::MaterialWeights& weights_to_move =
                 (pos.side_to_move == Color::White) ? weights_white : weights_black;
+            const int threads_to_move = (pos.side_to_move == Color::White) ? threads_white : threads_black;
             const search::SearchResult result =
-                search::search_fixed_depth(pos, config.search_depth, {}, &weights_to_move);
+                search::search_fixed_depth(pos, config.search_depth, {}, &weights_to_move, threads_to_move);
             // Guaranteed non-null: moves.size() > 0 was already
             // confirmed above (same reasoning as selfplay.cpp's own
             // play_game_impl()).
@@ -136,10 +138,12 @@ MatchResult play_match(const eval::MaterialWeights& weights_a, const eval::Mater
         const bool a_plays_white = (i % 2 == 0);
         const eval::MaterialWeights& weights_white = a_plays_white ? weights_a : weights_b;
         const eval::MaterialWeights& weights_black = a_plays_white ? weights_b : weights_a;
+        const int threads_white = a_plays_white ? config.threads_a : config.threads_b;
+        const int threads_black = a_plays_white ? config.threads_b : config.threads_a;
 
         const double result_white_perspective =
-            play_one_match_game(weights_white, weights_black, base_seed + static_cast<std::uint64_t>(i),
-                                 config);
+            play_one_match_game(weights_white, weights_black, threads_white, threads_black,
+                                 base_seed + static_cast<std::uint64_t>(i), config);
 
         // Translate the game's White-perspective result into an A-vs-B
         // outcome, accounting for which side A actually played this
