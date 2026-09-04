@@ -1903,8 +1903,26 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // make each successive iteration cheaper.
     TranspositionTable tt(kDefaultTTSizeMB);
     KillerTable killers;
-    HistoryTable history;
-    ContinuationHistoryTable cont_history;
+    // Heap-allocated, not stack locals -- see run_lazy_smp_helper()'s
+    // own identical pattern and comment just above in this file for the
+    // full rationale (docs/DECISIONS.md, 2026-09-03 (3)): together
+    // roughly 176KB, which fits comfortably on the CALLING thread's own
+    // stack when that's an ordinary main thread (this function's
+    // original, only caller), but does NOT fit macOS's fixed 512KB
+    // default new-thread stack size. That distinction stopped being
+    // hypothetical for THIS function specifically as of Session 75
+    // (docs/SESSIONS.md/DECISIONS.md, 2026-09-04): `src/uci/uci.cpp`'s
+    // pondering support (`start_pondering()`) now calls this function
+    // directly from a freshly spawned `std::thread`, not just via
+    // run_lazy_smp_helper()'s own already-guarded path -- confirmed by
+    // real macOS CI (`Bus error`/ASan `BUS on unknown address`,
+    // isolated to exactly the new pondering tests) after this function
+    // still had these two tables as plain stack locals. Heap allocation
+    // makes this function safe to call from ANY thread regardless of
+    // its stack size, present or future callers alike, rather than
+    // fixing only the one call site that happened to surface the bug.
+    auto history = std::make_unique<HistoryTable>();
+    auto cont_history = std::make_unique<ContinuationHistoryTable>();
     // Shared across every iteration of this call too, same rationale as
     // tt/killers/history just above (see negamax()'s header comment and
     // is_draw_by_rule()) -- a later, deeper iteration re-deriving the
@@ -1925,8 +1943,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // header comment). Full window: there's no previous iteration yet
     // to aspirate around (see the depth-2-onward loop below).
     tt.new_search();
-    SearchResult result = search_root(pos, 1, -kInfinity, kInfinity, tt, killers, history,
-                                       cont_history, game_history, path, pawn_tt, eval_cache,
+    SearchResult result = search_root(pos, 1, -kInfinity, kInfinity, tt, killers, *history,
+                                       *cont_history, game_history, path, pawn_tt, eval_cache,
                                        material_weights);
     std::uint64_t total_nodes = result.nodes;
 
@@ -2057,8 +2075,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             }
 
             for (;;) {
-                next = search_root(pos, depth, window_alpha, window_beta, tt, killers, history,
-                                    cont_history, game_history, path, pawn_tt, eval_cache,
+                next = search_root(pos, depth, window_alpha, window_beta, tt, killers, *history,
+                                    *cont_history, game_history, path, pawn_tt, eval_cache,
                                     material_weights, &limits);
 
                 if (limits.stopped) {
@@ -2101,7 +2119,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                 }
             }
         } else {
-            next = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history, cont_history,
+            next = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history, *cont_history,
                                 game_history, path, pawn_tt, eval_cache, material_weights, &limits);
         }
 
