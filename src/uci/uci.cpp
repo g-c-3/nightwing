@@ -243,16 +243,45 @@ constexpr int kMaxThreads = 1024;
 /// doc comment ("`size_mb` too small for even one bucket constructs a
 /// minimum 1-bucket table... rather than an unusable empty one" --
 /// tt.h), so 1 is a genuinely usable floor, not merely the smallest
-/// integer accepted. `kMaxHashMB` (65536, i.e. 64 GiB) is a sanity
-/// ceiling against a malformed or accidental `setoption ... value
-/// 999999999` attempting an unreasonably large allocation on every
-/// single `go` call (this table is rebuilt from scratch per call, not
-/// once at startup -- see tt.h's header comment -- so an oversized
-/// value here is paid repeatedly, not just once), mirroring
-/// `kMaxThreads`'s own "sanity guard, not a real technical ceiling"
-/// framing just above.
+/// integer accepted.
+///
+/// `kMaxHashMB` (2048, i.e. 2 GiB) was originally 65536 (64 GiB) --
+/// lowered after real CI evidence (GitHub Actions run 91820797115)
+/// showed that a large-but-in-bounds value doesn't just risk an
+/// allocation that's slow or wasteful, it can fail in ways this
+/// codebase has NO way to recover from at all, regardless of how
+/// careful the recovery code is: on Linux Debug, ASan's allocator
+/// defaults to `allocator_may_return_null=0`, so a failed allocation
+/// under ASan calls its own `Die()` and aborts the process directly --
+/// it never throws std::bad_alloc, so search.cpp's own
+/// make_transposition_table() fallback (which only catches
+/// std::bad_alloc) never even gets a chance to run. On macOS
+/// Debug/Release, the request instead triggered the OS's own
+/// out-of-memory killer, sending an uncatchable SIGKILL, 157 sec and
+/// 32 sec respectively after the search started -- also never a
+/// catchable C++ exception. Both failure modes are a direct
+/// consequence of `kMaxHashMB` having been set to a value with no
+/// real relationship to what any actual machine (least of all a
+/// shared CI runner also running ASan's own shadow-memory overhead)
+/// can reliably satisfy -- "sanity ceiling, not a real technical
+/// limit" (this constant's own framing before this fix, mirrored from
+/// kMaxThreads below) was true of the NUMBER chosen but not of its
+/// actual real-world safety. 2048 MB is comfortably below the RAM on
+/// every GitHub Actions runner class this project's CI matrix uses
+/// (.github/workflows/ci.yml), even accounting for ASan's shadow-
+/// memory overhead (roughly +12.5%) and normal OS/other-process
+/// headroom, while still being generous for actual engine use --
+/// most classical (non-NNUE) engines run comfortably with a small
+/// fraction of this even at serious tournament time controls.
+/// search.cpp's make_transposition_table() fallback is kept as
+/// defense-in-depth for a genuinely std::bad_alloc-throwing failure
+/// (a real, if now much rarer, possibility e.g. on a small embedded
+/// target or a Release/non-ASan build where malloc failure is
+/// reported normally) -- but per the CI evidence above, it is NOT a
+/// substitute for keeping this ceiling itself realistic, since under
+/// ASan specifically it cannot run at all.
 constexpr int kMinHashMB = 1;
-constexpr int kMaxHashMB = 65536;
+constexpr int kMaxHashMB = 2048;
 
 /// Bounds for the `Move Overhead` UCI option (ROADMAP.md Phase 8, "Full
 /// UCI option set"), in milliseconds -- a fixed safety margin subtracted
