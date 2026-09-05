@@ -4,6 +4,14 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-09-05 (3) — `Ponder` UCI option: advertised as a no-op check, not wired to gate any behavior
+
+**Decision:** `option name Ponder type check default true` is advertised and `setoption name Ponder value <bool>` is accepted, but neither value gates anything internally — pondering (`go ponder`/`ponderhit`/`stop`) remains fully functional regardless. Rationale: per the UCI spec, a GUI uses this option to decide whether IT will send `go ponder`, not to instruct the engine to withdraw a capability it already advertised; there is no compliant scenario where the engine itself needs to branch on this option's current value. Several established engines implement it the same way — accept and ignore.
+
+**Left explicitly open:** ROADMAP.md's own item text calls for verification "against GUIs that ponder (Arena, CuteChess, etc.)" — genuinely impossible to do from this sandbox, which has no way to run either GUI. The ROADMAP entry is worded to make clear this remains outstanding rather than silently checked off, so a future session (or person) with real GUI access knows there's a real verification step still needed, not just busywork.
+
+---
+
 ### 2026-09-05 (2) — `MultiPV` UCI option: separate-function implementation, sort-before-rank fix, and a named test gotcha (the opening-book singleton)
 
 **Decision — implement MultiPV as a completely separate function (`search_iterative_deepening_multipv()`, search.cpp), not by adding branches inside the existing single-line iterative-deepening loop:** the single-line path is well-tested (429 cases' worth of coverage before this session touched it at all) and this project's own standing rule is "never rewrite completed/green code unless a bug is confirmed." Generalizing the existing loop in place to handle N lines per depth would have meant threading exclusion sets, per-line aspiration-window state, and per-line Lazy SMP coordination through code that has none of those concepts today — real risk to a path with zero defects, for a feature only exercised when `multi_pv > 1`. A parallel implementation costs some duplication (its own TT/killers/history/pawn-hash/eval-cache construction) but guarantees `multi_pv <= 1` runs the byte-for-byte original code path, unconditionally.

@@ -4,6 +4,18 @@ Newest entry at top.
 
 ---
 
+### Session 82 — 2026-09-05 — Phase 8: `Ponder` UCI option advertisement (protocol side only — pondering itself already fully implemented)
+
+**Built:** `src/uci/uci.cpp` now advertises `option name Ponder type check default true` in the `uci` response, and `handle_setoption()` accepts `setoption name Ponder value <true|false>` without error but with deliberately no behavioral effect — pondering support (`go ponder`/`ponderhit`/`stop`) has been fully implemented and tested since Session 75/76 entirely independently of this option's value, so there's nothing for either value to gate; a compliant GUI only ever uses this option to decide whether IT sends `go ponder`, never to tell the engine to withdraw support once advertised. 2 new tests in `tests/uci_tests.cpp` (`[ponder]`): the advertisement string, and that `setoption name Ponder value false`/`value true` are both accepted cleanly and a subsequent ordinary `go` still works normally either way.
+
+**Explicitly NOT done, left open in ROADMAP.md:** real verification against an actual GUI (Arena, CuteChess, etc.) as ROADMAP.md's own item text calls for — this sandbox has no way to run either GUI. Only protocol-level (the exact `uci` response string) and unit-level correctness have been confirmed. This should be flagged to whoever next has access to a real GUI to close out the item properly; it would be dishonest to check this off as fully done.
+
+**Verification performed:** full suite (450 cases, up from 448) recompiled and rerun 3 consecutive times, plus once under `-fsanitize=address,undefined` — all green, bench unchanged (startpos 1274, kiwipete 8185, quiet_middlegame 6591, endgame_mate_in_3 64979/score 31995).
+
+**Next session start point:** Read ROADMAP.md's own Phase 8 section directly for the next incomplete item (time management, `bench` command, PGO build pipeline, TT prefetch, SPRT setup, README/build docs are all still open) and begin working immediately.
+
+---
+
 ### Session 81 — 2026-09-05 — Phase 8: `MultiPV` UCI option (completes "Full UCI option set")
 
 **Built:**
