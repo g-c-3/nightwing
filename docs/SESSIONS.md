@@ -4,6 +4,25 @@ Newest entry at top.
 
 ---
 
+### Session 85 — 2026-09-05 — Phase 8: Profile-Guided Optimization (PGO) build pipeline
+
+**Built:**
+- `CMakeLists.txt`: new `NIGHTWING_PGO_PHASE` cache STRING (`""`/`"generate"`/`"use"`), GCC/Clang only (MSVC explicitly rejected with a clear `FATAL_ERROR` message, not silently ignored). Applies `-fprofile-generate=<dir>` or `-fprofile-use=<dir> -fprofile-correction -Wno-missing-profile` globally across every target's compile and link steps.
+- `.github/workflows/ci.yml`: new `pgo-build` job (`workflow_dispatch`-only, Linux, same manual-trigger rationale as the existing `tuning-pipeline` job) implementing the full two-stage pipeline: configure+build instrumented → run a training workload (`bench` plus two ordinary `go depth 8` searches, chosen so the opening book also gets real profile coverage, not just `bench` alone which bypasses it entirely) → reconfigure the SAME build directory into `use` phase → rebuild → run the full test suite → re-run `bench` as a correctness cross-check → upload the optimized `nightwing` binary as an artifact.
+
+**A real gotcha found and documented, not just designed around after the fact:** a standalone sandbox prototype (raw g++, before any CMake/CI files were touched) revealed that GCC ties each `.gcda` profile file to the specific OUTPUT BINARY NAME active during the generate-phase compile. Using a different name between the generate and use phases — even with identical source and an identical build directory — produces a full set of "missing profile" warnings that `-Wno-missing-profile` would then silently mask, yielding a binary that compiles and runs fine but received NONE of the intended PGO optimization, with no error to signal the mistake. This is now called out explicitly in `CMakeLists.txt`'s own option comment and the CI job's own comments, and the CI job is structured (same build directory, same target name, both phases) to never hit it.
+
+**Verification performed, in increasing order of fidelity to the real pipeline:**
+1. Raw g++ prototype of the engine binary alone (lib + main.cpp): generate-phase build, real training run producing 42 `.gcda` files, use-phase rebuild with the same output name — bench output byte-identical (81029 nodes) to a plain `-O3` baseline, confirming PGO changes speed, not behavior.
+2. `cmake` was not installed in this sandbox at session start — installed via `pip install cmake --break-system-packages` specifically to verify the real `CMakeLists.txt` (not just a hand-rolled g++ approximation of what it does). Confirmed: clean configure in both phases, clean build of the actual `nightwing` engine target in both phases via real CMake, zero missing-profile warnings on rebuild, and correct (baseline-matching) bench output from the CMake-built PGO binary specifically.
+3. The full 458-case Catch2 test suite was compiled and run under genuine PGO instrumentation (via the faster raw-g++/Catch2-amalgamated path — the CMake+Catch2-FetchContent test-binary build proved too slow for this sandbox's per-command time limits, and a backgrounded build attempt was found not to persist across separate tool invocations in this environment), then recompiled with `-fprofile-use -fprofile-correction -Wno-missing-profile` using the identical output name, and rerun 3 consecutive times: all green every time, 458/458 cases, node counts unchanged from every prior session's own baseline.
+
+**Left honestly incomplete, noted in ROADMAP.md:** the CMake-driven (not raw-g++) build of the Catch2-based test binary specifically, in `use` phase, wasn't completed end-to-end in this sandbox — a resource/time constraint of this specific environment (Catch2's own FetchContent+compile is genuinely slow here, independent of PGO), not a known or suspected defect in the PGO flags themselves, which were validated via the raw-g++ path using the exact same file set and flags.
+
+**Next session start point:** Read ROADMAP.md's own Phase 8 section directly for the next incomplete item (TT prefetch verification, SPRT setup, skill-level limiting, contempt, README/build docs are all still open) and begin working immediately.
+
+---
+
 ### Session 84 — 2026-09-05 — Phase 8: `bench` command (fishtest/OpenBench-style regression benchmark)
 
 **Built:**
