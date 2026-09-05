@@ -71,6 +71,7 @@
 #include <thread>
 #include <vector>
 
+#include "bench_positions.h"
 #include "board/board.h"
 #include "board/fen.h"
 #include "board/movegen.h"
@@ -1149,6 +1150,48 @@ void finish_pondering(PonderState& ponder) {
 
 } // namespace
 
+void run_bench(std::ostream& out) {
+    std::uint64_t total_nodes = 0;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    for (const auto& bench_pos : bench::kBenchPositions) {
+        Position pos = board::parse_fen(bench_pos.fen);
+        // Deliberately the plain, all-defaults call — single-threaded,
+        // default Hash size — this function's own doc comment (uci.h)
+        // has the full reproducibility rationale for why neither is
+        // configurable here.
+        const search::SearchResult result = search::search_fixed_depth(pos, bench::kBenchDepth);
+        total_nodes += result.nodes;
+        out << bench_pos.name << ": depth " << bench::kBenchDepth << " nodes " << result.nodes
+            << " score " << result.score << " bestmove " << result.best_move.to_uci() << '\n';
+    }
+
+    const auto t1 = std::chrono::steady_clock::now();
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+    // Guard against a division by zero on an implausibly fast run
+    // (elapsed_ms == 0) -- reports 0 Nodes/second rather than crashing
+    // or reporting a nonsensical infinite rate.
+    const std::uint64_t nps =
+        elapsed_ms > 0
+            ? static_cast<std::uint64_t>(total_nodes) * 1000ULL / static_cast<std::uint64_t>(elapsed_ms)
+            : 0;
+
+    // Standard fishtest/OpenBench-parseable format (matches the
+    // convention several established engines already use): external
+    // tooling greps specifically for a "Nodes searched" line to extract
+    // the total, so this exact label/spacing matters for real
+    // interoperability, not just cosmetic — this could not be verified
+    // against actual OpenBench/fishtest infrastructure from this
+    // development environment (no access to either), so treat this
+    // format as believed-correct-by-convention rather than confirmed
+    // working end-to-end; see docs/ROADMAP.md's own note on this.
+    out << "===========================\n";
+    out << "Total time (ms) : " << elapsed_ms << '\n';
+    out << "Nodes searched  : " << total_nodes << '\n';
+    out << "Nodes/second    : " << nps << '\n';
+    out.flush();
+}
+
 void run(std::istream& in, std::ostream& out) {
     Position pos = board::start_position();
     // Ancestors of `pos`, oldest to newest, NOT including `pos` itself —
@@ -1272,6 +1315,15 @@ void run(std::istream& in, std::ostream& out) {
             handle_ponderhit(ponder);
         } else if (cmd == "stop") {
             handle_stop(ponder);
+        } else if (cmd == "bench") {
+            // ROADMAP.md Phase 8, "`bench` command": recognized as an
+            // ordinary typed UCI command too, not just the `./nightwing
+            // bench` CLI-argument path (main.cpp) — some fishtest/
+            // OpenBench-style tooling drives engines purely over UCI
+            // stdin/stdout rather than CLI arguments, so both entry
+            // points call the exact same run_bench() (this file, below)
+            // for byte-for-byte identical output either way.
+            run_bench(out);
         } else if (cmd == "quit") {
             break;
         }

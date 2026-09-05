@@ -28,4 +28,32 @@ namespace nightwing::uci {
 /// board/movegen.h).
 void run(std::istream& in, std::ostream& out);
 
+/// Runs the fixed-position, fixed-depth bench (ROADMAP.md Phase 8,
+/// "`bench` command" — src/bench_positions.h has the shared position
+/// set/depth this shares with tests/bench_tests.cpp's own internal
+/// regression tracking) and writes a fishtest/OpenBench-style summary
+/// to `out`, ending with a "Nodes searched : N" line that external
+/// tooling greps for to verify build correctness/reproducibility across
+/// commits. Called from two places: run()'s own `bench` command
+/// (typed at the interactive UCI prompt), and directly from main.cpp
+/// when the engine is invoked as `./nightwing bench` on the command
+/// line (the more common way fishtest/OpenBench actually invoke it —
+/// see main.cpp's own comment) — both produce byte-for-byte identical
+/// output for the same build, since both just call this one function.
+///
+/// Precondition: same as run() above — init_masks()/
+/// init_magic_bitboards()/init_zobrist_keys() must already have been
+/// called.
+///
+/// Deliberately single-threaded and Hash-default (search_fixed_depth()'s
+/// own defaults, unconditionally — not configurable via this function's
+/// own parameters): reproducibility across machines/commits is the
+/// entire point of a bench command a testing harness diffs output
+/// against, and both thread count and hash size can otherwise perturb
+/// node counts (Lazy SMP's own inherent nondeterminism; a differently-
+/// sized TT changes replacement-eviction timing) — see docs/DECISIONS.md
+/// for the full reasoning and what's deliberately NOT configurable here
+/// as a result.
+void run_bench(std::ostream& out);
+
 } // namespace nightwing::uci
