@@ -220,3 +220,90 @@ jobs:
             build/tuned_weights.txt
             build/match_result.txt
           retention-days: 30
+
+  # ROADMAP.md Phase 8's "PGO build pipeline" item. Manually triggered
+  # only (`workflow_dispatch`, same rationale as `tuning-pipeline` above)
+  # -- a two-stage PGO build is a deliberate, occasional release-quality
+  # step, not a per-commit correctness check, and doesn't gate regular
+  # CI. Linux only: PGO here is GCC/Clang-only by design (see
+  # CMakeLists.txt's own NIGHTWING_PGO_PHASE comment for why MSVC is out
+  # of scope this session), and a single representative platform is
+  # enough to validate the pipeline itself works — this job produces a
+  # downloadable artifact for whoever wants the actual optimized binary,
+  # not a cross-platform correctness matrix (build-and-test above
+  # already covers that, without PGO).
+  #
+  # CRITICAL: both cmake invocations below target the SAME build
+  # directory (`build`) and never rename the `nightwing` executable
+  # target — see CMakeLists.txt's own NIGHTWING_PGO_PHASE comment for
+  # why either one breaks GCC's own profile-file-to-binary-name
+  # association silently (produces a working but NON-PGO-optimized
+  # binary with a full set of masked "missing profile" warnings, not a
+  # build failure — the kind of mistake that's easy to ship unnoticed).
+  pgo-build:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    name: PGO build pipeline (generate -> train -> use -> verify)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure CMake (Release, PGO generate phase)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF -DNIGHTWING_PGO_PHASE=generate
+
+      - name: Build instrumented engine
+        run: cmake --build build --config Release --parallel --target nightwing
+
+      # Training workload: the same fixed bench positions this project
+      # already uses for regression tracking (src/bench_positions.h),
+      # plus a couple of ordinary `go` searches from both the starting
+      # position and a short reply, specifically so the opening book
+      # (book.cpp — `bench` alone never touches it, since
+      # search_fixed_depth() bypasses book entirely) also gets real
+      # profile coverage, not just left to `-Wno-missing-profile` to
+      # paper over. Verified directly, in a development sandbox before
+      # this job was written, that this exact combination already
+      # exercises every single .cpp file in nightwing_lib.
+      - name: Run training workload
+        working-directory: build
+        run: |
+          ./src/nightwing bench
+          printf 'uci\nposition startpos\ngo depth 8\nposition startpos moves e2e4 e7e5\ngo depth 8\nquit\n' | ./src/nightwing
+
+      # Reconfigures the SAME build directory in place (this step's own
+      # job-level comment above has the full reasoning on why this
+      # matters) -- also turns tests on now, so the verification step
+      # below builds and runs the PGO-optimized library, not a second,
+      # separate non-PGO copy of it.
+      - name: Reconfigure CMake (PGO use phase, tests on)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=ON -DNIGHTWING_PGO_PHASE=use
+
+      - name: Rebuild optimized engine and test suite
+        run: cmake --build build --config Release --parallel
+
+      # Confirms the PGO-optimized nightwing_lib is still correct, not
+      # just faster -- PGO only changes codegen/optimization decisions,
+      # never program logic, so every existing test should still pass
+      # unchanged; a failure here would mean something about this
+      # pipeline itself (not an ordinary code change) broke correctness.
+      - name: Test PGO-optimized build
+        working-directory: build
+        run: ctest --output-on-failure --build-config Release
+
+      # `bench`'s own "Nodes searched" total is a genuine correctness
+      # cross-check, not just informational here: PGO must never change
+      # WHAT the engine computes, only how fast — an unexpected total
+      # here (versus the plain, non-PGO build-and-test job's own bench
+      # numbers, docs/SESSIONS.md) would indicate this pipeline
+      # introduced a real behavioral difference, not just a speed one.
+      - name: Run bench on the PGO-optimized binary
+        working-directory: build
+        run: ./src/nightwing bench
+
+      - name: Upload PGO-optimized binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightwing-pgo-linux
+          path: build/src/nightwing
+          retention-days: 30
