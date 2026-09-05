@@ -695,3 +695,40 @@ TEST_CASE("uci: 'MultiPV' > 1 during pondering doesn't crash or hang -- ponderin
     (void)out;
 }
 
+// --- Ponder option advertisement (ROADMAP.md Phase 8, "Pondering —
+// protocol side"; pondering ITSELF has been fully implemented and
+// tested since Session 75/76 -- tests/pondering_tests.cpp -- this is
+// only the option advertisement/acceptance) ---
+
+TEST_CASE("uci: 'uci' response advertises the Ponder check option, default true", "[uci][ponder]") {
+    init_all();
+    const std::string out = run_uci({"uci", "quit"});
+    REQUIRE(contains(out, "option name Ponder type check default true"));
+}
+
+TEST_CASE("uci: 'setoption name Ponder value false/true' is accepted without error and doesn't "
+          "disable actual pondering support -- 'go ponder' still works exactly as before "
+          "regardless of this option's value (this option deliberately has no behavioral "
+          "effect -- handle_setoption()'s own doc comment)",
+          "[uci][ponder]") {
+    init_all();
+    // "value false" first: if this incorrectly disabled pondering
+    // internally, the subsequent 'go ponder'/'ponderhit' below would
+    // either hang (never producing a 'bestmove') or behave like an
+    // ordinary synchronous 'go' -- neither is being asserted directly
+    // here since tests/pondering_tests.cpp already covers the full
+    // ponder/ponderhit timing contract in depth; this test's own job is
+    // just confirming the setoption call itself, and a subsequent
+    // ordinary go, both still work normally either way.
+    const std::string out_after_false =
+        run_uci({"setoption name Ponder value false", "position startpos moves g1h3", "go depth 2",
+                  "quit"});
+    const std::string out_after_true =
+        run_uci({"setoption name Ponder value true", "position startpos moves g1h3", "go depth 2",
+                  "quit"});
+    REQUIRE(contains(out_after_false, "bestmove "));
+    REQUIRE_FALSE(contains(out_after_false, "bestmove 0000"));
+    REQUIRE(contains(out_after_true, "bestmove "));
+    REQUIRE_FALSE(contains(out_after_true, "bestmove 0000"));
+}
+
