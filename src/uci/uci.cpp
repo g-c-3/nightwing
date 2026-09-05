@@ -331,25 +331,82 @@ constexpr int kMaxMoveOverheadMs = 5000;
 constexpr int kMinMultiPV = 1;
 constexpr int kMaxMultiPV = 256;
 
-/// Simple time allocation for `go wtime/btime/winc/binc` — no
-/// movestogo-aware tuning yet (see DECISIONS.md): budgets
-/// remaining_ms / 20 plus the increment, capped at remaining_ms / 2 so
-/// a single move can never claim more than half of what's left (a
-/// guard against starving later moves when remaining_ms is already
-/// low).
-[[nodiscard]] int allocate_time_ms(int remaining_ms, int increment_ms) noexcept {
+/// Result of allocate_time_ms() below: a SOFT budget (the ordinary,
+/// "expected" allocation for this move -- used as the early-stop
+/// threshold once the best move has stabilized, search.h's own
+/// `soft_time_limit_ms` doc comment) and a HARD budget (an upper bound
+/// the search may extend into if the position turns out to be
+/// genuinely unstable, but never exceed). `hard_ms >= soft_ms` always.
+struct TimeAllocation {
+    int soft_ms = 0;
+    int hard_ms = 0;
+};
+
+/// How much larger the hard cap is allowed to be than the soft budget
+/// (ROADMAP.md Phase 8, "Time management" -- the best-move-stability-
+/// based extension sub-item) when the position is unstable enough that
+/// the soft early-stop in search_iterative_deepening() never triggers.
+/// 3x is a common, reasonable starting point in other engines' own
+/// time-management schemes -- like kStabilityThreshold (search.cpp),
+/// explicitly NOT yet tuned for Nightwing specifically; revisit once
+/// SPRT infrastructure exists (ROADMAP.md Phase 8's own still-open
+/// "SPRT testing setup/process" item) to validate empirically rather
+/// than by feel.
+constexpr int kHardBudgetMultiplier = 3;
+
+/// Time allocation for `go wtime/btime/winc/binc` — returns both a soft
+/// (expected/normal) and a hard (maximum, extendable-into-if-unstable)
+/// budget; see TimeAllocation's own doc comment just above and
+/// search.h's `soft_time_limit_ms` doc comment on
+/// search_iterative_deepening() for how the two are actually used.
+///
+/// `movestogo` (ROADMAP.md Phase 8, "Time management" -- the
+/// "increment handling"/allocation-strategy sub-item this specific
+/// piece addresses): when the GUI provides it (a genuine "N moves until
+/// the next time control" count, standard in classical/non-increment-
+/// only time controls), it replaces this function's previous, fixed
+/// "assume roughly 20 moves remain" guess with the ACTUAL number of
+/// moves remaining -- a materially better estimate whenever it's
+/// available, since the fixed-20 guess is only ever a guess, while
+/// `movestogo` is exact information the GUI already has and is
+/// offering. Falls back to the same fixed-20 heuristic as before when
+/// `movestogo <= 0` (not provided, or a malformed non-positive value --
+/// same defensive-clamping convention as every other option/token
+/// parsed in this file).
+///
+/// Both budgets are capped at `remaining_ms / 2` (never claim more than
+/// half of what's left, regardless of `movestogo` or the hard
+/// multiplier above) — the same safety invariant this function already
+/// had before this session's changes, now applied to both numbers
+/// rather than just one.
+[[nodiscard]] TimeAllocation allocate_time_ms(int remaining_ms, int increment_ms,
+                                                int movestogo) noexcept {
     if (remaining_ms <= 0) {
-        return 50; // Effectively "as little as possible, but not zero."
+        return {50, 50}; // Effectively "as little as possible, but not zero," for both.
     }
-    int budget = remaining_ms / 20 + increment_ms;
+    const int divisor = movestogo > 0 ? movestogo : 20;
     const int cap = remaining_ms / 2;
-    if (budget > cap) {
-        budget = cap;
+
+    int soft = remaining_ms / divisor + increment_ms;
+    if (soft > cap) {
+        soft = cap;
     }
-    if (budget < 1) {
-        budget = 1;
+    if (soft < 1) {
+        soft = 1;
     }
-    return budget;
+
+    // `long long` for the multiply: guards against a theoretical
+    // overflow at extreme `remaining_ms` values before the cap below
+    // brings it back into `int` range -- cheap insurance, not a
+    // response to any observed failure.
+    long long hard = static_cast<long long>(soft) * kHardBudgetMultiplier;
+    if (hard > cap) {
+        hard = cap;
+    }
+    if (hard < soft) {
+        hard = soft; // Never let the hard cap be smaller than the soft budget.
+    }
+    return {soft, static_cast<int>(hard)};
 }
 
 /// Result of parsing `go`'s own depth/time-control tokens (used both by
@@ -364,13 +421,33 @@ struct SearchBudget {
     /// applies to `max_depth` in that case instead). A positive value is
     /// a genuine millisecond budget, whether from `movetime` directly or
     /// derived from `wtime`/`btime`/`winc`/`binc` via allocate_time_ms().
+    /// This is the HARD cap, passed as search_iterative_deepening()'s
+    /// own `time_limit_ms` — never exceeded.
     int time_limit_ms = 0;
+
+    /// The SOFT budget (ROADMAP.md Phase 8, "Time management" --
+    /// best-move-stability-based extension), passed as
+    /// search_iterative_deepening()'s own `soft_time_limit_ms`
+    /// parameter. 0 means "no soft budget" — search.h's own doc comment
+    /// on that parameter: the search then runs exactly as if this
+    /// feature didn't exist, all the way to `time_limit_ms`/`max_depth`
+    /// regardless of best-move stability. Only ever set to a genuine
+    /// positive value alongside a `wtime`/`btime`-derived
+    /// `time_limit_ms` below — an explicit `movetime N` is a direct,
+    /// deliberate instruction for exactly how long to think (this
+    /// file's own Move Overhead doc comment draws the same "movetime is
+    /// deliberate, don't second-guess it" line elsewhere), so no soft
+    /// early-stop applies to it; nor does a bare `depth N` with no time
+    /// control, which has no time budget to be soft about at all.
+    int soft_time_limit_ms = 0;
 };
 
 /// Parses `go`'s own `[depth N] [movetime N] [wtime W btime B [winc I]
-/// [binc I]]` tokens (any combination; unrecognized sub-options like
-/// `movestogo`/`infinite`/`ponder`/`mate`/`nodes` are ignored here too,
-/// same as handle_go()'s own former inline version of this logic) into
+/// [binc I] [movestogo N]]` tokens (any combination; `movestogo` feeds
+/// allocate_time_ms() above -- see that function's own doc comment;
+/// other unrecognized sub-options like `infinite`/`ponder`/`mate`/
+/// `nodes` are still ignored here, same as handle_go()'s own former
+/// inline version of this logic) into
 /// a concrete depth ceiling and millisecond budget — extracted into its
 /// own function so start_pondering() can compute and SAVE the same
 /// budget an ordinary (non-ponder) `go` from this exact position would
@@ -400,6 +477,7 @@ struct SearchBudget {
     int btime = -1;
     int winc = 0;
     int binc = 0;
+    int movestogo = 0;
 
     for (std::size_t i = 1; i < tokens.size(); ++i) {
         const std::string& tok = tokens[i];
@@ -429,6 +507,8 @@ struct SearchBudget {
             winc = next_int();
         } else if (tok == "binc") {
             binc = next_int();
+        } else if (tok == "movestogo") {
+            movestogo = next_int();
         }
     }
 
@@ -437,15 +517,19 @@ struct SearchBudget {
             budget.max_depth = kNoTimeControlDepth; // Guard against a malformed "depth 0"/negative value.
         }
         // time_limit_ms is whatever movetime gave (possibly 0, i.e. no limit).
+        // soft_time_limit_ms stays 0 -- SearchBudget's own doc comment on why.
     } else if (have_movetime) {
         budget.max_depth = kTimedSearchMaxDepth;
         // time_limit_ms is already set from movetime above.
+        // soft_time_limit_ms stays 0 -- SearchBudget's own doc comment on why.
     } else {
         const bool white_to_move = pos.side_to_move == board::Color::White;
         const int remaining = white_to_move ? wtime : btime;
         if (remaining >= 0) {
             const int increment = white_to_move ? winc : binc;
-            budget.time_limit_ms = allocate_time_ms(remaining, increment);
+            const TimeAllocation alloc = allocate_time_ms(remaining, increment, movestogo);
+            budget.soft_time_limit_ms = alloc.soft_ms;
+            budget.time_limit_ms = alloc.hard_ms;
             budget.max_depth = kTimedSearchMaxDepth;
         } else {
             budget.max_depth = kNoTimeControlDepth;
@@ -457,6 +541,20 @@ struct SearchBudget {
         budget.time_limit_ms -= move_overhead_ms;
         if (budget.time_limit_ms < 1) {
             budget.time_limit_ms = 1;
+        }
+    }
+    if (budget.soft_time_limit_ms > 0) {
+        budget.soft_time_limit_ms -= move_overhead_ms;
+        if (budget.soft_time_limit_ms < 1) {
+            budget.soft_time_limit_ms = 1;
+        }
+        // Move Overhead could, in principle, be large enough relative
+        // to a tiny soft budget to push soft above hard after both were
+        // independently clamped to >= 1 above -- keep the invariant
+        // "soft <= hard" (SearchBudget's/TimeAllocation's own doc
+        // comments) true after overhead is applied too, not just before.
+        if (budget.soft_time_limit_ms > budget.time_limit_ms) {
+            budget.soft_time_limit_ms = budget.time_limit_ms;
         }
     }
     return budget;
@@ -637,8 +735,8 @@ void handle_setoption(int& num_threads, std::size_t& hash_size_mb, int& move_ove
     // Any other option name: silently ignored (this function's own doc comment).
 }
 
-/// Handles `go [depth N] [movetime N] [wtime W btime B [winc I] [binc I]]`
-/// (any combination; unrecognized sub-options like `movestogo`/
+/// Handles `go [depth N] [movetime N] [wtime W btime B [winc I] [binc I]
+/// [movestogo N]]` (any combination; unrecognized sub-options like
 /// `infinite`/`ponder`/`mate`/`nodes` are accepted but ignored — see
 /// this file's header comment): runs the search, writing one `info
 /// depth ... score ... nodes ... pv ...` line per completed iteration
@@ -714,11 +812,18 @@ void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
     // parameters, this function's own doc comment above; `external_stop`
     // stays nullptr -- an ordinary (non-ponder) `go` has no external
     // interruption source (this file's own header comment).
+    // `budget.soft_time_limit_ms` (ROADMAP.md Phase 8, "Time
+    // management"): passed straight through as
+    // search_iterative_deepening()'s own `soft_time_limit_ms` parameter
+    // (search.h's doc comment) -- 0 whenever this budget came from an
+    // explicit `movetime`/`depth` rather than `wtime`/`btime`
+    // (SearchBudget's own doc comment above on why), in which case this
+    // is a no-op exactly as if the parameter didn't exist.
     const search::SearchResult result = search::search_iterative_deepening(
         pos, budget.max_depth, budget.time_limit_ms, game_history,
         [&out](const search::SearchResult& iteration_result) { emit_info(iteration_result, out); },
         /*material_weights=*/nullptr, num_threads, /*external_stop=*/nullptr, hash_size_mb,
-        multi_pv);
+        multi_pv, budget.soft_time_limit_ms);
 
     out << "bestmove ";
     if (result.best_move.is_null()) {
@@ -860,6 +965,24 @@ void abandon_pondering(PonderState& ponder) {
 /// when computing the REAL move's saved budget for handle_ponderhit()
 /// to apply later, exactly as it would for an ordinary `go` from this
 /// same position.
+///
+/// `budget.soft_time_limit_ms` (ROADMAP.md Phase 8, "Time management")
+/// is computed by compute_search_budget() below (same as handle_go()'s
+/// own call) but deliberately NOT threaded into this function's own
+/// actual background search_iterative_deepening() call just below --
+/// that call already passes `time_limit_ms=0` (unbounded) and relies
+/// entirely on `external_stop`, itself only ever set by a real `stop`
+/// command or handle_ponderhit()'s own fixed-delay watchdog thread
+/// (that function's own doc comment) — an entirely different stopping
+/// mechanism than the iterative-deepening loop's own soft/hard-budget
+/// check (search.h's `soft_time_limit_ms` doc comment), which measures
+/// elapsed time from THIS call's own start, not from whenever
+/// `ponderhit` eventually arrives. Reconciling the two -- e.g. letting
+/// a ponder search stop itself early once stable, ahead of the
+/// watchdog's own fixed delay -- is real, legitimate future work, not
+/// something to improvise here; `budget.soft_time_limit_ms` is
+/// discarded (unused) at this specific call site for now, an accepted
+/// scope limit.
 void start_pondering(Position& pos, const std::vector<std::uint64_t>& game_history,
                       const std::vector<std::string>& tokens, int num_threads,
                       std::size_t hash_size_mb, int move_overhead_ms, std::ostream& out,
