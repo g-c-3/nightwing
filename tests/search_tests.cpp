@@ -951,3 +951,90 @@ TEST_CASE("search_iterative_deepening: multi_pv's on_iteration callback fires on
         REQUIRE(fired[i].nodes >= fired[i - 2].nodes);
     }
 }
+
+// --- Time management: best-move-stability-based early stop (ROADMAP.md
+// Phase 8, "Time management"; search.h's own `soft_time_limit_ms`
+// parameter doc comment on search_iterative_deepening() has the full
+// mechanism) ---
+
+TEST_CASE("search_iterative_deepening: soft_time_limit_ms <= 0 (the default) leaves behavior "
+          "completely unaffected -- the search still runs all the way to time_limit_ms/max_depth "
+          "regardless of how stable the best move is",
+          "[search][time_management]") {
+    init_all();
+    // Hanging-queen position: an obviously stable best move (confirmed
+    // directly via a standalone diagnostic before this test was
+    // written -- it stabilizes within a handful of iterations). If
+    // `soft_time_limit_ms == 0` (the default) accidentally still
+    // triggered an early stop somehow, this search would return in a
+    // few tens of milliseconds instead of running the full budget.
+    Position pos = parse_fen("4k3/8/8/8/8/8/4q3/4K2R w K - 0 1");
+    const auto t0 = std::chrono::steady_clock::now();
+    const SearchResult result =
+        search_iterative_deepening(pos, 30, /*time_limit_ms=*/300, {}, nullptr, nullptr, 1,
+                                    nullptr, kDefaultTTSizeMB, /*multi_pv=*/1,
+                                    /*soft_time_limit_ms=*/0);
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - t0)
+                                 .count();
+    REQUIRE_FALSE(result.best_move.is_null());
+    // Generous lower bound (150ms out of a 300ms hard budget): confirms
+    // the search actually used a substantial fraction of its budget
+    // rather than stopping suspiciously early, without being so tight
+    // that ordinary machine-speed/scheduling variance could flake it.
+    REQUIRE(elapsed_ms >= 150);
+}
+
+TEST_CASE("search_iterative_deepening: with soft_time_limit_ms set, a position whose best move "
+          "stabilizes quickly stops well before the hard time_limit_ms cap",
+          "[search][time_management]") {
+    init_all();
+    Position pos = parse_fen("4k3/8/8/8/8/8/4q3/4K2R w K - 0 1");
+    const auto t0 = std::chrono::steady_clock::now();
+    const SearchResult result =
+        search_iterative_deepening(pos, 30, /*time_limit_ms=*/1000, {}, nullptr, nullptr, 1,
+                                    nullptr, kDefaultTTSizeMB, /*multi_pv=*/1,
+                                    /*soft_time_limit_ms=*/80);
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - t0)
+                                 .count();
+    REQUIRE_FALSE(result.best_move.is_null());
+    // Real measured behavior (standalone diagnostic, before this test
+    // was written) was consistently under 100ms out of the 1000ms hard
+    // cap; 500ms (half the hard cap) is a deliberately generous
+    // threshold to avoid flaking on a slow or heavily loaded machine
+    // while still meaningfully confirming the early stop engaged rather
+    // than the search running to the hard cap.
+    REQUIRE(elapsed_ms < 500);
+}
+
+TEST_CASE("search_iterative_deepening: soft_time_limit_ms never allows the search to exceed "
+          "time_limit_ms (the hard cap) -- an unstable position (best move keeps changing) still "
+          "respects the hard deadline",
+          "[search][time_management]") {
+    init_all();
+    // The starting position: confirmed directly (standalone diagnostic)
+    // to have a best move that keeps changing across shallow iterations
+    // -- genuine search instability (the same phenomenon documented in
+    // docs/DECISIONS.md, 2026-09-05 (2), for MultiPV) -- so the
+    // stability streak required for an early stop never accumulates,
+    // and the search should run the full hard budget regardless of
+    // `soft_time_limit_ms` being set.
+    Position pos = start_position();
+    const auto t0 = std::chrono::steady_clock::now();
+    const SearchResult result =
+        search_iterative_deepening(pos, 30, /*time_limit_ms=*/300, {}, nullptr, nullptr, 1,
+                                    nullptr, kDefaultTTSizeMB, /*multi_pv=*/1,
+                                    /*soft_time_limit_ms=*/80);
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - t0)
+                                 .count();
+    REQUIRE_FALSE(result.best_move.is_null());
+    // Generous tolerance above the 300ms hard cap (scheduling/mid-
+    // iteration-check overhead, not a sign of a broken deadline) --
+    // still tight enough to catch soft_time_limit_ms somehow disabling
+    // the hard cap entirely, which would show up as a MUCH larger
+    // overrun than ordinary scheduling jitter.
+    REQUIRE(elapsed_ms <= 800);
+}
+

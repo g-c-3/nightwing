@@ -271,6 +271,48 @@ TEST_CASE("uci: 'go wtime/btime' returns a legal bestmove", "[uci]") {
     REQUIRE_FALSE(contains(out, "bestmove 0000"));
 }
 
+// --- Time management: `movestogo` parsing (ROADMAP.md Phase 8, "Time
+// management"; allocate_time_ms()'s own doc comment, src/uci/uci.cpp,
+// has the full allocation-strategy rationale -- the actual
+// best-move-stability-based early-stop MECHANISM itself is unit-tested
+// directly, with real timing assertions, in
+// tests/search_tests.cpp's own "[time_management]"-tagged tests, since
+// that's a search-level concern this file can't observe through the
+// UCI text protocol alone -- no `info ... time ...` field is emitted.
+// This file's own tests are limited to confirming `movestogo` parses
+// safely and doesn't break anything at the protocol layer.) ---
+
+TEST_CASE("uci: 'go wtime/btime/movestogo' returns a legal bestmove", "[uci][time_management]") {
+    init_all();
+    const std::string out = run_uci(
+        {"position startpos moves g1h3", "go wtime 5000 btime 5000 winc 0 binc 0 movestogo 30",
+          "quit"});
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
+TEST_CASE("uci: a malformed 'movestogo' (0, negative, non-integer) is ignored rather than "
+          "crashing or hanging -- falls back to the same fixed heuristic as no 'movestogo' at "
+          "all (allocate_time_ms()'s own doc comment)",
+          "[uci][time_management]") {
+    init_all();
+    const std::string out_zero = run_uci(
+        {"position startpos moves g1h3", "go wtime 3000 btime 3000 winc 0 binc 0 movestogo 0",
+          "quit"});
+    const std::string out_negative = run_uci(
+        {"position startpos moves g1h3", "go wtime 3000 btime 3000 winc 0 binc 0 movestogo -5",
+          "quit"});
+    const std::string out_non_integer = run_uci(
+        {"position startpos moves g1h3",
+          "go wtime 3000 btime 3000 winc 0 binc 0 movestogo notanumber", "quit"});
+    REQUIRE(contains(out_zero, "bestmove "));
+    REQUIRE_FALSE(contains(out_zero, "bestmove 0000"));
+    REQUIRE(contains(out_negative, "bestmove "));
+    REQUIRE_FALSE(contains(out_negative, "bestmove 0000"));
+    REQUIRE(contains(out_non_integer, "bestmove "));
+    REQUIRE_FALSE(contains(out_non_integer, "bestmove 0000"));
+}
+
 TEST_CASE("uci: a malformed FEN is ignored, leaving the position at its prior value", "[uci]") {
     init_all();
     const std::string out =
