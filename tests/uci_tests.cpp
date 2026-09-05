@@ -52,6 +52,20 @@ std::string run_uci(const std::vector<std::string>& commands) {
 bool contains(const std::string& haystack, const std::string& needle) {
     return haystack.find(needle) != std::string::npos;
 }
+
+/// Returns how many non-overlapping times `needle` appears in
+/// `haystack` -- used by the MultiPV tests below to confirm the right
+/// NUMBER of "multipv N" tokens appear (once per line per depth), not
+/// just that at least one does.
+[[nodiscard]] std::size_t count_occurrences(const std::string& haystack, const std::string& needle) {
+    std::size_t count = 0;
+    std::size_t idx = 0;
+    while ((idx = haystack.find(needle, idx)) != std::string::npos) {
+        ++count;
+        idx += needle.size();
+    }
+    return count;
+}
 } // namespace
 
 TEST_CASE("uci: 'uci' command responds with id and uciok", "[uci]") {
@@ -555,5 +569,129 @@ TEST_CASE("uci: 'Hash' and 'Move Overhead' set via 'setoption' persist across 'u
                   "ucinewgame", "position startpos", "go depth 3", "quit"});
     REQUIRE(contains(out, "bestmove "));
     REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
+// --- MultiPV (ROADMAP.md Phase 8, "Full UCI option set" -- the last
+// sub-item, completing this bullet) ---
+
+TEST_CASE("uci: 'uci' response advertises the MultiPV spin option with its documented bounds",
+          "[uci][multipv]") {
+    init_all();
+    const std::string out = run_uci({"uci", "quit"});
+    REQUIRE(contains(out, "option name MultiPV type spin default 1 min 1 max 256"));
+}
+
+TEST_CASE("uci: every 'info' line always includes a 'multipv' token, even at the default MultiPV "
+          "of 1 -- matches the convention several established engines already follow",
+          "[uci][multipv]") {
+    init_all();
+    // "moves g1h3" (not bare "position startpos"): sidesteps the
+    // opening book (src/book/book.h) exactly like this file's other
+    // pre-existing search-content tests already do (e.g. this file's
+    // own "'position startpos moves ...' applies the moves before
+    // searching" test above) -- a bare "position startpos" would
+    // silently answer from book once ANY earlier test in the same
+    // process has called book::init_book() (this file's own dedicated
+    // book test does exactly that), skipping search--and therefore
+    // "info"/"multipv" output--entirely. Confirmed directly: this
+    // exact test (and two siblings below) failed only when run as part
+    // of the FULL suite, never in isolation, before this fix.
+    const std::string out = run_uci({"position startpos moves g1h3", "go depth 2", "quit"});
+    REQUIRE(contains(out, "info depth 1 multipv 1 score "));
+    REQUIRE(contains(out, "info depth 2 multipv 1 score "));
+}
+
+TEST_CASE("uci: 'setoption name MultiPV value N' followed by 'go' emits N distinct 'multipv' "
+          "lines per depth, ranked 1..N, and 'bestmove' still names exactly one legal move",
+          "[uci][multipv]") {
+    init_all();
+    // "moves g1h3": see the previous test's own comment on why bare
+    // "position startpos" isn't safe to use here.
+    const std::string out = run_uci(
+        {"setoption name MultiPV value 3", "position startpos moves g1h3", "go depth 3", "quit"});
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+    // Every completed depth (1, 2, 3) should report exactly 3 multipv
+    // lines: "multipv 1", "multipv 2", "multipv 3" once each per depth.
+    REQUIRE(count_occurrences(out, "multipv 1") == 3);
+    REQUIRE(count_occurrences(out, "multipv 2") == 3);
+    REQUIRE(count_occurrences(out, "multipv 3") == 3);
+    REQUIRE(count_occurrences(out, "multipv 4") == 0);
+}
+
+TEST_CASE("uci: an out-of-range 'setoption name MultiPV value ...' is clamped, not rejected -- "
+          "'go' still returns a legal bestmove",
+          "[uci][multipv]") {
+    init_all();
+    // "moves g1h3": see the "every 'info' line..." test's own comment
+    // above on why bare "position startpos" isn't safe here -- this
+    // exact test was one of the two that actually failed (real,
+    // reproduced full-suite failure, not hypothetical) before this fix.
+    // 0 is below kMinMultiPV (1); 99999 is far above kMaxMultiPV (256).
+    const std::string out_low = run_uci(
+        {"setoption name MultiPV value 0", "position startpos moves g1h3", "go depth 2", "quit"});
+    const std::string out_high = run_uci({"setoption name MultiPV value 99999",
+                                           "position startpos moves g1h3", "go depth 2", "quit"});
+    REQUIRE(contains(out_low, "bestmove "));
+    REQUIRE_FALSE(contains(out_low, "bestmove 0000"));
+    REQUIRE(contains(out_high, "bestmove "));
+    REQUIRE_FALSE(contains(out_high, "bestmove 0000"));
+    // This position still has on the order of 20 legal moves; a request
+    // of 99999 is capped at the actual legal move count -- confirm at
+    // least SOME multipv lines beyond 1 came back, without hardcoding
+    // the exact count (search_iterative_deepening()'s own capping logic
+    // already has dedicated unit-level coverage in
+    // tests/search_tests.cpp).
+    REQUIRE(contains(out_high, "multipv 2"));
+}
+
+TEST_CASE("uci: a malformed 'setoption' for MultiPV (missing value, non-integer value) is "
+          "ignored -- a subsequent 'go' still works normally",
+          "[uci][multipv]") {
+    init_all();
+    const std::string out = run_uci({
+        "setoption name MultiPV",                 // missing "value ..." entirely
+        "setoption name MultiPV value notanumber", // non-integer value
+        "position startpos",
+        "go depth 2",
+        "quit",
+    });
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
+TEST_CASE("uci: 'MultiPV' set via 'setoption' persists across 'ucinewgame' (an option, not game "
+          "state)",
+          "[uci][multipv]") {
+    init_all();
+    // "moves g1h3" (after ucinewgame, not before -- ucinewgame resets
+    // the position, so the moves have to come after it here): see the
+    // "every 'info' line..." test's own comment above on why bare
+    // "position startpos" isn't safe -- this exact test was the other
+    // of the two that actually failed (real, reproduced full-suite
+    // failure) before this fix.
+    const std::string out = run_uci({"setoption name MultiPV value 2", "ucinewgame",
+                                      "position startpos moves g1h3", "go depth 2", "quit"});
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE(contains(out, "multipv 2"));
+}
+
+TEST_CASE("uci: 'MultiPV' > 1 during pondering doesn't crash or hang -- pondering's own search "
+          "call deliberately ignores MultiPV (this file's own header comment / run()'s own "
+          "MultiPV state-variable comment), but setting it beforehand must still behave safely",
+          "[uci][multipv]") {
+    init_all();
+    const std::string out =
+        run_uci({"setoption name MultiPV value 4", "position startpos",
+                  "go ponder wtime 5000 btime 5000 winc 0 binc 0", "stop", "quit"});
+    // Pondering suppresses 'bestmove' unless a real ponderhit converts
+    // it (this file's existing pondering tests already cover that
+    // distinction in depth) -- this test's only job is confirming
+    // MultiPV > 1 doesn't crash/hang the ponder path, so a clean 'quit'
+    // completing at all (run_uci() returning) is itself the assertion;
+    // REQUIRE(true) makes that explicit rather than leaving the test
+    // body looking accidentally empty.
+    REQUIRE(true);
+    (void)out;
 }
 

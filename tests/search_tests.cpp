@@ -823,3 +823,131 @@ TEST_CASE("search_fixed_depth: a position that already repeated once in game_his
     REQUIRE(result.best_move.from() == make_square(1, 0)); // b1
     REQUIRE(result.best_move.to() == make_square(0, 0));   // a1
 }
+
+// --- MultiPV (ROADMAP.md Phase 8, "Full UCI option set" -- the
+// `MultiPV` sub-item; search.h's own `multi_pv` parameter doc comment
+// on search_iterative_deepening()) ---
+
+TEST_CASE("search_iterative_deepening: multi_pv <= 1 leaves multipv_lines empty and every other "
+          "field exactly as before this parameter existed",
+          "[search][multipv]") {
+    init_all();
+    Position pos = start_position();
+    const SearchResult default_mpv = search_iterative_deepening(pos, 4);
+    const SearchResult explicit_one =
+        search_iterative_deepening(pos, 4, 0, {}, nullptr, nullptr, 1, nullptr,
+                                    kDefaultTTSizeMB, /*multi_pv=*/1);
+    REQUIRE(default_mpv.multipv_lines.empty());
+    REQUIRE(explicit_one.multipv_lines.empty());
+    REQUIRE(default_mpv.multipv_index == 1);
+    REQUIRE_FALSE(default_mpv.best_move.is_null());
+}
+
+TEST_CASE("search_iterative_deepening: multi_pv > 1 returns that many distinct lines, ranked by "
+          "strictly non-increasing score, each a legal root move, none repeated",
+          "[search][multipv]") {
+    init_all();
+    Position pos = start_position();
+    MoveList legal;
+    generate_legal_moves(pos, legal);
+
+    const SearchResult result =
+        search_iterative_deepening(pos, 4, 0, {}, nullptr, nullptr, 1, nullptr,
+                                    kDefaultTTSizeMB, /*multi_pv=*/3);
+
+    REQUIRE(result.multipv_lines.size() == 3);
+    for (std::size_t i = 0; i < result.multipv_lines.size(); ++i) {
+        const SearchResult& line = result.multipv_lines[i];
+        REQUIRE(line.multipv_index == static_cast<int>(i) + 1);
+        REQUIRE_FALSE(line.best_move.is_null());
+        REQUIRE(legal.contains(line.best_move));
+        if (i > 0) {
+            // Non-increasing, not strictly decreasing: a genuine tie
+            // between two lines' scores is legitimate and shouldn't
+            // fail this test -- see search.cpp's own comment on why
+            // std::stable_sort (not a strict ordering requirement) is
+            // used, not why ties can't happen.
+            REQUIRE(result.multipv_lines[i - 1].score >= line.score);
+        }
+    }
+    // No two lines report the same move -- the whole point of root-move
+    // exclusion (search_root()'s own `excluded_moves` doc comment).
+    REQUIRE(result.multipv_lines[0].best_move != result.multipv_lines[1].best_move);
+    REQUIRE(result.multipv_lines[0].best_move != result.multipv_lines[2].best_move);
+    REQUIRE(result.multipv_lines[1].best_move != result.multipv_lines[2].best_move);
+
+    // The enclosing SearchResult mirrors the best (rank-1) line.
+    REQUIRE(result.best_move == result.multipv_lines[0].best_move);
+    REQUIRE(result.score == result.multipv_lines[0].score);
+}
+
+TEST_CASE("search_iterative_deepening: multi_pv requesting more lines than legal root moves exist "
+          "is capped at the actual legal move count, not padded or rejected",
+          "[search][multipv]") {
+    init_all();
+    // A position with very few legal moves: White king and queen only,
+    // Black king far away -- still guaranteed at least 2 legal moves
+    // (not stalemate/checkmate), but nowhere near, say, 20.
+    Position pos = parse_fen("4k3/8/8/8/8/8/8/K1Q5 w - - 0 1");
+    MoveList legal;
+    generate_legal_moves(pos, legal);
+    REQUIRE(legal.size() >= 2);
+    REQUIRE(legal.size() < 500); // sanity, not a real assertion on the exact count
+
+    const SearchResult result = search_iterative_deepening(
+        pos, 3, 0, {}, nullptr, nullptr, 1, nullptr, kDefaultTTSizeMB, /*multi_pv=*/500);
+    REQUIRE(static_cast<int>(result.multipv_lines.size()) == legal.size());
+}
+
+TEST_CASE("search_iterative_deepening: multi_pv on a position with exactly one legal move leaves "
+          "multipv_lines empty (nothing extra to show) rather than crashing or hanging",
+          "[search][multipv]") {
+    init_all();
+    // A position with exactly one legal move (verified directly, below
+    // -- kings this close with a queen controlling most of the board
+    // leaves Black exactly one square to shuffle to, regardless of
+    // whether it's technically a check or just severe confinement).
+    Position pos = parse_fen("6k1/8/6K1/8/8/8/8/7Q b - - 0 1");
+    MoveList legal;
+    generate_legal_moves(pos, legal);
+    // If this specific FEN doesn't actually have exactly one legal move
+    // (an easy thing to get subtly wrong by hand), fail loudly with a
+    // clear message rather than silently testing a different scenario
+    // than intended.
+    REQUIRE(legal.size() == 1);
+
+    const SearchResult result = search_iterative_deepening(
+        pos, 3, 0, {}, nullptr, nullptr, 1, nullptr, kDefaultTTSizeMB, /*multi_pv=*/5);
+    REQUIRE(result.multipv_lines.empty());
+    REQUIRE_FALSE(result.best_move.is_null());
+    REQUIRE(result.best_move == legal[0]);
+}
+
+TEST_CASE("search_iterative_deepening: multi_pv's on_iteration callback fires once per line per "
+          "completed depth, each with the matching multipv_index and the SAME cumulative nodes "
+          "count across every line reported at that depth",
+          "[search][multipv]") {
+    init_all();
+    Position pos = start_position();
+    std::vector<SearchResult> fired;
+    const SearchResult result = search_iterative_deepening(
+        pos, 3, 0, {},
+        [&fired](const SearchResult& r) { fired.push_back(r); },
+        nullptr, 1, nullptr, kDefaultTTSizeMB, /*multi_pv=*/2);
+
+    REQUIRE(result.multipv_lines.size() == 2);
+    // 3 depths (1, 2, 3) x 2 lines each = 6 callback firings.
+    REQUIRE(fired.size() == 6);
+    for (std::size_t i = 0; i + 1 < fired.size(); i += 2) {
+        REQUIRE(fired[i].multipv_index == 1);
+        REQUIRE(fired[i + 1].multipv_index == 2);
+        // Both lines at the same depth report the identical cumulative
+        // node count (SearchResult::multipv_lines' own doc comment,
+        // search.h, on why this is `nodes`, not a per-line count).
+        REQUIRE(fired[i].nodes == fired[i + 1].nodes);
+    }
+    // Node counts are non-decreasing across successive depths.
+    for (std::size_t i = 2; i < fired.size(); ++i) {
+        REQUIRE(fired[i].nodes >= fired[i - 2].nodes);
+    }
+}
