@@ -529,13 +529,21 @@ void emit_info(const search::SearchResult& result, std::ostream& out) {
 }
 
 /// Handles `setoption name <name...> value <value...>`. Recognized
-/// option names, as of ROADMAP.md Phase 8's "Full UCI option set" item
-/// (now complete -- `MultiPV` was the last piece): `Threads` (ROADMAP.md
-/// Phase 7, unchanged from Session 74), `Hash`, `Move Overhead`, and
-/// `MultiPV` (kMinHashMB/kMaxHashMB, kMinMoveOverheadMs/
-/// kMaxMoveOverheadMs, and kMinMultiPV/kMaxMultiPV's own doc comments
-/// above have each option's full rationale). Every other name is silently ignored,
-/// matching this file's established robustness convention (this file's
+/// option names with real behavioral effect, as of ROADMAP.md Phase 8's
+/// "Full UCI option set" item (now complete -- `MultiPV` was the last
+/// piece): `Threads` (ROADMAP.md Phase 7, unchanged from Session 74),
+/// `Hash`, `Move Overhead`, and `MultiPV` (kMinHashMB/kMaxHashMB,
+/// kMinMoveOverheadMs/kMaxMoveOverheadMs, and kMinMultiPV/kMaxMultiPV's
+/// own doc comments above have each option's full rationale). `Ponder`
+/// (ROADMAP.md Phase 8, "Pondering — protocol side") is also
+/// RECOGNIZED, in the sense that it's advertised in the `uci` response
+/// above and accepted here without complaint, but deliberately has NO
+/// behavioral branch of its own below -- see that option's own
+/// advertisement comment above for why: pondering support is
+/// unconditional (already fully implemented, Session 75/76), so there's
+/// nothing for this specific value to gate. Every OTHER, truly
+/// unrecognized name is silently ignored, matching this file's
+/// established robustness convention (this file's
 /// header comment; run()'s own trailing comment on unrecognized
 /// commands generally) rather than treating an unknown option as an
 /// error. `name`/`value` are matched positionally (the LAST `name`/
@@ -1095,6 +1103,26 @@ void run(std::istream& in, std::ostream& out) {
             // bounds rationale.
             out << "option name MultiPV type spin default " << kMinMultiPV << " min " << kMinMultiPV
                 << " max " << kMaxMultiPV << '\n';
+            // `Ponder` (ROADMAP.md Phase 8, "Pondering — protocol
+            // side"): a `check` (boolean), not a `spin` -- standard UCI
+            // convention for this specific option (every compliant GUI
+            // recognizes it as the signal "this engine supports `go
+            // ponder`"). Default `true`: pondering itself (`go ponder`/
+            // `ponderhit`/`stop`, handle_ponderhit()/start_pondering()
+            // below) has been fully implemented since Session 75/76,
+            // entirely independently of this option's own value --
+            // advertising `true` here is simply telling the GUI that
+            // capability exists so IT can decide whether to use it, not
+            // gating any of this engine's own behavior. `setoption name
+            // Ponder value <true|false>` is accepted (handle_setoption()
+            // below) but deliberately has NO behavioral effect: a
+            // compliant GUI only ever uses this option to decide whether
+            // to SEND `go ponder` in the first place, never to tell the
+            // engine to stop supporting it once already advertised, so
+            // there is nothing for this engine to gate on either way --
+            // pondering support is unconditional, matching how many
+            // established engines implement this specific option.
+            out << "option name Ponder type check default true\n";
             out << "uciok\n";
             out.flush();
         } else if (cmd == "isready") {
