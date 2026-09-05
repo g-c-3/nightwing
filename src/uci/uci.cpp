@@ -4,26 +4,25 @@
 // later phases, tracked informally here rather than duplicated across
 // every function that touches it):
 //   - setoption / engine options: `Threads` (added Session 74,
-//     ROADMAP.md Phase 7's "Thread count UCI option" item), `Hash`, and
-//     `Move Overhead` (both added under Phase 8's "Full UCI option set"
-//     item -- see handle_setoption() below) are all recognized. `Hash`
+//     ROADMAP.md Phase 7's "Thread count UCI option" item), `Hash`,
+//     `Move Overhead`, and `MultiPV` (all three added under Phase 8's
+//     "Full UCI option set" item -- see handle_setoption() below) are
+//     all recognized; "Full UCI option set" is now fully done. `Hash`
 //     changes the SIZE of the fresh, private TranspositionTable each
 //     top-level search call still constructs for itself, not an
 //     in-place resize of a persistent one -- the TT itself is still
 //     scoped per top-level search call rather than a persistent global
 //     (search/tt.h's own LIFETIME NOTE); making it genuinely persistent,
 //     with a `ucinewgame`-triggered clear, remains a separate, not-yet-
-//     started piece of that same Phase 8 item. `MultiPV` and `Ponder`
-//     are the two named-in-ROADMAP.md sub-items this pass did NOT
-//     implement: `MultiPV` needs real multi-line search support (root-
-//     move exclusion and a second, independent per-line search loop)
-//     that doesn't exist anywhere in this codebase yet, a substantial
-//     enough feature to warrant its own dedicated session rather than
-//     being folded in here; `Ponder` (the option ADVERTISEMENT, distinct
-//     from pondering ITSELF, which is already fully implemented below)
-//     is ROADMAP.md's own next, separate Phase 8 item ("Pondering —
-//     protocol side"), not part of "Full UCI option set" 's own item
-//     text.
+//     started piece of that same Phase 8 item. `MultiPV` uses classic
+//     root-move exclusion (search::search_iterative_deepening_multipv(),
+//     search.cpp) with two deliberate first-draft simplifications, both
+//     documented at that function's own definition: no aspiration
+//     windows and no Lazy SMP when it genuinely takes effect. `Ponder`
+//     (the option ADVERTISEMENT, distinct from pondering ITSELF, which
+//     is already fully implemented below) is ROADMAP.md's own next,
+//     separate Phase 8 item ("Pondering — protocol side"), not part of
+//     "Full UCI option set" 's own item text -- still open.
 //   - True asynchronous `go infinite` + `stop` FOR AN ORDINARY (non-
 //     ponder) `go`: still not attempted. A plain `go` (with or without
 //     a time control) still always runs synchronously to completion (or
@@ -303,6 +302,35 @@ constexpr int kMaxHashMB = 2048;
 constexpr int kMinMoveOverheadMs = 0;
 constexpr int kMaxMoveOverheadMs = 5000;
 
+/// Bounds for the `MultiPV` UCI option (ROADMAP.md Phase 8, "Full UCI
+/// option set" -- the sub-item this fixes, completing that bullet's
+/// checklist entirely). `kMinMultiPV` (1) is the ordinary, single-line
+/// behavior every pre-existing `go` already used before this option
+/// existed -- passed straight through as
+/// search::search_iterative_deepening()'s own `multi_pv` parameter
+/// (search/search.h's doc comment on that parameter has the full
+/// contract, including that `multi_pv <= 1` runs the exact same
+/// single-line code path as before this option existed, byte for byte).
+/// `kMaxMultiPV` (256) is a sanity ceiling, same "guard against a
+/// malformed/oversized request, not a real technical limit" framing as
+/// kMaxThreads/kMaxHashMB above -- chosen well above any position's
+/// realistic legal-root-move count (chess has at most 218 legal moves
+/// from any single position, a well-known figure -- CPW "Chess Position
+/// with the most legal moves" -- so 256 already exceeds every position
+/// that could ever occur) while still being small enough that
+/// requesting the max never risks the kind of large-allocation problem
+/// `kMaxHashMB` ran into (docs/DECISIONS.md, 2026-09-05): MultiPV's own
+/// cost scales with the number of LINES searched, not a memory
+/// allocation size, and search_iterative_deepening() itself already
+/// caps the actually-used line count at the root's own real legal move
+/// count regardless of what this option requests (that function's own
+/// doc comment, search.h), so a value above the true legal-move count
+/// is inherently harmless, just wasted -- 256 is simply a courtesy
+/// ceiling against an obviously-malformed request, not a value chosen
+/// to prevent any specific failure mode the way kMaxHashMB was.
+constexpr int kMinMultiPV = 1;
+constexpr int kMaxMultiPV = 256;
+
 /// Simple time allocation for `go wtime/btime/winc/binc` — no
 /// movestogo-aware tuning yet (see DECISIONS.md): budgets
 /// remaining_ms / 20 plus the increment, capped at remaining_ms / 2 so
@@ -459,8 +487,26 @@ struct SearchBudget {
 /// iteration) still emits a `pv` field containing exactly `best_move`
 /// alone, so every `info` line names at least the one move its score
 /// applies to, never a bare `pv` with nothing after it.
+///
+/// `multipv <result.multipv_index>` (ROADMAP.md Phase 8, "Full UCI
+/// option set" -- the `MultiPV` sub-item) is ALWAYS included, right
+/// after `depth`, even when the `MultiPV` option is left at its
+/// default of 1 -- `multipv_index` itself already defaults to 1 for
+/// every ordinary, non-MultiPV SearchResult (search.h's own doc
+/// comment on that field), so this costs nothing to always emit and
+/// matches the convention several established engines (Stockfish among
+/// them) already follow of always including the token rather than only
+/// when MultiPV > 1. handle_go() (below) calls this function once per
+/// line reported by a MultiPV search's `on_iteration` (each with its
+/// own correct `multipv_index` already set by
+/// search_iterative_deepening_multipv(), search.cpp) exactly as it
+/// already calls it once per depth for an ordinary single-line search
+/// -- this function itself needs no MultiPV-specific branching at all,
+/// since every field it reads already carries the right per-line
+/// values regardless of which path produced them.
 void emit_info(const search::SearchResult& result, std::ostream& out) {
-    out << "info depth " << result.depth_completed << " score ";
+    out << "info depth " << result.depth_completed << " multipv " << result.multipv_index
+        << " score ";
     if (result.score >= search::kMateThreshold) {
         const int plies_to_mate = search::kMateScore - result.score;
         out << "mate " << (plies_to_mate + 1) / 2;
@@ -483,11 +529,12 @@ void emit_info(const search::SearchResult& result, std::ostream& out) {
 }
 
 /// Handles `setoption name <name...> value <value...>`. Recognized
-/// option names, as of ROADMAP.md Phase 8's "Full UCI option set" item:
-/// `Threads` (ROADMAP.md Phase 7, unchanged from Session 74), `Hash`,
-/// and `Move Overhead` (both new this item -- kMinHashMB/kMaxHashMB and
-/// kMinMoveOverheadMs/kMaxMoveOverheadMs's own doc comments above have
-/// each option's full rationale). Every other name is silently ignored,
+/// option names, as of ROADMAP.md Phase 8's "Full UCI option set" item
+/// (now complete -- `MultiPV` was the last piece): `Threads` (ROADMAP.md
+/// Phase 7, unchanged from Session 74), `Hash`, `Move Overhead`, and
+/// `MultiPV` (kMinHashMB/kMaxHashMB, kMinMoveOverheadMs/
+/// kMaxMoveOverheadMs, and kMinMultiPV/kMaxMultiPV's own doc comments
+/// above have each option's full rationale). Every other name is silently ignored,
 /// matching this file's established robustness convention (this file's
 /// header comment; run()'s own trailing comment on unrecognized
 /// commands generally) rather than treating an unknown option as an
@@ -505,7 +552,7 @@ void emit_info(const search::SearchResult& result, std::ostream& out) {
 /// GUI or script shouldn't crash the engine or corrupt otherwise-good
 /// prior state.
 void handle_setoption(int& num_threads, std::size_t& hash_size_mb, int& move_overhead_ms,
-                       const std::vector<std::string>& tokens) {
+                       int& multi_pv, const std::vector<std::string>& tokens) {
     std::size_t name_start = 0;
     std::size_t name_end = 0;
     std::size_t value_start = 0;
@@ -566,6 +613,18 @@ void handle_setoption(int& num_threads, std::size_t& hash_size_mb, int& move_ove
         } catch (const std::exception&) {
             // Non-integer value -- ignore, leaving move_overhead_ms unchanged.
         }
+    } else if (name == "MultiPV") {
+        try {
+            int value = std::stoi(tokens[value_start]);
+            if (value < kMinMultiPV) {
+                value = kMinMultiPV;
+            } else if (value > kMaxMultiPV) {
+                value = kMaxMultiPV;
+            }
+            multi_pv = value;
+        } catch (const std::exception&) {
+            // Non-integer value -- ignore, leaving multi_pv unchanged.
+        }
     }
     // Any other option name: silently ignored (this function's own doc comment).
 }
@@ -600,9 +659,25 @@ void handle_setoption(int& num_threads, std::size_t& hash_size_mb, int& move_ove
 /// (search/search.h), the latter is consumed by compute_search_budget()
 /// below (that function's own doc comment) before the search even
 /// starts.
+///
+/// `multi_pv` (ROADMAP.md Phase 8, "Full UCI option set" -- the
+/// `MultiPV` sub-item): same run()-owned, `setoption`-driven session-
+/// lifetime state as the three parameters above, passed straight
+/// through as search_iterative_deepening()'s own `multi_pv` parameter
+/// (search/search.h's doc comment has the full contract). No branching
+/// needed here at all for the multi-line case: `on_iteration` below
+/// already fires once per line, each with the right `multipv_index`
+/// already set (search_iterative_deepening_multipv()'s own doc comment,
+/// search.cpp), and emit_info() already emits the right `multipv N`
+/// token per call (that function's own doc comment) -- so this
+/// function's existing single on_iteration lambda, and its existing
+/// single `bestmove` line at the end (SearchResult::multipv_lines' own
+/// doc comment guarantees the top-level `result.best_move` always
+/// mirrors the best line), both already do exactly the right thing
+/// whether `multi_pv` is 1 or 20.
 void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
                const std::vector<std::string>& tokens, int num_threads, std::size_t hash_size_mb,
-               int move_overhead_ms, std::ostream& out) {
+               int move_overhead_ms, int multi_pv, std::ostream& out) {
     // Opening book (src/book/book.h, ROADMAP.md's optional "small
     // curated opening book" item): consulted first, unconditionally --
     // no setoption/UCI-options infrastructure exists yet to gate this
@@ -634,7 +709,8 @@ void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
     const search::SearchResult result = search::search_iterative_deepening(
         pos, budget.max_depth, budget.time_limit_ms, game_history,
         [&out](const search::SearchResult& iteration_result) { emit_info(iteration_result, out); },
-        /*material_weights=*/nullptr, num_threads, /*external_stop=*/nullptr, hash_size_mb);
+        /*material_weights=*/nullptr, num_threads, /*external_stop=*/nullptr, hash_size_mb,
+        multi_pv);
 
     out << "bestmove ";
     if (result.best_move.is_null()) {
@@ -965,6 +1041,21 @@ void run(std::istream& in, std::ostream& out) {
     // doesn't" convention `num_threads` already follows.
     std::size_t hash_size_mb = search::kDefaultTTSizeMB;
     int move_overhead_ms = kMinMoveOverheadMs;
+    // `MultiPV` (ROADMAP.md Phase 8, "Full UCI option set" -- the last
+    // sub-item, completing this bullet): same session-lifetime,
+    // `setoption`-driven, not-reset-by-`ucinewgame` convention as
+    // `Hash`/`Move Overhead` above. Deliberately NOT threaded into
+    // start_pondering() below -- pondering never emits `info` lines at
+    // all (its own search call already passes `on_iteration=nullptr`,
+    // this file's existing code, unchanged by this item) and its
+    // eventual `bestmove` always already reports the single best line
+    // regardless of how many lines were computed
+    // (SearchResult::multipv_lines' own doc comment, search.h -- the
+    // top-level result always mirrors the best line), so computing
+    // extra MultiPV lines during a ponder search would cost real time
+    // for zero observable UCI effect -- pondering's own search call
+    // stays at the implicit default of 1 line.
+    int multi_pv = kMinMultiPV;
     // Pondering state (ROADMAP.md Phase 7) — session-lifetime, like
     // `num_threads` above, though its own contents (the background
     // thread, the stop flag) are reset per `go ponder` by
@@ -998,6 +1089,12 @@ void run(std::istream& in, std::ostream& out) {
                 << kMinHashMB << " max " << kMaxHashMB << '\n';
             out << "option name Move Overhead type spin default " << kMinMoveOverheadMs << " min "
                 << kMinMoveOverheadMs << " max " << kMaxMoveOverheadMs << '\n';
+            // `MultiPV` (ROADMAP.md Phase 8, "Full UCI option set" --
+            // the last sub-item) -- same standard `spin` syntax;
+            // kMinMultiPV/kMaxMultiPV's own doc comment above has the
+            // bounds rationale.
+            out << "option name MultiPV type spin default " << kMinMultiPV << " min " << kMinMultiPV
+                << " max " << kMaxMultiPV << '\n';
             out << "uciok\n";
             out.flush();
         } else if (cmd == "isready") {
@@ -1011,14 +1108,14 @@ void run(std::istream& in, std::ostream& out) {
             abandon_pondering(ponder); // Same rationale as ucinewgame above.
             handle_position(pos, game_history, tokens);
         } else if (cmd == "setoption") {
-            handle_setoption(num_threads, hash_size_mb, move_overhead_ms, tokens);
+            handle_setoption(num_threads, hash_size_mb, move_overhead_ms, multi_pv, tokens);
         } else if (cmd == "go") {
             if (has_token(tokens, "ponder")) {
                 start_pondering(pos, game_history, tokens, num_threads, hash_size_mb,
                                  move_overhead_ms, out, ponder);
             } else {
                 handle_go(pos, game_history, tokens, num_threads, hash_size_mb, move_overhead_ms,
-                          out);
+                          multi_pv, out);
             }
         } else if (cmd == "ponderhit") {
             handle_ponderhit(ponder);
