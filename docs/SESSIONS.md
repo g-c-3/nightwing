@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 84 — 2026-09-05 — Phase 8: `bench` command (fishtest/OpenBench-style regression benchmark)
+
+**Built:**
+- New `src/bench_positions.h`: the four-position, depth-6 bench set (startpos, Kiwipete, a quiet middlegame, a forced-mate endgame) factored out of `tests/bench_tests.cpp` into one shared header, specifically so it and the new real `bench` command below can never silently drift apart into reporting different things for what's nominally "the same" bench. `tests/bench_tests.cpp` updated to consume this shared header instead of its own local copy — no behavioral change to that test.
+- `src/uci/uci.cpp`: new `uci::run_bench(std::ostream&)`, declared in `uci.h`. Runs every position in the shared set to the shared fixed depth via `search_fixed_depth()` (single-threaded, default Hash size, unconditionally — not configurable through this command, since reproducibility across machines/commits is the entire point of a bench a testing harness diffs output against, and either Lazy SMP or a differently-sized TT would perturb node counts). Writes a standard fishtest/OpenBench-parseable summary (`Total time (ms)` / `Nodes searched` / `Nodes/second`) — external tooling greps specifically for the `Nodes searched` line. Recognized as a `bench` command in `run()`'s own dispatch, for tooling that drives engines purely over UCI stdin/stdout.
+- `src/main.cpp`: `./nightwing bench` recognized as a special first command-line argument (the more common way fishtest/OpenBench actually invoke an engine) — runs the board-subsystem init, calls `run_bench()` directly, and exits without starting the interactive UCI loop or initializing the opening book (irrelevant to what bench measures).
+- 3 new tests in `tests/uci_tests.cpp` (`[bench]`): the `bench` UCI command's output format, an independent cross-check that its reported total matches a fresh computation over the same shared position set (not a hardcoded, potentially-stale expected number), and that a `bench` followed by an ordinary `go` still works normally.
+
+**Verified beyond the permanent test suite:** the actual compiled engine binary was built and run directly in this sandbox for both entry points — `./nightwing bench` and `bench` typed at the interactive UCI prompt — confirming real, working output (not just passing unit tests around it), and confirming both entry points produce byte-for-byte identical results since both call the same `run_bench()`. The reported total (81029 nodes) matches the pre-existing internal regression bench's own long-standing baseline exactly, cross-confirming the new command's node counts are genuinely the same computation, not a divergent one.
+
+**Left honestly open, noted in ROADMAP.md:** real interoperability with actual fishtest/OpenBench infrastructure — neither is reachable from this development environment, so the output format (matching the convention several established engines use) is believed-correct by convention rather than confirmed working end-to-end against that specific tooling. Same category of caveat as the "Pondering — protocol side" item's own outstanding real-GUI verification.
+
+**Verification performed:** full suite (458 cases, up from 455) recompiled and rerun 3 consecutive times, plus under `-fsanitize=address,undefined` (including a separate ASan build of the actual `main.cpp`-based engine binary, exercising the CLI `bench` path specifically, not just the test-harness path) — all green, bench node counts/scores unchanged from every prior session's own baseline.
+
+**Next session start point:** Read ROADMAP.md's own Phase 8 section directly for the next incomplete item (PGO build pipeline, TT prefetch verification, SPRT setup, skill-level limiting, contempt, README/build docs are all still open) and begin working immediately.
+
+---
+
 ### Session 83 — 2026-09-05 — Phase 8: Time management (`movestogo` allocation + best-move-stability-based early stop)
 
 **Built:**
