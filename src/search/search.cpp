@@ -1638,17 +1638,54 @@ std::vector<Move> extract_pv(Position pos, const TranspositionTable& tt, Move ro
 /// see its own comments) -- callers other than
 /// search_iterative_deepening() never pass a `limits` with
 /// `has_deadline` set, so this never applies to search_fixed_depth().
+/// `excluded_moves` (ROADMAP.md Phase 8, "Full UCI option set" -- the
+/// `MultiPV` sub-item): any root move present in this list is removed
+/// from consideration entirely -- as if move generation had never
+/// produced it -- before ordering/searching begins. This is the whole
+/// mechanism behind MultiPV's classic root-move-exclusion technique
+/// (CPW "MultiPV"): search_iterative_deepening_multipv() (this file,
+/// below) finds line 1 with an empty exclusion set, then finds line 2
+/// by calling this function again with line 1's own best move as the
+/// sole excluded move, then line 3 with lines 1 AND 2's best moves
+/// excluded, and so on. Defaults to empty -- every pre-existing call
+/// site (the ordinary single-PV path just below, run_lazy_smp_helper(),
+/// search_fixed_depth()) is entirely unaffected, since an empty
+/// exclusion list is a no-op filter. The CALLER (not this function) is
+/// responsible for never excluding every legal move at once -- this
+/// function still assumes at least one move survives filtering to reach
+/// its normal, non-terminal code path below; see
+/// search_iterative_deepening_multipv()'s own doc comment for how it
+/// guarantees that (capping the number of requested lines at the
+/// number of legal root moves, computed once up front).
 SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int aspiration_beta,
                           TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
                           ContinuationHistoryTable& cont_history,
                           std::span<const std::uint64_t> game_history,
                           std::array<std::uint64_t, kMaxPly>& path, eval::PawnHashTable& pawn_tt,
                           eval::EvalCache& eval_cache, const eval::MaterialWeights* material_weights,
-                          SearchLimits* limits = nullptr) {
+                          SearchLimits* limits = nullptr,
+                          std::span<const Move> excluded_moves = {}) {
     SearchResult result;
 
     MoveList moves;
     board::generate_legal_moves(pos, moves);
+
+    if (!excluded_moves.empty()) {
+        MoveList filtered;
+        for (const Move& m : moves) {
+            bool is_excluded = false;
+            for (const Move& ex : excluded_moves) {
+                if (m == ex) {
+                    is_excluded = true;
+                    break;
+                }
+            }
+            if (!is_excluded) {
+                filtered.push_back(m);
+            }
+        }
+        moves = filtered;
+    }
 
     if (moves.empty()) {
         // Nothing to play: report the terminal score with a null
@@ -2014,6 +2051,199 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
     nodes_out = total_nodes;
 }
 
+/// MultiPV implementation (ROADMAP.md Phase 8, "Full UCI option set" --
+/// the `MultiPV` sub-item), called from search_iterative_deepening()
+/// below exactly when `multi_pv > 1` genuinely takes effect (that
+/// function's own doc comment, search.h, covers the two conditions
+/// under which it's used instead of the ordinary single-line path, and
+/// this implementation's two deliberate simplifications relative to
+/// that path -- no aspiration windows, no Lazy SMP -- which aren't
+/// repeated here). `max_lines` is guaranteed by the caller to be >= 2
+/// and <= the root position's own legal move count, so every
+/// search_root() call below is guaranteed at least one un-excluded move
+/// to search (search_root()'s own doc comment on `excluded_moves`).
+///
+/// Structure deliberately mirrors search_iterative_deepening()'s own
+/// single-line loop as closely as the N-lines-per-depth generalization
+/// allows -- same depth-1-is-unconditional guarantee (this function's
+/// own depth-1 block below has no SearchLimits/deadline at all, exactly
+/// like the single-line path's own depth-1 call), same
+/// "an iteration/depth only counts if it fully completes, otherwise the
+/// previous depth's result is kept" discard convention (generalized
+/// here to "only counts if EVERY one of the `max_lines` lines
+/// completes," not just one line), same cumulative (not per-iteration)
+/// `nodes` reported via IterationCallback. Root-move exclusion
+/// (search_root()'s own new `excluded_moves` parameter) is rebuilt
+/// fresh at the start of every depth (not carried over from the
+/// previous depth): each depth's own line 1 search is unconstrained,
+/// line 2 excludes line 1's THIS-depth best move, and so on -- a
+/// shallower depth's best move for a given rank isn't assumed to still
+/// be that rank's best move at the next depth, exactly as the ordinary
+/// single-line path never assumes a shallower depth's single best move
+/// is still correct at the next depth either.
+SearchResult search_iterative_deepening_multipv(
+    Position& pos, int max_depth, int time_limit_ms, std::span<const std::uint64_t> game_history,
+    const IterationCallback& on_iteration, const eval::MaterialWeights* material_weights,
+    int max_lines, std::atomic<bool>* external_stop, std::size_t hash_size_mb) {
+    const auto start_time = std::chrono::steady_clock::now();
+
+    // Same table set, same lifetime rationale, as the single-line path
+    // (search_iterative_deepening()'s own comments on tt/killers/
+    // history/cont_history/path/pawn_tt/eval_cache just below in this
+    // file) -- duplicated here rather than shared via a helper, since
+    // this function's own caller constructs an entirely separate set
+    // for the single-line path it does NOT take when this function is
+    // used instead (search_iterative_deepening()'s own top-of-function
+    // branch, below).
+    TranspositionTable tt = make_transposition_table(hash_size_mb);
+    KillerTable killers;
+    auto history = std::make_unique<HistoryTable>();
+    auto cont_history = std::make_unique<ContinuationHistoryTable>();
+    std::array<std::uint64_t, kMaxPly> path{};
+    eval::PawnHashTable pawn_tt(kDefaultPawnTTSizeKB);
+    eval::EvalCache eval_cache(kDefaultEvalCacheSizeKB);
+
+    std::uint64_t total_nodes = 0;
+
+    // Depth 1: unconditional, no SearchLimits/deadline at all -- see
+    // this function's own header comment above.
+    tt.new_search();
+    std::vector<SearchResult> lines;
+    lines.reserve(static_cast<std::size_t>(max_lines));
+    std::vector<Move> excluded;
+    excluded.reserve(static_cast<std::size_t>(max_lines));
+    for (int line = 1; line <= max_lines; ++line) {
+        SearchResult r =
+            search_root(pos, 1, -kInfinity, kInfinity, tt, killers, *history, *cont_history,
+                        game_history, path, pawn_tt, eval_cache, material_weights,
+                        /*limits=*/nullptr, excluded);
+        total_nodes += r.nodes;
+        r.multipv_index = line;
+        excluded.push_back(r.best_move);
+        lines.push_back(std::move(r));
+    }
+
+    // Sort by score, descending, before assigning/reporting rank.
+    // NECESSARY, not cosmetic: the exclusion loop above discovers lines
+    // in a fixed order (line 1 = full move set, line 2 = line 1's move
+    // excluded, etc.), but does NOT guarantee that order is already
+    // sorted by score -- `killers`/`history`/`cont_history` are shared
+    // and mutated across every line's own search_root() call within
+    // this one depth (deliberately, so a later line still benefits from
+    // ordering information an earlier line's search discovered -- same
+    // cross-call reuse rationale as this function's own tables' header
+    // comments), which means the SAME subtree can be searched under a
+    // genuinely different effective move order (hence different
+    // LMR/null-move/futility pruning decisions, hence a different
+    // heuristic score) depending on which line's search visits it --
+    // real, observed search instability (confirmed directly: an
+    // un-sorted run of this exact function produced a rank-3 score
+    // higher than rank 1's at both depth 4 and depth 6 from the
+    // starting position), not a hypothetical concern. `std::stable_sort`
+    // (not `std::sort`): a tie in score keeps the exclusion loop's own
+    // discovery order rather than an arbitrary reshuffle, which is
+    // otherwise unobservable but costs nothing to keep deterministic.
+    std::stable_sort(lines.begin(), lines.end(),
+                      [](const SearchResult& a, const SearchResult& b) { return a.score > b.score; });
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        lines[i].multipv_index = static_cast<int>(i) + 1;
+    }
+
+    SearchResult result = lines[0];
+    result.multipv_lines = lines;
+    for (SearchResult& l : result.multipv_lines) {
+        l.nodes = total_nodes;
+    }
+    result.nodes = total_nodes;
+
+    if (on_iteration) {
+        for (const SearchResult& l : result.multipv_lines) {
+            on_iteration(l);
+        }
+    }
+
+    for (int depth = 2; depth <= max_depth; ++depth) {
+        if (time_limit_ms > 0) {
+            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::steady_clock::now() - start_time)
+                                         .count();
+            if (elapsed_ms >= time_limit_ms) {
+                break;
+            }
+        }
+        if (external_stop != nullptr && external_stop->load(std::memory_order_relaxed)) {
+            break;
+        }
+
+        tt.new_search();
+        std::vector<SearchResult> depth_lines;
+        depth_lines.reserve(static_cast<std::size_t>(max_lines));
+        std::vector<Move> depth_excluded;
+        depth_excluded.reserve(static_cast<std::size_t>(max_lines));
+        std::uint64_t depth_nodes = 0;
+        bool interrupted = false;
+
+        for (int line = 1; line <= max_lines; ++line) {
+            SearchLimits limits;
+            limits.has_deadline = time_limit_ms > 0;
+            if (limits.has_deadline) {
+                limits.deadline = start_time + std::chrono::milliseconds(time_limit_ms);
+            }
+            limits.external_stop = external_stop;
+
+            SearchResult r =
+                search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history, *cont_history,
+                            game_history, path, pawn_tt, eval_cache, material_weights, &limits,
+                            depth_excluded);
+            depth_nodes += r.nodes;
+            if (limits.stopped) {
+                interrupted = true;
+                break;
+            }
+            r.multipv_index = line;
+            depth_excluded.push_back(r.best_move);
+            depth_lines.push_back(std::move(r));
+        }
+
+        total_nodes += depth_nodes;
+
+        if (interrupted || depth_lines.size() != static_cast<std::size_t>(max_lines)) {
+            // This depth's line set is incomplete -- discard it
+            // wholesale (same rationale as the single-line path's own
+            // discard, generalized to "every line must complete, not
+            // just one" -- this function's own header comment above)
+            // and keep the previous, fully-completed depth's `result`.
+            break;
+        }
+
+        // Sort by score descending before assigning rank -- same
+        // necessity as the depth-1 block above (this function's own
+        // comment there has the full rationale).
+        std::stable_sort(
+            depth_lines.begin(), depth_lines.end(),
+            [](const SearchResult& a, const SearchResult& b) { return a.score > b.score; });
+        for (std::size_t i = 0; i < depth_lines.size(); ++i) {
+            depth_lines[i].multipv_index = static_cast<int>(i) + 1;
+        }
+
+        lines = std::move(depth_lines);
+        result = lines[0];
+        result.multipv_lines = lines;
+        for (SearchResult& l : result.multipv_lines) {
+            l.nodes = total_nodes;
+        }
+        result.nodes = total_nodes;
+
+        if (on_iteration) {
+            for (const SearchResult& l : result.multipv_lines) {
+                on_iteration(l);
+            }
+        }
+    }
+
+    return result;
+}
+
 } // namespace
 
 SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_limit_ms,
@@ -2021,8 +2251,35 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                                          IterationCallback on_iteration,
                                          const eval::MaterialWeights* material_weights,
                                          int num_threads, std::atomic<bool>* external_stop,
-                                         std::size_t hash_size_mb) {
+                                         std::size_t hash_size_mb, int multi_pv) {
     assert(max_depth >= 1 && "search_iterative_deepening: max_depth must be at least 1");
+
+    // MultiPV (ROADMAP.md Phase 8, "Full UCI option set" -- the
+    // `MultiPV` sub-item; this parameter's own doc comment, search.h,
+    // has the full contract): only genuinely takes effect when BOTH
+    // more than one line was requested AND the root position actually
+    // has more than one legal move to show a second line for -- either
+    // way, when it doesn't take effect, execution falls straight
+    // through to the ordinary single-line path below, completely
+    // unmodified, exactly as if `multi_pv` had never been passed at
+    // all. Computing the root's own legal move count here, once, is
+    // cheap (one generate_legal_moves() call) relative to the search
+    // about to happen, and is what guarantees
+    // search_iterative_deepening_multipv() (below) never has to handle
+    // "every remaining move got excluded" as a real possibility.
+    if (multi_pv > 1) {
+        MoveList root_moves;
+        board::generate_legal_moves(pos, root_moves);
+        const int max_lines = std::min(multi_pv, root_moves.size());
+        if (max_lines > 1) {
+            return search_iterative_deepening_multipv(pos, max_depth, time_limit_ms, game_history,
+                                                        on_iteration, material_weights, max_lines,
+                                                        external_stop, hash_size_mb);
+        }
+        // max_lines <= 1 (0 or 1 legal root moves): nothing extra to
+        // show regardless of what `multi_pv` requested -- fall through
+        // to the ordinary single-line path below, same as `multi_pv <= 1`.
+    }
 
     const auto start_time = std::chrono::steady_clock::now();
 

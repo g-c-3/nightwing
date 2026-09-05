@@ -209,6 +209,42 @@ struct SearchResult {
     /// deepening — same reconstruction, just from that one call's own
     /// (fresh, private) TT.
     std::vector<board::Move> pv;
+
+    /// 1-based rank of this particular line among a MultiPV search's
+    /// several simultaneous lines (ROADMAP.md Phase 8, "Full UCI option
+    /// set" -- the `MultiPV` sub-item), 1 meaning "the best line found."
+    /// Meaningful only on the individual per-line SearchResult objects
+    /// inside `multipv_lines` below (and on each SearchResult passed to
+    /// IterationCallback when a MultiPV search is running) -- stays at
+    /// its default, 1, on every SearchResult from every ordinary
+    /// (`multi_pv <= 1`, i.e. every existing) call, since there's only
+    /// ever one line to report in that case anyway.
+    int multipv_index = 1;
+
+    /// Every requested line's own final SearchResult, ranked best (index
+    /// 0, `multipv_index == 1`) to worst, when a MultiPV search
+    /// (search_iterative_deepening()'s `multi_pv` parameter) actually
+    /// produced more than one line. Each entry's own `pv`/`score`/
+    /// `best_move`/`depth_completed` describe THAT line specifically;
+    /// each entry's own `nodes` is the SAME cumulative total as the
+    /// enclosing SearchResult's `nodes` (matching the existing single-
+    /// line `nodes` convention -- see that field's own doc comment
+    /// above -- rather than a per-line count, since node-count
+    /// attribution to one line vs. another isn't a meaningful split when
+    /// they all share one transposition table). Left empty (the
+    /// default) whenever `multi_pv <= 1` was requested, OR when the root
+    /// position had one or zero legal moves (nothing extra to show
+    /// regardless of what `multi_pv` asked for) -- i.e. empty means
+    /// exactly what it already meant before this field existed: "treat
+    /// this as an ordinary single-line result," so every pre-existing
+    /// caller that never looks at this field is completely unaffected.
+    /// The enclosing SearchResult itself (this struct) always mirrors
+    /// `multipv_lines[0]` (the best line) in its own `best_move`/
+    /// `score`/`pv`/`depth_completed`/`multipv_index` fields whenever
+    /// `multipv_lines` is non-empty, so a caller that ignores this field
+    /// entirely still gets exactly the single best line, the same as
+    /// every non-MultiPV caller always has.
+    std::vector<SearchResult> multipv_lines;
 };
 
 /// Optional callback invoked by search_iterative_deepening() once after
@@ -416,10 +452,46 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// private TranspositionTable, shared (per tt.h's THREAD-SAFETY NOTE)
 /// across the calling thread and every Lazy SMP helper thread this one
 /// call spawns.
+///
+/// `multi_pv` (ROADMAP.md Phase 8, "Full UCI option set" -- the
+/// `MultiPV` sub-item): requests up to this many simultaneous best
+/// lines instead of just one, via classic root-move exclusion (CPW
+/// "MultiPV" -- for line 2, re-search the root with line 1's own best
+/// move excluded from consideration; for line 3, exclude lines 1 AND
+/// 2's; and so on) -- see search.cpp's search_iterative_deepening_multipv()
+/// for the implementation. Defaults to 1, meaning "ordinary single-line
+/// search," in which case this function's behavior, including every
+/// field of its returned SearchResult other than the new
+/// `multipv_index`/`multipv_lines` (which simply stay at their own
+/// defaults), is COMPLETELY UNCHANGED from before this parameter
+/// existed -- the entire pre-existing code path below runs untouched
+/// whenever `multi_pv <= 1`, or whenever the root position turns out to
+/// have one or zero legal moves regardless of what `multi_pv` requested
+/// (SearchResult::multipv_lines' own doc comment, search.h). When it
+/// genuinely takes effect (`multi_pv > 1` AND at least 2 legal root
+/// moves exist), this function delegates entirely to a separate,
+/// dedicated implementation (search_iterative_deepening_multipv(),
+/// internal to search.cpp) rather than threading MultiPV logic through
+/// the single-line loop below -- a deliberate choice to keep the
+/// well-tested single-line path completely unmodified rather than risk
+/// it while adding this. That separate implementation deliberately
+/// simplifies two things relative to the single-line path, both
+/// documented at its own definition: no aspiration windows (every
+/// line, every depth, searches the full (-inf,+inf) window -- N
+/// independent per-line aspiration windows, each with its own widening
+/// state, was judged not worth the added complexity for a first
+/// implementation) and no Lazy SMP helper threads (`num_threads` is
+/// ignored entirely when `multi_pv` genuinely takes effect -- the
+/// existing helper-thread design assumes a single, undifferentiated
+/// root search, not one aware of per-line exclusion; combining the two
+/// is real, if not yet started, future work, not a defect in this
+/// implementation). Both are accepted first-draft scope limits, not
+/// bugs -- see docs/DECISIONS.md.
 [[nodiscard]] SearchResult search_iterative_deepening(
     board::Position& pos, int max_depth, int time_limit_ms = 0,
     std::span<const std::uint64_t> game_history = {}, IterationCallback on_iteration = nullptr,
     const eval::MaterialWeights* material_weights = nullptr, int num_threads = 1,
-    std::atomic<bool>* external_stop = nullptr, std::size_t hash_size_mb = kDefaultTTSizeMB);
+    std::atomic<bool>* external_stop = nullptr, std::size_t hash_size_mb = kDefaultTTSizeMB,
+    int multi_pv = 1);
 
 } // namespace nightwing::search
