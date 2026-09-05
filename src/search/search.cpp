@@ -136,6 +136,21 @@ constexpr std::size_t kDefaultEvalCacheSizeKB = 2048;
 /// verified optimal here).
 constexpr int kAspirationInitialDelta = 25;
 
+/// Best-move-stability threshold for the soft time-management early
+/// stop (ROADMAP.md Phase 8, "Time management" -- search.h's own
+/// `soft_time_limit_ms` parameter doc comment on
+/// search_iterative_deepening() has the full mechanism). 4 consecutive
+/// iterations reporting the identical best move is a common, reasonable
+/// starting point in other engines' own stability-based time-management
+/// heuristics -- like kAspirationInitialDelta just above, explicitly
+/// NOT yet tuned for Nightwing specifically (no SPRT testing
+/// infrastructure exists yet either -- ROADMAP.md Phase 8's own
+/// "SPRT testing setup/process" item, still open -- so there is
+/// currently no rigorous way to validate a different value would do
+/// better; this is a plausible starting guess, not a claim of
+/// optimality).
+constexpr int kStabilityThreshold = 4;
+
 /// Internal Iterative Reduction (IIR) thresholds: a node with no
 /// transposition-table entry at all has no move-ordering hint (see
 /// negamax()'s header comment for the full technique). Only applied
@@ -2251,7 +2266,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                                          IterationCallback on_iteration,
                                          const eval::MaterialWeights* material_weights,
                                          int num_threads, std::atomic<bool>* external_stop,
-                                         std::size_t hash_size_mb, int multi_pv) {
+                                         std::size_t hash_size_mb, int multi_pv,
+                                         int soft_time_limit_ms) {
     assert(max_depth >= 1 && "search_iterative_deepening: max_depth must be at least 1");
 
     // MultiPV (ROADMAP.md Phase 8, "Full UCI option set" -- the
@@ -2360,6 +2376,16 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
         on_iteration(result);
     }
 
+    // Best-move-stability tracking for the soft time-management early
+    // stop (search.h's own `soft_time_limit_ms` doc comment on this
+    // function has the full mechanism) -- initialized from depth 1's
+    // own result, which always exists at this point (the early return
+    // above already handled the "no legal moves" case). A no-op when
+    // `soft_time_limit_ms <= 0` (this function's default), since the
+    // loop below only ever reads `stable_count` inside that same guard.
+    Move stable_move = result.best_move;
+    int stable_count = 1;
+
     // Lazy SMP (ROADMAP.md Phase 7, search.h's own doc comment on this
     // function's `num_threads` parameter has the full contract): spawn
     // helper threads now, once depth 1 has proven there's real work
@@ -2400,6 +2426,23 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                                          std::chrono::steady_clock::now() - start_time)
                                          .count();
             if (elapsed_ms >= time_limit_ms) {
+                break;
+            }
+        }
+        // Soft time-management early stop (ROADMAP.md Phase 8, "Time
+        // management" -- search.h's own `soft_time_limit_ms` doc
+        // comment has the full mechanism): a no-op whenever
+        // `soft_time_limit_ms <= 0` (this parameter's default), so
+        // every pre-existing caller reaches the `external_stop` check
+        // just below exactly as before. Checked independently of, and
+        // in addition to, the hard `time_limit_ms` check just above --
+        // this one can only stop the loop EARLIER than that one would
+        // have, never later.
+        if (soft_time_limit_ms > 0 && stable_count >= kStabilityThreshold) {
+            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::steady_clock::now() - start_time)
+                                         .count();
+            if (elapsed_ms >= soft_time_limit_ms) {
                 break;
             }
         }
@@ -2539,6 +2582,19 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
         }
 
         result = next;
+
+        // Update best-move-stability tracking (search.h's own
+        // `soft_time_limit_ms` doc comment) with THIS now-committed
+        // iteration's result -- done unconditionally (cheap either way)
+        // rather than only when `soft_time_limit_ms > 0`, so the count
+        // is always correct and up to date the moment it's needed,
+        // without an extra branch to keep in sync with the guard above.
+        if (result.best_move == stable_move) {
+            ++stable_count;
+        } else {
+            stable_move = result.best_move;
+            stable_count = 1;
+        }
 
         // Report CUMULATIVE nodes to the callback (matching the
         // conventional meaning of a UCI `info nodes` line -- total

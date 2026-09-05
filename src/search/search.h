@@ -487,11 +487,42 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// is real, if not yet started, future work, not a defect in this
 /// implementation). Both are accepted first-draft scope limits, not
 /// bugs -- see docs/DECISIONS.md.
+///
+/// `soft_time_limit_ms` (ROADMAP.md Phase 8, "Time management" -- the
+/// best-move-stability-based extension/early-stop sub-item): a SECOND,
+/// smaller time budget, independent of `time_limit_ms` (which remains
+/// the hard, never-exceeded cap exactly as before). Defaults to 0,
+/// meaning "no soft budget at all," in which case this function's
+/// iteration loop behaves EXACTLY as it did before this parameter
+/// existed -- every existing caller is unaffected. When positive
+/// (and expected, though not enforced here, to be <= `time_limit_ms`),
+/// the loop tracks how many CONSECUTIVE completed iterations have
+/// reported the identical `best_move` ("stability" -- CPW-adjacent
+/// convention, not a term from a specific cited source); once that
+/// streak reaches search.cpp's own `kStabilityThreshold` AND elapsed
+/// time has passed `soft_time_limit_ms`, the loop stops early, on the
+/// theory that a best move that hasn't changed across several
+/// increasingly-deep iterations is unlikely to change again and further
+/// search time is better saved for a future, harder move. If the best
+/// move keeps changing (an unstable, genuinely difficult position), the
+/// loop keeps going past `soft_time_limit_ms` all the way to
+/// `time_limit_ms` (the hard cap) exactly as it already would have
+/// without this parameter -- `soft_time_limit_ms` can only make a
+/// search STOP EARLIER than `time_limit_ms` would have alone, never
+/// later and never past it. This early stop applies to the single-line
+/// path only -- search_iterative_deepening_multipv() (this parameter is
+/// not threaded into it at all) always runs to `time_limit_ms`/
+/// `max_depth` exactly as before, an accepted scope limit for the same
+/// reason MultiPV's own two simplifications above are: stability is a
+/// single-line concept (which move is "the" answer), and doesn't
+/// obviously generalize to "when have N ranked lines all stabilized,"
+/// a genuinely harder question left for whenever MultiPV's own
+/// aspiration-window/Lazy-SMP gaps are revisited.
 [[nodiscard]] SearchResult search_iterative_deepening(
     board::Position& pos, int max_depth, int time_limit_ms = 0,
     std::span<const std::uint64_t> game_history = {}, IterationCallback on_iteration = nullptr,
     const eval::MaterialWeights* material_weights = nullptr, int num_threads = 1,
     std::atomic<bool>* external_stop = nullptr, std::size_t hash_size_mb = kDefaultTTSizeMB,
-    int multi_pv = 1);
+    int multi_pv = 1, int soft_time_limit_ms = 0);
 
 } // namespace nightwing::search
