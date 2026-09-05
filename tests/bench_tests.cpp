@@ -3,6 +3,10 @@
 // Regression bench (ROADMAP.md Phase 4's last item): a small, fixed set
 // of positions searched to a fixed depth via search_fixed_depth(), with
 // resulting node counts printed to stdout in a simple, greppable format.
+// Position set and depth now live in src/bench_positions.h, shared with
+// the actual UCI/CLI `bench` command (src/uci/uci.cpp's run_bench(),
+// ROADMAP.md Phase 8) so the two can never silently drift apart — see
+// that header's own comment for the split of responsibilities.
 //
 // Deliberately NOT asserting exact node counts as pass/fail, unlike
 // perft (where the count is a mathematically fixed ground truth): a
@@ -48,6 +52,7 @@
 #include <iostream>
 #include <string>
 
+#include "bench_positions.h"
 #include "board/attacks.h"
 #include "board/board.h"
 #include "board/fen.h"
@@ -57,6 +62,8 @@
 
 using namespace nightwing::board;
 using namespace nightwing::search;
+using nightwing::bench::kBenchDepth;
+using nightwing::bench::kBenchPositions;
 
 namespace {
 
@@ -72,23 +79,6 @@ void init_all() {
     init_zobrist_keys();
 }
 
-/// Fixed search depth for every bench position -- see this file's own
-/// header comment for the full reasoning.
-constexpr int kBenchDepth = 6;
-
-struct BenchPosition {
-    const char* name;
-    const char* fen;
-};
-
-// See this file's own header comment for why these four specifically.
-constexpr std::array<BenchPosition, 4> kBenchPositions = {{
-    {"startpos", "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"},
-    {"kiwipete", "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1"},
-    {"quiet_middlegame", "r1bq1rk1/pp2bppp/2n1pn2/2pp4/3P4/2PBPN2/PP1N1PPP/R1BQ1RK1 w - - 0 1"},
-    {"endgame_mate_in_3", "2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1"},
-}};
-
 } // namespace
 
 TEST_CASE("regression bench: fixed positions searched to a fixed depth, node counts printed for "
@@ -97,7 +87,7 @@ TEST_CASE("regression bench: fixed positions searched to a fixed depth, node cou
     init_all();
 
     std::uint64_t total_nodes = 0;
-    for (const BenchPosition& bench_pos : kBenchPositions) {
+    for (const auto& bench_pos : kBenchPositions) {
         Position pos = parse_fen(bench_pos.fen);
         const SearchResult result = search_fixed_depth(pos, kBenchDepth);
 

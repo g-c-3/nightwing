@@ -8,10 +8,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include "bench_positions.h"
 #include "board/attacks.h"
 #include "board/board.h"
 #include "board/fen.h"
@@ -19,6 +21,7 @@
 #include "board/movegen.h"
 #include "board/zobrist.h"
 #include "book/book.h"
+#include "search/search.h"
 #include "uci/uci.h"
 
 using namespace nightwing::board;
@@ -772,5 +775,67 @@ TEST_CASE("uci: 'setoption name Ponder value false/true' is accepted without err
     REQUIRE_FALSE(contains(out_after_false, "bestmove 0000"));
     REQUIRE(contains(out_after_true, "bestmove "));
     REQUIRE_FALSE(contains(out_after_true, "bestmove 0000"));
+}
+
+// --- `bench` command (ROADMAP.md Phase 8, "`bench` command") ---
+// The actual CLI-argument path (`./nightwing bench`, src/main.cpp) is
+// its own separate translation unit (a distinct `main()`) and isn't
+// reachable through this file's own uci::run()-based test harness --
+// it was verified directly, manually, by running the compiled binary
+// in this development sandbox (real output, not hypothetical: matched
+// this file's own [bench]-tagged test's total exactly). These tests
+// cover the OTHER entry point instead: `bench` typed as an ordinary
+// UCI command at the interactive prompt, which uci::run() dispatches to
+// the exact same uci::run_bench() the CLI path calls -- so this is
+// genuine, not partial, coverage of the shared implementation both
+// paths actually run.
+
+TEST_CASE("uci: 'bench' command prints per-position lines and a final 'Nodes searched' summary "
+          "line",
+          "[uci][bench]") {
+    init_all();
+    const std::string out = run_uci({"bench", "quit"});
+    REQUIRE(contains(out, "startpos: depth 6 nodes "));
+    REQUIRE(contains(out, "kiwipete: depth 6 nodes "));
+    REQUIRE(contains(out, "quiet_middlegame: depth 6 nodes "));
+    REQUIRE(contains(out, "endgame_mate_in_3: depth 6 nodes "));
+    REQUIRE(contains(out, "Total time (ms) : "));
+    REQUIRE(contains(out, "Nodes searched  : "));
+    REQUIRE(contains(out, "Nodes/second    : "));
+}
+
+TEST_CASE("uci: 'bench' command's reported total node count matches an independent computation "
+          "over the same shared position set (src/bench_positions.h) -- not a hardcoded, "
+          "potentially-stale expected value",
+          "[uci][bench]") {
+    init_all();
+    const std::string out = run_uci({"bench", "quit"});
+
+    // Independently reproduce what run_bench() itself should have
+    // computed, using the SAME shared header both consume
+    // (src/bench_positions.h) -- if a future session changes
+    // kBenchDepth/kBenchPositions, this test's own expectation moves
+    // with it automatically rather than needing a hand-updated magic
+    // number.
+    std::uint64_t expected_total = 0;
+    for (const auto& bench_pos : nightwing::bench::kBenchPositions) {
+        nightwing::board::Position pos = nightwing::board::parse_fen(bench_pos.fen);
+        const nightwing::search::SearchResult result =
+            nightwing::search::search_fixed_depth(pos, nightwing::bench::kBenchDepth);
+        expected_total += result.nodes;
+    }
+
+    REQUIRE(contains(out, "Nodes searched  : " + std::to_string(expected_total)));
+}
+
+TEST_CASE("uci: 'bench' followed by an ordinary 'go' still works normally -- bench doesn't leave "
+          "the engine in a bad state",
+          "[uci][bench]") {
+    init_all();
+    const std::string out =
+        run_uci({"bench", "position startpos moves g1h3", "go depth 2", "quit"});
+    REQUIRE(contains(out, "Nodes searched  : "));
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
 }
 
