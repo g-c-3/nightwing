@@ -22,6 +22,7 @@ on:
         options:
           - tuning
           - pgo
+          - sprt
         default: tuning
       selfplay_games:
         description: "nightwing_selfplay: number of self-play games to generate training data from"
@@ -47,6 +48,22 @@ on:
         description: "nightwing_match: number of games played between tuned weights and eval::default_material_weights()"
         required: false
         default: "400"
+      sprt_elo0:
+        description: "nightwing_sprt: H0 Elo bound (the change is no better than this)"
+        required: false
+        default: "0"
+      sprt_elo1:
+        description: "nightwing_sprt: H1 Elo bound (the change is at least this good)"
+        required: false
+        default: "5"
+      sprt_batch_size:
+        description: "nightwing_sprt: games played per SPRT check (should be even)"
+        required: false
+        default: "20"
+      sprt_max_games:
+        description: "nightwing_sprt: hard safety cap on total games if neither SPRT bound is ever crossed"
+        required: false
+        default: "2000"
 
 jobs:
   build-and-test:
@@ -324,4 +341,91 @@ jobs:
         with:
           name: nightwing-pgo-linux
           path: build/src/nightwing
+          retention-days: 30
+
+  # ROADMAP.md Phase 8's "SPRT testing setup/process for validating future
+  # changes" item. Manually triggered only (`workflow_dispatch`, same
+  # rationale as `tuning-pipeline`/`pgo-build` above) — an SPRT run is a
+  # deliberate, occasional strength-validation step for a specific proposed
+  # change, not a per-commit correctness check. Linux Release only, same
+  # "search is deterministic given a seed, cross-platform isn't a
+  # meaningful axis here" reasoning as `tuning-pipeline`.
+  #
+  # This job demonstrates the actual end-to-end process a future session
+  # (or person) can reuse to validate ANY proposed change with a real
+  # accept/reject decision rather than a fixed-game match's bare point
+  # estimate (tuner::match.h's own header comment on the difference,
+  # tuner::sprt.h's own header comment on the method): here, self-play ->
+  # tune produces a candidate weight vector, and nightwing_sprt (not
+  # nightwing_match) is what decides whether it's actually worth adopting.
+  # The identical nightwing_sprt tool works just as well standing alone,
+  # fed any other candidate eval::MaterialWeights on stdin — the self-play/
+  # tune steps above it in this job are one example producer of a
+  # candidate to test, not a requirement of the SPRT process itself.
+  sprt-test:
+    if: github.event_name == 'workflow_dispatch' && inputs.pipeline == 'sprt'
+    runs-on: ubuntu-latest
+    name: SPRT pipeline (selfplay -> tune -> sprt)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure CMake (Release, no tests)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF
+
+      - name: Build tuner executables
+        run: cmake --build build --config Release --parallel --target nightwing_selfplay nightwing_tune nightwing_sprt
+
+      # Positional args:
+      #   nightwing_selfplay [num_games] [base_seed] [search_depth] [random_opening_plies] [max_plies]
+      #   nightwing_tune     [iterations] [learning_rate] [finite_diff_epsilon] [sigmoid_scale]
+      #   nightwing_sprt     [elo0] [elo1] [alpha] [beta] [batch_size] [max_games]
+      #                      [base_seed] [search_depth] [random_opening_plies] [max_plies]
+      # (sprt_main.cpp's own header comment has the full list.) base_seed
+      # is fixed (1) for both selfplay and the SPRT run so a re-run of this
+      # workflow with unchanged inputs is exactly reproducible. alpha/beta
+      # are left at nightwing_sprt's own defaults (0.05/0.05, the
+      # conventional Fishtest-style error rates) — not exposed as separate
+      # workflow_dispatch inputs, since changing them changes what
+      # "accept"/"reject" statistically MEANS, not just how long the test
+      # runs; the four inputs that are exposed (elo0/elo1/batch_size/
+      # max_games) are the ones that vary run-to-run for a genuinely
+      # different question being asked, not the test's own error-rate
+      # calibration.
+      - name: Run self-play -> tune -> SPRT pipeline
+        working-directory: build
+        run: |
+          set -euo pipefail
+          echo "== nightwing_selfplay: ${{ inputs.selfplay_games }} games =="
+          ./src/nightwing_selfplay \
+            "${{ inputs.selfplay_games }}" 1 \
+            "${{ inputs.selfplay_search_depth }}" \
+            "${{ inputs.selfplay_random_opening_plies }}" \
+            "${{ inputs.selfplay_max_plies }}" \
+            > training_data.txt
+          wc -l training_data.txt
+
+          echo "== nightwing_tune: ${{ inputs.tune_iterations }} iterations =="
+          ./src/nightwing_tune "${{ inputs.tune_iterations }}" \
+            < training_data.txt > tuned_weights.txt
+          cat tuned_weights.txt
+
+          echo "== nightwing_sprt: tuned vs. default_material_weights(), elo0=${{ inputs.sprt_elo0 }} elo1=${{ inputs.sprt_elo1 }} =="
+          ./src/nightwing_sprt \
+            "${{ inputs.sprt_elo0 }}" "${{ inputs.sprt_elo1 }}" 0.05 0.05 \
+            "${{ inputs.sprt_batch_size }}" "${{ inputs.sprt_max_games }}" 1 \
+            "${{ inputs.selfplay_search_depth }}" \
+            "${{ inputs.selfplay_random_opening_plies }}" \
+            "${{ inputs.selfplay_max_plies }}" \
+            < tuned_weights.txt | tee sprt_result.txt
+
+      - name: Upload pipeline artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sprt-pipeline-results
+          path: |
+            build/training_data.txt
+            build/tuned_weights.txt
+            build/sprt_result.txt
           retention-days: 30
