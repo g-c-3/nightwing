@@ -4,6 +4,40 @@ Newest entry at top.
 
 ---
 
+### Session 87 — 2026-09-06 — Phase 8: TT prefetch verified — a real placement defect found and fixed, but no measurable speed benefit confirmable in this sandbox
+
+**Built/fixed:**
+- `src/search/search.cpp`: the pre-existing `negamax()` prefetch was confirmed, by direct code inspection, to have zero intervening work between the prefetch call and the `tt.probe()` that immediately followed it (one line apart) — contradicting its own comment and ARCHITECTURE.md's documented intent that it "overlaps memory latency with move generation/ordering work," since movegen for that node actually happens considerably later. Fixed by adding a second, eager prefetch immediately after `board::make_move()` in the main move loop, using the child position's already-updated `pos.zobrist_hash` — genuine work (`in_check()` plus extension logic) now exists between that prefetch and the recursive call's own eventual probe. The original internal prefetch was kept, its comment corrected to describe accurately what it does and doesn't achieve, and documented as still the only prefetch covering the root call and the null-move/ProbCut recursive calls (both structurally unable to benefit from the same fix — see below).
+
+**Rigorous empirical measurement performed (this item's own wording specifically asks for "profiled, not assumed"):**
+- Built three separate binaries — original placement, this session's fix, and prefetch disabled entirely (both call sites no-op'd) — first confirmed all three produce byte-identical node counts, scores, and PVs at a real search depth (11 ply, a complex middlegame position), i.e., the change is provably behavior-neutral.
+- Ran an interleaved (not batched, to average out any non-stationary drift) A/B/C wall-clock comparison, 20 repetitions each at depth 12 (~3.2 seconds per run) with a 256 MB Hash (well beyond typical L2/L3 cache size, to maximize the chance of genuine cache-miss-driven differences showing up): trimmed-mean results were 3180.0ms (original), 3182.1ms (fix), 3173.4ms (no prefetch) — differences under 10ms against a measured standard deviation of roughly 100ms. No statistically or practically significant difference between any of the three.
+
+**Honest interpretation, not overclaimed either direction:** this sandbox has no `perf`/hardware-performance-counter tooling available, and is a virtualized/shared-CPU environment where genuine memory-latency effects are difficult to isolate from ordinary scheduling noise — the null result here means this sandbox specifically cannot substantiate a measurable benefit, not that prefetching provides zero benefit on real, dedicated target hardware. The code-level fix is kept anyway: it's logically sound (a genuine overlap window now exists where none did before) and provably costs nothing (identical node counts, negligible added instructions), even without a confirmed measurable uplift here.
+
+**Verification performed:** full suite (458 cases) recompiled and rerun 3 consecutive times, plus under `-fsanitize=address,undefined` — all green every time, bench node counts byte-for-byte unchanged (confirming the change altered nothing about search behavior, only its instruction-level composition).
+
+**Next session start point:** Read ROADMAP.md's own Phase 8 section directly for the next incomplete item (SPRT testing setup, skill-level limiting, contempt, README/build docs are all still open — flag to a future session with real hardware/`perf` access that a more conclusive TT-prefetch performance measurement, beyond what this sandbox could provide, would still be valuable if search speed becomes a priority) and begin working immediately.
+
+---
+
+### Session 86 — 2026-09-06 — Follow-up: PGO pipeline confirmed working on real GitHub Actions CI (not just the development sandbox)
+
+**What happened:** the `pgo-build` job (Session 85) was manually triggered on real GitHub Actions via the `pipeline: pgo` workflow_dispatch input, and the resulting `nightwing-pgo-linux` artifact was downloaded and inspected directly.
+
+**Confirmed directly from the real artifact, not the sandbox:**
+- The uploaded binary is a genuine, valid ELF 64-bit executable — not an empty/corrupt upload.
+- `./nightwing bench` on the real CI-built binary reports **81029 total nodes** — byte-identical to this project's long-standing baseline, confirming the real CI-run PGO build changed nothing about what the engine computes, only how it's compiled, exactly as intended.
+- Normal UCI operation (`uci`/`isready`/`position`/`go`/`bestmove`) works correctly on the real artifact.
+- No leftover `gcov`/profiling symbols in the binary (checked via `strings`) — confirms this is the clean, final `-fprofile-use`-rebuilt binary the pipeline is supposed to upload, not an accidentally-uploaded instrumented copy from the `generate` phase.
+- The job reached its final "Upload PGO-optimized binary" step and produced a downloadable artifact at all — since that step comes after `ctest --output-on-failure` in the job's own step sequence, and no step in this job sets `continue-on-error`, this is strong (if indirect — the actual CI log output was not itself reviewed) evidence the full test suite also passed in `use` phase on real CI infrastructure, closing the gap Session 85 could only leave open due to this sandbox's own resource/time constraints on the CMake+Catch2-FetchContent build specifically.
+
+**Net effect:** the PGO build pipeline (ROADMAP.md Phase 8) is now confirmed working end-to-end on the actual target infrastructure (real GitHub Actions), not just in this development sandbox — the honest caveat Session 85 recorded ("not completed end-to-end via CMake specifically... a sandbox resource/time constraint") has been substantively addressed by this real run, though the actual CI log/test-output text itself was not directly reviewed (only the resulting artifact).
+
+**Next session start point:** Read ROADMAP.md's own Phase 8 section directly for the next incomplete item (TT prefetch verification, SPRT setup, skill-level limiting, contempt, README/build docs are all still open) and begin working immediately.
+
+---
+
 ### Session 85 — 2026-09-05 — Phase 8: Profile-Guided Optimization (PGO) build pipeline
 
 **Built:**
