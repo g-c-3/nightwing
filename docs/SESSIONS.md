@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+### Session 88 — 2026-09-06 — Phase 8: SPRT testing setup/process for validating future changes
+
+**Built:**
+- `src/tuner/sprt.h`/`.cpp` (new): `nightwing::tuner::sprt` module implementing GSPRT (the generalized Sequential Probability Ratio Test used by Fishtest/OpenBench-style engine-testing infrastructure) as a from-scratch computation over cumulative win/draw/loss counts. `SprtConfig` holds two Elo hypotheses and two error-rate bounds (defaulting to the conventional Fishtest values, 0.05/0.05); `compute_sprt()` returns the current log-likelihood ratio, the two decision bounds, and a `Continue`/`AcceptH0`/`AcceptH1` status.
+- `src/tuner/sprt_main.cpp` (new): `nightwing_sprt` executable — reads a candidate `eval::MaterialWeights` from stdin (the same format `nightwing_tune`/`nightwing_match` already use) and plays it against `eval::default_material_weights()` in batches via the pre-existing, unchanged `tuner::play_match()`, checking SPRT after each batch and stopping as soon as one bound is crossed rather than committing to a fixed game count up front.
+- `.github/workflows/ci.yml`: new `sprt` `pipeline` option and `sprt-test` job (`workflow_dispatch`-only, same manual-trigger rationale as the pre-existing `tuning-pipeline`/`pgo-build` jobs), chaining self-play → tune → `nightwing_sprt` end to end; four new workflow inputs (`sprt_elo0`, `sprt_elo1`, `sprt_batch_size`, `sprt_max_games`) — `alpha`/`beta` deliberately left at the executable's own compiled-in defaults, not exposed as CI inputs (see docs/DECISIONS.md, 2026-09-06 (2), for why).
+- `tests/sprt_tests.cpp` (new, 11 cases / 22 assertions): logistic-model properties of `elo_to_score()`, exact default-bound values, the zero-games and all-draws (zero-variance) `Continue` edge cases, two hand-derived decisive win/loss records checked against manually computed LLR values, a small-sample-under-close-hypotheses `Continue` case, a monotonicity check, and a tighter-alpha/beta-widens-bounds check.
+- `src/CMakeLists.txt`/`tests/CMakeLists.txt`: registered the new source/test files and the new `nightwing_sprt` executable target.
+
+**Design rationale (full detail in docs/DECISIONS.md, 2026-09-06 (2)):** SPRT built as a genuinely separate module/executable on top of `tuner::match`'s own pre-existing, completely untouched `play_match()`, rather than growing `play_match()`/`MatchResult` a second, SPRT-aware calling convention; GSPRT (normal approximation over the 0/0.5/1 score) chosen over a literal two-outcome Wald SPRT specifically because chess has three game outcomes and GSPRT is information-preserving for any win/draw/loss mix, matching why Fishtest itself uses this method.
+
+**Verification performed:**
+- `tests/sprt_tests.cpp`'s 11 new cases pass in isolation (fast raw-g++/Catch2-amalgamated path, matching earlier sessions' own precedent for a quick single-module check) with hand-computed LLR values confirmed to match the implementation's own output before being written into assertions.
+- Full test suite rebuilt via a genuine CMake+Catch2 (FetchContent) build and rerun clean in this sandbox — **471 test cases, 100% passing**, including this session's 11 new `[sprt]`-tagged cases. (Earlier sessions, e.g. Session 85, found this full CMake+Catch2 build path too slow for this sandbox's per-command time limits and fell back to the raw-g++ path for a full-suite run; this session's attempt completed within a single command's time budget without needing that fallback.)
+- `bench` reverified byte-for-byte identical to the established baseline (**81029 total nodes**) after the change — confirms zero impact on search/eval behavior from this purely additive, standalone new module.
+- `nightwing_sprt` smoke-tested by hand against two real scenarios: a neutral, identical-weights candidate correctly staying `Continue` through an all-draws run at very shallow search depth (zero-variance edge case hit for real, not just in the unit test); a deliberately worse candidate correctly triggering an `AcceptH1`/`AcceptH0`-style decision partway through a batch run, with the tool's own reported LLR cross-checked against a hand computation of the GSPRT formula for that exact win/draw/loss split.
+- `.github/workflows/ci.yml` changes validated for correct YAML syntax (`python3 -c "import yaml; yaml.safe_load(...)"`) before delivery; the `sprt-test` job itself has NOT been run on real GitHub Actions yet (parallel to Session 85's PGO job, later confirmed working on real CI by Session 86) — flagging this honestly as still open, same pattern as that precedent.
+
+**Next session start point:** ROADMAP.md Phase 8 still has open items — skill-level/strength limiting (optional), contempt/draw-score adjustment (optional), and README/build-instructions/engine-info-via-`uci`. Read ROADMAP.md's own Phase 8 section directly for the next incomplete item and begin working immediately. If real GitHub Actions access becomes available, triggering the new `sprt-test` job once (parallel to Session 86's own PGO confirmation) would close the one open verification gap this session left (CI-YAML-syntax-checked only, not yet run for real).
+
+---
+
 ### Session 87 — 2026-09-06 — Phase 8: TT prefetch verified — a real placement defect found and fixed, but no measurable speed benefit confirmable in this sandbox
 
 **Built/fixed:**
