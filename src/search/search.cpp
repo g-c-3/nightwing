@@ -1013,7 +1013,29 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 
     const int alpha_orig = alpha;
     const Color us = pos.side_to_move;
-    tt.prefetch(key); // ARCHITECTURE.md: issued as early as possible, to overlap with movegen below.
+    // Prefetches THIS node's own TT bucket, at the very top of the
+    // function, before probe() below needs it (ROADMAP.md Phase 8, "TT
+    // prefetch verified..." item; docs/DECISIONS.md has the full
+    // account). NOTE, corrected by this session's own profiling work:
+    // the "overlaps with movegen below" framing this comment originally
+    // had (matching ARCHITECTURE.md's own description) was aspirational
+    // rather than accurate -- probe() is issued on literally the very
+    // next line, with movegen happening considerably later (only if
+    // this probe doesn't cause an outright cutoff), so THIS specific
+    // prefetch call has essentially no intervening work to overlap with
+    // and provides little to no real latency-hiding for most calls into
+    // this function. It's kept anyway, unchanged, because it's still
+    // the ONLY prefetch that fires for: the root call into this
+    // function (search_root() has no "parent negamax() move loop" to
+    // eagerly prefetch from), and the null-move/ProbCut recursive calls
+    // above and below (both make their own move and recurse with zero
+    // intervening work either way, so an eager prefetch there wouldn't
+    // help any more than this one does -- see this file's own move-
+    // loop comment on the ACTUAL fix this session added, right after
+    // the ordinary move loop's own make_move() call, where real
+    // intervening work -- in_check()/extension logic -- genuinely
+    // exists to hide the latency behind).
+    tt.prefetch(key);
 
     const TTProbeResult probe = tt.probe(key, ply);
     if (probe.hit && probe.depth >= depth) {
@@ -1303,6 +1325,31 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 
         UndoInfo undo;
         board::make_move(pos, move, undo);
+
+        // Eager TT prefetch for the CHILD position (ROADMAP.md Phase 8,
+        // "TT prefetch verified..." item; docs/DECISIONS.md has the full
+        // account of what this replaces and why): issued here, right
+        // after the move that produces this exact position, rather than
+        // only relying on the prefetch already issued at the TOP of the
+        // recursive negamax() call below (this file's own comment on
+        // that one). `pos.zobrist_hash` is already the CHILD's own hash
+        // at this point -- board::make_move() updates it incrementally,
+        // in place, as part of applying the move -- so this is the
+        // earliest point at which the child's TT bucket address is even
+        // knowable. The `in_check(pos)` call and extension-related work
+        // immediately below give the hardware prefetch real time to
+        // complete before the recursive call's own probe actually needs
+        // that memory -- unlike the pre-existing internal prefetch
+        // (kept below, unchanged, as a fallback for the root call and
+        // the NMP/ProbCut recursive calls above, neither of which has
+        // an equivalent gap of independent work before their own
+        // recursion -- see docs/DECISIONS.md for why those two were
+        // deliberately left as-is rather than "fixed" the same way).
+        // Issuing it twice for the same address (here, and again at the
+        // top of the recursive call) is harmless -- a hardware prefetch
+        // is purely advisory, and a second prefetch for an address
+        // already in flight or already resident is essentially free.
+        tt.prefetch(pos.zobrist_hash);
 
         // "Gives check" is computed once here, right after the move is
         // already applied -- no dedicated move flag exists in this
