@@ -43,6 +43,7 @@ add_library(nightwing_lib STATIC
     tuner/selfplay.cpp
     tuner/tune.cpp
     tuner/match.cpp
+    tuner/sprt.cpp
 )
 
 target_include_directories(nightwing_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -130,3 +131,6 @@ target_link_libraries(nightwing_tune PRIVATE nightwing_lib)
 
 add_executable(nightwing_match tuner/match_main.cpp)
 target_link_libraries(nightwing_match PRIVATE nightwing_lib)
+
+add_executable(nightwing_sprt tuner/sprt_main.cpp)
+target_link_libraries(nightwing_sprt PRIVATE nightwing_lib)
