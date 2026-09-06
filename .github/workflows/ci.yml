@@ -5,6 +5,24 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      # Selects which of the two manually-triggered pipelines below
+      # (`tuning-pipeline`, `pgo-build`) actually runs. Without this,
+      # both jobs share the same `if: github.event_name ==
+      # 'workflow_dispatch'` condition and a single "Run workflow" click
+      # would kick off BOTH every time -- a real gap noticed only after
+      # this workflow was already written (see docs/DECISIONS.md), not
+      # something intentional about the original two-job design. `type:
+      # choice` renders as a dropdown in GitHub's own "Run workflow" UI
+      # (web and mobile browser alike), so picking the wrong one isn't
+      # possible the way a free-text field would allow.
+      pipeline:
+        description: "Which manually-triggered pipeline to run"
+        required: true
+        type: choice
+        options:
+          - tuning
+          - pgo
+        default: tuning
       selfplay_games:
         description: "nightwing_selfplay: number of self-play games to generate training data from"
         required: false
@@ -155,7 +173,7 @@ jobs:
   # and running this on all 6 legs would be 6x the compute for zero
   # additional signal.
   tuning-pipeline:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.pipeline == 'tuning'
     runs-on: ubuntu-latest
     name: Tuning pipeline (selfplay -> tune -> match)
 
@@ -241,7 +259,7 @@ jobs:
   # binary with a full set of masked "missing profile" warnings, not a
   # build failure — the kind of mistake that's easy to ship unnoticed).
   pgo-build:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.pipeline == 'pgo'
     runs-on: ubuntu-latest
     name: PGO build pipeline (generate -> train -> use -> verify)
 
