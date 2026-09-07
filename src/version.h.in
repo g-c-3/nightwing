@@ -1,0 +1,17 @@
+#pragma once
+// src/version.h.in
+//
+// Template for a CMake-generated header (configure_file(), top-level
+// CMakeLists.txt) exposing this project's own `project(nightwing
+// VERSION ...)` version number to C++ code -- specifically,
+// src/uci/uci.cpp's own `id name` UCI response (ROADMAP.md Phase 8,
+// "engine info (name/author via `uci`)").
+//
+// DO NOT EDIT THE GENERATED COPY (build/generated/nightwing/version.h)
+// DIRECTLY -- it is overwritten on every CMake configure. To change the
+// version, edit top-level CMakeLists.txt's own `project(nightwing
+// VERSION ...)` line instead -- that single declaration is substituted
+// into the macro below, so nothing in src/ ever needs a second,
+// separately-maintained version number.
+
+#define NIGHTWING_VERSION_STRING "@PROJECT_VERSION@"
