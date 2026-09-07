@@ -7,7 +7,9 @@
 //     ROADMAP.md Phase 7's "Thread count UCI option" item), `Hash`,
 //     `Move Overhead`, and `MultiPV` (all three added under Phase 8's
 //     "Full UCI option set" item -- see handle_setoption() below) are
-//     all recognized; "Full UCI option set" is now fully done. `Hash`
+//     all recognized; "Full UCI option set" is now fully done. `Skill
+//     Level` (Phase 8's own separate "Skill level / strength limiting"
+//     item, src/search/skill.h) is also recognized. `Hash`
 //     changes the SIZE of the fresh, private TranspositionTable each
 //     top-level search call still constructs for itself, not an
 //     in-place resize of a persistent one -- the TT itself is still
@@ -65,6 +67,7 @@
 #include <functional>
 #include <iostream>
 #include <optional>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -78,6 +81,7 @@
 #include "board/move.h"
 #include "book/book.h"
 #include "search/search.h"
+#include "search/skill.h"
 
 namespace nightwing::uci {
 namespace {
@@ -628,12 +632,16 @@ void emit_info(const search::SearchResult& result, std::ostream& out) {
 }
 
 /// Handles `setoption name <name...> value <value...>`. Recognized
-/// option names with real behavioral effect, as of ROADMAP.md Phase 8's
-/// "Full UCI option set" item (now complete -- `MultiPV` was the last
-/// piece): `Threads` (ROADMAP.md Phase 7, unchanged from Session 74),
-/// `Hash`, `Move Overhead`, and `MultiPV` (kMinHashMB/kMaxHashMB,
-/// kMinMoveOverheadMs/kMaxMoveOverheadMs, and kMinMultiPV/kMaxMultiPV's
-/// own doc comments above have each option's full rationale). `Ponder`
+/// option names with real behavioral effect: `Threads` (ROADMAP.md
+/// Phase 7, unchanged from Session 74), `Hash`, `Move Overhead`, and
+/// `MultiPV` (ROADMAP.md Phase 8's "Full UCI option set" item --
+/// kMinHashMB/kMaxHashMB, kMinMoveOverheadMs/kMaxMoveOverheadMs, and
+/// kMinMultiPV/kMaxMultiPV's own doc comments above have each option's
+/// full rationale), and `Skill Level` (ROADMAP.md Phase 8's own
+/// separate "Skill level / strength limiting" item -- src/search/
+/// skill.h's own header comment has the full design; kMinSkillLevel/
+/// kMaxSkillLevel bound it the same way the options above bound
+/// themselves). `Ponder`
 /// (ROADMAP.md Phase 8, "Pondering — protocol side") is also
 /// RECOGNIZED, in the sense that it's advertised in the `uci` response
 /// above and accepted here without complaint, but deliberately has NO
@@ -659,7 +667,7 @@ void emit_info(const search::SearchResult& result, std::ostream& out) {
 /// GUI or script shouldn't crash the engine or corrupt otherwise-good
 /// prior state.
 void handle_setoption(int& num_threads, std::size_t& hash_size_mb, int& move_overhead_ms,
-                       int& multi_pv, const std::vector<std::string>& tokens) {
+                       int& multi_pv, int& skill_level, const std::vector<std::string>& tokens) {
     std::size_t name_start = 0;
     std::size_t name_end = 0;
     std::size_t value_start = 0;
@@ -732,6 +740,18 @@ void handle_setoption(int& num_threads, std::size_t& hash_size_mb, int& move_ove
         } catch (const std::exception&) {
             // Non-integer value -- ignore, leaving multi_pv unchanged.
         }
+    } else if (name == "Skill Level") {
+        try {
+            int value = std::stoi(tokens[value_start]);
+            if (value < search::kMinSkillLevel) {
+                value = search::kMinSkillLevel;
+            } else if (value > search::kMaxSkillLevel) {
+                value = search::kMaxSkillLevel;
+            }
+            skill_level = value;
+        } catch (const std::exception&) {
+            // Non-integer value -- ignore, leaving skill_level unchanged.
+        }
     }
     // Any other option name: silently ignored (this function's own doc comment).
 }
@@ -769,22 +789,41 @@ void handle_setoption(int& num_threads, std::size_t& hash_size_mb, int& move_ove
 ///
 /// `multi_pv` (ROADMAP.md Phase 8, "Full UCI option set" -- the
 /// `MultiPV` sub-item): same run()-owned, `setoption`-driven session-
-/// lifetime state as the three parameters above, passed straight
-/// through as search_iterative_deepening()'s own `multi_pv` parameter
-/// (search/search.h's doc comment has the full contract). No branching
-/// needed here at all for the multi-line case: `on_iteration` below
-/// already fires once per line, each with the right `multipv_index`
-/// already set (search_iterative_deepening_multipv()'s own doc comment,
+/// lifetime state as the three parameters above -- this function's own
+/// USER-FACING MultiPV behavior (which `info multipv N` lines get
+/// reported) always matches this value exactly, but the number of
+/// lines actually REQUESTED from search_iterative_deepening() below may
+/// be silently raised above it when skill limiting is active -- see
+/// `skill_level`'s own doc comment just below for why, and
+/// search::skill_search_multipv()'s own doc comment (search/skill.h)
+/// for the exact rule. When skill limiting is OFF (the default), this
+/// function's behavior for any `multi_pv` value is completely
+/// unaffected by that mechanism: `on_iteration` below fires once per
+/// line exactly as before, each with the right `multipv_index` already
+/// set (search_iterative_deepening_multipv()'s own doc comment,
 /// search.cpp), and emit_info() already emits the right `multipv N`
-/// token per call (that function's own doc comment) -- so this
-/// function's existing single on_iteration lambda, and its existing
-/// single `bestmove` line at the end (SearchResult::multipv_lines' own
-/// doc comment guarantees the top-level `result.best_move` always
-/// mirrors the best line), both already do exactly the right thing
-/// whether `multi_pv` is 1 or 20.
+/// token per call (that function's own doc comment).
+///
+/// `skill_level`/`skill_rng` (ROADMAP.md Phase 8, "Skill level /
+/// strength limiting" -- src/search/skill.h's own header comment has
+/// the full design): `skill_level` is run()'s own session-lifetime
+/// state, set via `setoption name Skill Level value <N>`
+/// (handle_setoption() above) and defaulting to search::kMaxSkillLevel
+/// (no limiting at all). `skill_rng` is a single generator owned by
+/// run() for its whole session lifetime (seeded once from a genuine
+/// entropy source, not reset by `ucinewgame` — a real game's own move
+/// choices should keep drawing from one advancing stream, not restart
+/// predictably every new game) and passed down here by reference. At
+/// the default skill level, this function's behavior — including
+/// `skill_rng`'s own state — is completely unaffected by either
+/// parameter's existence: search::skill_search_multipv() returns
+/// `multi_pv` unchanged, and search::pick_skill_move() (called below)
+/// draws nothing from `skill_rng` at all in that case (both functions'
+/// own doc comments, search/skill.h).
 void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
                const std::vector<std::string>& tokens, int num_threads, std::size_t hash_size_mb,
-               int move_overhead_ms, int multi_pv, std::ostream& out) {
+               int move_overhead_ms, int multi_pv, int skill_level, std::mt19937_64& skill_rng,
+               std::ostream& out) {
     // Opening book (src/book/book.h, ROADMAP.md's optional "small
     // curated opening book" item): consulted first, unconditionally --
     // no setoption/UCI-options infrastructure exists yet to gate this
@@ -793,6 +832,12 @@ void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
     // hit skips search entirely and answers immediately -- no `info
     // depth ...` line is emitted for it, since no depth was actually
     // searched; a `bestmove` alone is a fully valid UCI response.
+    // Deliberately NOT gated behind `skill_level` either -- an opening
+    // book move is a single fixed choice with no MultiPV alternatives
+    // to weigh in the first place, so there is nothing for skill
+    // limiting to act on here regardless of its configured value; the
+    // limiting mechanism only ever has an effect once real search
+    // happens, below.
     const std::optional<std::string> book_move = book::book_move(pos);
     if (book_move.has_value()) {
         out << "bestmove " << *book_move << '\n';
@@ -801,6 +846,11 @@ void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
     }
 
     const SearchBudget budget = compute_search_budget(pos, tokens, move_overhead_ms);
+
+    // `search::skill_search_multipv()` (search/skill.h): returns
+    // `multi_pv` unchanged when skill limiting is off (the default) --
+    // see this function's own doc comment above.
+    const int search_multi_pv = search::skill_search_multipv(skill_level, multi_pv);
 
     // `on_iteration` (search/search.h's IterationCallback): emits one
     // `info depth ... score ... nodes ... pv ...` line per completed
@@ -824,16 +874,33 @@ void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
         pos, budget.max_depth, budget.time_limit_ms, game_history,
         [&out](const search::SearchResult& iteration_result) { emit_info(iteration_result, out); },
         /*material_weights=*/nullptr, num_threads, /*external_stop=*/nullptr, hash_size_mb,
-        multi_pv, budget.soft_time_limit_ms);
+        search_multi_pv, budget.soft_time_limit_ms);
+
+    // `search::pick_skill_move()` (search/skill.h): returns
+    // `result.best_move` unchanged, drawing nothing from `skill_rng`,
+    // whenever skill limiting is off or `result.multipv_lines` is empty
+    // (the latter happening whenever the root position had one or zero
+    // legal moves regardless of `search_multi_pv` -- SearchResult::
+    // multipv_lines' own doc comment, search.h) -- see this function's
+    // own doc comment above. The `info` lines already emitted above, by
+    // `on_iteration`, always report the engine's own genuine, full-
+    // strength analysis of every line regardless of which one ends up
+    // chosen here -- only the final `bestmove` below is ever affected
+    // by skill limiting (src/search/skill.h's own header comment on
+    // this exact point).
+    const board::Move move_to_play = result.multipv_lines.empty()
+                                          ? result.best_move
+                                          : search::pick_skill_move(result.multipv_lines,
+                                                                     skill_level, skill_rng);
 
     out << "bestmove ";
-    if (result.best_move.is_null()) {
+    if (move_to_play.is_null()) {
         // No legal move (checkmate/stalemate at the root) -- "0000" is
         // the conventional UCI null-move token GUIs recognize; there's
         // no other clean way to say "no move" via bestmove.
         out << "0000";
     } else {
-        out << result.best_move.to_uci();
+        out << move_to_play.to_uci();
     }
     out << '\n';
     out.flush();
@@ -1230,6 +1297,29 @@ void run(std::istream& in, std::ostream& out) {
     // for zero observable UCI effect -- pondering's own search call
     // stays at the implicit default of 1 line.
     int multi_pv = kMinMultiPV;
+    // `Skill Level` (ROADMAP.md Phase 8, "Skill level / strength
+    // limiting" -- src/search/skill.h's own header comment has the full
+    // design): same session-lifetime, `setoption`-driven,
+    // not-reset-by-`ucinewgame` convention as `Hash`/`Move Overhead`/
+    // `MultiPV` above. Defaults to search::kMaxSkillLevel -- "no
+    // limiting at all" -- so a session that never sends `setoption name
+    // Skill Level` sees zero behavioral change from before this option
+    // existed. `skill_rng`: a single generator for this option's own
+    // move-selection randomness (search::pick_skill_move(), called from
+    // handle_go() below), seeded once here from a genuine entropy
+    // source and then left to advance move after move for the rest of
+    // this session -- deliberately NOT reseeded by `ucinewgame` (a
+    // fresh game restarting the SAME pseudo-random sequence every time
+    // would make a "weak" opponent's own weaknesses eerily, unrealistically
+    // repeatable move-for-move across games) and NOT threaded into
+    // start_pondering() below, for the identical reason `multi_pv`
+    // itself already isn't (comment just above): pondering's own
+    // eventual `bestmove` is written by a background thread whose
+    // result this file doesn't currently reconcile with skill limiting
+    // at all, an accepted scope limit matching this same function's
+    // existing MultiPV-during-pondering one.
+    int skill_level = search::kMaxSkillLevel;
+    std::mt19937_64 skill_rng(std::random_device{}());
     // Pondering state (ROADMAP.md Phase 7) — session-lifetime, like
     // `num_threads` above, though its own contents (the background
     // thread, the stop flag) are reset per `go ponder` by
@@ -1269,6 +1359,17 @@ void run(std::istream& in, std::ostream& out) {
             // bounds rationale.
             out << "option name MultiPV type spin default " << kMinMultiPV << " min " << kMinMultiPV
                 << " max " << kMaxMultiPV << '\n';
+            // `Skill Level` (ROADMAP.md Phase 8, "Skill level / strength
+            // limiting") -- same standard `spin` syntax; defaults to
+            // search::kMaxSkillLevel (no limiting), the same value this
+            // engine has effectively always played at before this
+            // option existed, so a GUI/script that never touches it
+            // sees no behavioral change. src/search/skill.h's own
+            // header comment has the full design and, in particular,
+            // why no accompanying UCI_Elo/UCI_LimitStrength-style
+            // option is offered alongside it.
+            out << "option name Skill Level type spin default " << search::kMaxSkillLevel
+                << " min " << search::kMinSkillLevel << " max " << search::kMaxSkillLevel << '\n';
             // `Ponder` (ROADMAP.md Phase 8, "Pondering — protocol
             // side"): a `check` (boolean), not a `spin` -- standard UCI
             // convention for this specific option (every compliant GUI
@@ -1302,14 +1403,15 @@ void run(std::istream& in, std::ostream& out) {
             abandon_pondering(ponder); // Same rationale as ucinewgame above.
             handle_position(pos, game_history, tokens);
         } else if (cmd == "setoption") {
-            handle_setoption(num_threads, hash_size_mb, move_overhead_ms, multi_pv, tokens);
+            handle_setoption(num_threads, hash_size_mb, move_overhead_ms, multi_pv, skill_level,
+                              tokens);
         } else if (cmd == "go") {
             if (has_token(tokens, "ponder")) {
                 start_pondering(pos, game_history, tokens, num_threads, hash_size_mb,
                                  move_overhead_ms, out, ponder);
             } else {
                 handle_go(pos, game_history, tokens, num_threads, hash_size_mb, move_overhead_ms,
-                          multi_pv, out);
+                          multi_pv, skill_level, skill_rng, out);
             }
         } else if (cmd == "ponderhit") {
             handle_ponderhit(ponder);
