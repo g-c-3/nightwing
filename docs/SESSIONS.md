@@ -4,6 +4,26 @@ Newest entry at top.
 
 ---
 
+### Session 92 — 2026-09-08 — Phase 8: README, build instructions, engine info via `uci` — Phase 8 complete
+
+**Built:**
+- New top-level `README.md`: project description, the NO-NNUE/NO-tablebase constraint stated up front as permanent, a feature summary (search/eval/tuning-testing infrastructure/UCI), build instructions (CMake configure+build, `bench`, `ctest`), a repository-layout diagram, and an attribution-policy pointer.
+- `CMakeLists.txt`: `project(nightwing VERSION 0.1.0 LANGUAGES CXX)` — a real version number, now the single source of truth. New `configure_file()` call generates `build/generated/nightwing/version.h` from a new checked-in template, `src/version.h.in`.
+- `src/uci/uci.cpp`: `id name` now reports `Nightwing 0.1.0` (real version, previously bare `Nightwing`) via the newly generated header.
+
+**Design rationale (full detail in docs/DECISIONS.md, 2026-09-08):** the version lives in exactly one place (CMake's own `project()` declaration) and is generated into C++ rather than hand-duplicated as a separate string literal, so a future version bump can't silently drift between the two. No LICENSE file was added — a genuine ownership decision left for the repository's owner to make explicitly, not invented on their behalf.
+
+**Verification performed:**
+- Full test suite rebuilt via a genuine CMake+Catch2 build and rerun clean — **500 test cases, 100% passing** (the pre-existing `id name` substring-match test in `tests/uci_tests.cpp` is unaffected by the appended version number).
+- `bench` reverified byte-for-byte identical to the established baseline (**81029 total nodes**) after the change.
+- The generated `version.h` and the actual compiled binary's real `uci` response were both inspected directly (`id name Nightwing 0.1.0` confirmed against real output, not assumed from the CMake logic alone) — this also caught and fixed a minor self-referential artifact in the template's own explanatory comment (CMake's `@ONLY` substitution had silently replaced the comment's own illustrative `@PROJECT_VERSION@` example text).
+
+**This closes the last open item in Phase 8 (Polish & Tournament Readiness) — Phase 8 is now complete.** Two items carry an honestly-flagged external-verification gap this sandbox cannot itself close (real-GUI pondering interop; real fishtest/OpenBench interop for `bench`'s own output format) — both already noted at their own ROADMAP.md items, not new findings this session. Both items marked optional (Skill level/strength limiting, Contempt/draw score adjustment) were completed anyway, in Sessions 90 and 91.
+
+**Next session start point:** ROADMAP.md's sequential Phase 0–8 order is now fully complete. The next candidates are the unlabeled Release Automation phase (CI release job, native binary publishing, wasm build — immediately below Phase 8 in ROADMAP.md) and Phase 9 (Advanced/Stretch Goals), neither of which is part of the sequential phase order the way Phases 0–8 were — read ROADMAP.md directly to choose, since no single "next incomplete item" ordering applies here the way it did through Phase 8.
+
+---
+
 ### Session 91 — 2026-09-07 — Phase 8: Contempt / draw score adjustment (optional)
 
 **Built:**

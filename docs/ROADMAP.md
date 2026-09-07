@@ -333,7 +333,42 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
       100` correctly still finds and plays the forced draw, with the
       reported `info`/`bestmove` score showing exactly -100 instead of
       0, matching the unit test's own hand-derived expectation exactly.
-- [ ] README, build instructions, engine info (name/author via `uci`)
+- [x] README, build instructions, engine info (name/author via `uci`) —
+      DONE as of Session 92. New top-level `README.md`: project
+      description, the NO-NNUE/NO-tablebase constraint stated up front
+      as permanent (not a placeholder), a feature summary across
+      search/eval/tuning-testing-infrastructure/UCI, build instructions
+      (the two-command CMake configure+build, how to run `bench`, how to
+      run the test suite via `ctest`), a repository-layout diagram, and
+      an attribution-policy pointer — deliberately concise and pointing
+      into `docs/` for depth rather than duplicating it. Engine info via
+      `uci`: `id name`/`id author` already existed (`Nightwing`/`g-c-3`)
+      from early in the project; this session added a real version
+      number rather than leaving `id name` bare — `project(nightwing
+      VERSION 0.1.0 ...)` in the top-level `CMakeLists.txt` is now the
+      single source of truth, `configure_file()`'d into a generated
+      `nightwing/version.h` (`src/version.h.in` is the checked-in
+      template; the generated copy lives under the build directory,
+      never in the repo) and consumed by `src/uci/uci.cpp`'s own `id
+      name` line — `id name Nightwing 0.1.0`, confirmed by running the
+      actual compiled binary. No LICENSE file was added — that's a
+      genuine legal/ownership decision for whoever owns this repo to
+      make, not something to invent unprompted; `README.md` doesn't
+      claim a license status either way. Verified: full test suite
+      rebuilt and rerun clean (500 test cases, 100% passing — the
+      pre-existing `id name Nightwing` substring-match test in
+      `tests/uci_tests.cpp` is unaffected by the appended version
+      number), `bench` reverified byte-for-byte unchanged (81029 nodes),
+      and the generated `version.h`/real `id name` output both
+      confirmed directly against the actual compiled binary rather than
+      assumed from reading the CMake logic alone. **This closes the
+      last open item in Phase 8 — Phase 8 (Polish & Tournament
+      Readiness) is now complete**, modulo the two items with an
+      honestly-flagged external-verification gap this sandbox cannot
+      close itself (real-GUI pondering interop, and real fishtest/
+      OpenBench interop for `bench`'s own output format — both already
+      noted at their own items above) and the two items marked optional
+      that were nonetheless completed anyway (Skill Level, Contempt).
 - [ ] wasm build / GUI packaging — superseded by the "Release & Packaging Infrastructure" section below (2026-08-15); tracked there instead of here.
 
 ## Release & Packaging Infrastructure (parallel track — not phase-gated, pick up whenever)
@@ -356,4 +391,4 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
 - [ ] Self-generated small (3-4-5 man) endgame tablebases — DECIDED AGAINST (see DECISIONS.md, 2026-08-11): superseded by Phase 6's algorithmic endgame theory approach. Listed here only as a historical note; not planned.
 
 ---
-**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Phase 4 complete.** **The Priority Fixes section above is complete** (external code review, 2026-08-25 — both mid-search time checks and UCI `info` output done). **Phase 5 complete** (2026-08-31, Session 63 — see that phase's own final-item note above for the tuning-run history). **Phase 6 complete, including both of its lower-priority items** (2026-08-31, Session 69 for the core phase; Session 70 for the dedicated endgame test suite and the opening book — the material-signature classifier from Session 64, `eval::classify_endgame()`, ended up with seven buckets, four `eval/` consumers, and one `search/` consumer across Sessions 65–69; Fortress pattern detection stands as the one deliberately classifier-independent term. See Sessions 64–70's own docs/SESSIONS.md entries for the full build history of this phase). Phase 7 (Multithreading) complete (2026-09-03/04, Sessions 71–77 — 73 and 76 were both bugfixes, not new roadmap items — see their own entries): Lazy SMP implementation, Lock-free TT for concurrent access, Thread count UCI option, Pondering, and the strength-regression verification, all done — see that phase's own item notes above and docs/SESSIONS.md's Session 71/72/74/75/77 entries. (Session 78, immediately after, was a same-day CI-driven bugfix to Session 77's own test suite — see its own entry; no roadmap item touched.) Next up: Phase 8 — Polish & Tournament Readiness (see that phase's own section below for its full item list).
+**Phase 2 complete. Phase 3 complete** (its former "Pondering" item moved to Phase 7 — see above). **Phase 4 complete.** **The Priority Fixes section above is complete** (external code review, 2026-08-25 — both mid-search time checks and UCI `info` output done). **Phase 5 complete** (2026-08-31, Session 63 — see that phase's own final-item note above for the tuning-run history). **Phase 6 complete, including both of its lower-priority items** (2026-08-31, Session 69 for the core phase; Session 70 for the dedicated endgame test suite and the opening book — the material-signature classifier from Session 64, `eval::classify_endgame()`, ended up with seven buckets, four `eval/` consumers, and one `search/` consumer across Sessions 65–69; Fortress pattern detection stands as the one deliberately classifier-independent term. See Sessions 64–70's own docs/SESSIONS.md entries for the full build history of this phase). Phase 7 (Multithreading) complete (2026-09-03/04, Sessions 71–77 — 73 and 76 were both bugfixes, not new roadmap items — see their own entries): Lazy SMP implementation, Lock-free TT for concurrent access, Thread count UCI option, Pondering, and the strength-regression verification, all done — see that phase's own item notes above and docs/SESSIONS.md's Session 71/72/74/75/77 entries. (Session 78, immediately after, was a same-day CI-driven bugfix to Session 77's own test suite — see its own entry; no roadmap item touched.) **Phase 8 (Polish & Tournament Readiness) complete as of Session 92** — see that phase's own item notes above and docs/SESSIONS.md's Session 79–92 entries for the full build history (two items carry an honestly-flagged external-verification gap this sandbox cannot itself close — real-GUI pondering interop, and real fishtest/OpenBench interop for `bench`'s own output format — both noted at their own items; both optional items, Skill Level and Contempt, were completed anyway). Next up: the unlabeled Release Automation phase immediately below (CI release job, native binary publishing, wasm build) or Phase 9 — Advanced/Stretch Goals, at a future session's own discretion, since neither is part of the sequential phase order the way Phases 0–8 were.
