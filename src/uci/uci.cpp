@@ -9,7 +9,10 @@
 //     "Full UCI option set" item -- see handle_setoption() below) are
 //     all recognized; "Full UCI option set" is now fully done. `Skill
 //     Level` (Phase 8's own separate "Skill level / strength limiting"
-//     item, src/search/skill.h) is also recognized. `Hash`
+//     item, src/search/skill.h) and `Contempt` (Phase 8's own separate
+//     "Contempt / draw score adjustment" item, search.h's
+//     search_iterative_deepening()'s own `contempt_cp` doc comment) are
+//     also recognized. `Hash`
 //     changes the SIZE of the fresh, private TranspositionTable each
 //     top-level search call still constructs for itself, not an
 //     in-place resize of a persistent one -- the TT itself is still
@@ -336,6 +339,27 @@ constexpr int kMaxMoveOverheadMs = 5000;
 constexpr int kMinMultiPV = 1;
 constexpr int kMaxMultiPV = 256;
 
+/// Bounds for the `Contempt` UCI option (ROADMAP.md Phase 8, "Contempt
+/// / draw score adjustment" -- src/search/search.h's own
+/// search_iterative_deepening()/search_fixed_depth() doc comments on
+/// their identically-named `contempt_cp` parameter have the full
+/// design). `kMaxContemptCp` (100, one pawn -- eval::MaterialWeights::
+/// pawn_mg's own default, the same "keep a knob within a sensible
+/// order of magnitude relative to real material values" reasoning
+/// kSkillNoiseCapCp already uses, src/search/skill.h) caps how much a
+/// draw's own score can be pushed away from a genuinely neutral 0 --
+/// beyond a pawn's worth, contempt would start to meaningfully distort
+/// ordinary positional judgement rather than just nudging draw
+/// preference, which is well past what "discourage/encourage draws"
+/// is meant to do. `kMinContemptCp` is simply its negation -- Contempt
+/// is symmetric: a negative value means actively welcoming draws
+/// (useful against a known-stronger opponent), exactly as much as a
+/// positive value means avoiding them. Default 0 (no adjustment at
+/// all) preserves every pre-existing caller's exact behavior until a
+/// GUI/tournament manager explicitly sets this option.
+constexpr int kMinContemptCp = -100;
+constexpr int kMaxContemptCp = 100;
+
 /// Result of allocate_time_ms() below: a SOFT budget (the ordinary,
 /// "expected" allocation for this move -- used as the early-stop
 /// threshold once the best move has stabilized, search.h's own
@@ -641,7 +665,11 @@ void emit_info(const search::SearchResult& result, std::ostream& out) {
 /// separate "Skill level / strength limiting" item -- src/search/
 /// skill.h's own header comment has the full design; kMinSkillLevel/
 /// kMaxSkillLevel bound it the same way the options above bound
-/// themselves). `Ponder`
+/// themselves), and `Contempt` (ROADMAP.md Phase 8's own separate
+/// "Contempt / draw score adjustment" item -- src/search/search.h's
+/// own search_iterative_deepening()/search_fixed_depth() doc comments
+/// on their `contempt_cp` parameter have the full design;
+/// kMinContemptCp/kMaxContemptCp bound it the same way). `Ponder`
 /// (ROADMAP.md Phase 8, "Pondering — protocol side") is also
 /// RECOGNIZED, in the sense that it's advertised in the `uci` response
 /// above and accepted here without complaint, but deliberately has NO
@@ -667,7 +695,8 @@ void emit_info(const search::SearchResult& result, std::ostream& out) {
 /// GUI or script shouldn't crash the engine or corrupt otherwise-good
 /// prior state.
 void handle_setoption(int& num_threads, std::size_t& hash_size_mb, int& move_overhead_ms,
-                       int& multi_pv, int& skill_level, const std::vector<std::string>& tokens) {
+                       int& multi_pv, int& skill_level, int& contempt_cp,
+                       const std::vector<std::string>& tokens) {
     std::size_t name_start = 0;
     std::size_t name_end = 0;
     std::size_t value_start = 0;
@@ -752,6 +781,18 @@ void handle_setoption(int& num_threads, std::size_t& hash_size_mb, int& move_ove
         } catch (const std::exception&) {
             // Non-integer value -- ignore, leaving skill_level unchanged.
         }
+    } else if (name == "Contempt") {
+        try {
+            int value = std::stoi(tokens[value_start]);
+            if (value < kMinContemptCp) {
+                value = kMinContemptCp;
+            } else if (value > kMaxContemptCp) {
+                value = kMaxContemptCp;
+            }
+            contempt_cp = value;
+        } catch (const std::exception&) {
+            // Non-integer value -- ignore, leaving contempt_cp unchanged.
+        }
     }
     // Any other option name: silently ignored (this function's own doc comment).
 }
@@ -820,10 +861,19 @@ void handle_setoption(int& num_threads, std::size_t& hash_size_mb, int& move_ove
 /// `multi_pv` unchanged, and search::pick_skill_move() (called below)
 /// draws nothing from `skill_rng` at all in that case (both functions'
 /// own doc comments, search/skill.h).
+///
+/// `contempt_cp` (ROADMAP.md Phase 8, "Contempt / draw score
+/// adjustment"): run()'s own session-lifetime state, set via
+/// `setoption name Contempt value <N>` (handle_setoption() above) and
+/// defaulting to 0 (no adjustment). Passed straight through as
+/// search::search_iterative_deepening()'s own identically-named
+/// parameter (search/search.h's doc comment has the full contract) --
+/// at the default value, this function's behavior is completely
+/// unaffected, exactly as if this parameter didn't exist.
 void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
                const std::vector<std::string>& tokens, int num_threads, std::size_t hash_size_mb,
                int move_overhead_ms, int multi_pv, int skill_level, std::mt19937_64& skill_rng,
-               std::ostream& out) {
+               int contempt_cp, std::ostream& out) {
     // Opening book (src/book/book.h, ROADMAP.md's optional "small
     // curated opening book" item): consulted first, unconditionally --
     // no setoption/UCI-options infrastructure exists yet to gate this
@@ -874,7 +924,7 @@ void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
         pos, budget.max_depth, budget.time_limit_ms, game_history,
         [&out](const search::SearchResult& iteration_result) { emit_info(iteration_result, out); },
         /*material_weights=*/nullptr, num_threads, /*external_stop=*/nullptr, hash_size_mb,
-        search_multi_pv, budget.soft_time_limit_ms);
+        search_multi_pv, budget.soft_time_limit_ms, contempt_cp);
 
     // `search::pick_skill_move()` (search/skill.h): returns
     // `result.best_move` unchanged, drawing nothing from `skill_rng`,
@@ -1320,6 +1370,16 @@ void run(std::istream& in, std::ostream& out) {
     // existing MultiPV-during-pondering one.
     int skill_level = search::kMaxSkillLevel;
     std::mt19937_64 skill_rng(std::random_device{}());
+    // `Contempt` (ROADMAP.md Phase 8, "Contempt / draw score adjustment"
+    // -- src/search/search.h's own doc comments on `contempt_cp` have
+    // the full design): same session-lifetime, `setoption`-driven,
+    // not-reset-by-`ucinewgame` convention as every option above.
+    // Defaults to 0 -- no adjustment -- so a session that never sends
+    // `setoption name Contempt` sees zero behavioral change from before
+    // this option existed. NOT threaded into start_pondering() below,
+    // for the identical reason `skill_level`/`multi_pv` above already
+    // aren't (those two parameters' own comments, just above).
+    int contempt_cp = 0;
     // Pondering state (ROADMAP.md Phase 7) — session-lifetime, like
     // `num_threads` above, though its own contents (the background
     // thread, the stop flag) are reset per `go ponder` by
@@ -1370,6 +1430,14 @@ void run(std::istream& in, std::ostream& out) {
             // option is offered alongside it.
             out << "option name Skill Level type spin default " << search::kMaxSkillLevel
                 << " min " << search::kMinSkillLevel << " max " << search::kMaxSkillLevel << '\n';
+            // `Contempt` (ROADMAP.md Phase 8, "Contempt / draw score
+            // adjustment") -- same standard `spin` syntax; defaults to
+            // 0 (no adjustment), the same value this engine has
+            // effectively always played at before this option existed.
+            // kMinContemptCp/kMaxContemptCp's own doc comment above has
+            // the full range rationale.
+            out << "option name Contempt type spin default 0 min " << kMinContemptCp << " max "
+                << kMaxContemptCp << '\n';
             // `Ponder` (ROADMAP.md Phase 8, "Pondering — protocol
             // side"): a `check` (boolean), not a `spin` -- standard UCI
             // convention for this specific option (every compliant GUI
@@ -1404,14 +1472,14 @@ void run(std::istream& in, std::ostream& out) {
             handle_position(pos, game_history, tokens);
         } else if (cmd == "setoption") {
             handle_setoption(num_threads, hash_size_mb, move_overhead_ms, multi_pv, skill_level,
-                              tokens);
+                              contempt_cp, tokens);
         } else if (cmd == "go") {
             if (has_token(tokens, "ponder")) {
                 start_pondering(pos, game_history, tokens, num_threads, hash_size_mb,
                                  move_overhead_ms, out, ponder);
             } else {
                 handle_go(pos, game_history, tokens, num_threads, hash_size_mb, move_overhead_ms,
-                          multi_pv, skill_level, skill_rng, out);
+                          multi_pv, skill_level, skill_rng, contempt_cp, out);
             }
         } else if (cmd == "ponderhit") {
             handle_ponderhit(ponder);
