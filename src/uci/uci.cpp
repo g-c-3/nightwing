@@ -83,6 +83,7 @@
 #include "board/movegen.h"
 #include "board/move.h"
 #include "book/book.h"
+#include "nightwing/version.h"
 #include "search/search.h"
 #include "search/skill.h"
 
@@ -1397,7 +1398,14 @@ void run(std::istream& in, std::ostream& out) {
         const std::string& cmd = tokens[0];
 
         if (cmd == "uci") {
-            out << "id name Nightwing\n";
+            // `NIGHTWING_VERSION_STRING` (ROADMAP.md Phase 8, "engine
+            // info (name/author via `uci`)"): CMake-generated
+            // (nightwing/version.h, top-level CMakeLists.txt's own
+            // configure_file() comment) from this project's own
+            // `project(nightwing VERSION ...)` declaration -- the
+            // single source of truth for this number lives there, not
+            // here.
+            out << "id name Nightwing " << NIGHTWING_VERSION_STRING << '\n';
             out << "id author g-c-3\n";
             // `option name Threads type spin default <D> min <MIN> max <MAX>`:
             // standard UCI `spin` option syntax -- kMinThreads/kMaxThreads's
