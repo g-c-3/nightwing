@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+### Session 91 — 2026-09-07 — Phase 8: Contempt / draw score adjustment (optional)
+
+**Built:**
+- `src/search/search.cpp`: new `contempt_draw_score(pos, contempt_white_pov)` helper (just above `negamax()`) with the full sign-derivation doc comment; `negamax()` and `search_root()` each gained a new trailing `int contempt_white_pov = 0` parameter, threaded through all 9 (`negamax()`) / 3 (`search_root()`) of their own internal negamax()/quiescence() call sites, and used at each function's own draw-scoring points. `run_lazy_smp_helper()` (forward declaration + definition) also updated so Lazy SMP helper threads use the same contempt-adjusted scores as the main thread. Public entry points `search_fixed_depth()` and `search_iterative_deepening()` (`search.h`/`.cpp`) each gained a new trailing `int contempt_cp = 0`, computing the fixed White-perspective `contempt_white_pov` exactly once at entry and threading it down; `search_iterative_deepening_multipv()` also updated to accept and thread the already-derived value through its own 2 call sites.
+- `src/search/quiescence.h`/`.cpp`: `quiescence()`/`quiescence_impl()` gained the same new trailing parameter; a duplicate `contempt_draw_score()` helper added (matching this file's own existing `in_check()` duplication precedent) and used at its own stalemate-terminal case.
+- `src/uci/uci.cpp`: new `Contempt` UCI spin option (default 0, min -100, max 100 — `kMinContemptCp`/`kMaxContemptCp`), wired through `handle_setoption()`/`handle_go()`/`run()`. Deliberately not threaded into `start_pondering()` — same accepted scope limit as `Skill Level`/`MultiPV`.
+- `tests/contempt_tests.cpp` (new, 6 cases): immediate-stalemate sign checks in both directions, a side-to-move-relative (not fixed-color) sign check, and a real multi-ply propagation test reusing `tests/search_tests.cpp`'s own forced-draw-by-repetition fixture — confirms contempt survives several plies of real negamax recursion intact, and that even maximum-configured contempt (100) never overturns a queen's-worth (~900) of material.
+- `tests/uci_tests.cpp`: 6 new cases mirroring the `Skill Level` pattern (Session 90) — option advertisement, byte-for-byte-identical-at-default proof, clamping, malformed input, `ucinewgame` persistence.
+- `src/CMakeLists.txt`/`tests/CMakeLists.txt`: registered `tests/contempt_tests.cpp`.
+
+**Design rationale (full detail in docs/DECISIONS.md, 2026-09-07 (2)):** a fixed White-perspective contempt value, derived once per search and threaded unchanged through the entire recursive search core, correctly accounts for negamax's own per-ply score negation so a drawn line is worth a consistent `-contempt` from the root's own fixed perspective regardless of depth or whose turn it falls on. Range capped at one pawn each direction (matching `kSkillNoiseCapCp`'s own reasoning, Session 90) specifically so contempt can only ever nudge draw preference, never substitute for genuine positional judgement on a materially lopsided position.
+
+**Verification performed:**
+- `tests/contempt_tests.cpp`'s 6 new cases and `tests/uci_tests.cpp`'s 6 new cases all pass.
+- Full test suite rebuilt via a genuine CMake+Catch2 build and rerun clean — **500 test cases, 100% passing** (494 before this session's 12 new cases across the two files).
+- `bench` reverified byte-for-byte identical to the established baseline (**81029 total nodes**) after the change — confirming this large, invasive threading change through the hot recursive search core (dozens of edited call sites across `search.cpp`/`search.h`/`quiescence.cpp`/`quiescence.h`) is completely behaviorally inert at the default `contempt_cp=0`.
+- Manually smoke-tested end to end via a real UCI session against the exact repetition fixture the unit test uses: `Contempt 100` correctly still found and played the forced draw, with the reported score showing exactly -100 instead of 0 — matching the unit test's own hand-derived expectation precisely.
+
+**Next session start point:** ROADMAP.md Phase 8 has one item left — README, build instructions, and engine info (name/author via `uci`). Read ROADMAP.md's own Phase 8 section directly and begin working immediately; this appears to be the final open item in Phase 8.
+
+---
+
 ### Session 90 — 2026-09-07 — Phase 8: Skill level / strength limiting (optional, for practice/handicap play)
 
 **Built:**

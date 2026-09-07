@@ -274,7 +274,65 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
       persistence, and book-bypass) — full suite verified green (488
       cases) and `bench` reverified byte-for-byte unchanged (81029
       nodes) after the change.
-- [ ] Contempt / draw score adjustment (optional)
+- [x] Contempt / draw score adjustment (optional) — DONE as of Session
+      91. A `Contempt` UCI spin option (`src/uci/uci.cpp`, default 0,
+      min -100, max 100 -- one pawn each direction, `kMinContemptCp`/
+      `kMaxContemptCp`'s own doc comment) discourages (positive) or
+      welcomes (negative) draws for whichever side the engine is
+      playing. New `contempt_draw_score()` helper (`src/search/
+      search.cpp`, just above `negamax()`, and duplicated verbatim into
+      `src/search/quiescence.cpp` per this codebase's own established
+      "duplicate small stable helpers rather than share them across
+      files" convention) converts a fixed White-perspective value,
+      computed once per search from the UCI-facing `contempt_cp`, into
+      the correctly-signed score at each of the four draw-detection
+      points in the engine (negamax()'s repetition/50-move and
+      stalemate cases, quiescence()'s own stalemate case, and
+      search_root()'s own top-level terminal case) — the sign
+      derivation accounts for negamax's own per-ply score negation so a
+      drawn line is worth a CONSISTENT `-contempt` from the root's own
+      fixed perspective no matter how many plies deep it occurs or
+      whose turn it technically falls on there (`contempt_draw_score()`'s
+      own doc comment has the full math). Threaded as a new trailing,
+      default-0 parameter through the entire recursive search core —
+      `negamax()` (9 internal call sites), `quiescence()`/
+      `quiescence_impl()`, `search_root()` (3 internal call sites),
+      `run_lazy_smp_helper()` (so Lazy SMP helper threads populate the
+      shared TT using the SAME contempt-adjusted scores the main thread
+      does, not silently-inconsistent plain ones), and both public entry
+      points `search_fixed_depth()`/`search_iterative_deepening()`
+      (each computing the fixed White-perspective value exactly once,
+      from `pos.side_to_move` at entry) — mechanical parameter
+      threading through every identified call site, the same pattern
+      already used for `material_weights`/`limits`/`multi_pv` when each
+      was added. `contempt_cp` IS fully threaded into
+      `search_iterative_deepening_multipv()` too (unlike
+      `soft_time_limit_ms`, which deliberately isn't) — see
+      docs/DECISIONS.md, 2026-09-07 (2), for why the two differ.
+      Deliberately NOT threaded into `start_pondering()` — same accepted
+      scope limit `Skill Level`/`MultiPV` already established for
+      pondering. `tests/contempt_tests.cpp` (new, 6 cases) — an
+      immediate-stalemate sign check in both directions, a check that
+      the sign is relative to whichever side is actually to move (not a
+      fixed color), and, most importantly, a real multi-ply propagation
+      test reusing the exact same forced-draw-by-repetition fixture as
+      `tests/search_tests.cpp`'s own repetition test: confirms contempt
+      survives several plies of real negamax recursion intact (not just
+      an immediate terminal case) AND that even `kMaxContemptCp`-scale
+      contempt (100) never overturns a queen's-worth (~900) material
+      difference — the whole design point of capping the range small.
+      6 new `tests/uci_tests.cpp` cases (option advertisement, an
+      explicit "Contempt 0" proven byte-for-byte identical to never
+      touching the option, clamping, malformed input, `ucinewgame`
+      persistence). Full suite verified green (500 cases) and `bench`
+      reverified byte-for-byte unchanged (81029 nodes) after the
+      change — confirming this large, invasive threading change through
+      the hot recursive search core is completely behaviorally inert at
+      the default `contempt_cp=0`. Manually smoke-tested end to end via
+      a real UCI session against the same repetition fixture: `Contempt
+      100` correctly still finds and plays the forced draw, with the
+      reported `info`/`bestmove` score showing exactly -100 instead of
+      0, matching the unit test's own hand-derived expectation exactly.
 - [ ] README, build instructions, engine info (name/author via `uci`)
 - [ ] wasm build / GUI packaging — superseded by the "Release & Packaging Infrastructure" section below (2026-08-15); tracked there instead of here.
 
