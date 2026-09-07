@@ -740,6 +740,121 @@ TEST_CASE("uci: 'MultiPV' > 1 during pondering doesn't crash or hang -- ponderin
     (void)out;
 }
 
+// --- Skill Level (ROADMAP.md Phase 8, "Skill level / strength
+// limiting (optional, for practice/handicap play)" -- src/search/
+// skill.h has the full design) ---
+
+TEST_CASE("uci: 'uci' response advertises the Skill Level spin option with its documented bounds",
+          "[uci][skill]") {
+    init_all();
+    const std::string out = run_uci({"uci", "quit"});
+    REQUIRE(contains(out, "option name Skill Level type spin default 20 min 0 max 20"));
+}
+
+TEST_CASE("uci: explicitly setting 'Skill Level' to its own default (20) behaves EXACTLY like "
+          "never touching the option at all -- identical bestmove, same fixed depth, same "
+          "position",
+          "[uci][skill]") {
+    init_all();
+    // "moves g1h3": sidesteps the opening book, same rationale as the
+    // MultiPV tests above (this file's own comment on that block's
+    // first test). Depth 4, single-threaded, no time budget at all
+    // (bare "go depth") -- search::search_iterative_deepening() is
+    // fully deterministic under those conditions, so an identical
+    // bestmove between the two runs is a genuine confirmation that
+    // "Skill Level 20" draws nothing from skill_rng and changes nothing
+    // about which move gets chosen (search::pick_skill_move()'s own
+    // doc comment, search/skill.h) -- not just a plausible-looking
+    // coincidence.
+    const std::string out_default =
+        run_uci({"position startpos moves g1h3", "go depth 4", "quit"});
+    const std::string out_explicit_20 =
+        run_uci({"setoption name Skill Level value 20", "position startpos moves g1h3",
+                  "go depth 4", "quit"});
+
+    const std::string bestmove_prefix = "bestmove ";
+    const std::size_t default_pos = out_default.rfind(bestmove_prefix);
+    const std::size_t explicit_pos = out_explicit_20.rfind(bestmove_prefix);
+    REQUIRE(default_pos != std::string::npos);
+    REQUIRE(explicit_pos != std::string::npos);
+    REQUIRE(out_default.substr(default_pos) == out_explicit_20.substr(explicit_pos));
+}
+
+TEST_CASE("uci: a limited 'Skill Level' still returns a legal, non-null bestmove, and the "
+          "engine's own 'info' lines still report genuine multi-line analysis even though the "
+          "'MultiPV' option itself was never touched",
+          "[uci][skill]") {
+    init_all();
+    // "moves g1h3": same book-avoidance rationale as above. Skill Level
+    // 0 (the weakest setting) with 'MultiPV' left at its own default
+    // (1): search::skill_search_multipv() (search/skill.h) should still
+    // silently request several internal lines, so the SAME "info depth
+    // ... multipv N ..." reporting the MultiPV tests above already
+    // confirm should appear here too, purely as a side effect of skill
+    // limiting being active -- this is the exact, deliberately-chosen
+    // "info lines stay genuine, only bestmove is ever affected" design
+    // (src/search/skill.h's own header comment; this file's own
+    // handle_go() doc comment).
+    const std::string out = run_uci(
+        {"setoption name Skill Level value 0", "position startpos moves g1h3", "go depth 3", "quit"});
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+    REQUIRE(contains(out, "multipv 2")); // kSkillSearchMultiPv (8) >> the untouched MultiPV of 1.
+}
+
+TEST_CASE("uci: an out-of-range 'setoption name Skill Level value ...' is clamped, not "
+          "rejected -- 'go' still returns a legal bestmove",
+          "[uci][skill]") {
+    init_all();
+    // -5 is below kMinSkillLevel (0); 999 is far above kMaxSkillLevel (20).
+    const std::string out_low = run_uci(
+        {"setoption name Skill Level value -5", "position startpos moves g1h3", "go depth 2", "quit"});
+    const std::string out_high = run_uci(
+        {"setoption name Skill Level value 999", "position startpos moves g1h3", "go depth 2", "quit"});
+    REQUIRE(contains(out_low, "bestmove "));
+    REQUIRE_FALSE(contains(out_low, "bestmove 0000"));
+    REQUIRE(contains(out_high, "bestmove "));
+    REQUIRE_FALSE(contains(out_high, "bestmove 0000"));
+}
+
+TEST_CASE("uci: a malformed 'setoption' for Skill Level (missing value, non-integer value) is "
+          "ignored -- a subsequent 'go' still works normally",
+          "[uci][skill]") {
+    init_all();
+    const std::string out = run_uci({
+        "setoption name Skill Level",                 // missing "value ..." entirely
+        "setoption name Skill Level value notanumber", // non-integer value
+        "position startpos",
+        "go depth 2",
+        "quit",
+    });
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
+TEST_CASE("uci: 'Skill Level' set via 'setoption' persists across 'ucinewgame' (an option, not "
+          "game state)",
+          "[uci][skill]") {
+    init_all();
+    const std::string out = run_uci({"setoption name Skill Level value 5", "ucinewgame",
+                                      "position startpos moves g1h3", "go depth 2", "quit"});
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
+TEST_CASE("uci: an opening-book hit is answered from book regardless of 'Skill Level' -- a book "
+          "move has no MultiPV alternatives for skill limiting to weigh in the first place "
+          "(handle_go()'s own doc comment)",
+          "[uci][skill][book]") {
+    init_all();
+    nightwing::book::init_book();
+    const std::string out = run_uci(
+        {"setoption name Skill Level value 0", "position startpos", "go depth 5", "quit"});
+    REQUIRE(contains(out, "bestmove e2e4")); // Same deterministic book move as this file's own
+                                              // dedicated (non-skill) book test above.
+    REQUIRE_FALSE(contains(out, "info depth"));
+}
+
 // --- Ponder option advertisement (ROADMAP.md Phase 8, "Pondering —
 // protocol side"; pondering ITSELF has been fully implemented and
 // tested since Session 75/76 -- tests/pondering_tests.cpp -- this is
