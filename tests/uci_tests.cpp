@@ -855,6 +855,88 @@ TEST_CASE("uci: an opening-book hit is answered from book regardless of 'Skill L
     REQUIRE_FALSE(contains(out, "info depth"));
 }
 
+// --- Contempt (ROADMAP.md Phase 8, "Contempt / draw score adjustment
+// (optional)" -- src/search/search.h's own search_iterative_deepening()
+// doc comment on `contempt_cp` has the full design) ---
+
+TEST_CASE("uci: 'uci' response advertises the Contempt spin option with its documented bounds",
+          "[uci][contempt]") {
+    init_all();
+    const std::string out = run_uci({"uci", "quit"});
+    REQUIRE(contains(out, "option name Contempt type spin default 0 min -100 max 100"));
+}
+
+TEST_CASE("uci: explicitly setting 'Contempt' to its own default (0) behaves EXACTLY like never "
+          "touching the option at all -- identical bestmove and score, same fixed depth, same "
+          "position",
+          "[uci][contempt]") {
+    init_all();
+    const std::string out_default =
+        run_uci({"position startpos moves g1h3", "go depth 4", "quit"});
+    const std::string out_explicit_zero =
+        run_uci({"setoption name Contempt value 0", "position startpos moves g1h3", "go depth 4",
+                  "quit"});
+
+    const std::string bestmove_prefix = "bestmove ";
+    const std::size_t default_pos = out_default.rfind(bestmove_prefix);
+    const std::size_t explicit_pos = out_explicit_zero.rfind(bestmove_prefix);
+    REQUIRE(default_pos != std::string::npos);
+    REQUIRE(explicit_pos != std::string::npos);
+    REQUIRE(out_default.substr(default_pos) == out_explicit_zero.substr(explicit_pos));
+}
+
+TEST_CASE("uci: a nonzero 'Contempt' still returns a legal, non-null bestmove", "[uci][contempt]") {
+    init_all();
+    const std::string out_positive = run_uci(
+        {"setoption name Contempt value 50", "position startpos moves g1h3", "go depth 3", "quit"});
+    const std::string out_negative = run_uci(
+        {"setoption name Contempt value -50", "position startpos moves g1h3", "go depth 3", "quit"});
+    REQUIRE(contains(out_positive, "bestmove "));
+    REQUIRE_FALSE(contains(out_positive, "bestmove 0000"));
+    REQUIRE(contains(out_negative, "bestmove "));
+    REQUIRE_FALSE(contains(out_negative, "bestmove 0000"));
+}
+
+TEST_CASE("uci: an out-of-range 'setoption name Contempt value ...' is clamped, not rejected -- "
+          "'go' still returns a legal bestmove",
+          "[uci][contempt]") {
+    init_all();
+    // -500 is below kMinContemptCp (-100); 500 is above kMaxContemptCp (100).
+    const std::string out_low = run_uci(
+        {"setoption name Contempt value -500", "position startpos moves g1h3", "go depth 2", "quit"});
+    const std::string out_high = run_uci(
+        {"setoption name Contempt value 500", "position startpos moves g1h3", "go depth 2", "quit"});
+    REQUIRE(contains(out_low, "bestmove "));
+    REQUIRE_FALSE(contains(out_low, "bestmove 0000"));
+    REQUIRE(contains(out_high, "bestmove "));
+    REQUIRE_FALSE(contains(out_high, "bestmove 0000"));
+}
+
+TEST_CASE("uci: a malformed 'setoption' for Contempt (missing value, non-integer value) is "
+          "ignored -- a subsequent 'go' still works normally",
+          "[uci][contempt]") {
+    init_all();
+    const std::string out = run_uci({
+        "setoption name Contempt",                 // missing "value ..." entirely
+        "setoption name Contempt value notanumber", // non-integer value
+        "position startpos",
+        "go depth 2",
+        "quit",
+    });
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
+TEST_CASE("uci: 'Contempt' set via 'setoption' persists across 'ucinewgame' (an option, not "
+          "game state)",
+          "[uci][contempt]") {
+    init_all();
+    const std::string out = run_uci({"setoption name Contempt value 30", "ucinewgame",
+                                      "position startpos moves g1h3", "go depth 2", "quit"});
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
 // --- Ponder option advertisement (ROADMAP.md Phase 8, "Pondering —
 // protocol side"; pondering ITSELF has been fully implemented and
 // tested since Session 75/76 -- tests/pondering_tests.cpp -- this is

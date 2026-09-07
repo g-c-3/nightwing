@@ -53,6 +53,7 @@ add_executable(nightwing_tests
     match_tests.cpp
     sprt_tests.cpp
     skill_tests.cpp
+    contempt_tests.cpp
     thread_regression_tests.cpp
 )
 target_link_libraries(nightwing_tests PRIVATE nightwing_lib Catch2::Catch2WithMain)
