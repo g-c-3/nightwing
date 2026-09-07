@@ -4,6 +4,44 @@ Newest entry at top.
 
 ---
 
+### Session 90 — 2026-09-07 — Phase 8: Skill level / strength limiting (optional, for practice/handicap play)
+
+**Built:**
+- `src/search/skill.h`/`.cpp` (new): `nightwing::search::skill` module. `kMinSkillLevel=0`/`kMaxSkillLevel=20` (20 = full strength/disabled, this engine's own existing default). `is_skill_limited()`, `skill_search_multipv()` (silently raises the internal MultiPV line count to `kSkillSearchMultiPv`=8 when limiting is active and the user's own `MultiPV` is smaller), and `pick_skill_move()` (adds bounded random noise — capped at one pawn, `kSkillNoiseCapCp`=100, scaling to zero at full strength — to each MultiPV candidate's own score before picking the highest adjusted one).
+- `src/uci/uci.cpp`: new `Skill Level` UCI spin option (default 20, min 0, max 20), wired through `handle_setoption()`/`handle_go()`; a session-lifetime `std::mt19937_64` (`skill_rng`), seeded once from `std::random_device`, never reseeded by `ucinewgame`. Book-move responses deliberately bypass skill limiting entirely (no MultiPV alternatives exist to weigh for a book hit). Deliberately not threaded into `start_pondering()` — same accepted scope limit as `MultiPV`-during-pondering.
+- `tests/skill_tests.cpp` (new, 10 cases): pure-logic, fully deterministic tests over hand-built `SearchResult` vectors and explicitly-seeded generators — zero-RNG-consumption proofs at full strength, a near-mate line never overturned across 200 fixed-seed trials at the weakest setting, real variability confirmed between two genuinely close lines, and a direct comparison confirming weaker settings pick the worse line strictly more often than a middling setting over the same seed stream.
+- `tests/uci_tests.cpp`: 7 new cases — option advertisement, a byte-for-byte-identical-`bestmove` proof that explicit "Skill Level 20" behaves exactly like never touching the option, a limited level still returning a legal `bestmove` with genuinely expanded `info multipv N` reporting, out-of-range/malformed-input handling, `ucinewgame` persistence, and book-hit bypass.
+- `src/CMakeLists.txt`/`tests/CMakeLists.txt`: registered the new source/test files.
+
+**Design rationale (full detail in docs/DECISIONS.md, 2026-09-07):** weakens only the FINAL move choice, never the search itself — every `info` line stays genuine, full-strength analysis regardless of configured level, mirroring the general shape (not the code) of Stockfish's own classic Skill Level option. The one-pawn noise cap specifically guarantees a forced mate or large material win can never be discarded at any skill level, only a genuinely close alternative is ever put up for grabs. No `UCI_Elo`/`UCI_LimitStrength` companion option offered, deliberately — this project has no real measured Elo-to-skill-level calibration of its own, and offering one would overclaim precision it hasn't earned (same "don't overclaim strength that hasn't actually been measured" convention as `bench`'s own long-standing honest caveat).
+
+**Verification performed:**
+- `tests/skill_tests.cpp`'s 10 new cases pass in isolation via the fast raw-g++/Catch2-amalgamated path (linked with zero dependency on `move.cpp`/`search.cpp` at all — the module's own logic needs neither).
+- Full test suite rebuilt via a genuine CMake+Catch2 build and rerun clean in this sandbox — **488 test cases, 100% passing** (471 before this session's 17 new cases).
+- `bench` reverified byte-for-byte identical to the established baseline (**81029 total nodes**) after the change — zero impact on search/eval behavior.
+- Manually smoke-tested via a real UCI session: `setoption name Skill Level value 0` against a real position at `go depth 4` produced genuine 8-line MultiPV `info` output, and the reported `bestmove` was confirmed to be a real, legal, non-top-ranked alternative drawn from that same analysis — the mechanism engaging exactly as designed, not merely running without crashing.
+
+**Next session start point:** ROADMAP.md Phase 8 still has two open items — contempt/draw-score adjustment (optional) and README/build-instructions/engine-info-via-`uci`. Read ROADMAP.md's own Phase 8 section directly for the next incomplete item and begin working immediately.
+
+---
+
+### Session 89 — 2026-09-06 — Follow-up: SPRT pipeline confirmed working on real GitHub Actions CI (not just the development sandbox)
+
+**What happened:** the `sprt-test` job (Session 88) was manually triggered on real GitHub Actions via the `pipeline: sprt` workflow_dispatch input, and the resulting `sprt-pipeline-results` artifact (`training_data.txt`, `tuned_weights.txt`, `sprt_result.txt`) was downloaded and inspected directly.
+
+**Confirmed directly from the real artifact, not the sandbox:**
+- `nightwing_selfplay` produced **224,825** real training positions in `training_data.txt` — a genuine self-play run, not an empty or truncated file.
+- `nightwing_tune` converged to plausible, non-degenerate weights: knight 274.821/310.71, bishop 290.325/321.62, rook 465.036/486.185, queen 876.494/892.185 (mg/eg) — all moved a believable amount from `eval::default_material_weights()`'s own untuned values, none collapsed to zero or blew up, consistent with the tuner working correctly against real self-play data rather than the small/synthetic inputs this project's own unit tests use.
+- `nightwing_sprt` ran the full pipeline against those tuned weights and reached `max_games` (2000) without crossing either bound: `llr=1.297`, `status=Continue`, `score_b=0.5065`, `elo_diff_b_minus_a=4.5`.
+
+**Honest interpretation, not overclaimed either direction:** a `Continue` (inconclusive) result at `max_games` is the CORRECT statistical outcome here, not a failure of the tool — the observed candidate edge (`elo_diff_b_minus_a=4.5`) sits almost exactly at the default `elo1=5` upper hypothesis, which is precisely the hardest case for any sequential test to resolve: the closer a true effect sits to one of the two configured hypotheses, the more games are needed before the test can tell that hypothesis apart from the other one at the configured confidence level. This is expected GSPRT behavior (docs/DECISIONS.md, 2026-09-06 (2), covers the method), not a defect — a genuinely larger or smaller real effect, or a larger `sprt_max_games`, would be expected to resolve to a definite `AcceptH0`/`AcceptH1` faster. The result also serves as an unplanned but welcome secondary confirmation of the tuner itself (Phase 5/7): tuning against 224,825 real positions produced weights close enough to the untuned baseline (~4.5 Elo, within this run's own measurement noise) that no dramatic tuning bug is indicated, while still being different enough from the defaults to confirm the tuner is doing real work, not just returning its own inputs unchanged.
+
+**Net effect:** the SPRT pipeline (ROADMAP.md Phase 8) is now confirmed working end-to-end on the actual target infrastructure (real GitHub Actions) — selfplay → tune → SPRT decision — not just in this development sandbox, closing the one open verification gap Session 88 left (CI-YAML-syntax-checked only, not yet run for real). Same pattern as Session 86's own confirmation of the `pgo-build` job.
+
+**Next session start point:** ROADMAP.md Phase 8 still has open items — skill-level/strength limiting (optional), contempt/draw-score adjustment (optional), and README/build-instructions/engine-info-via-`uci`. Read ROADMAP.md's own Phase 8 section directly for the next incomplete item and begin working immediately.
+
+---
+
 ### Session 88 — 2026-09-06 — Phase 8: SPRT testing setup/process for validating future changes
 
 **Built:**

@@ -195,7 +195,85 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
       hand-derived decisive win/loss records checked against manually
       computed LLR values — see docs/DECISIONS.md, 2026-09-06 (2) entry,
       for the full design and the empirical verification performed.
-- [ ] Skill level / strength limiting (optional, for practice/handicap play)
+      **UPDATE, Session 89:** the `sprt-test` job was subsequently run
+      for real on GitHub Actions (`pipeline: sprt` workflow_dispatch)
+      and its resulting artifact (`training_data.txt`/
+      `tuned_weights.txt`/`sprt_result.txt`) downloaded and inspected
+      directly — self-play produced 224,825 real training positions,
+      tuning converged to plausible weights (knight ~275/311, bishop
+      ~290/322, rook ~465/486, queen ~876/892 mg/eg — all moved a
+      believable amount from the untuned defaults, none degenerate),
+      and `nightwing_sprt` ran the full pipeline end to end, reaching
+      `max_games` (2000) with `llr=1.297` still inside the default
+      `[-2.944, 2.944]` bounds and correctly reporting `Continue`
+      (inconclusive) rather than forcing a spurious decision — an
+      honest result, not a bug: the observed candidate edge
+      (`elo_diff_b_minus_a=4.5`, `score_b=0.5065`) sits almost exactly
+      AT the `elo1=5` upper hypothesis this default test is configured
+      for, which is precisely the hardest case for any SPRT to resolve
+      quickly (the closer the true effect is to one of the two
+      hypotheses' own boundary, the more games any sequential test
+      needs before it can tell that hypothesis apart from the other one
+      with the configured confidence) — a real change further from the
+      test's own bounds, or a longer `sprt_max_games`, would be expected
+      to resolve faster. This substantively closes the "not yet run
+      against real GitHub Actions" gap this item's own Session 88 entry
+      left open, same pattern as Session 86's own confirmation of the
+      `pgo-build` job.
+- [x] Skill level / strength limiting (optional, for practice/handicap
+      play) — DONE as of Session 90. New `nightwing::search::skill`
+      module (`src/search/skill.h`/`.cpp`) mirrors the general SHAPE of
+      Stockfish's own classic "Skill Level" UCI option (0-20, 20 = full
+      strength/disabled — the same numeric convention, for familiarity)
+      but is a from-scratch design, not copied code: search itself is
+      NEVER weakened (no reduced depth/time/eval — every `info depth
+      ... score ... pv ...` line a GUI sees is genuine, full-strength
+      analysis, completely unaffected by this feature); only WHICH of
+      several already-genuinely-computed MultiPV candidate moves
+      (Session 78's own MultiPV machinery, this same Phase 8) gets
+      reported as `bestmove` changes with the configured level.
+      `pick_skill_move()` adds a random perturbation to each candidate
+      line's own score, capped at one pawn (`kSkillNoiseCapCp`, 100 —
+      scaled down to zero at full strength) before picking the highest
+      adjusted score — a cap chosen specifically so a large material
+      win or a forced mate can never be discarded regardless of
+      configured level, only a genuinely close alternative is ever put
+      up for grabs (see that function's own doc comment, skill.h, for
+      the full reasoning). `skill_search_multipv()` silently raises the
+      internal MultiPV line count (to `kSkillSearchMultiPv`, 8) whenever
+      limiting is active and the user's own `MultiPV` UCI option is
+      smaller — mirroring Stockfish's own well-known, accepted behavior
+      of a Skill-Level-active search reporting more `info multipv N`
+      lines than the user explicitly asked for. New `Skill Level` UCI
+      spin option (`src/uci/uci.cpp`, default 20, min 0, max 20) wired
+      through `handle_setoption()`/`handle_go()`; a single
+      session-lifetime `std::mt19937_64`, seeded once from genuine
+      entropy and never reseeded by `ucinewgame`, is threaded through so
+      a real game's own move choices keep advancing one real stream
+      rather than eerily repeating move-for-move across games. Book
+      moves (src/book/book.h) deliberately bypass skill limiting
+      entirely — a book move has no MultiPV alternatives to weigh in
+      the first place. Deliberately NOT threaded into `start_pondering()`
+      — the exact same accepted scope limit this same file's own
+      `MultiPV`-during-pondering already established (run()'s own
+      `skill_rng` doc comment has the parallel). Deliberately NO
+      UCI_Elo/UCI_LimitStrength-style companion option: mapping a target
+      Elo rating onto an equivalent skill level would require this
+      project's own actual playing strength at each level to have been
+      independently measured against a real rating pool, which it
+      hasn't — see docs/DECISIONS.md, 2026-09-07, for the full
+      rationale and why this is consistent with this project's own
+      established "don't overclaim strength that hasn't actually been
+      measured" convention (the `bench` item's own honest fishtest/
+      OpenBench-interop caveat, Session 84, is the same pattern).
+      `tests/skill_tests.cpp` (10 new pure-logic tests, seeded/
+      deterministic, no board/search dependency at all) plus 7 new
+      `tests/uci_tests.cpp` cases (option advertisement, an explicit
+      "Skill Level 20" proven byte-for-byte identical to never touching
+      the option at all, clamping, malformed input, `ucinewgame`
+      persistence, and book-bypass) — full suite verified green (488
+      cases) and `bench` reverified byte-for-byte unchanged (81029
+      nodes) after the change.
 - [ ] Contempt / draw score adjustment (optional)
 - [ ] README, build instructions, engine info (name/author via `uci`)
 - [ ] wasm build / GUI packaging — superseded by the "Release & Packaging Infrastructure" section below (2026-08-15); tracked there instead of here.
