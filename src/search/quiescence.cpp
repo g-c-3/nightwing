@@ -126,10 +126,22 @@ void order_captures_first(MoveList& moves, const Position& pos) noexcept {
     }
 }
 
+/// Mirrors search.cpp's own contempt_draw_score() of the same behavior
+/// -- a private, module-local duplicate rather than a shared one, same
+/// "small, stable, and this module's only real dependency on it"
+/// convention as this file's own in_check() above (that function's own
+/// comment explains why duplicating a one-line helper like this beats
+/// adding a cross-file declaration for it).
+[[nodiscard]] constexpr int contempt_draw_score(const Position& pos,
+                                                 int contempt_white_pov) noexcept {
+    return pos.side_to_move == Color::White ? kDrawScore - contempt_white_pov
+                                             : kDrawScore + contempt_white_pov;
+}
+
 int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& nodes,
                      bool include_checks, int qs_ply, eval::PawnHashTable* pawn_tt,
                      eval::EvalCache* eval_cache, const eval::MaterialWeights* material_weights,
-                     SearchLimits* limits) noexcept {
+                     SearchLimits* limits, int contempt_white_pov) noexcept {
     // Mid-search time-budget interruption (search.h's SearchLimits):
     // fast-path bail if a shallower quiescence/negamax() frame already
     // noticed the deadline has passed, mirroring negamax()'s own
@@ -170,7 +182,7 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         // Genuinely terminal (checkmate/stalemate), not just "no noisy
         // moves left" -- matches negamax()'s own terminal handling
         // exactly, including the same ply-adjusted mate score.
-        return us_in_check ? -(kMateScore - ply) : kDrawScore;
+        return us_in_check ? -(kMateScore - ply) : contempt_draw_score(pos, contempt_white_pov);
     }
 
     if (qs_ply >= kMaxQuiescencePly) {
@@ -291,7 +303,8 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         board::make_move(pos, move, undo);
         const int score = -quiescence_impl(pos, -beta, -alpha, ply + 1, nodes,
                                             /*include_checks=*/false, qs_ply + 1, pawn_tt,
-                                            eval_cache, material_weights, limits);
+                                            eval_cache, material_weights, limits,
+                                            contempt_white_pov);
         board::unmake_move(pos, move, undo);
 
         if (limits != nullptr && limits->stopped) {
@@ -321,9 +334,10 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
 
 int quiescence(Position& pos, int alpha, int beta, int ply, std::uint64_t& nodes,
                bool include_checks, eval::PawnHashTable* pawn_tt, eval::EvalCache* eval_cache,
-               const eval::MaterialWeights* material_weights, SearchLimits* limits) noexcept {
+               const eval::MaterialWeights* material_weights, SearchLimits* limits,
+               int contempt_white_pov) noexcept {
     return quiescence_impl(pos, alpha, beta, ply, nodes, include_checks, /*qs_ply=*/0, pawn_tt,
-                            eval_cache, material_weights, limits);
+                            eval_cache, material_weights, limits, contempt_white_pov);
 }
 
 } // namespace nightwing::search

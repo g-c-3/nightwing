@@ -92,6 +92,15 @@ namespace nightwing::search {
 /// every existing call site (tests, bench, negamax()'s own calls
 /// outside search_iterative_deepening()) is unaffected.
 ///
+/// `contempt_white_pov` (ROADMAP.md Phase 8, "Contempt / draw score
+/// adjustment"): same fixed, White-perspective contempt value negamax()
+/// threads through its own recursion (search.cpp's negamax() doc
+/// comment on this identically-named parameter has the full sign
+/// derivation) -- used here only at this function's own terminal
+/// checkmate/stalemate case (search.cpp's own contempt_draw_score()
+/// helper). Defaults to 0, meaning "no contempt adjustment": every
+/// existing call site is unaffected.
+///
 /// Precondition: same as negamax()'s own -- init_masks()/
 /// init_magic_bitboards() have been called.
 [[nodiscard]] int quiescence(board::Position& pos, int alpha, int beta, int ply,
@@ -99,6 +108,7 @@ namespace nightwing::search {
                               eval::PawnHashTable* pawn_tt = nullptr,
                               eval::EvalCache* eval_cache = nullptr,
                               const eval::MaterialWeights* material_weights = nullptr,
-                              SearchLimits* limits = nullptr) noexcept;
+                              SearchLimits* limits = nullptr,
+                              int contempt_white_pov = 0) noexcept;
 
 } // namespace nightwing::search

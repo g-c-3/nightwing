@@ -322,12 +322,26 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// such call's own table, not an in-place resize of anything longer-
 /// lived). Defaults to kDefaultTTSizeMB, matching every pre-existing
 /// caller's behavior before this parameter existed.
+///
+/// `contempt_cp` (ROADMAP.md Phase 8, "Contempt / draw score
+/// adjustment" -- src/uci/uci.cpp's own `Contempt` UCI option):
+/// positive means "the side to move in `pos` at this call wants to
+/// avoid draws" -- a draw anywhere in the resulting search tree is
+/// worth `-contempt_cp` to that side, from its own perspective,
+/// regardless of how deep it occurs (search.cpp's contempt_draw_score()
+/// has the full sign derivation). Converted once, internally, into a
+/// fixed White-perspective value and threaded through every
+/// negamax()/quiescence() call this search makes. Defaults to 0, the
+/// pre-existing behavior (a plain, uncontemptuous 0 for every draw) --
+/// every pre-existing caller (every test, `bench`, the tuner) is
+/// completely unaffected.
 [[nodiscard]] SearchResult search_fixed_depth(board::Position& pos, int depth,
                                                std::span<const std::uint64_t> game_history = {},
                                                const eval::MaterialWeights* material_weights =
                                                    nullptr,
                                                int num_threads = 1,
-                                               std::size_t hash_size_mb = kDefaultTTSizeMB);
+                                               std::size_t hash_size_mb = kDefaultTTSizeMB,
+                                               int contempt_cp = 0);
 
 /// Runs iterative deepening: searches at depth = 1, 2, 3, ... up to
 /// `max_depth`, keeping the most recently *completed* iteration's
@@ -518,11 +532,21 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// obviously generalize to "when have N ranked lines all stabilized,"
 /// a genuinely harder question left for whenever MultiPV's own
 /// aspiration-window/Lazy-SMP gaps are revisited.
+///
+/// `contempt_cp` (ROADMAP.md Phase 8, "Contempt / draw score
+/// adjustment" -- same meaning and one-time-conversion-then-threaded-
+/// through-everywhere contract as search_fixed_depth()'s own parameter
+/// of the same name, above -- UNLIKE `soft_time_limit_ms` just above,
+/// this one IS fully threaded into search_iterative_deepening_multipv()
+/// too (this file's own comments on that function), so `Contempt` and
+/// `MultiPV` compose correctly together with no special-casing needed
+/// by a caller using both at once. Defaults to 0, the pre-existing
+/// behavior -- every pre-existing caller is completely unaffected.
 [[nodiscard]] SearchResult search_iterative_deepening(
     board::Position& pos, int max_depth, int time_limit_ms = 0,
     std::span<const std::uint64_t> game_history = {}, IterationCallback on_iteration = nullptr,
     const eval::MaterialWeights* material_weights = nullptr, int num_threads = 1,
     std::atomic<bool>* external_stop = nullptr, std::size_t hash_size_mb = kDefaultTTSizeMB,
-    int multi_pv = 1, int soft_time_limit_ms = 0);
+    int multi_pv = 1, int soft_time_limit_ms = 0, int contempt_cp = 0);
 
 } // namespace nightwing::search

@@ -914,13 +914,79 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
 /// See SearchLimits' own doc comment for the full contract. Defaults to
 /// nullptr, meaning "no time budget": search_fixed_depth() and every
 /// existing test/bench call are unaffected.
+///
+/// `contempt_white_pov` (ROADMAP.md Phase 8, "Contempt / draw score
+/// adjustment" -- src/uci/uci.cpp's own `Contempt` UCI option): the
+/// configured contempt value, ALREADY converted once, at whichever
+/// top-level entry point (search_fixed_depth()/
+/// search_iterative_deepening()) began this whole search, into a fixed
+/// value from White's own absolute perspective -- +N means White wants
+/// to avoid draws (a draw is worth -N to White, +N to Black) by that
+/// same amount, at every draw this search encounters at any depth,
+/// regardless of whose turn it technically falls on at that exact
+/// node. Both draw-scoring points below (is_draw_by_rule()'s own
+/// kDrawScore return, and the stalemate terminal case) use it via
+/// contempt_draw_score() (this file's own small helper, just above
+/// negamax() -- its own doc comment has the full sign-convention
+/// derivation). Threaded straight through to every recursive negamax()/
+/// quiescence() call below, completely unchanged -- exactly like
+/// `material_weights`/`limits` above, this is a single value fixed for
+/// the whole search, not something that varies node to node the way
+/// `alpha`/`beta`/`ply` do. Defaults to 0, meaning "no contempt
+/// adjustment" -- both branches of contempt_draw_score() collapse to
+/// plain kDrawScore in that case, so every existing test/bench/tuner
+/// call site (none of which pass this parameter) is completely
+/// unaffected.
+/// Converts `contempt_white_pov` (a fixed value from White's own
+/// absolute perspective, computed once per search -- see negamax()'s
+/// own doc comment on its identically-named parameter, just below, for
+/// the full picture) into the actual score a draw at `pos` should
+/// return, from `pos.side_to_move`'s own perspective -- the same
+/// perspective convention every other negamax()/quiescence() return
+/// value already uses.
+///
+/// SIGN DERIVATION (ROADMAP.md Phase 8, "Contempt / draw score
+/// adjustment"): negamax negates every returned score once per ply on
+/// the way back up the tree, so a value returned at a draw node N plies
+/// below the root becomes that same value times (-1)^N by the time it
+/// reaches the root. For the root's OWN, fixed perspective to
+/// consistently see any drawn line as worth exactly `-contempt` (the
+/// UCI-facing convention: positive Contempt means "avoid draws"),
+/// regardless of how many plies deep the draw occurs or whose turn it
+/// technically falls on there, the value returned AT the draw node
+/// itself must already carry that same (-1)^N factored in -- which
+/// works out to exactly: return `-contempt` when the node's own side to
+/// move is the SAME as the root's own side to move (an even number of
+/// negations undoes itself), and `+contempt` when it's the OTHER side
+/// (an odd number of negations flips it once more). Expressed in terms
+/// of a fixed White-perspective value instead of tracking "the root's
+/// own side" across the whole recursion (which would need an extra
+/// parameter of its own), this reduces to the one-line comparison
+/// below: `contempt_white_pov` already has the right sign for White,
+/// and simply negating it for Black is equivalent to the "same side as
+/// root / other side" comparison above, without negamax() or
+/// quiescence() ever needing to know which side is actually "the root's
+/// own" at all -- only the CURRENT node's `pos.side_to_move`, which
+/// both functions already have.
+///
+/// Returns exactly `kDrawScore` (0) when `contempt_white_pov` is 0 (the
+/// default, "no contempt configured") -- both branches below collapse
+/// to the same value, so every caller that never sets up contempt at
+/// all sees precisely the pre-existing behavior.
+[[nodiscard]] constexpr int contempt_draw_score(const Position& pos,
+                                                 int contempt_white_pov) noexcept {
+    return pos.side_to_move == board::Color::White ? kDrawScore - contempt_white_pov
+                                                    : kDrawScore + contempt_white_pov;
+}
+
 int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_t& nodes,
             TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
             ContinuationHistoryTable& cont_history, board::PieceType prev_piece,
             board::Square prev_to, std::span<const std::uint64_t> game_history,
             std::array<std::uint64_t, kMaxPly>& path, eval::PawnHashTable& pawn_tt,
             eval::EvalCache& eval_cache, const eval::MaterialWeights* material_weights,
-            bool allow_null_move = true, SearchLimits* limits = nullptr) {
+            bool allow_null_move = true, SearchLimits* limits = nullptr,
+            int contempt_white_pov = 0) {
     // Mid-search time-budget interruption fast path (search.h's
     // SearchLimits doc comment has the full contract): checked before
     // anything else, including the depth <= 0 quiescence delegation
@@ -944,7 +1010,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // quiescence.h's own doc comment on why quiescence search
         // participates in the same interruption scheme.
         return quiescence(pos, alpha, beta, ply, nodes, /*include_checks=*/true, &pawn_tt,
-                           &eval_cache, material_weights, limits);
+                           &eval_cache, material_weights, limits, contempt_white_pov);
     }
 
     // Periodic deadline/external-stop check (search.h's SearchLimits
@@ -981,8 +1047,10 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     if (is_draw_by_rule(pos, key, ply, game_history, path)) {
         // Not stored in the TT -- see negamax()'s header comment on why
         // this check deliberately runs before the TT probe below (the
-        // Graph History Interaction problem).
-        return kDrawScore;
+        // Graph History Interaction problem). contempt_draw_score()
+        // (this file's own doc comment on it, just above negamax())
+        // returns plain kDrawScore whenever contempt_white_pov is 0.
+        return contempt_draw_score(pos, contempt_white_pov);
     }
 
     // Mate distance pruning (CPW "Mate Distance Pruning"): regardless of
@@ -1120,7 +1188,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                                          tt, killers, history, cont_history,
                                          /*prev_piece=*/board::PieceType::None, /*prev_to=*/0,
                                          game_history, path, pawn_tt, eval_cache, material_weights,
-                                         /*allow_null_move=*/false, limits);
+                                         /*allow_null_move=*/false, limits, contempt_white_pov);
         board::unmake_null_move(pos, null_undo);
         // A probe interrupted mid-search (limits->stopped) returns a
         // meaningless, truncated-subtree score (SearchLimits' own doc
@@ -1150,7 +1218,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         if (razor_static_eval + kRazorMargins[static_cast<std::size_t>(depth)] <= alpha) {
             const int razor_score = quiescence(pos, alpha, beta, ply, nodes,
                                                 /*include_checks=*/true, &pawn_tt, &eval_cache,
-                                                material_weights, limits);
+                                                material_weights, limits, contempt_white_pov);
             if ((limits == nullptr || !limits->stopped) && razor_score <= alpha) {
                 return razor_score;
             }
@@ -1167,7 +1235,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // Terminal position: not stored in the TT (see this function's
         // header comment) — movegen already paid the cost of detecting
         // this, and there's no move-loop result left to cache.
-        return in_check(pos) ? -(kMateScore - ply) : kDrawScore;
+        return in_check(pos) ? -(kMateScore - ply) : contempt_draw_score(pos, contempt_white_pov);
     }
 
     order_moves(moves, pos, tt_move, killers, ply, history, cont_history, prev_piece, prev_to);
@@ -1202,7 +1270,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 -negamax(pos, depth - kProbCutReduction, -probcut_beta, -probcut_beta + 1, ply + 1,
                          nodes, tt, killers, history, cont_history, probcut_moved_piece,
                          probcut_move.to(), game_history, path, pawn_tt, eval_cache, material_weights,
-                         /*allow_null_move=*/true, limits);
+                         /*allow_null_move=*/true, limits, contempt_white_pov);
             board::unmake_move(pos, probcut_move, probcut_undo);
             if (limits != nullptr && limits->stopped) {
                 // Truncated subtree (SearchLimits' own doc comment) --
@@ -1297,7 +1365,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                     -negamax(pos, singular_depth, -singular_beta, -singular_beta + 1, ply + 1, nodes,
                              tt, killers, history, cont_history, alt_moved_piece, alt_move.to(),
                              game_history, path, pawn_tt, eval_cache, material_weights,
-                             /*allow_null_move=*/true, limits);
+                             /*allow_null_move=*/true, limits, contempt_white_pov);
                 board::unmake_move(pos, alt_move, alt_undo);
                 if (limits != nullptr && limits->stopped) {
                     // Truncated subtree -- stop the verification loop
@@ -1386,7 +1454,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // ordering.
             score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt, killers,
                               history, cont_history, moved_piece, move.to(), game_history, path,
-                              pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits);
+                              pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits,
+                              contempt_white_pov);
         } else {
             // Futility pruning (CPW "Futility Pruning", this function's
             // header comment): a node-level condition -- computed once,
@@ -1460,7 +1529,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             score = -negamax(pos, depth - 1 + extension - reduction, -alpha - 1, -alpha, ply + 1,
                               nodes, tt, killers, history, cont_history, moved_piece, move.to(),
                               game_history, path, pawn_tt, eval_cache, material_weights,
-                              /*allow_null_move=*/true, limits);
+                              /*allow_null_move=*/true, limits, contempt_white_pov);
             if ((limits == nullptr || !limits->stopped) && reduction > 0 && score > alpha) {
                 // The reduced probe suggested this move might actually
                 // be good -- not trustworthy on its own (a shallower
@@ -1474,13 +1543,13 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, ply + 1, nodes, tt,
                                   killers, history, cont_history, moved_piece, move.to(), game_history,
                                   path, pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
-                                  limits);
+                                  limits, contempt_white_pov);
             }
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt,
                                   killers, history, cont_history, moved_piece, move.to(), game_history,
                                   path, pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
-                                  limits);
+                                  limits, contempt_white_pov);
             }
         }
 
@@ -1719,6 +1788,15 @@ std::vector<Move> extract_pv(Position pos, const TranspositionTable& tt, Move ro
 /// search_iterative_deepening_multipv()'s own doc comment for how it
 /// guarantees that (capping the number of requested lines at the
 /// number of legal root moves, computed once up front).
+///
+/// `contempt_white_pov` (ROADMAP.md Phase 8, "Contempt / draw score
+/// adjustment"): same fixed, White-perspective contempt value negamax()
+/// threads through its own recursion (search.cpp's negamax() doc
+/// comment on this identically-named parameter has the full sign
+/// derivation) -- used here at this function's own terminal (no legal
+/// moves) case, and threaded unchanged into every negamax() call this
+/// function itself makes below. Defaults to 0, meaning "no contempt
+/// adjustment": every existing call site is unaffected.
 SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int aspiration_beta,
                           TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
                           ContinuationHistoryTable& cont_history,
@@ -1726,7 +1804,7 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
                           std::array<std::uint64_t, kMaxPly>& path, eval::PawnHashTable& pawn_tt,
                           eval::EvalCache& eval_cache, const eval::MaterialWeights* material_weights,
                           SearchLimits* limits = nullptr,
-                          std::span<const Move> excluded_moves = {}) {
+                          std::span<const Move> excluded_moves = {}, int contempt_white_pov = 0) {
     SearchResult result;
 
     MoveList moves;
@@ -1752,7 +1830,7 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
     if (moves.empty()) {
         // Nothing to play: report the terminal score with a null
         // best_move (Move::is_null()) rather than an arbitrary one.
-        result.score = in_check(pos) ? -kMateScore : kDrawScore;
+        result.score = in_check(pos) ? -kMateScore : contempt_draw_score(pos, contempt_white_pov);
         result.nodes = 1;
         return result;
     }
@@ -1824,17 +1902,18 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         if (i == 0 || depth == 1) {
             score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt, killers,
                               history, cont_history, moved_piece, move.to(), game_history, path,
-                              pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits);
+                              pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits,
+                              contempt_white_pov);
         } else {
             score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, 1, result.nodes, tt,
                               killers, history, cont_history, moved_piece, move.to(), game_history,
                               path, pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
-                              limits);
+                              limits, contempt_white_pov);
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt,
                                   killers, history, cont_history, moved_piece, move.to(), game_history,
                                   path, pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
-                                  limits);
+                                  limits, contempt_white_pov);
             }
         }
 
@@ -1932,13 +2011,29 @@ namespace {
 void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
                           std::span<const std::uint64_t> game_history,
                           const eval::MaterialWeights* material_weights,
-                          const std::atomic<bool>& stop, std::uint64_t& nodes_out);
+                          const std::atomic<bool>& stop, std::uint64_t& nodes_out,
+                          int contempt_white_pov = 0);
 } // namespace
 
 SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::uint64_t> game_history,
                                  const eval::MaterialWeights* material_weights, int num_threads,
-                                 std::size_t hash_size_mb) {
+                                 std::size_t hash_size_mb, int contempt_cp) {
     assert(depth >= 1 && "search_fixed_depth: depth must be at least 1");
+
+    // Contempt (ROADMAP.md Phase 8, "Contempt / draw score adjustment"):
+    // converted once, here, from the UCI-facing `contempt_cp` (positive
+    // = the side to move here, "us", wants to avoid draws) into a fixed
+    // value from White's own absolute perspective -- see
+    // contempt_draw_score()'s own doc comment (just above negamax(),
+    // this file) for the full sign derivation. `pos.side_to_move` at
+    // this exact point IS the root's own side for this whole call, by
+    // construction -- nothing between here and every negamax()/
+    // quiescence() call below ever mutates `pos` past this line without
+    // also unmaking that same move first (the same invariant this
+    // file's own many other "pos is restored before the next sibling
+    // call" comments already describe).
+    const int contempt_white_pov =
+        pos.side_to_move == board::Color::White ? contempt_cp : -contempt_cp;
 
     // Fresh, private tables for this one call (see tt.h's header
     // comment, which applies equally to KillerTable/HistoryTable/
@@ -1995,7 +2090,7 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
                                         // own identical comment below.
             helpers.emplace_back(run_lazy_smp_helper, std::move(helper_pos), depth, std::ref(tt),
                                   game_history, material_weights, std::cref(smp_stop),
-                                  std::ref(helper_nodes[i]));
+                                  std::ref(helper_nodes[i]), contempt_white_pov);
         }
     }
 
@@ -2004,7 +2099,8 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
     // aspiration-windows entry) -- always the full window.
     SearchResult result = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history,
                                        cont_history, game_history, path, pawn_tt, eval_cache,
-                                       material_weights);
+                                       material_weights, /*limits=*/nullptr, /*excluded_moves=*/{},
+                                       contempt_white_pov);
 
     // Same stop/join/fold-in-node-counts pattern as
     // search_iterative_deepening()'s own below -- no-op (empty
@@ -2049,7 +2145,8 @@ namespace {
 void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
                           std::span<const std::uint64_t> game_history,
                           const eval::MaterialWeights* material_weights,
-                          const std::atomic<bool>& stop, std::uint64_t& nodes_out) {
+                          const std::atomic<bool>& stop, std::uint64_t& nodes_out,
+                          int contempt_white_pov) {
     KillerTable killers;
     // Heap-allocated, not stack locals: HistoryTable and
     // ContinuationHistoryTable together are roughly 176KB
@@ -2103,7 +2200,8 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
 
         const SearchResult r = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history,
                                             *cont_history, game_history, path, pawn_tt, eval_cache,
-                                            material_weights, &limits);
+                                            material_weights, &limits, /*excluded_moves=*/{},
+                                            contempt_white_pov);
         total_nodes += r.nodes;
 
         if (limits.stopped) {
@@ -2146,7 +2244,8 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
 SearchResult search_iterative_deepening_multipv(
     Position& pos, int max_depth, int time_limit_ms, std::span<const std::uint64_t> game_history,
     const IterationCallback& on_iteration, const eval::MaterialWeights* material_weights,
-    int max_lines, std::atomic<bool>* external_stop, std::size_t hash_size_mb) {
+    int max_lines, std::atomic<bool>* external_stop, std::size_t hash_size_mb,
+    int contempt_white_pov) {
     const auto start_time = std::chrono::steady_clock::now();
 
     // Same table set, same lifetime rationale, as the single-line path
@@ -2178,7 +2277,7 @@ SearchResult search_iterative_deepening_multipv(
         SearchResult r =
             search_root(pos, 1, -kInfinity, kInfinity, tt, killers, *history, *cont_history,
                         game_history, path, pawn_tt, eval_cache, material_weights,
-                        /*limits=*/nullptr, excluded);
+                        /*limits=*/nullptr, excluded, contempt_white_pov);
         total_nodes += r.nodes;
         r.multipv_index = line;
         excluded.push_back(r.best_move);
@@ -2256,7 +2355,7 @@ SearchResult search_iterative_deepening_multipv(
             SearchResult r =
                 search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history, *cont_history,
                             game_history, path, pawn_tt, eval_cache, material_weights, &limits,
-                            depth_excluded);
+                            depth_excluded, contempt_white_pov);
             depth_nodes += r.nodes;
             if (limits.stopped) {
                 interrupted = true;
@@ -2314,8 +2413,15 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                                          const eval::MaterialWeights* material_weights,
                                          int num_threads, std::atomic<bool>* external_stop,
                                          std::size_t hash_size_mb, int multi_pv,
-                                         int soft_time_limit_ms) {
+                                         int soft_time_limit_ms, int contempt_cp) {
     assert(max_depth >= 1 && "search_iterative_deepening: max_depth must be at least 1");
+
+    // Contempt (ROADMAP.md Phase 8, "Contempt / draw score adjustment"):
+    // same one-time conversion as search_fixed_depth()'s own (this
+    // file, above) -- `pos.side_to_move` here IS the root's own side
+    // for this whole call.
+    const int contempt_white_pov =
+        pos.side_to_move == board::Color::White ? contempt_cp : -contempt_cp;
 
     // MultiPV (ROADMAP.md Phase 8, "Full UCI option set" -- the
     // `MultiPV` sub-item; this parameter's own doc comment, search.h,
@@ -2337,7 +2443,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
         if (max_lines > 1) {
             return search_iterative_deepening_multipv(pos, max_depth, time_limit_ms, game_history,
                                                         on_iteration, material_weights, max_lines,
-                                                        external_stop, hash_size_mb);
+                                                        external_stop, hash_size_mb,
+                                                        contempt_white_pov);
         }
         // max_lines <= 1 (0 or 1 legal root moves): nothing extra to
         // show regardless of what `multi_pv` requested -- fall through
@@ -2401,7 +2508,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     tt.new_search();
     SearchResult result = search_root(pos, 1, -kInfinity, kInfinity, tt, killers, *history,
                                        *cont_history, game_history, path, pawn_tt, eval_cache,
-                                       material_weights);
+                                       material_weights, /*limits=*/nullptr, /*excluded_moves=*/{},
+                                       contempt_white_pov);
     std::uint64_t total_nodes = result.nodes;
 
     // Position already over (checkmate/stalemate at the root): every
@@ -2463,7 +2571,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             Position helper_pos = pos; // synchronous copy on the calling thread -- see above
             helpers.emplace_back(run_lazy_smp_helper, std::move(helper_pos), max_depth,
                                   std::ref(tt), game_history, material_weights, std::cref(smp_stop),
-                                  std::ref(helper_nodes[i]));
+                                  std::ref(helper_nodes[i]), contempt_white_pov);
         }
     }
 
@@ -2560,7 +2668,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             for (;;) {
                 next = search_root(pos, depth, window_alpha, window_beta, tt, killers, *history,
                                     *cont_history, game_history, path, pawn_tt, eval_cache,
-                                    material_weights, &limits);
+                                    material_weights, &limits, /*excluded_moves=*/{},
+                                    contempt_white_pov);
 
                 if (limits.stopped) {
                     // Interrupted mid-retry -- see the post-loop
@@ -2603,7 +2712,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             }
         } else {
             next = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history, *cont_history,
-                                game_history, path, pawn_tt, eval_cache, material_weights, &limits);
+                                game_history, path, pawn_tt, eval_cache, material_weights, &limits,
+                                /*excluded_moves=*/{}, contempt_white_pov);
         }
 
         // `next.nodes` reflects real work done regardless of whether
