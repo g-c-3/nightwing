@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(nightwing LANGUAGES CXX)
+project(nightwing VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -169,6 +169,21 @@ else()
 endif()
 
 add_subdirectory(src)
+
+# Engine version string, exposed via UCI's own `id name` response
+# (ROADMAP.md Phase 8, "engine info (name/author via `uci`)" --
+# src/uci/uci.cpp's own doc comment on that exact line). Generated from
+# a template (src/version.h.in) rather than hand-maintained separately,
+# so this file's own `project(nightwing VERSION ...)` declaration above
+# stays the single source of truth -- bumping the version here is
+# enough; nothing in src/ needs a matching manual edit. Placed under
+# `generated/` (a build-directory path, never checked into the repo)
+# specifically so a full rebuild always regenerates it fresh from
+# whatever version is currently configured, rather than a stale copy
+# silently surviving a version bump.
+configure_file(${CMAKE_SOURCE_DIR}/src/version.h.in
+               ${CMAKE_BINARY_DIR}/generated/nightwing/version.h @ONLY)
+target_include_directories(nightwing_lib PUBLIC ${CMAKE_BINARY_DIR}/generated)
 
 if(NIGHTWING_BUILD_TESTS)
     enable_testing()
