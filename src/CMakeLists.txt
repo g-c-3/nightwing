@@ -37,6 +37,7 @@ add_library(nightwing_lib STATIC
     search/quiescence.cpp
     search/search.cpp
     search/see.cpp
+    search/skill.cpp
     search/tt.cpp
     book/book.cpp
     uci/uci.cpp
