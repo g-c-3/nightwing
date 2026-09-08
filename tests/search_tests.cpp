@@ -607,6 +607,33 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
 }
 
 TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "history malus active",
+          "[search][history_malus]") {
+    init_all();
+    // Same position/rationale as the IIR/NMP/LMR/LMP/futility/razoring/
+    // history-pruning/continuation-history regression tests above --
+    // reused again here specifically for history malus
+    // (search/ordering.h's HistoryTable::malus()/
+    // ContinuationHistoryTable::malus(), applied in search.cpp's
+    // negamax() move loop to every quiet move genuinely searched-and-
+    // rejected at a node that later fails high on a different move).
+    // Malus only ever shifts move ORDERING (a quiet move's score can now
+    // go negative, feeding into score_move()/history-pruning's own
+    // threshold check, search/ordering.cpp) -- it cannot change which
+    // moves are legal or what any node's own best score is, so the
+    // deepest confirmation available without a real bench/node-count
+    // comparison is, as with every sibling test in this file, that the
+    // correct forced mate is still found once malus is live end-to-end
+    // across the whole recursive call chain this test exercises. Depth 6
+    // gives plenty of nodes where a move fails to raise alpha before a
+    // sibling cuts off, the exact situation malus is meant to penalize.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
+
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
           "ProbCut active",
           "[search][probcut]") {
     init_all();

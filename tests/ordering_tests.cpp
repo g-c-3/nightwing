@@ -114,6 +114,39 @@ TEST_CASE("HistoryTable: colors and squares are independent", "[ordering][histor
     REQUIRE(history.score(Color::White, black_move) == 0); // different move entirely
 }
 
+TEST_CASE("HistoryTable: malus() subtracts a depth-squared penalty", "[ordering][history]") {
+    HistoryTable history;
+    const Move move(make_square(4, 1), make_square(4, 3), MoveFlag::DoublePawnPush);
+    history.malus(Color::White, move, /*depth=*/4);
+    REQUIRE(history.score(Color::White, move) == -16); // -(4*4)
+    history.malus(Color::White, move, /*depth=*/3);
+    REQUIRE(history.score(Color::White, move) == -25); // -16 - 3*3
+}
+
+TEST_CASE("HistoryTable: malus() and update() on the same move net against each other",
+          "[ordering][history]") {
+    // The whole point of malus existing alongside update() (ordering.h's
+    // own header comment: "rewards but never corrects" without it) --
+    // a move that earns a bonus and is later penalized should reflect
+    // the NET of both, not just whichever happened most recently.
+    HistoryTable history;
+    const Move move(make_square(4, 1), make_square(4, 3), MoveFlag::DoublePawnPush);
+    history.update(Color::White, move, /*depth=*/5); // +25
+    history.malus(Color::White, move, /*depth=*/3);  // -9
+    REQUIRE(history.score(Color::White, move) == 16); // 25 - 9
+}
+
+TEST_CASE("HistoryTable: malus score is floored and never underflows", "[ordering][history]") {
+    HistoryTable history;
+    const Move move(make_square(4, 1), make_square(4, 3), MoveFlag::DoublePawnPush);
+    for (int i = 0; i < 100; ++i) {
+        history.malus(Color::White, move, /*depth=*/50); // -2500 per call, far exceeding the floor quickly
+    }
+    const int score = history.score(Color::White, move);
+    REQUIRE(score < 0);
+    REQUIRE(score >= -8192); // matches HistoryTable::kHistoryMax's mirrored floor (private, checked by value)
+}
+
 TEST_CASE("ContinuationHistoryTable: an unrecorded combination scores 0", "[ordering][continuation_history]") {
     ContinuationHistoryTable cont_history;
     REQUIRE(cont_history.score(PieceType::Knight, make_square(4, 3), PieceType::Bishop,
@@ -175,6 +208,41 @@ TEST_CASE("ContinuationHistoryTable: score is clamped and never overflows",
                                           make_square(2, 5));
     REQUIRE(score > 0);
     REQUIRE(score <= 8192); // matches ContinuationHistoryTable::kContinuationHistoryMax (private)
+}
+
+TEST_CASE("ContinuationHistoryTable: malus() subtracts a depth-squared penalty, same key shape as "
+          "update()'s",
+          "[ordering][continuation_history]") {
+    ContinuationHistoryTable cont_history;
+    cont_history.malus(PieceType::Knight, make_square(4, 3), PieceType::Bishop, make_square(2, 5),
+                        /*depth=*/4);
+    REQUIRE(cont_history.score(PieceType::Knight, make_square(4, 3), PieceType::Bishop,
+                                make_square(2, 5)) == -16); // -(4*4)
+}
+
+TEST_CASE("ContinuationHistoryTable: a PieceType::None prev_piece makes malus() a no-op too",
+          "[ordering][continuation_history]") {
+    // Same sentinel-handling as update() (this file's own existing test
+    // for update()'s PieceType::None case, just above) -- malus() must
+    // match it exactly rather than crashing or indexing with None.
+    ContinuationHistoryTable cont_history;
+    cont_history.malus(PieceType::None, make_square(4, 3), PieceType::Bishop, make_square(2, 5),
+                        /*depth=*/10);
+    REQUIRE(cont_history.score(PieceType::None, make_square(4, 3), PieceType::Bishop,
+                                make_square(2, 5)) == 0);
+}
+
+TEST_CASE("ContinuationHistoryTable: malus score is floored and never underflows",
+          "[ordering][continuation_history]") {
+    ContinuationHistoryTable cont_history;
+    for (int i = 0; i < 100; ++i) {
+        cont_history.malus(PieceType::Knight, make_square(4, 3), PieceType::Bishop, make_square(2, 5),
+                            /*depth=*/50); // -2500 per call, far exceeding the floor quickly
+    }
+    const int score = cont_history.score(PieceType::Knight, make_square(4, 3), PieceType::Bishop,
+                                          make_square(2, 5));
+    REQUIRE(score < 0);
+    REQUIRE(score >= -8192); // matches kContinuationHistoryMax's mirrored floor (private, checked by value)
 }
 
 TEST_CASE("order_moves: the TT move is always ordered first when present", "[ordering]") {
