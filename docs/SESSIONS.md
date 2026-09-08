@@ -4,6 +4,25 @@ Newest entry at top.
 
 ---
 
+### Session 93 — 2026-09-08 — External review intake + Priority Fixes: SEE king-legality bug fixed
+
+**Built:**
+- Two external documents reviewed: a full-repo code review (independently rebuilt/tested, 500 cases / 53,403 assertions, perft/UCI/`bench` verified, a depth-5-vs-depth-4 self-play sanity match at +52.5 Elo) and a companion design document scoping an extension of the Texel tuner to PSQT parameters.
+- `docs/ROADMAP.md`: new "Priority Fixes (external code review, 2026-09-08)" section inserted ahead of the Release & Packaging track and Phase 9, listing all findings from both documents (SEE king-legality — done this session; history malus; SEE-based bad-capture pruning; persistent TT; reverse futility; continuous LMR; an "improving" flag; correction history; recapture/passed-pawn extensions; Lazy SMP helper diversification; pawn storms/connected passed pawns; and Tier 0, the full eval-tuning extension, tracked as its own multi-session sub-effort).
+- `src/search/see.cpp`: the swap loop now stops when the next selected attacker is the king and the opponent still attacks the target square afterward (an illegal king "recapture" into check), instead of simulating that move.
+- `src/search/see.h`: doc comment updated to note this one carved-out legality exception, so it no longer overclaims a blanket "ignores all recapture legality" simplification.
+- `tests/see_tests.cpp`: new case — a king as the sole defender behind a second attacker, confirming the exchange correctly stops rather than simulating the illegal recapture.
+
+**Bugs fixed:** SEE's swap algorithm let a hypothetical king "recapture" proceed even when the opponent still attacked the square afterward (an illegal king move into check) — see docs/DECISIONS.md, 2026-09-08 (1), for cause/fix/why-correct, including the by-hand arithmetic confirming this bug was numerically self-limiting in practice (the king's large SEE sentinel value dwarfs any realistic material total) and the fix is a correctness/hygiene fix, not one expected to change any existing test's result.
+
+**Decisions made:** review intake and Priority Fixes section rationale in docs/DECISIONS.md, 2026-09-08 (2); the SEE fix itself in 2026-09-08 (1).
+
+**Verification performed:** full repo cloned into a scratch build, real CMake+Catch2 build (Release) rebuilt clean with the changed files applied — **501 test cases, 100% passing** (500 pre-existing + 1 new `see_tests.cpp` case). `bench` reverified byte-for-byte unchanged (**81029 total nodes**). Additionally, by-hand re-derivation of the old-vs-new backward-resolution arithmetic for the new test's exact position, confirming the old (buggy) code's own backward min-max resolution already coincidentally converges to the same numeric verdict (100) via the king-value-dominance argument in DECISIONS.md, 2026-09-08 (1) — i.e. this fix is confirmed correctness/hygiene-motivated, not expected to move any existing eval/search number.
+
+**Next session start point:** ROADMAP.md's new Priority Fixes section (2026-09-08) has its next open item: history malus/gravity in `HistoryTable::update()` (`src/search/ordering.cpp`) — add malus on non-cutoff quiet moves searched at a node, plus periodic aging/halving. Read that file in full before starting (a fixed HistoryTable size/update path is being modified, not a fresh module).
+
+---
+
 ### Session 92 — 2026-09-08 — Phase 8: README, build instructions, engine info via `uci` — Phase 8 complete
 
 **Built:**

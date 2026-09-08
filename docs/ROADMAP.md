@@ -371,6 +371,88 @@ Goal: exact-feeling play in common endgames and graceful, generalizing play ever
       that were nonetheless completed anyway (Skill Level, Contempt).
 - [ ] wasm build / GUI packaging — superseded by the "Release & Packaging Infrastructure" section below (2026-08-15); tracked there instead of here.
 
+## Priority Fixes (external code review, 2026-09-08)
+
+Not phase-gated — inserted here, ahead of the Release & Packaging track and
+Phase 9, per the decision logged in docs/DECISIONS.md (2026-09-08 (2)). Two
+independent external documents were reviewed on the same day: a full-repo
+code review (build + full test suite in Release and Debug/ASan+UBSan, both
+green; 500 test cases / 53,403 assertions; perft, UCI, and `bench`
+independently verified; a depth-5-vs-depth-4 self-play sanity match) and a
+companion design document scoping the eval-tuning extension the review
+itself flags as the single biggest lever (Tier 0 below). Items are ordered
+correctness-fix-first, then cheap/well-understood search wins, then the
+larger multi-session eval-tuning extension, matching this project's own
+established "bugs before enhancements" convention (see the 2026-08-25
+Priority Fixes section above).
+
+- [x] SEE king-legality edge case — the swap algorithm never checked
+      whether a hypothetical king "recapture" would actually be legal
+      (i.e., whether the opponent still has an attacker on that square
+      afterward, which in real chess means the king moved into check and
+      the move is illegal); the simulation continued regardless. Fixed
+      in `src/search/see.cpp`: when the next attacker in the sequence is
+      the king, the exchange now stops there if the opponent still
+      attacks the square post-recapture, rather than simulating an
+      illegal move. See docs/DECISIONS.md, 2026-09-08 (1), including why
+      this is provably a no-op on every existing test's numeric result
+      (the king's large SEE sentinel value makes the bug self-limiting
+      in practice, per the review's own finding) and is nonetheless
+      worth fixing as a correctness/hygiene issue, not a speculative one.
+- [ ] History malus/gravity — `HistoryTable::update()` only rewards the
+      cutoff move and never penalizes quiet moves tried-and-rejected
+      before it, nor decays over time; a move can hit near the ordering
+      ceiling once and stay there indefinitely.
+- [ ] SEE-based pruning of bad captures in the main search — SEE is used
+      for capture ordering only; nothing in `negamax()` prunes clearly-
+      losing captures at shallow-to-moderate depth the way LMP/futility
+      prune quiet moves. A related, smaller addition: a separate capture-
+      history table (keyed on capturing/captured piece type) for finer-
+      grained capture ordering beyond MVV-LVA/SEE.
+- [ ] Persistent, engine-lifetime transposition table — still a fresh,
+      private allocation constructed per top-level search call rather
+      than a persistent, `ucinewgame`-cleared global; hash information
+      doesn't carry over between moves within the same game. Already
+      flagged as an accepted placeholder (`src/search/tt.h`'s LIFETIME
+      NOTE, ARCHITECTURE.md's Tech Stack row) — this promotes it to a
+      tracked item rather than an indefinitely-deferred note.
+- [ ] Reverse futility / static null-move pruning — a node-level pre-
+      move-loop check (`if static_eval - margin*depth >= beta: return
+      static_eval`), the natural third leg alongside the existing
+      futility and razoring, currently absent.
+- [ ] LMR as a continuous formula (e.g. `R = a + ln(depth)*ln(move_count)*b`)
+      rather than the current 2-value step table.
+- [ ] An "improving" flag (is static eval better than 2 plies ago?)
+      feeding into futility/LMR/NMP margins.
+- [ ] Correction history — a running per-pawn-structure (optionally per-
+      piece-type) estimate of static-eval error vs. actual search
+      result, used to adjust static eval before it drives pruning
+      decisions.
+- [ ] Recapture extension (extend on an immediate recapture on the
+      opponent's last capture square) and a small passed-pawn-push
+      extension near promotion (rank 6/7) — only check and singular
+      extensions exist today.
+- [ ] Lazy SMP helper thread diversification — every helper thread runs
+      an identical, plain, non-aspirating loop starting at depth 1;
+      real scaling gains typically come from varied starting depths,
+      occasional depth skips, and varied move-ordering tie-breaks.
+- [ ] Eval: pawn storms (enemy pawns advancing on the king's shelter,
+      the aggressive complement to the existing defensive king-safety
+      terms) and a connected-passed-pawns bonus (a mutually-defending
+      passed pair worth more than two individually-scored passers).
+- [ ] **Tier 0 — extend the tuner to PSQT and beyond (largest item, own
+      multi-session design doc reviewed 2026-09-08):** only the 5 base
+      material weights are Texel-tuned today; every PSQT cell and every
+      mobility/king-safety/pawn/space/threat constant is hand-set. Full
+      plan (tapering the 4 untapered piece PSQTs, a generalized
+      `ParameterRef<Weights>` covering array-valued parameters, L2
+      regularization once the parameter count leaves the current
+      10-scalar regime, an analytic-gradient path for PSQT terms, a
+      materially larger self-play corpus, and mandatory SPRT-gating
+      before any tuned values are committed) logged in docs/DECISIONS.md,
+      2026-09-08 (2). Treated as its own sub-tracked effort, not a single
+      checkbox — see that entry for the step-by-step order.
+
 ## Release & Packaging Infrastructure (parallel track — not phase-gated, pick up whenever)
 Added 2026-08-15. Not part of the sequential phase order above — can be
 picked up in any session without waiting for Phase 8. Decisions/rationale in DECISIONS.md,
