@@ -3,13 +3,28 @@
 //
 // Move ordering: reorders a MoveList in place so that alpha-beta (and
 // the transposition table's cutoffs) prune as many nodes as possible.
-// Priority, following ROADMAP.md's Phase 3 "Move ordering" item exactly
-// (SEE and counter-moves are ARCHITECTURE.md's eventual fuller scheme,
-// but not this item -- separate, still-unchecked pieces of it):
+// Priority, following ROADMAP.md's Phase 3 "Move ordering" item as its
+// starting point, since extended (this file's own per-class header
+// comments below have the full account of each later addition):
 //   1. The transposition-table move for this position, if any (search/tt.h)
 //   2. Captures (including en passant and capture-promotions), scored
 //      by MVV-LVA -- Most Valuable Victim, Least Valuable Attacker
-//      (CPW "MVV-LVA")
+//      (CPW "MVV-LVA") -- PLUS capture history (CaptureHistoryTable
+//      below, this file's own header comment on it), a from-scratch
+//      finer-grained tiebreak within MVV-LVA's own victim-value bands
+//      (docs/DECISIONS.md has the external-review provenance for this
+//      addition). NOTE: unlike its own header comment's original Phase
+//      3 wording might suggest, plain Static Exchange Evaluation
+//      (search/see.h) does NOT feed into ordering here -- SEE is used
+//      by search.cpp's negamax() for shallow-depth bad-capture PRUNING
+//      (skipping a losing capture outright, this file's own header
+//      comment can't cover that -- see negamax()'s own header comment
+//      in search.cpp) and by quiescence.cpp for its own bad-capture
+//      pruning, but ordering here still relies on MVV-LVA + capture
+//      history alone, not a genuine SEE score per move (which would
+//      cost meaningfully more per node than this file's other, cheap
+//      scoring signals, for a benefit ProbCut/the pruning use already
+//      captures more directly).
 //   3. Non-capture promotions, by promoted piece value (not in CPW's
 //      MVV-LVA article specifically, but the same "try the forcing,
 //      probably-strong moves first" logic applies -- a from-scratch
@@ -219,6 +234,75 @@ private:
         table_{};
 };
 
+/// Capture history: how often a CAPTURE (by attacking piece type and
+/// captured/victim piece type -- NOT square, color, or specific move)
+/// has caused a beta cutoff, weighted by the depth at which it did --
+/// same depth-squared weighting, and the same bonus-plus-malus
+/// ("history gravity") design, as HistoryTable/ContinuationHistoryTable
+/// above, applied to captures instead of quiet moves. External-review
+/// provenance (docs/DECISIONS.md, 2026-09-08): "a separate capture
+/// history table (keyed on capturing/captured piece type) for finer-
+/// grained capture ordering beyond MVV-LVA/SEE."
+///
+/// Distinct from, and additive with, MVV-LVA (ordering.cpp's
+/// mvv_lva_score()): MVV-LVA is a fixed, purely material-value-based
+/// formula -- it can never learn that, say, "Knight captures Bishop"
+/// has tended to work out better THIS SEARCH than "Bishop captures
+/// Knight" despite both trading equal material (MVV-LVA scores them
+/// identically, since victim/attacker values alone don't distinguish
+/// them the way piece-type-specific outcomes might). Capture history
+/// is the same kind of empirical, search-local correction for captures
+/// that HistoryTable already provides for quiet moves -- ordering.cpp's
+/// score_move() adds this table's score on top of the MVV-LVA base for
+/// every capture, the same "two independent signals, summed" pattern
+/// already used for quiet moves (plain history plus continuation
+/// history).
+///
+/// Indexed by ATTACKER and VICTIM piece type only -- not square, not
+/// color, not the specific move -- deliberately coarser than
+/// HistoryTable's own [color][from][to] granularity: capture quality is
+/// primarily a function of WHAT was captured by WHAT, far more than
+/// where on the board it happened, and a coarser key means far more
+/// searches contribute evidence to the same cell rather than the table
+/// staying mostly empty at typical search-tree sizes. En passant is
+/// scored as a Pawn-attacker-Pawn-victim capture -- the same special-
+/// case mvv_lva_score() (ordering.cpp) already applies, since the
+/// captured pawn isn't the piece actually sitting on the move's own
+/// `to` square. Scoped like every other per-search table above: one
+/// instance per top-level search call.
+class CaptureHistoryTable {
+public:
+    /// Adds a depth-weighted bonus for an `attacker`-captures-`victim`
+    /// move having caused a beta cutoff at `depth`. Clamped at
+    /// kCaptureHistoryMax, the same rationale as HistoryTable's own
+    /// ceiling.
+    void update(board::PieceType attacker, board::PieceType victim, int depth) noexcept;
+
+    /// Subtracts a depth-weighted penalty for an `attacker`-captures-
+    /// `victim` move having been searched, but NOT caused the beta
+    /// cutoff, at a node where some other capture at the same depth
+    /// did. Floored at `-kCaptureHistoryMax` -- same rationale as
+    /// HistoryTable::malus().
+    void malus(board::PieceType attacker, board::PieceType victim, int depth) noexcept;
+
+    /// Returns the current capture-history score for this
+    /// attacker/victim pair (0 if never recorded; may be negative --
+    /// see malus()'s own comment above).
+    [[nodiscard]] int score(board::PieceType attacker, board::PieceType victim) const noexcept;
+
+private:
+    /// Same symmetric cap, and the same rationale, as
+    /// HistoryTable::kHistoryMax -- chosen to sit comfortably within
+    /// the capture score band's own headroom in ordering.cpp's
+    /// score_move() (that band's own comment has the exact numbers) so
+    /// this can meaningfully re-rank captures that share an MVV-LVA
+    /// score without ever letting a bad-victim capture outrank a
+    /// good-victim one purely on accumulated capture history.
+    static constexpr int kCaptureHistoryMax = 8192;
+
+    std::array<std::array<int, board::kNumPieceTypes>, board::kNumPieceTypes> table_{};
+};
+
 /// MVV-LVA (Most Valuable Victim, Least Valuable Attacker): favors
 /// capturing the most valuable piece with the least valuable attacker.
 /// `move` must be a genuine capture (is_capture() == true) of `pos`,
@@ -249,10 +333,15 @@ private:
 /// when there isn't one (the true search root, or immediately after a
 /// null move; see ContinuationHistoryTable's own header comment), which
 /// makes continuation history contribute nothing to this call's
-/// scoring, same as if the table were empty.
+/// scoring, same as if the table were empty. `capture_history` is
+/// looked up by each capture's own attacker/victim piece type (this
+/// file's own CaptureHistoryTable header comment) -- unlike
+/// `cont_history`, it needs no null-context sentinel, since every
+/// capture always has a genuine attacker and victim to key on.
 void order_moves(board::MoveList& moves, const board::Position& pos, board::Move tt_move,
                   const KillerTable& killers, int ply, const HistoryTable& history,
-                  const ContinuationHistoryTable& cont_history, board::PieceType prev_piece,
+                  const ContinuationHistoryTable& cont_history,
+                  const CaptureHistoryTable& capture_history, board::PieceType prev_piece,
                   board::Square prev_to) noexcept;
 
 } // namespace nightwing::search

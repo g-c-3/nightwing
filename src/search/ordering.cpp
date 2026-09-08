@@ -23,10 +23,16 @@ using board::Position;
 /// move.
 constexpr int kTTMoveScore = 2'000'000;
 
-/// Captures: kCaptureBase + mvv_lva_score(...). mvv_lva_score's range
-/// is roughly [pawn_value*10 - queen_value, queen_value*10 - 0] =
-/// [100*10-900, 900*10-0] = [100, 9000] given this engine's current
-/// material values (eval/psqt.h) -- comfortably within a band this wide.
+/// Captures: kCaptureBase + mvv_lva_score(...) + capture_history.score(...).
+/// mvv_lva_score's range is roughly [pawn_value*10 - queen_value,
+/// queen_value*10 - 0] = [100*10-900, 900*10-0] = [100, 9000] given this
+/// engine's current material values (eval/psqt.h); capture_history's own
+/// range is [-8192, 8192] (CaptureHistoryTable::kCaptureHistoryMax,
+/// ordering.h). Combined worst/best case is [1,000,000+100-8192,
+/// 1,000,000+9000+8192] = [991,908, 1,017,192] -- comfortably clear of
+/// both kPromotionBase (900,000) below and kTTMoveScore (2,000,000) above, so neither signal can ever push a capture's score
+/// out of this band even at each one's own most extreme value
+/// simultaneously.
 constexpr int kCaptureBase = 1'000'000;
 
 /// Non-capture promotions: kPromotionBase + promoted piece's value
@@ -51,13 +57,25 @@ namespace {
 
 [[nodiscard]] int score_move(const Position& pos, Move move, Move tt_move,
                               const KillerTable& killers, int ply, const HistoryTable& history,
-                              const ContinuationHistoryTable& cont_history, PieceType prev_piece,
+                              const ContinuationHistoryTable& cont_history,
+                              const CaptureHistoryTable& capture_history, PieceType prev_piece,
                               board::Square prev_to) noexcept {
     if (move == tt_move) {
         return kTTMoveScore;
     }
     if (move.is_capture()) {
-        return kCaptureBase + mvv_lva_score(pos, move);
+        // MVV-LVA (the base, dominant signal) plus capture history (a
+        // finer-grained tiebreak within/around it -- this file's own
+        // CaptureHistoryTable header comment): same "two independent
+        // signals, summed" pattern as quiet moves' plain-history-plus-
+        // continuation-history just below, applied to captures instead.
+        // En passant's attacker/victim types mirror mvv_lva_score()'s
+        // own special case just below (both read off the SAME move, so
+        // they can never disagree with each other).
+        const PieceType attacker = board::piece_type_of(pos.piece_at(move.from()));
+        const PieceType victim =
+            move.is_en_passant() ? PieceType::Pawn : board::piece_type_of(pos.piece_at(move.to()));
+        return kCaptureBase + mvv_lva_score(pos, move) + capture_history.score(attacker, victim);
     }
     if (move.is_promotion()) {
         return kPromotionBase + eval::material_value(move.promotion_piece_type()).mg;
@@ -161,9 +179,30 @@ int ContinuationHistoryTable::score(PieceType prev_piece, board::Square prev_to,
                  [static_cast<std::size_t>(piece)][static_cast<std::size_t>(to)];
 }
 
+void CaptureHistoryTable::update(PieceType attacker, PieceType victim, int depth) noexcept {
+    int& slot = table_[static_cast<std::size_t>(attacker)][static_cast<std::size_t>(victim)];
+    slot += depth * depth;
+    if (slot > kCaptureHistoryMax) {
+        slot = kCaptureHistoryMax;
+    }
+}
+
+void CaptureHistoryTable::malus(PieceType attacker, PieceType victim, int depth) noexcept {
+    int& slot = table_[static_cast<std::size_t>(attacker)][static_cast<std::size_t>(victim)];
+    slot -= depth * depth;
+    if (slot < -kCaptureHistoryMax) {
+        slot = -kCaptureHistoryMax;
+    }
+}
+
+int CaptureHistoryTable::score(PieceType attacker, PieceType victim) const noexcept {
+    return table_[static_cast<std::size_t>(attacker)][static_cast<std::size_t>(victim)];
+}
+
 void order_moves(MoveList& moves, const Position& pos, Move tt_move, const KillerTable& killers,
                   int ply, const HistoryTable& history, const ContinuationHistoryTable& cont_history,
-                  PieceType prev_piece, board::Square prev_to) noexcept {
+                  const CaptureHistoryTable& capture_history, PieceType prev_piece,
+                  board::Square prev_to) noexcept {
     struct ScoredMove {
         Move move;
         int score;
@@ -174,7 +213,7 @@ void order_moves(MoveList& moves, const Position& pos, Move tt_move, const Kille
     for (int i = 0; i < count; ++i) {
         scored[static_cast<std::size_t>(i)] = {
             moves[i], score_move(pos, moves[i], tt_move, killers, ply, history, cont_history,
-                                  prev_piece, prev_to)};
+                                  capture_history, prev_piece, prev_to)};
     }
 
     // Stable so equal-scored moves (most commonly: untried quiets that
