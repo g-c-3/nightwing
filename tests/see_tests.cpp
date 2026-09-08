@@ -92,6 +92,21 @@ TEST_CASE("SEE: en passant treats the victim as a pawn and clears the correct oc
     REQUIRE(static_exchange_evaluation(pos, ep) == 100); // pawn value, undefended
 }
 
+TEST_CASE("SEE: a king cannot legally 'recapture' into a square the opponent still attacks", "[see]") {
+    init_all();
+    // White rook d1 captures black pawn d5. Black's only piece attacking
+    // d5 is the king on d6 -- but White also has a second rook on a5
+    // attacking d5 along the (clear) 5th rank, so the black king
+    // recapturing on d5 would be moving into check: illegal. The
+    // exchange must therefore stop after White's own initial capture,
+    // exactly as if Black had no attacker on d5 at all.
+    Position pos = parse_fen("8/8/3k4/R2p4/8/8/8/3RK3 w - - 0 1");
+    const Move rxd5(make_square(3, 0), make_square(3, 4), MoveFlag::Capture);
+    // Only the pawn (100) is won; the king cannot legally recapture, so
+    // nothing else in the sequence happens.
+    REQUIRE(static_exchange_evaluation(pos, rxd5) == 100);
+}
+
 TEST_CASE("SEE: leaves the position completely unmodified", "[see]") {
     init_all();
     Position pos = parse_fen("4k3/8/2p5/3p4/8/8/8/3QK3 w - - 0 1");
