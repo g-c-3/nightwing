@@ -1325,6 +1325,24 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // quiet ALTERNATIVES have already failed to help, not where a move
     // sits in a list that also contains captures/promotions ahead of it.
     int quiets_tried = 0;
+    // Quiet moves that were actually GIVEN A REAL SEARCH at this node
+    // (as opposed to skipped outright by futility/LMP/history pruning
+    // below, which continue past this array without ever recording
+    // into it) -- tracked so that a later beta cutoff at this same node
+    // can apply HistoryTable::malus()/ContinuationHistoryTable::malus()
+    // (search/ordering.h) to every one of them except the move that
+    // actually caused the cutoff. Deliberately does NOT include
+    // futility/LMP/history-pruning-skipped moves: a move this search
+    // never evaluated has no real evidence against it, only a heuristic
+    // guess that it probably wasn't worth the node -- malus is for
+    // moves genuinely tried and found wanting, not moves never tried at
+    // all. Fixed-size, matching board::kMaxMoves (ARCHITECTURE.md's
+    // "no heap allocation in the search hot path"), not a
+    // std::vector -- same convention order_moves() itself already uses
+    // (search/ordering.cpp).
+    std::array<Move, board::kMaxMoves> quiet_searched_moves{};
+    std::array<board::PieceType, board::kMaxMoves> quiet_searched_pieces{};
+    int quiet_searched_count = 0;
     for (int i = 0; i < moves.size(); ++i) {
         const Move move = moves[i];
         const bool move_is_quiet = !move.is_capture() && !move.is_promotion();
@@ -1569,6 +1587,17 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 
         if (move_is_quiet) {
             ++quiets_tried;
+            if (quiet_searched_count < static_cast<int>(quiet_searched_moves.size())) {
+                // Defensive bound only -- quiet_searched_count can never
+                // actually exceed moves.size() <= board::kMaxMoves, the
+                // array's own size, so this is never false in practice;
+                // kept for the same "don't trust an index without a
+                // check" discipline SEE's own gain[] array uses
+                // (search/see.cpp).
+                quiet_searched_moves[static_cast<std::size_t>(quiet_searched_count)] = move;
+                quiet_searched_pieces[static_cast<std::size_t>(quiet_searched_count)] = moved_piece;
+                ++quiet_searched_count;
+            }
         }
 
         if (score > best) {
@@ -1594,6 +1623,24 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 // preceding move at this node -- see this function's
                 // header comment and ContinuationHistoryTable's own).
                 cont_history.update(prev_piece, prev_to, moved_piece, move.to(), depth);
+                // History malus (search/ordering.h's HistoryTable::malus()/
+                // ContinuationHistoryTable::malus() -- "history gravity"):
+                // every OTHER quiet move this node actually searched (not
+                // skipped by futility/LMP/history pruning -- see
+                // quiet_searched_moves' own comment above) gets a matching
+                // depth-scaled penalty, since a cutoff on THIS move is
+                // active evidence those others were worse, at least this
+                // once. Excludes the cutoff move itself, which already got
+                // the bonus two lines above.
+                for (int j = 0; j < quiet_searched_count; ++j) {
+                    if (quiet_searched_moves[static_cast<std::size_t>(j)] == move) {
+                        continue;
+                    }
+                    history.malus(us, quiet_searched_moves[static_cast<std::size_t>(j)], depth);
+                    cont_history.malus(prev_piece, prev_to,
+                                        quiet_searched_pieces[static_cast<std::size_t>(j)],
+                                        quiet_searched_moves[static_cast<std::size_t>(j)].to(), depth);
+                }
             }
             break; // The opponent won't let us reach this line.
         }

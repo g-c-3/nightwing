@@ -109,6 +109,15 @@ void HistoryTable::update(Color color, Move move, int depth) noexcept {
     }
 }
 
+void HistoryTable::malus(Color color, Move move, int depth) noexcept {
+    int& slot = table_[static_cast<std::size_t>(color)][static_cast<std::size_t>(move.from())]
+                       [static_cast<std::size_t>(move.to())];
+    slot -= depth * depth;
+    if (slot < -kHistoryMax) {
+        slot = -kHistoryMax;
+    }
+}
+
 int HistoryTable::score(Color color, Move move) const noexcept {
     return table_[static_cast<std::size_t>(color)][static_cast<std::size_t>(move.from())]
                  [static_cast<std::size_t>(move.to())];
@@ -126,6 +135,20 @@ void ContinuationHistoryTable::update(PieceType prev_piece, board::Square prev_t
     slot += depth * depth;
     if (slot > kContinuationHistoryMax) {
         slot = kContinuationHistoryMax;
+    }
+}
+
+void ContinuationHistoryTable::malus(PieceType prev_piece, board::Square prev_to, PieceType piece,
+                                      board::Square to, int depth) noexcept {
+    if (prev_piece == PieceType::None) {
+        // See update()'s own comment just above.
+        return;
+    }
+    int& slot = table_[static_cast<std::size_t>(prev_piece)][static_cast<std::size_t>(prev_to)]
+                       [static_cast<std::size_t>(piece)][static_cast<std::size_t>(to)];
+    slot -= depth * depth;
+    if (slot < -kContinuationHistoryMax) {
+        slot = -kContinuationHistoryMax;
     }
 }
 

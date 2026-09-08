@@ -91,6 +91,22 @@ private:
 /// bet to try early anywhere, including at the root. Scoped like
 /// TranspositionTable/KillerTable (search/tt.h's header comment): one
 /// instance per top-level search call for now.
+///
+/// Carries a MALUS as well as a bonus (CPW "History Heuristic" /
+/// "Relative History Heuristic" literature's common "history gravity"
+/// extension): every quiet move searched-and-rejected at a node that
+/// later fails high on a DIFFERENT move is not just "no evidence
+/// either way" -- it is active evidence this specific move was, at
+/// least this once, worse than the move that did cut off. Without a
+/// malus, `update()` alone can only ever ratchet a score upward, so a
+/// move that hit near `kHistoryMax` once from a single lucky cutoff
+/// stays there indefinitely regardless of how many later searches
+/// reject it -- update()-only history rewards but never *corrects*,
+/// which is exactly what malus() exists to fix. A score can therefore
+/// now be negative; `score()`'s callers (ordering.cpp's score_move(),
+/// search.cpp's history-pruning check) already treat it as a plain
+/// signed int with no assumption it's non-negative, so no caller-side
+/// change was needed for this.
 class HistoryTable {
 public:
     /// Adds a depth-weighted bonus for `move` (by `color`) having
@@ -98,17 +114,28 @@ public:
     /// single move's score can grow unbounded across a long search.
     void update(board::Color color, board::Move move, int depth) noexcept;
 
+    /// Subtracts a depth-weighted penalty for `move` (by `color`)
+    /// having been searched, but NOT caused the beta cutoff, at a node
+    /// where some other move at the same depth did. Floored at
+    /// `-kHistoryMax` (the mirror image of `update()`'s own ceiling) so
+    /// a move that's repeatedly rejected can't drive its score to an
+    /// unbounded negative that would then take an equally unbounded
+    /// number of future cutoffs to recover from.
+    void malus(board::Color color, board::Move move, int depth) noexcept;
+
     /// Returns the current history score for `move` by `color` (0 if
-    /// never recorded).
+    /// never recorded; may be negative -- see this class's own header
+    /// comment on malus()).
     [[nodiscard]] int score(board::Color color, board::Move move) const noexcept;
 
 private:
-    /// Upper bound on any single table entry -- prevents overflow and
-    /// keeps one very-frequently-cutting-off move from permanently
-    /// swamping ordering ahead of other, also-good moves found later in
-    /// the same search. Chosen to sit comfortably below the killer-move
-    /// score band in ordering.cpp's score_move() so history alone can
-    /// never accidentally outrank a killer.
+    /// Symmetric upper/lower bound on any single table entry --
+    /// prevents overflow in both directions and keeps one very-
+    /// frequently-cutting-off (or very-frequently-rejected) move from
+    /// permanently swamping ordering ahead of other, also-relevant
+    /// moves found later in the same search. Chosen to sit comfortably
+    /// below the killer-move score band in ordering.cpp's score_move()
+    /// so history alone can never accidentally outrank a killer.
     static constexpr int kHistoryMax = 8192;
 
     std::array<std::array<std::array<int, board::kNumSquares>, board::kNumSquares>,
@@ -161,17 +188,29 @@ public:
     void update(board::PieceType prev_piece, board::Square prev_to, board::PieceType piece,
                 board::Square to, int depth) noexcept;
 
+    /// Subtracts a depth-weighted penalty for `move` (`piece` moved to
+    /// `to`) having been searched, but NOT caused the beta cutoff, as a
+    /// reply to `prev_piece` moving to `prev_to`, at a node where some
+    /// other move at the same depth did -- the same "malus alongside
+    /// bonus" rationale as HistoryTable::malus() (ordering.h), applied
+    /// to this table's own [prev_piece][prev_to][piece][to] key instead
+    /// of HistoryTable's [color][from][to]. No-op if `prev_piece` is
+    /// `board::PieceType::None`, same as update().
+    void malus(board::PieceType prev_piece, board::Square prev_to, board::PieceType piece,
+               board::Square to, int depth) noexcept;
+
     /// Returns the current continuation-history score, or 0 if
     /// `prev_piece` is `board::PieceType::None` or the combination has
-    /// never been recorded.
+    /// never been recorded. May be negative -- see malus()'s own
+    /// comment above.
     [[nodiscard]] int score(board::PieceType prev_piece, board::Square prev_to,
                              board::PieceType piece, board::Square to) const noexcept;
 
 private:
-    /// Same cap, and the same rationale, as HistoryTable::kHistoryMax
-    /// above -- comfortably below the killer-move score band in
-    /// ordering.cpp's score_move() even after being added to a plain
-    /// history score there.
+    /// Same symmetric cap, and the same rationale, as
+    /// HistoryTable::kHistoryMax above -- comfortably below the
+    /// killer-move score band in ordering.cpp's score_move() even after
+    /// being added to a plain history score there.
     static constexpr int kContinuationHistoryMax = 8192;
 
     std::array<std::array<std::array<std::array<int, board::kNumSquares>, board::kNumPieceTypes>,
