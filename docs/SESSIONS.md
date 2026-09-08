@@ -4,12 +4,32 @@ Newest entry at top.
 
 ---
 
+### Session 95 — 2026-09-08 — SEE-based bad-capture pruning + CaptureHistoryTable
+
+**Built:**
+- `src/search/ordering.h`/`.cpp`: new `CaptureHistoryTable` class (update/malus/score, keyed by attacker/victim piece type), wired into `score_move()`'s capture branch alongside MVV-LVA; module-level header comment corrected to state plainly that plain SEE does NOT feed into ordering here (only MVV-LVA + capture history do).
+- `src/search/search.cpp`: `#include "search/see.h"` added; new `kSeePruningMaxDepth`/`kSeePruningThresholds` constants and a new cascading skip check in `negamax()`'s move loop, alongside futility/LMP/history pruning, pruning a capture outright when its pre-move SEE value falls below a depth-scaled threshold. `capture_history` threaded through `order_moves()`/`negamax()`/`search_root()`'s entire call chain (10+ recursive call sites, 4 construction sites, 2 signatures). New per-node capture-tracking arrays (mirroring Session 94's own quiet-move ones); capture beta cutoffs now update/malus `CaptureHistoryTable` the same "bonus for the cutoff move, malus for every other genuinely-searched capture" way quiet moves already work. `negamax()`'s own header comment updated with a new paragraph documenting both additions.
+- `docs/ROADMAP.md`: SEE-based capture pruning / capture-history item in the Priority Fixes section checked off.
+- `tests/ordering_tests.cpp`: 7 new `CaptureHistoryTable` unit tests (unrecorded/update/malus/net-against-update/independent-pairs/clamp/floor) + 1 new `order_moves()` integration test confirming capture history re-ranks two MVV-LVA-tied captures.
+- `tests/search_tests.cpp`: 1 new integration test, reusing the same forced-mate-in-3 fixture every other move-ordering/pruning technique in this file already regression-tests against.
+
+**Bugs fixed:** none in the delivered code — but one was caught and fixed DURING this session's own development, before delivery: an early draft of the SEE-pruning check called `static_exchange_evaluation()` AFTER `make_move()` had already been applied for that iteration, violating SEE's own documented precondition (`see.h`: `pos` must reflect the position BEFORE the move). Caught by this session's own real build-and-test verification, not source review alone; fixed by computing the SEE value earlier in the loop, before `make_move()`, alongside the already-existing pre-move `captured_piece` computation, and threading it down as a local (`capture_see`) for the pruning check to consult.
+
+**Decisions made:** full rationale in docs/DECISIONS.md, 2026-09-08 (4) — most notably, a correction of the external review's own stated premise that SEE was already used for capture ordering (it was not; SEE was previously used only by `quiescence.cpp` for its own bad-capture pruning, never in the main search and never for ordering anywhere in this codebase before this session). Also covers: why SEE itself isn't folded directly into `order_moves()`'s own capture scoring (cost per node vs. benefit already captured by pruning + the cheaper capture-history signal); why `CaptureHistoryTable` is keyed on piece type only, not square; and why a linear (not quadratic) SEE-pruning threshold was chosen for a first implementation.
+
+**Verification performed:** full repo cloned into a scratch build with all 5 changed files applied; real CMake+Catch2 Release build rebuilt clean; `ctest` fully green — **517 test cases, 100% passing** (508 carried over from Session 94 + 9 new this session). `bench` RE-RUN: **81197 total nodes**, DOWN from Session 94's own 82166-node figure (-1.2%) — a net decrease, the expected direction for a technique that prunes nodes outright rather than only reordering them (the opposite direction from Session 94's own malus-driven increase). No strength claim made from the node-count shift alone; a real `nightwing_match`/`nightwing_sprt` head-to-head was not run this session.
+
+**Next session start point:** ROADMAP.md's Priority Fixes section (2026-09-08) — every quick/cheap item is now done; the next open item is reverse futility / static null-move pruning (a node-level pre-move-loop check, the natural third leg alongside the existing futility and razoring checks already in `negamax()`). Read `search.cpp`'s existing futility-pruning and razoring header-comment sections in full before starting (both already establish the exact node-level-check-before-the-move-loop pattern the new check should follow) — no need to re-read the move-ordering machinery this and the prior session already touched unless debugging.
+
+---
+
 ### Session 94 — 2026-09-08 — History malus/gravity added to HistoryTable/ContinuationHistoryTable
 
 **Built:**
 - `src/search/ordering.h`/`.cpp`: `HistoryTable::malus()` and `ContinuationHistoryTable::malus()` — a depth-squared penalty (mirroring `update()`'s existing bonus), floored at each table's existing ceiling's negative mirror. Scores can now go negative.
 - `src/search/search.cpp`: `negamax()`'s move loop now tracks every quiet move genuinely given a real search at a node (not moves skipped outright by futility/LMP/history pruning) in two fixed-size, `board::kMaxMoves`-sized arrays; on a beta cutoff, every tracked quiet move except the one that caused the cutoff gets `malus()` on both tables.
 - `docs/ROADMAP.md`: history malus item in the Priority Fixes section checked off.
+
 - `tests/ordering_tests.cpp`: 6 new unit tests (`HistoryTable::malus()` basic/net-against-update/floor-clamped; `ContinuationHistoryTable::malus()` basic/`PieceType::None`-no-op/floor-clamped).
 - `tests/search_tests.cpp`: 1 new integration test, reusing the same forced-mate-in-3 fixture every other move-ordering/pruning technique in this file already regression-tests against, confirming the mate is still found correctly with malus active end-to-end.
 

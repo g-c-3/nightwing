@@ -418,12 +418,28 @@ Priority Fixes section above).
       game" concern that recommendation is aimed at doesn't apply the
       same way here, since `HistoryTable` is already scoped to reset
       every top-level search call, not persistent across a game).
-- [ ] SEE-based pruning of bad captures in the main search — SEE is used
+- [x] SEE-based pruning of bad captures in the main search — SEE is used
       for capture ordering only; nothing in `negamax()` prunes clearly-
       losing captures at shallow-to-moderate depth the way LMP/futility
       prune quiet moves. A related, smaller addition: a separate capture-
       history table (keyed on capturing/captured piece type) for finer-
-      grained capture ordering beyond MVV-LVA/SEE.
+      grained capture ordering beyond MVV-LVA/SEE. DONE, Session 95: a
+      new cascading skip check (`kSeePruningMaxDepth`/
+      `kSeePruningThresholds`, `src/search/search.cpp`) alongside
+      futility/LMP/history pruning, gated on each capture's own
+      pre-move SEE value; `CaptureHistoryTable`
+      (`src/search/ordering.h`/`.cpp`), keyed by attacker/victim piece
+      type with the same bonus-plus-malus scheme this session's own
+      Session 94 quiet-history work established, threaded through
+      `order_moves()`/`negamax()`/`search_root()` end-to-end and
+      applied on capture beta cutoffs. See docs/DECISIONS.md,
+      2026-09-08 (4), including a correction of the external review's
+      own premise (SEE was NOT already used for ordering anywhere in
+      this codebase before this session, only for quiescence's bad-
+      capture pruning) and the real bench node-count change this
+      produced (a net decrease, unlike Session 94's own malus-driven
+      increase — expected, since this technique specifically prunes
+      nodes rather than just reordering them).
 - [ ] Persistent, engine-lifetime transposition table — still a fresh,
       private allocation constructed per top-level search call rather
       than a persistent, `ucinewgame`-cleared global; hash information
@@ -455,6 +471,26 @@ Priority Fixes section above).
       the aggressive complement to the existing defensive king-safety
       terms) and a connected-passed-pawns bonus (a mutually-defending
       passed pair worth more than two individually-scored passers).
+      Five further concrete, low-risk gaps identified by cross-
+      referencing a bucketed CPW/Stockfish-classical eval-feature
+      review against `src/eval/` (docs/DECISIONS.md, 2026-09-08 (5)),
+      each cheap to detect via existing attack-bitboard/pawn-structure
+      machinery and, per that review's own framing, standard sub-checks
+      within already-implemented top-level buckets rather than new
+      buckets of their own:
+    - [ ] Candidate passed pawns — a pawn not yet passed but positioned
+          to become passed after a likely, forceable pawn trade.
+    - [ ] Outside passed pawns — a passer on the side of the board away
+          from the pawn majority; a specific, cheap-to-detect sub-case
+          of the existing passed-pawn bucket.
+    - [ ] Pawn islands — a simple count of contiguous same-color pawn
+          groups; correlates well with structural weakness.
+    - [ ] Back-rank weakness — a concrete, well-defined pattern (an open
+          back rank with the king stuck on it).
+    - [ ] Overloaded pieces — a piece defending two or more things it
+          cannot actually defend if any one of them is taken/attacked;
+          detectable via the same attack-bitboard machinery the existing
+          Threats bucket already uses.
 - [ ] **Tier 0 — extend the tuner to PSQT and beyond (largest item, own
       multi-session design doc reviewed 2026-09-08):** only the 5 base
       material weights are Texel-tuned today; every PSQT cell and every
@@ -468,7 +504,44 @@ Priority Fixes section above).
       2026-09-08 (2). Treated as its own sub-tracked effort, not a single
       checkbox — see that entry for the step-by-step order.
 
-## Release & Packaging Infrastructure (parallel track — not phase-gated, pick up whenever)
+## NPS / Raw Speed (parallel track — not phase-gated, external review 2026-09-08)
+
+Distinct axis from the Priority Fixes section above: that section is entirely about
+searching *fewer nodes* for the same answer (pruning/reductions/ordering); this
+section is about searching the nodes it does visit *faster* (raw nodes-per-second).
+Both matter and are pursued independently — closing the gap with stronger classical
+engines needs both, not one traded off against the other (docs/DECISIONS.md,
+2026-09-08 (5)).
+
+- [ ] **Profile first (do this before any of the items below):** run
+      `perf record`/`perf report` (or `valgrind --tool=callgrind`) on a
+      real search and confirm where the cycles actually go before
+      committing to any rewrite below. `eval::evaluate()`'s own existing
+      code comments already flag the from-scratch-every-node computation
+      below as a deliberate, PROFILER-FREE trade-off ("no profiled hot
+      path to justify the accumulator's extra bookkeeping yet") — the
+      right next step is measurement, not proceeding on assumption alone,
+      per this project's own already-stated instinct on the matter.
+- [ ] Incremental evaluation (material + PSQT as a running accumulator,
+      updated with a small delta on `make_move`/`unmake_move`, instead
+      of recomputed from zero on every call to `eval::evaluate()`) — if
+      profiling confirms this is in fact the dominant per-node cost (as
+      it typically is in classical engines), this is the single biggest
+      lever on this list.
+- [ ] Lazy evaluation / early-exit on cheap terms: compute material +
+      PSQT first inside `eval::evaluate()`; if that alone already clears
+      alpha/beta by a comfortable margin, skip the remaining expensive
+      terms (mobility, king safety, threats, space, pawn structure) and
+      return early, rather than always computing every term regardless
+      of whether the cheap ones already settled the question.
+- [ ] Staged / lazy move generation: a `MovePicker`-style iterator that
+      generates captures first and only generates quiet moves if the
+      search gets past the captures without a cutoff, instead of always
+      generating the entire legal move list upfront. A structural change
+      (a real iterator type, not just a flat generate-then-sort list),
+      not a small patch — scope accordingly when picked up.
+
+
 Added 2026-08-15. Not part of the sequential phase order above — can be
 picked up in any session without waiting for Phase 8. Decisions/rationale in DECISIONS.md,
 2026-08-15 entry.
