@@ -657,6 +657,35 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
 }
 
 TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "SEE-based capture pruning and capture history active",
+          "[search][see_pruning][capture_history]") {
+    init_all();
+    // Same position/rationale as the IIR/NMP/LMR/LMP/futility/razoring/
+    // history-pruning/continuation-history/ProbCut regression tests
+    // above -- reused again here specifically for this session's two
+    // paired additions (search.cpp's negamax() move loop): SEE-based
+    // bad-capture pruning (a new cascading skip alongside futility/LMP/
+    // history pruning, gated on kSeePruningMaxDepth/kSeePruningThresholds)
+    // and CaptureHistoryTable's own bonus/malus on a capture cutoff
+    // (search/ordering.h). Depth 6 keeps remaining depth at or below
+    // kSeePruningMaxDepth (6) for the root's own immediate children,
+    // so this test's very first ply already exercises the pruning
+    // check, not just leaves the code present but unreached; the
+    // position's own forced-mate captures (the rook/queen checks along
+    // the mating net) give the capture-history update/malus path real
+    // cutoffs to record against, too. A bug in either piece --
+    // pruning a capture this forced mate actually needs, or a
+    // corrupted capture-history score somehow feeding back into a
+    // wrong move choice via order_moves() -- risks silently missing
+    // or misordering a move along this line rather than just searching
+    // it differently.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
+
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
           "check extensions active",
           "[search][check_extension]") {
     init_all();

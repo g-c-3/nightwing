@@ -245,6 +245,104 @@ TEST_CASE("ContinuationHistoryTable: malus score is floored and never underflows
     REQUIRE(score >= -8192); // matches kContinuationHistoryMax's mirrored floor (private, checked by value)
 }
 
+TEST_CASE("CaptureHistoryTable: an unrecorded attacker/victim pair scores 0", "[ordering][capture_history]") {
+    CaptureHistoryTable capture_history;
+    REQUIRE(capture_history.score(PieceType::Knight, PieceType::Bishop) == 0);
+}
+
+TEST_CASE("CaptureHistoryTable: update() adds a depth-squared bonus, same weighting as "
+          "HistoryTable's",
+          "[ordering][capture_history]") {
+    CaptureHistoryTable capture_history;
+    capture_history.update(PieceType::Knight, PieceType::Bishop, /*depth=*/4);
+    REQUIRE(capture_history.score(PieceType::Knight, PieceType::Bishop) == 16); // 4*4
+    capture_history.update(PieceType::Knight, PieceType::Bishop, /*depth=*/3);
+    REQUIRE(capture_history.score(PieceType::Knight, PieceType::Bishop) == 25); // 16 + 3*3
+}
+
+TEST_CASE("CaptureHistoryTable: malus() subtracts a depth-squared penalty", "[ordering][capture_history]") {
+    CaptureHistoryTable capture_history;
+    capture_history.malus(PieceType::Knight, PieceType::Bishop, /*depth=*/4);
+    REQUIRE(capture_history.score(PieceType::Knight, PieceType::Bishop) == -16); // -(4*4)
+}
+
+TEST_CASE("CaptureHistoryTable: malus() and update() on the same pair net against each other",
+          "[ordering][capture_history]") {
+    CaptureHistoryTable capture_history;
+    capture_history.update(PieceType::Knight, PieceType::Bishop, /*depth=*/5); // +25
+    capture_history.malus(PieceType::Knight, PieceType::Bishop, /*depth=*/3);  // -9
+    REQUIRE(capture_history.score(PieceType::Knight, PieceType::Bishop) == 16); // 25 - 9
+}
+
+TEST_CASE("CaptureHistoryTable: distinct attacker/victim pairs are independent",
+          "[ordering][capture_history]") {
+    // The entire point of keying on BOTH piece types (this class's own
+    // header comment, ordering.h): "Knight captures Bishop" and "Bishop
+    // captures Knight" trade equal material (MVV-LVA scores them
+    // identically) but must still be tracked as separate cells here.
+    CaptureHistoryTable capture_history;
+    capture_history.update(PieceType::Knight, PieceType::Bishop, /*depth=*/5);
+    REQUIRE(capture_history.score(PieceType::Knight, PieceType::Bishop) == 25);
+    REQUIRE(capture_history.score(PieceType::Bishop, PieceType::Knight) == 0); // reversed pair
+    REQUIRE(capture_history.score(PieceType::Rook, PieceType::Bishop) == 0);   // different attacker
+    REQUIRE(capture_history.score(PieceType::Knight, PieceType::Queen) == 0);  // different victim
+}
+
+TEST_CASE("CaptureHistoryTable: score is clamped and never overflows", "[ordering][capture_history]") {
+    CaptureHistoryTable capture_history;
+    for (int i = 0; i < 100; ++i) {
+        capture_history.update(PieceType::Knight, PieceType::Bishop,
+                                /*depth=*/50); // 50*50 = 2500 per call, far exceeding the cap quickly
+    }
+    const int score = capture_history.score(PieceType::Knight, PieceType::Bishop);
+    REQUIRE(score > 0);
+    REQUIRE(score <= 8192); // matches CaptureHistoryTable::kCaptureHistoryMax (private, checked by value)
+}
+
+TEST_CASE("CaptureHistoryTable: malus score is floored and never underflows",
+          "[ordering][capture_history]") {
+    CaptureHistoryTable capture_history;
+    for (int i = 0; i < 100; ++i) {
+        capture_history.malus(PieceType::Knight, PieceType::Bishop,
+                               /*depth=*/50); // -2500 per call, far exceeding the floor quickly
+    }
+    const int score = capture_history.score(PieceType::Knight, PieceType::Bishop);
+    REQUIRE(score < 0);
+    REQUIRE(score >= -8192); // matches kCaptureHistoryMax's mirrored floor (private, checked by value)
+}
+
+TEST_CASE("order_moves: capture history re-ranks two captures that MVV-LVA alone scores identically",
+          "[ordering][capture_history]") {
+    init_all();
+    // White knight c3 and bishop c2 can each capture a black knight on
+    // e4 (equal victim, equal attacker VALUE -- eval/psqt.h scores
+    // Knight and Bishop identically at 320 -- so mvv_lva_score() alone
+    // gives both moves the exact same score and order_moves() would
+    // otherwise fall back to move-generation order between them, this
+    // file's own header comment on std::stable_sort's tiebreak). Once
+    // Nxe4 has a recorded capture-history bonus and Bxe4 doesn't,
+    // Nxe4 must rank first despite the tie -- the entire reason this
+    // table exists (ordering.h's own CaptureHistoryTable header
+    // comment).
+    Position pos = parse_fen("4k3/8/8/8/4n3/2N5/2B5/4K3 w - - 0 1");
+    const Move nxe4(make_square(2, 2), make_square(4, 3), MoveFlag::Capture);
+    const Move bxe4(make_square(2, 1), make_square(4, 3), MoveFlag::Capture);
+
+    MoveList moves;
+    moves.push_back(nxe4);
+    moves.push_back(bxe4);
+
+    KillerTable killers;
+    HistoryTable history;
+    ContinuationHistoryTable cont_history;
+    CaptureHistoryTable capture_history;
+    capture_history.update(PieceType::Knight, PieceType::Knight, /*depth=*/5);
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, capture_history,
+                PieceType::None, 0);
+    REQUIRE(moves[0] == nxe4);
+    REQUIRE(moves[1] == bxe4);
+}
+
 TEST_CASE("order_moves: the TT move is always ordered first when present", "[ordering]") {
     init_all();
     // White queen e4, rook c4, knight b4; Black rook c6, pawn d5, king e8.
@@ -259,13 +357,14 @@ TEST_CASE("order_moves: the TT move is always ordered first when present", "[ord
     KillerTable killers;
     HistoryTable history;
     ContinuationHistoryTable cont_history;
+    CaptureHistoryTable capture_history;
     // Without a TT move, Rxc6 (captures a rook) should outrank Qxd5
     // (captures a pawn) on MVV-LVA alone -- sanity-check that first,
     // then confirm the TT move overrides it.
-    order_moves(moves, pos, Move(), killers, 0, history, cont_history, PieceType::None, 0);
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, capture_history, PieceType::None, 0);
     REQUIRE(moves[0] == rxc6);
 
-    order_moves(moves, pos, /*tt_move=*/qxd5, killers, 0, history, cont_history, PieceType::None, 0);
+    order_moves(moves, pos, /*tt_move=*/qxd5, killers, 0, history, cont_history, capture_history, PieceType::None, 0);
     REQUIRE(moves[0] == qxd5);
 }
 
@@ -283,7 +382,8 @@ TEST_CASE("order_moves: MVV -- capturing the more valuable victim ranks first re
     KillerTable killers;
     HistoryTable history;
     ContinuationHistoryTable cont_history;
-    order_moves(moves, pos, Move(), killers, 0, history, cont_history, PieceType::None, 0);
+    CaptureHistoryTable capture_history;
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, capture_history, PieceType::None, 0);
     REQUIRE(moves[0] == rxc6); // rook victim (500) beats pawn victim (100) regardless of attacker value
 }
 
@@ -300,7 +400,8 @@ TEST_CASE("order_moves: LVA -- among equal victims, the cheaper attacker ranks f
     KillerTable killers;
     HistoryTable history;
     ContinuationHistoryTable cont_history;
-    order_moves(moves, pos, Move(), killers, 0, history, cont_history, PieceType::None, 0);
+    CaptureHistoryTable capture_history;
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, capture_history, PieceType::None, 0);
     REQUIRE(moves[0] == nxd5); // same victim (pawn) -- cheaper attacker (knight < queen) goes first
 }
 
@@ -319,7 +420,8 @@ TEST_CASE("order_moves: captures rank above non-capture promotions", "[ordering]
     KillerTable killers;
     HistoryTable history;
     ContinuationHistoryTable cont_history;
-    order_moves(moves, pos, Move(), killers, 0, history, cont_history, PieceType::None, 0);
+    CaptureHistoryTable capture_history;
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, capture_history, PieceType::None, 0);
     REQUIRE(moves[0] == qxd5); // any capture outranks a non-capture promotion in this scheme
 }
 
@@ -336,7 +438,8 @@ TEST_CASE("order_moves: a non-capture promotion ranks above a plain quiet move",
     KillerTable killers;
     HistoryTable history;
     ContinuationHistoryTable cont_history;
-    order_moves(moves, pos, Move(), killers, 0, history, cont_history, PieceType::None, 0);
+    CaptureHistoryTable capture_history;
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, capture_history, PieceType::None, 0);
     REQUIRE(moves[0] == promo);
 }
 
@@ -354,7 +457,8 @@ TEST_CASE("order_moves: a killer move ranks above an unrelated quiet move with n
     killers.update(/*ply=*/2, killer_move);
     HistoryTable history;
     ContinuationHistoryTable cont_history;
-    order_moves(moves, pos, Move(), killers, /*ply=*/2, history, cont_history, PieceType::None, 0);
+    CaptureHistoryTable capture_history;
+    order_moves(moves, pos, Move(), killers, /*ply=*/2, history, cont_history, capture_history, PieceType::None, 0);
     REQUIRE(moves[0] == killer_move);
 }
 
@@ -372,7 +476,8 @@ TEST_CASE("order_moves: a killer move only applies at its own recorded ply", "[o
     killers.update(/*ply=*/2, killer_move); // recorded at ply 2...
     HistoryTable history;
     ContinuationHistoryTable cont_history;
-    order_moves(moves, pos, Move(), killers, /*ply=*/7, history, cont_history, PieceType::None, 0); // ...but ordering happens at ply 7
+    CaptureHistoryTable capture_history;
+    order_moves(moves, pos, Move(), killers, /*ply=*/7, history, cont_history, capture_history, PieceType::None, 0); // ...but ordering happens at ply 7
     REQUIRE(moves[0] == killer_move); // unaffected -- both still score 0 (no killer match, no history);
                                        // move-generation order (stable sort) keeps killer_move first
                                        // simply because it was pushed first, not because it "won."
@@ -391,9 +496,10 @@ TEST_CASE("order_moves: a higher-history quiet move ranks above a lower-history 
     KillerTable killers;
     HistoryTable history;
     ContinuationHistoryTable cont_history;
+    CaptureHistoryTable capture_history;
     history.update(Color::White, good_move, /*depth=*/6); // 36
     history.update(Color::White, meh_move, /*depth=*/2);  // 4
-    order_moves(moves, pos, Move(), killers, 0, history, cont_history, PieceType::None, 0);
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, capture_history, PieceType::None, 0);
     REQUIRE(moves[0] == good_move);
 }
 
@@ -411,13 +517,14 @@ TEST_CASE("order_moves: history-scored quiets still rank below killers", "[order
     killers.update(2, killer_move);
     HistoryTable history;
     ContinuationHistoryTable cont_history;
+    CaptureHistoryTable capture_history;
     // A very large history score -- still must not outrank a killer,
     // since killer scores (ordering.cpp) are deliberately kept above
     // HistoryTable::kHistoryMax's ceiling.
     for (int i = 0; i < 20; ++i) {
         history.update(Color::White, history_move, 50);
     }
-    order_moves(moves, pos, Move(), killers, 2, history, cont_history, PieceType::None, 0);
+    order_moves(moves, pos, Move(), killers, 2, history, cont_history, capture_history, PieceType::None, 0);
     REQUIRE(moves[0] == killer_move);
 }
 
@@ -434,7 +541,8 @@ TEST_CASE("order_moves: equal-scoring quiets keep move-generation order (stable 
     KillerTable killers;
     HistoryTable history;
     ContinuationHistoryTable cont_history;
-    order_moves(moves, pos, Move(), killers, 0, history, cont_history, PieceType::None, 0);
+    CaptureHistoryTable capture_history;
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, capture_history, PieceType::None, 0);
     REQUIRE(moves[0] == first);
     REQUIRE(moves[1] == second);
 }
