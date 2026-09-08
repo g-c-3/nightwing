@@ -33,11 +33,17 @@ namespace nightwing::search {
 ///
 /// Deliberately ignores whether intermediate hypothetical recaptures in
 /// the simulated sequence would themselves be legal (e.g. a recapture
-/// that would expose the recapturing side's own king to check) -- this
-/// is a well-known, universally-accepted simplification of the
-/// technique (CPW), not an oversight: checking full legality at every
-/// hypothetical step would turn a cheap material estimate into a real
-/// search, defeating its purpose as a fast pruning heuristic.
+/// that would expose the recapturing side's own king to check via a
+/// pin or a discovered attack elsewhere on the board) -- this is a
+/// well-known, universally-accepted simplification of the technique
+/// (CPW), not an oversight: checking full legality at every hypothetical
+/// step would turn a cheap material estimate into a real search,
+/// defeating its purpose as a fast pruning heuristic. One narrow
+/// exception IS special-cased (see.cpp): a hypothetical king
+/// "recapture" onto a square the opponent still attacks is not merely a
+/// bad trade the way every other piece's bad recapture is -- it is not a
+/// legal chess move at all, since it would move the king into check.
+/// The swap sequence stops rather than simulating that move.
 [[nodiscard]] int static_exchange_evaluation(const board::Position& pos, board::Move move) noexcept;
 
 } // namespace nightwing::search

@@ -127,6 +127,30 @@ int static_exchange_evaluation(const Position& pos, board::Move move) noexcept {
             break;
         }
 
+        if (next_type == PieceType::King) {
+            // A king "recapturing" on `to` is only legal if the opponent
+            // has no remaining attacker of that square afterward --
+            // otherwise the king would be moving into check, which is
+            // illegal, and (since kAttackerOrder already established the
+            // king is the ONLY attacker `side` has left) `side` simply
+            // cannot continue the exchange at all. This is the one
+            // legality check this algorithm special-cases, despite the
+            // general "ignores hypothetical-recapture legality"
+            // simplification documented in see.h -- most engines special-
+            // case exactly this, because unlike an ordinary piece a king
+            // capturing INTO a still-attacked square is not a legal move
+            // in the first place, not merely a bad trade. Checked against
+            // `occ` with the king's own origin square already cleared
+            // (the king has vacated it), before actually removing it
+            // below, since the opponent's attackers must be evaluated as
+            // of the king's own hypothetical arrival on `to`.
+            Bitboard occ_after_king = occ;
+            board::clear_bit(occ_after_king, next_sq);
+            if (attackers_to(pos, to, occ_after_king, board::opposite(side))) {
+                break;
+            }
+        }
+
         ++depth;
         gain[static_cast<std::size_t>(depth)] =
             see_piece_value(attacker_type) - gain[static_cast<std::size_t>(depth - 1)];
