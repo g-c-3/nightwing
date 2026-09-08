@@ -399,10 +399,25 @@ Priority Fixes section above).
       (the king's large SEE sentinel value makes the bug self-limiting
       in practice, per the review's own finding) and is nonetheless
       worth fixing as a correctness/hygiene issue, not a speculative one.
-- [ ] History malus/gravity — `HistoryTable::update()` only rewards the
+- [x] History malus/gravity — `HistoryTable::update()` only rewards the
       cutoff move and never penalizes quiet moves tried-and-rejected
       before it, nor decays over time; a move can hit near the ordering
-      ceiling once and stay there indefinitely.
+      ceiling once and stay there indefinitely. DONE, Session 94:
+      `HistoryTable::malus()`/`ContinuationHistoryTable::malus()`
+      (`src/search/ordering.h`/`.cpp`) subtract a depth-squared penalty,
+      floored at the mirror of each table's existing positive ceiling;
+      `negamax()`'s move loop (`src/search/search.cpp`) now tracks every
+      quiet move it genuinely searches (not ones skipped outright by
+      futility/LMP/history pruning) and, on a beta cutoff, applies malus
+      to every one of them except the move that actually cut off. See
+      docs/DECISIONS.md, 2026-09-08 (3), including the real bench
+      node-count shift this produced (a mixed, small net increase across
+      the 4 bench positions — expected from changed move ordering/
+      pruning interaction, not a regression) and the explicit, justified
+      decision NOT to add separate periodic aging/halving (the "long
+      game" concern that recommendation is aimed at doesn't apply the
+      same way here, since `HistoryTable` is already scoped to reset
+      every top-level search call, not persistent across a game).
 - [ ] SEE-based pruning of bad captures in the main search — SEE is used
       for capture ordering only; nothing in `negamax()` prunes clearly-
       losing captures at shallow-to-moderate depth the way LMP/futility

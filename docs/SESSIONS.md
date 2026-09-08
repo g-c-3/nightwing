@@ -4,6 +4,25 @@ Newest entry at top.
 
 ---
 
+### Session 94 — 2026-09-08 — History malus/gravity added to HistoryTable/ContinuationHistoryTable
+
+**Built:**
+- `src/search/ordering.h`/`.cpp`: `HistoryTable::malus()` and `ContinuationHistoryTable::malus()` — a depth-squared penalty (mirroring `update()`'s existing bonus), floored at each table's existing ceiling's negative mirror. Scores can now go negative.
+- `src/search/search.cpp`: `negamax()`'s move loop now tracks every quiet move genuinely given a real search at a node (not moves skipped outright by futility/LMP/history pruning) in two fixed-size, `board::kMaxMoves`-sized arrays; on a beta cutoff, every tracked quiet move except the one that caused the cutoff gets `malus()` on both tables.
+- `docs/ROADMAP.md`: history malus item in the Priority Fixes section checked off.
+- `tests/ordering_tests.cpp`: 6 new unit tests (`HistoryTable::malus()` basic/net-against-update/floor-clamped; `ContinuationHistoryTable::malus()` basic/`PieceType::None`-no-op/floor-clamped).
+- `tests/search_tests.cpp`: 1 new integration test, reusing the same forced-mate-in-3 fixture every other move-ordering/pruning technique in this file already regression-tests against, confirming the mate is still found correctly with malus active end-to-end.
+
+**Bugs fixed:** none — this is new functionality, not a fix. (See Session 93 for the SEE king-legality bug fix.)
+
+**Decisions made:** full rationale in docs/DECISIONS.md, 2026-09-08 (3) — why futility/LMP/history-pruning-skipped moves are excluded from malus (no real search evidence against them); why a fixed-size per-node tracking array was used rather than re-deriving searched-quiet-move status from `moves`' own pre-loop ordering; and, notably, an explicit decision NOT to add the periodic aging/halving the external review paired with its malus recommendation, since `HistoryTable`/`ContinuationHistoryTable` are already scoped to reset every top-level search call (the "long game" staleness concern that recommendation targets doesn't apply the same way until/unless a persistent global History table is ever added alongside the already-queued persistent-TT item).
+
+**Verification performed:** full repo cloned into a scratch build with all 5 changed files applied; real CMake+Catch2 Release build rebuilt clean; `ctest` fully green — **508 test cases, 100% passing** (501 carried over from Session 93 + 7 new this session). `bench` RE-RUN (not just re-verified unchanged, since this change genuinely alters move ordering): **82166 total nodes**, up from the established 81029-node baseline (+1.4%, mixed across the 4 fixed positions — 2 down, 2 up) — logged with full justification in docs/DECISIONS.md, 2026-09-08 (3) per ARCHITECTURE.md's Testing Policy. No strength claim made from the node-count shift alone; a real `nightwing_match`/`nightwing_sprt` head-to-head was not run this session.
+
+**Next session start point:** ROADMAP.md's Priority Fixes section (2026-09-08) — next open item is SEE-based pruning of bad captures in the main search (plus the related smaller capture-history-table addition), `src/search/search.cpp`'s `negamax()` move loop and `src/search/see.h`'s already-public `static_exchange_evaluation()`. Read `search.cpp`'s move loop in full before starting (same function this session's own history-malus work already touched) and re-skim `see.h`'s public interface (no need to re-read `see.cpp` itself unless debugging).
+
+---
+
 ### Session 93 — 2026-09-08 — External review intake + Priority Fixes: SEE king-legality bug fixed
 
 **Built:**
