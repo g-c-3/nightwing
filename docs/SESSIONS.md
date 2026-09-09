@@ -4,7 +4,27 @@ Newest entry at top.
 
 ---
 
-### Session 95 — 2026-09-08 — SEE-based bad-capture pruning + CaptureHistoryTable
+### Session 96 — 2026-09-09 — Persistent, engine-lifetime transposition table
+
+**Built:**
+- `src/search/search.h`/`.cpp`: `TranspositionTable` forward-declared; `make_transposition_table()` promoted out of `search.cpp`'s anonymous namespace to a public declaration in `search.h` (usable by other translation units, though `uci.cpp` ended up needing its own small variant instead — see docs/DECISIONS.md). New trailing `TranspositionTable* external_tt = nullptr` parameter on `search_fixed_depth()`, `search_iterative_deepening()`, and the internal `search_iterative_deepening_multipv()` — `nullptr` (default) is byte-for-byte the old behavior; non-null uses that caller-owned table directly, ignoring `hash_size_mb`. New internal `emplace_transposition_table()` helper works around a real compile hazard (`TranspositionTable` is non-movable/non-copyable via its atomic members) found during this session's own build-and-test pass.
+- `src/uci/uci.cpp`: `run()` now owns one `std::optional<search::TranspositionTable>` for its whole session, initialized at startup, shared by `handle_go()`/`start_pondering()` (both signatures gained a `TranspositionTable&` parameter, threaded through as `external_tt`). `ucinewgame` calls `clear()` on it; `setoption name Hash` genuinely changing size rebuilds it via a new `emplace_persistent_tt()` helper, but only after calling `abandon_pondering()` first — a real concurrency hazard (destroying the table out from under a still-running ponder thread) this session identified and fixed, not merely a stray-output edge case. `run_bench()` deliberately left untouched — still builds its own private table, preserving reproducibility.
+- `docs/ROADMAP.md`: Persistent, engine-lifetime transposition table item in the Priority Fixes (2026-09-08) section checked off.
+- `tests/persistent_tt_tests.cpp` (NEW): 6 cases — `external_tt` defaulting to `nullptr` leaves both `search_fixed_depth()`/`search_iterative_deepening()` unaffected; a non-null `external_tt` is genuinely used (probed after the call, hit matches the reported result); `hash_size_mb` is ignored when `external_tt` is supplied (proven via `num_buckets()`); an identical warm repeat at the same depth visits dramatically fewer nodes (1185 → 61 nodes on the starting position at depth 6, in this session's own diagnostic run) while returning the identical best move/score; MultiPV (`multi_pv > 1`) still populates a supplied external table correctly.
+- `tests/pondering_tests.cpp`: 3 new cases covering the Hash-mid-ponder concurrency path specifically — a genuine size change safely abandons the stale ponder search (no crash, no stray `bestmove`); the engine still works correctly on a fresh `go` afterward; a same-size `setoption` does NOT abandon an active ponder search.
+- `tests/CMakeLists.txt`: `persistent_tt_tests.cpp` registered.
+
+**Bugs fixed:** the non-movable-`TranspositionTable`/`std::optional::emplace()` compile hazard above — caught during this session's own real build, not source review alone; see docs/DECISIONS.md, 2026-09-09 (1), for the full mechanism and fix.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-09 (1) — the `std::optional`-based ownership pattern and why `emplace()` needs the constructor's own plain arguments rather than an already-built object; the Hash-mid-ponder concurrency hazard and its `abandon_pondering()`-first fix; `ucinewgame` clears rather than rebuilds; `run_bench()` deliberately excluded from the persistent table.
+
+**Verification:** full repo cloned into a scratch build (this sandbox's single CPU core, so the full CMake+Catch2 `-O3`+LTO build was configured successfully but the actual test run used this project's own established faster raw-`g++`-against-fetched-Catch2-amalgamated path instead). `search.cpp`/`uci.cpp` each compiled standalone with `-Wall -Wextra -Wpedantic` first: zero warnings. Full suite: **526 test cases, 53,457 assertions, all green** (517 carried over from Session 95 + 9 new). `bench` re-run: **81,197 total nodes, unchanged from Session 95's own baseline exactly** (expected — `run_bench()`'s own path is untouched). A separate ASan+UBSan binary ran the `[pondering]`+`[persistent_tt]`-tagged subset (19 cases) 4 times total: zero findings, zero flakiness. The real, compiled `nightwing` UCI binary was also hand-exercised end to end outside the test suite (an out-of-book position: 9588 nodes cold → 223 nodes on an identical warm repeat → back to 9588 after a genuine `Hash` resize → back to 9588 again after `ucinewgame`), directly confirming reuse/rebuild/clear all work correctly on the real binary.
+
+**Next session starts:** top of the Priority Fixes (2026-09-08) section's remaining items — "Reverse futility / static null-move pruning" is next (a node-level pre-move-loop check, `if static_eval - margin*depth >= beta: return static_eval`, the natural third leg alongside the existing futility and razoring, currently absent). Read `src/search/search.cpp`'s `negamax()` (the existing futility/razoring implementation immediately above the move loop is the natural insertion point and template to follow) before writing anything.
+
+---
+
+
 
 **Built:**
 - `src/search/ordering.h`/`.cpp`: new `CaptureHistoryTable` class (update/malus/score, keyed by attacker/victim piece type), wired into `score_move()`'s capture branch alongside MVV-LVA; module-level header comment corrected to state plainly that plain SEE does NOT feed into ordering here (only MVV-LVA + capture history do).

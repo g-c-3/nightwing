@@ -440,13 +440,42 @@ Priority Fixes section above).
       produced (a net decrease, unlike Session 94's own malus-driven
       increase — expected, since this technique specifically prunes
       nodes rather than just reordering them).
-- [ ] Persistent, engine-lifetime transposition table — still a fresh,
+- [x] Persistent, engine-lifetime transposition table — was a fresh,
       private allocation constructed per top-level search call rather
       than a persistent, `ucinewgame`-cleared global; hash information
-      doesn't carry over between moves within the same game. Already
+      didn't carry over between moves within the same game. Was already
       flagged as an accepted placeholder (`src/search/tt.h`'s LIFETIME
-      NOTE, ARCHITECTURE.md's Tech Stack row) — this promotes it to a
-      tracked item rather than an indefinitely-deferred note.
+      NOTE, ARCHITECTURE.md's Tech Stack row) before being promoted to a
+      tracked item. DONE, Session 96: `search_fixed_depth()`/
+      `search_iterative_deepening()` (and the internal MultiPV path)
+      gained a new `external_tt` parameter (`src/search/search.h`/
+      `.cpp`) — `nullptr` (the default) reproduces every pre-existing
+      call site's behavior exactly (a fresh, private table, as before);
+      non-null uses that caller-owned table directly instead.
+      `src/uci/uci.cpp`'s `run()` now owns one `TranspositionTable` for
+      its whole session, shared by every ordinary `go` and `go ponder`
+      call, rebuilt (not resized in place — `TranspositionTable` has no
+      such operation) only when `setoption name Hash` genuinely changes
+      its size, and `clear()`-ed (not rebuilt) on `ucinewgame`. See
+      docs/DECISIONS.md, 2026-09-09 (1), including the non-movable/non-
+      copyable-table compile hazard this surfaced and how it was
+      resolved, and the concurrency hazard a Hash-size change mid-ponder
+      posed and how it's handled. New test coverage:
+      `tests/persistent_tt_tests.cpp` (6 cases, `search::`-level:
+      default-unaffected, genuine reuse via TT probe, a dramatic
+      node-count drop on an identical warm repeat, `hash_size_mb` being
+      ignored when `external_tt` is supplied, and MultiPV
+      compatibility) plus 3 new cases appended to
+      `tests/pondering_tests.cpp` covering the Hash-mid-ponder
+      concurrency path specifically (genuine-size-change safely
+      abandons the ponder search; same-size change does not; the engine
+      still works correctly afterward) — verified green under both a
+      plain build and ASan+UBSan, several repeated runs each, no
+      flakiness. Full suite: 526 test cases / 53,457 assertions, all
+      green; `bench` node counts unchanged (81,197 total, matching
+      Session 95's own baseline exactly, as expected since `run_bench()`
+      deliberately still constructs its own private table for
+      reproducibility — untouched by this change).
 - [ ] Reverse futility / static null-move pruning — a node-level pre-
       move-loop check (`if static_eval - margin*depth >= beta: return
       static_eval`), the natural third leg alongside the existing
