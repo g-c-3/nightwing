@@ -267,3 +267,67 @@ TEST_CASE("uci: a second 'go ponder' arriving while one is already active abando
     }
     REQUIRE(count == 1);
 }
+
+// ---------------------------------------------------------------------
+// 'setoption name Hash' arriving mid-ponder (ROADMAP.md Priority Fixes,
+// 2026-09-08, "Persistent, engine-lifetime transposition table"): run()
+// now shares ONE TranspositionTable between an ordinary 'go' and a 'go
+// ponder' background search, so a Hash-size change that genuinely
+// rebuilds that shared object must not do so while a ponder thread
+// might still be reading/writing it -- see run()'s own 'setoption'
+// dispatch comment (uci.cpp) for the full safety argument. These three
+// cases exercise exactly that path, the same defensive pattern already
+// established for 'position'/'ucinewgame'/a second 'go ponder' above.
+// ---------------------------------------------------------------------
+
+TEST_CASE("uci: 'setoption name Hash' with a genuinely different size arriving mid-ponder "
+          "safely abandons the stale ponder search (no crash, no stray bestmove) rather than "
+          "rebuilding the shared table out from under it",
+          "[uci][pondering][hash]") {
+    init_all();
+    const std::string out = run_uci({"position startpos moves g1h3",
+                                      "go ponder wtime 5000 btime 5000 winc 0 binc 0",
+                                      "setoption name Hash value 32", "stop", "quit"});
+    // The ponder search was already abandoned by the Hash change (its
+    // own suppress_output, abandon_pondering()'s doc comment) before
+    // 'stop' ever arrives -- 'stop' with nothing pondering is a safe
+    // no-op (this file's own dedicated test above), so this whole
+    // sequence should produce NO bestmove at all.
+    REQUIRE_FALSE(contains(out, "bestmove"));
+}
+
+TEST_CASE("uci: after 'setoption name Hash' safely abandons a mid-ponder search, the engine "
+          "still works correctly on a fresh ordinary 'go' using the newly rebuilt table",
+          "[uci][pondering][hash]") {
+    init_all();
+    const std::string out = run_uci({"position startpos moves g1h3",
+                                      "go ponder wtime 5000 btime 5000 winc 0 binc 0",
+                                      "setoption name Hash value 32",
+                                      "position startpos moves e2e4 e7e5", "go depth 2", "quit"});
+    // Exactly one bestmove: the abandoned ponder search's own result is
+    // suppressed, so only the explicit 'go depth 2' below produced one.
+    std::size_t count = 0;
+    std::size_t idx = 0;
+    while ((idx = out.find("bestmove ", idx)) != std::string::npos) {
+        ++count;
+        idx += 9;
+    }
+    REQUIRE(count == 1);
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
+TEST_CASE("uci: 'setoption name Hash' with the SAME size as before, arriving mid-ponder, does "
+          "NOT abandon the ponder search -- only a genuine size change needs the shared table "
+          "rebuilt",
+          "[uci][pondering][hash]") {
+    init_all();
+    // search::kDefaultTTSizeMB is 16 -- run() advertises and starts at
+    // that same default (uci.cpp's own 'uci' response), so this
+    // 'setoption' is a genuine no-op resize.
+    const std::string out = run_uci({"position startpos moves g1h3",
+                                      "go ponder wtime 1000 btime 1000 winc 0 binc 0",
+                                      "setoption name Hash value 16", "ponderhit", "quit"});
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
