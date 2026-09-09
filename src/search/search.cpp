@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cassert>
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <new>
 #include <optional>
@@ -254,14 +255,86 @@ constexpr int kZugzwangReductionDecrease = 1;
 constexpr int kZugzwangMinReduction = 1;
 
 /// Late move reductions (CPW "Late Move Reductions", negamax()'s move
-/// loop below) constants. Same "simple, hand-verifiable two-tier
-/// scheme over a smoother formula" choice as the null-move-pruning
-/// constants just above, and the same not-yet-tuned status.
+/// loop below) constants. Eligibility gating (kLMRMinDepth/
+/// kLMRMinMoveIndex) is unchanged from this file's original two-tier
+/// scheme; the REDUCTION MAGNITUDE itself, previously a hand-picked
+/// two-value step function (R=1 below depth 6, R=2 at/above it), is now
+/// a continuous formula over remaining depth and move index instead
+/// (ROADMAP.md's own Priority Fixes (2026-09-08) item, "LMR as a
+/// continuous formula" -- ln(depth)*ln(move_count) is the well-known
+/// CPW/Stockfish-style shape; kLMRBase/kLMRScale below are this
+/// project's own from-scratch-chosen coefficients, not copied values --
+/// see lmr_reduction()'s own doc comment just below for the formula and
+/// its precomputed-table implementation). Not yet tuned, same caveat as
+/// every other not-yet-SPRT-validated search constant in this file.
 constexpr int kLMRMinDepth = 3;        // don't bother below this remaining depth
 constexpr int kLMRMinMoveIndex = 4;    // don't reduce the first few (already well-ordered) moves
-constexpr int kLMRReduction = 1;       // R for depth < kLMRBigReductionDepth
-constexpr int kLMRBigReductionDepth = 6;
-constexpr int kLMRBigReduction = 2;    // R for depth >= kLMRBigReductionDepth
+constexpr double kLMRBase = 0.0;       // additive constant (a)
+constexpr double kLMRScale = 0.3;      // scale on ln(depth)*ln(move_index) (b)
+
+/// Bounds for lmr_reduction()'s precomputed table below. kMaxPly (128,
+/// search/ordering.h) is reused as the depth axis's own bound -- the
+/// same "safe, generous upper bound on remaining search depth" role it
+/// already plays for this file's `path`/killer-table arrays elsewhere,
+/// even though a real remaining-depth value passed into negamax() is in
+/// practice far smaller. board::kMaxMoves (218, board/movegen.h -- the
+/// true theoretical maximum legal move count in any position) bounds
+/// the move-index axis exactly, since `i` below is a real index into a
+/// real MoveList.
+constexpr int kLMRTableDepth = kMaxPly;
+constexpr int kLMRTableMoves = board::kMaxMoves;
+
+/// Computes this file's Late Move Reduction amount for a move at
+/// `depth` remaining search depth and `move_index` (the move's 0-based
+/// position in order_moves()'s ranking) via the continuous formula
+/// `R = kLMRBase + ln(depth) * ln(move_index) * kLMRScale`, replacing
+/// the two-tier step function this file used previously (see the
+/// kLMR* constants' own doc comment just above for the ROADMAP.md
+/// item this implements). Builds and caches a `kLMRTableDepth` x
+/// `kLMRTableMoves` lookup table on first call via a function-local
+/// `static` -- `std::log()` isn't usable in a `constexpr` context
+/// portably across this project's supported compilers, so the table is
+/// computed once at runtime instead of at compile time, the same
+/// "compute once, cache in a function-local static" pattern this
+/// project already uses elsewhere for one-time setup work (e.g.
+/// board/magic.cpp's own magic-bitboard table generation). Both
+/// arguments are clamped into the table's own bounds before indexing,
+/// so an out-of-range caller (which shouldn't happen given this file's
+/// own eligibility guards, but costs nothing to guard against directly)
+/// degrades to the nearest in-range table entry rather than reading out
+/// of bounds. The result itself is NOT further clamped against `depth`
+/// here (i.e. it can exceed `depth - 1`) -- the move loop's own call
+/// site is responsible for that, since it alone knows the caller's
+/// actual `depth - 1 + extension - reduction` formula and what floor
+/// that formula needs to stay non-negative at.
+int lmr_reduction(int depth, int move_index) {
+    static const auto table = [] {
+        std::array<std::array<std::int8_t, kLMRTableMoves>, kLMRTableDepth> t{};
+        for (int d = 0; d < kLMRTableDepth; ++d) {
+            for (int m = 0; m < kLMRTableMoves; ++m) {
+                if (d < 1 || m < 1) {
+                    t[static_cast<std::size_t>(d)][static_cast<std::size_t>(m)] = 0;
+                    continue;
+                }
+                const double r = kLMRBase + std::log(static_cast<double>(d)) *
+                                                 std::log(static_cast<double>(m)) * kLMRScale;
+                // Clamped to int8_t's own range (127), not
+                // kLMRTableDepth -- the table's storage type, not the
+                // formula's own realistic ceiling, is what must never
+                // be exceeded here (a realistic worst case at the
+                // table's own bounds is ~11, far below either limit,
+                // but this guards the cast below unconditionally).
+                const double clamped = std::clamp(r, 0.0, 127.0);
+                t[static_cast<std::size_t>(d)][static_cast<std::size_t>(m)] =
+                    static_cast<std::int8_t>(std::lround(clamped));
+            }
+        }
+        return t;
+    }();
+    const int d = std::clamp(depth, 0, kLMRTableDepth - 1);
+    const int m = std::clamp(move_index, 0, kLMRTableMoves - 1);
+    return static_cast<int>(table[static_cast<std::size_t>(d)][static_cast<std::size_t>(m)]);
+}
 
 /// Late move pruning (LMP) / move-count based pruning (CPW "Move Count
 /// Based Pruning", negamax()'s move loop below) constants. Only applies
@@ -422,7 +495,8 @@ constexpr std::array<int, kReverseFutilityMaxDepth + 1> kReverseFutilityMargins 
 /// (`beta + kProbCutMargin`) that, if it also fails high, is taken as
 /// strong evidence a full-depth search would too, without paying for
 /// one. kProbCutReduction (4) is deliberately large relative to LMR's
-/// own kLMRReduction/kLMRBigReduction (1-2) above -- ProbCut's
+/// own typical reduction range (roughly 1-2 near LMR's own eligibility
+/// threshold, per lmr_reduction()'s continuous formula below) -- ProbCut's
 /// verification search only needs to be roughly right about "is this
 /// position winning by at least a large, specific margin," not compute
 /// an exact score, so a much shallower probe is an acceptable trade for
@@ -1761,10 +1835,14 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             const bool eligible_for_lmr = !us_in_check && depth >= kLMRMinDepth &&
                                            i >= kLMRMinMoveIndex && !move.is_capture() &&
                                            !move.is_promotion() && !move_gives_check;
-            const int reduction = eligible_for_lmr ? (depth >= kLMRBigReductionDepth
-                                                            ? kLMRBigReduction
-                                                            : kLMRReduction)
-                                                     : 0;
+            // lmr_reduction()'s own continuous-formula result is clamped
+            // to `depth - 1` here (never below) so `depth - 1 -
+            // reduction` (this call site's own formula, just below)
+            // can never go negative -- the table itself has no notion
+            // of the caller's own depth-1 floor, only of depth/move-
+            // index bounds (see that function's own doc comment).
+            const int reduction =
+                eligible_for_lmr ? std::min(lmr_reduction(depth, i), depth - 1) : 0;
 
             // PVS: probe every later move with a null (zero-width)
             // window first -- cheap, since it only needs to prove
