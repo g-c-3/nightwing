@@ -494,8 +494,17 @@ Priority Fixes section above).
       genuine new pruning technique, not a bug) and the deterministic
       (not flaky) small test-assertion-count shift it also produced,
       isolated to time-budget-sensitive tests and confirmed benign.
-- [ ] LMR as a continuous formula (e.g. `R = a + ln(depth)*ln(move_count)*b`)
-      rather than the current 2-value step table.
+- [x] LMR as a continuous formula (e.g. `R = a + ln(depth)*ln(move_count)*b`)
+      rather than the previous 2-value step table. DONE, Session 98: a new
+      `lmr_reduction(depth, move_index)` helper (`src/search/search.cpp`)
+      replacing `kLMRReduction`/`kLMRBigReduction`/`kLMRBigReductionDepth`
+      with `R = kLMRBase + ln(depth)*ln(move_index)*kLMRScale`, precomputed
+      into a cached lookup table on first call (`std::log()` isn't usable
+      in a portably-`constexpr` context). Eligibility gating
+      (`kLMRMinDepth`/`kLMRMinMoveIndex`) unchanged. See docs/DECISIONS.md,
+      2026-09-10, for the coefficient values chosen and the regression a
+      first, more aggressive pair of coefficients caused (and how it was
+      caught and corrected) before landing on the final ones.
 - [ ] An "improving" flag (is static eval better than 2 plies ago?)
       feeding into futility/LMR/NMP margins.
 - [ ] Correction history — a running per-pawn-structure (optionally per-
