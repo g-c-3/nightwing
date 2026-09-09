@@ -408,6 +408,29 @@ TEST_CASE("search_iterative_deepening: finds a genuine mate-in-3 correctly with 
 }
 
 TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "reverse futility / static null-move pruning active",
+          "[search][rfp]") {
+    init_all();
+    // Same position/rationale as the IIR regression test just above --
+    // reused again here specifically for reverse futility pruning
+    // (search.cpp's negamax(), the new node-level check right after
+    // IIR, before NMP). This is the FIRST of this function's static-
+    // eval-based pruning checks to run at any node, so a guard bug here
+    // (the not-in-check exclusion, the mate-range beta guard, an
+    // off-by-one in kReverseFutilityMargins) would silently return a
+    // wrong, unverified static eval for a node along this forced mating
+    // line before NMP/razoring/futility/the real move loop ever got a
+    // chance to run at all -- the most upstream place a soundness bug
+    // in this technique could hide. Depth 6 gives internal nodes at
+    // remaining depth <= kReverseFutilityMaxDepth (6) plenty of
+    // opportunity to actually trigger the check, not just leave the
+    // code present but unexercised.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
           "null-move pruning active (depth 6 comfortably exceeds kNullMoveMinDepth at internal "
           "nodes)",
           "[search][nmp]") {
