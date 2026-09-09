@@ -13,13 +13,18 @@
 //     "Contempt / draw score adjustment" item, search.h's
 //     search_iterative_deepening()'s own `contempt_cp` doc comment) are
 //     also recognized. `Hash`
-//     changes the SIZE of the fresh, private TranspositionTable each
-//     top-level search call still constructs for itself, not an
-//     in-place resize of a persistent one -- the TT itself is still
-//     scoped per top-level search call rather than a persistent global
-//     (search/tt.h's own LIFETIME NOTE); making it genuinely persistent,
-//     with a `ucinewgame`-triggered clear, remains a separate, not-yet-
-//     started piece of that same Phase 8 item. `MultiPV` uses classic
+//     changes the size of run()'s own persistent, engine-lifetime
+//     TranspositionTable (ROADMAP.md Priority Fixes, 2026-09-08,
+//     "Persistent, engine-lifetime transposition table" -- see that
+//     table's own declaration inside run(), below, and
+//     search/tt.h's LIFETIME NOTE) by rebuilding it fresh at the new
+//     size -- TranspositionTable has no in-place resize operation, so
+//     a `setoption name Hash value <N>` genuinely changing the size
+//     discards whatever was cached at the old size, exactly the
+//     behavior a person changing `Hash` mid-session should expect.
+//     `ucinewgame` clears that same persistent table (a real clear(),
+//     not a fresh allocation) rather than leaving an unrelated
+//     previous game's positions cached. `MultiPV` uses classic
 //     root-move exclusion (search::search_iterative_deepening_multipv(),
 //     search.cpp) with two deliberate first-draft simplifications, both
 //     documented at that function's own definition: no aspiration
@@ -86,6 +91,7 @@
 #include "nightwing/version.h"
 #include "search/search.h"
 #include "search/skill.h"
+#include "search/tt.h"
 
 namespace nightwing::uci {
 namespace {
@@ -656,6 +662,44 @@ void emit_info(const search::SearchResult& result, std::ostream& out) {
     out.flush();
 }
 
+/// Fills `tt` with a TranspositionTable sized to `requested_mb`, with
+/// the same graceful, halve-and-retry std::bad_alloc fallback
+/// search::make_transposition_table() gives every top-level search
+/// call's own private table (search/search.h's own doc comment on that
+/// function) -- constructing directly via std::optional::emplace()'s
+/// plain std::size_t argument rather than move-constructing from an
+/// already-built temporary, since TranspositionTable (tt.h's own
+/// atomic-member layout) is neither copyable nor movable. Deliberately
+/// a small, self-contained duplicate of search.cpp's own identically-
+/// shaped internal helper rather than a shared one exposed across
+/// files -- matching this project's own established convention of
+/// duplicating small, stable helpers instead of coupling two files
+/// together over them (e.g. contempt_draw_score(), duplicated verbatim
+/// between search.cpp and quiescence.cpp). Used both to build run()'s
+/// own persistent, engine-lifetime TranspositionTable (ROADMAP.md
+/// Priority Fixes, 2026-09-08, "Persistent, engine-lifetime
+/// transposition table") at startup and to rebuild it fresh whenever
+/// `setoption name Hash value <N>` changes its size -- see run()'s own
+/// use of this function, below.
+void emplace_persistent_tt(std::optional<search::TranspositionTable>& tt,
+                            std::size_t requested_mb) {
+    std::size_t size_mb = requested_mb < 1 ? 1 : requested_mb;
+    while (true) {
+        try {
+            tt.emplace(size_mb);
+            return;
+        } catch (const std::bad_alloc&) {
+            if (size_mb <= 1) {
+                throw; // Nothing smaller left to try -- let it propagate.
+            }
+            size_mb /= 2;
+            if (size_mb < 1) {
+                size_mb = 1;
+            }
+        }
+    }
+}
+
 /// Handles `setoption name <name...> value <value...>`. Recognized
 /// option names with real behavioral effect: `Threads` (ROADMAP.md
 /// Phase 7, unchanged from Session 74), `Hash`, `Move Overhead`, and
@@ -871,10 +915,20 @@ void handle_setoption(int& num_threads, std::size_t& hash_size_mb, int& move_ove
 /// parameter (search/search.h's doc comment has the full contract) --
 /// at the default value, this function's behavior is completely
 /// unaffected, exactly as if this parameter didn't exist.
+///
+/// `persistent_tt` (ROADMAP.md Priority Fixes, 2026-09-08, "Persistent,
+/// engine-lifetime transposition table"): run()'s own single
+/// TranspositionTable, constructed once at startup and rebuilt only
+/// when `setoption name Hash` genuinely changes its size (run()'s own
+/// comments at that table's declaration) -- passed straight through as
+/// search::search_iterative_deepening()'s own `external_tt` parameter,
+/// so an ordinary `go` genuinely reuses hash information left over from
+/// this session's earlier moves/ponders instead of starting from an
+/// empty table every single call the way a fresh, private one would.
 void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
                const std::vector<std::string>& tokens, int num_threads, std::size_t hash_size_mb,
                int move_overhead_ms, int multi_pv, int skill_level, std::mt19937_64& skill_rng,
-               int contempt_cp, std::ostream& out) {
+               int contempt_cp, search::TranspositionTable& persistent_tt, std::ostream& out) {
     // Opening book (src/book/book.h, ROADMAP.md's optional "small
     // curated opening book" item): consulted first, unconditionally --
     // no setoption/UCI-options infrastructure exists yet to gate this
@@ -920,12 +974,20 @@ void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
     // (search.h's doc comment) -- 0 whenever this budget came from an
     // explicit `movetime`/`depth` rather than `wtime`/`btime`
     // (SearchBudget's own doc comment above on why), in which case this
-    // is a no-op exactly as if the parameter didn't exist.
+    // is a no-op exactly as if the parameter didn't exist. `&persistent_tt`
+    // (ROADMAP.md Priority Fixes, 2026-09-08, "Persistent,
+    // engine-lifetime transposition table") is passed as
+    // search_iterative_deepening()'s own `external_tt` parameter --
+    // `hash_size_mb` above is still threaded through as a call
+    // argument for API-compatibility with every other caller of this
+    // function (search_fixed_depth()/search_iterative_deepening()'s own
+    // doc comments), but is ignored by that function whenever
+    // `external_tt` is non-null, exactly as here.
     const search::SearchResult result = search::search_iterative_deepening(
         pos, budget.max_depth, budget.time_limit_ms, game_history,
         [&out](const search::SearchResult& iteration_result) { emit_info(iteration_result, out); },
         /*material_weights=*/nullptr, num_threads, /*external_stop=*/nullptr, hash_size_mb,
-        search_multi_pv, budget.soft_time_limit_ms, contempt_cp);
+        search_multi_pv, budget.soft_time_limit_ms, contempt_cp, &persistent_tt);
 
     // `search::pick_skill_move()` (search/skill.h): returns
     // `result.best_move` unchanged, drawing nothing from `skill_rng`,
@@ -1078,12 +1140,37 @@ void abandon_pondering(PonderState& ponder) {
 ///
 /// `hash_size_mb`/`move_overhead_ms` (ROADMAP.md Phase 8, "Full UCI
 /// option set"): same run()-owned, `setoption`-driven session-lifetime
-/// state handle_go() consumes — `hash_size_mb` is passed straight
+/// state handle_go() consumes -- `hash_size_mb` is passed straight
 /// through to this call's own search_iterative_deepening() the same
-/// way; `move_overhead_ms` feeds into compute_search_budget() below
-/// when computing the REAL move's saved budget for handle_ponderhit()
-/// to apply later, exactly as it would for an ordinary `go` from this
-/// same position.
+/// way, though it's ignored whenever `persistent_tt` below is supplied
+/// (search_iterative_deepening()'s own `external_tt`-vs-`hash_size_mb`
+/// contract, search.h); `move_overhead_ms` feeds into
+/// compute_search_budget() below when computing the REAL move's saved
+/// budget for handle_ponderhit() to apply later, exactly as it would
+/// for an ordinary `go` from this same position.
+///
+/// `persistent_tt` (ROADMAP.md Priority Fixes, 2026-09-08, "Persistent,
+/// engine-lifetime transposition table"): run()'s own single
+/// TranspositionTable, the SAME object handle_go() uses for an
+/// ordinary `go` -- a pointer to it, not the table itself, is captured
+/// by value into the background thread's own closure below (a raw
+/// pointer copies trivially and is exactly what
+/// search_iterative_deepening()'s own `external_tt` parameter expects;
+/// TranspositionTable itself is neither copyable nor movable, tt.h's
+/// own atomic-member layout, so capturing anything other than a
+/// pointer/reference to it wouldn't compile). Sharing this one object
+/// between the pondering thread and whatever real `go` eventually
+/// follows is the whole point of pondering finding anything useful at
+/// all -- entries the ponder search stores land in the SAME table an
+/// ordinary `go` right after `ponderhit` will probe. Safe under
+/// concurrent access by construction (tt.h's own THREAD-SAFETY NOTE --
+/// the exact same lock-free guarantee Lazy SMP's helper threads already
+/// rely on to share one table with the main search thread). The one
+/// genuine hazard -- a `setoption name Hash` REBUILDING this object out
+/// from under a still-running ponder thread -- is handled at run()'s
+/// own `setoption` dispatch, not here: see that dispatch's own comment
+/// for why it calls abandon_pondering() first whenever `Hash` actually
+/// changes size.
 ///
 /// `budget.soft_time_limit_ms` (ROADMAP.md Phase 8, "Time management")
 /// is computed by compute_search_budget() below (same as handle_go()'s
@@ -1104,7 +1191,8 @@ void abandon_pondering(PonderState& ponder) {
 /// scope limit.
 void start_pondering(Position& pos, const std::vector<std::uint64_t>& game_history,
                       const std::vector<std::string>& tokens, int num_threads,
-                      std::size_t hash_size_mb, int move_overhead_ms, std::ostream& out,
+                      std::size_t hash_size_mb, int move_overhead_ms,
+                      search::TranspositionTable& persistent_tt, std::ostream& out,
                       PonderState& ponder) {
     abandon_pondering(ponder); // Defensive: see this function's own doc comment above.
 
@@ -1118,13 +1206,14 @@ void start_pondering(Position& pos, const std::vector<std::uint64_t>& game_histo
     std::vector<std::uint64_t> ponder_history = game_history;
     std::atomic<bool>* stop_ptr = &ponder.stop;
     std::atomic<bool>* suppress_ptr = &ponder.suppress_output;
+    search::TranspositionTable* tt_ptr = &persistent_tt;
 
     ponder.thread = std::thread([&out, num_threads, hash_size_mb, ponder_pos, ponder_history,
-                                  stop_ptr, suppress_ptr]() mutable {
+                                  stop_ptr, suppress_ptr, tt_ptr]() mutable {
         const search::SearchResult result = search::search_iterative_deepening(
             ponder_pos, kTimedSearchMaxDepth, /*time_limit_ms=*/0, ponder_history,
             /*on_iteration=*/nullptr, /*material_weights=*/nullptr, num_threads, stop_ptr,
-            hash_size_mb);
+            hash_size_mb, /*multi_pv=*/1, /*soft_time_limit_ms=*/0, /*contempt_cp=*/0, tt_ptr);
         if (suppress_ptr->load(std::memory_order_relaxed)) {
             return;
         }
@@ -1332,6 +1421,35 @@ void run(std::istream& in, std::ostream& out) {
     // NOT reset by `ucinewgame` below, same "options persist, game state
     // doesn't" convention `num_threads` already follows.
     std::size_t hash_size_mb = search::kDefaultTTSizeMB;
+    // Persistent, engine-lifetime transposition table (ROADMAP.md
+    // Priority Fixes, 2026-09-08, "Persistent, engine-lifetime
+    // transposition table" -- search/tt.h's own LIFETIME NOTE has the
+    // full background on why every top-level search call previously
+    // constructed its own fresh, private table instead). Constructed
+    // once here, at whatever `hash_size_mb` starts at, and lives for
+    // this whole run() call -- every ordinary `go` (handle_go()) and
+    // every `go ponder` (start_pondering()) below shares this SAME
+    // object (a pointer to it, passed as search_iterative_deepening()'s
+    // own `external_tt` parameter), so hash information genuinely
+    // carries over from one move to the next within a real game, the
+    // way a UCI engine playing an actual timed game is expected to --
+    // rather than starting from an empty table on every single `go`.
+    // `std::optional` (not a plain value) specifically because
+    // TranspositionTable can't be reassigned in place (no copy/move
+    // assignment -- tt.h's own atomic-member layout): `setoption name
+    // Hash value <N>` below rebuilds this via emplace_persistent_tt()
+    // (a fresh construction, replacing the old object outright) rather
+    // than resizing anything in place, since TranspositionTable itself
+    // has no such operation. `ucinewgame` below calls clear() on it
+    // instead (a real clear, not a rebuild) -- a persistent table
+    // carrying over an unrelated PREVIOUS game's positions into a new
+    // one is exactly the stale-information case a UCI `ucinewgame`
+    // exists to prevent, even though the option/table itself is
+    // otherwise treated as session-lifetime state that `ucinewgame`
+    // doesn't touch (same convention `num_threads`/`hash_size_mb`
+    // themselves already follow just above).
+    std::optional<search::TranspositionTable> persistent_tt;
+    emplace_persistent_tt(persistent_tt, hash_size_mb);
     int move_overhead_ms = kMinMoveOverheadMs;
     // `MultiPV` (ROADMAP.md Phase 8, "Full UCI option set" -- the last
     // sub-item, completing this bullet): same session-lifetime,
@@ -1475,19 +1593,48 @@ void run(std::istream& in, std::ostream& out) {
             abandon_pondering(ponder); // A new game starting mid-ponder is out-of-protocol; degrade gracefully.
             pos = board::start_position();
             game_history.clear();
+            // A real clear() (ROADMAP.md Priority Fixes, 2026-09-08,
+            // "Persistent, engine-lifetime transposition table"), not a
+            // rebuild -- see persistent_tt's own declaration comment
+            // above for why a new game clears it while `setoption`
+            // changes are otherwise treated as surviving `ucinewgame`.
+            persistent_tt->clear();
         } else if (cmd == "position") {
             abandon_pondering(ponder); // Same rationale as ucinewgame above.
             handle_position(pos, game_history, tokens);
         } else if (cmd == "setoption") {
+            const std::size_t previous_hash_size_mb = hash_size_mb;
             handle_setoption(num_threads, hash_size_mb, move_overhead_ms, multi_pv, skill_level,
                               contempt_cp, tokens);
+            if (hash_size_mb != previous_hash_size_mb) {
+                // Rebuilding persistent_tt below destroys the old
+                // object outright and replaces it with a fresh one at
+                // the new size (TranspositionTable has no in-place
+                // resize -- persistent_tt's own declaration comment,
+                // above). If a `go ponder` search is still running
+                // against the OLD object (start_pondering() shares this
+                // same table with its background thread), destroying it
+                // out from under that thread would be a genuine use-
+                // after-free, not just a lost cache -- so, exactly like
+                // `position`/`ucinewgame`/a second `go ponder` arriving
+                // mid-ponder, this is treated as an out-of-protocol
+                // situation handled defensively via abandon_pondering()
+                // (which stops and JOINS that thread before returning,
+                // guaranteeing no concurrent access remains) before the
+                // rebuild -- a real GUI pauses and resumes pondering
+                // around option changes, never resizes Hash mid-think,
+                // so discarding that one ponder search here is an
+                // acceptable, safe response, not a real compromise.
+                abandon_pondering(ponder);
+                emplace_persistent_tt(persistent_tt, hash_size_mb);
+            }
         } else if (cmd == "go") {
             if (has_token(tokens, "ponder")) {
                 start_pondering(pos, game_history, tokens, num_threads, hash_size_mb,
-                                 move_overhead_ms, out, ponder);
+                                 move_overhead_ms, *persistent_tt, out, ponder);
             } else {
                 handle_go(pos, game_history, tokens, num_threads, hash_size_mb, move_overhead_ms,
-                          multi_pv, skill_level, skill_rng, contempt_cp, out);
+                          multi_pv, skill_level, skill_rng, contempt_cp, *persistent_tt, out);
             }
         } else if (cmd == "ponderhit") {
             handle_ponderhit(ponder);
