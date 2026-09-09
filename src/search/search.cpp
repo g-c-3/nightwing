@@ -375,6 +375,43 @@ constexpr std::array<int, kRazorMaxDepth + 1> kRazorMargins = {
     0, 300, 400, 500,
 };
 
+/// Reverse futility / static null-move pruning (CPW "Reverse Futility
+/// Pruning" / "Static Null Move Pruning" -- ROADMAP.md Priority Fixes,
+/// 2026-09-08, "the natural third leg alongside the existing futility
+/// and razoring"; negamax()'s own node-level check right after IIR,
+/// before NMP, below -- see this function's own header comment for the
+/// full placement rationale). Razoring's mirror image, one level up
+/// from ProbCut's own already-existing "fail high early" idea: instead
+/// of a wide margin below alpha suggesting no move here plausibly
+/// RECOVERS (razoring), a wide margin above BETA suggests any move
+/// here plausibly ALREADY fails high, cheaply enough to check (one
+/// eval::evaluate() call, no move made, no recursive search at all --
+/// unlike NMP, which pays for a reduced-depth recursive probe to reach
+/// the same kind of verdict) that it's worth pruning the entire node
+/// outright on that evidence alone, fail-soft (the static eval itself,
+/// matching razoring's/ProbCut's own fail-soft convention, not just
+/// `beta`). Same fixed-lookup-table shape as kFutilityMargins/
+/// kRazorMargins above (index 0 unused, not yet tuned), and the same
+/// linear-per-remaining-ply growth kFutilityMargins already uses (this
+/// file's own stated preference for the simplest defensible first
+/// draft) -- but at a meaningfully DEEPER cutoff (kReverseFutilityMaxDepth
+/// = 6) than futility/razoring's shared depth-3 ceiling: unlike those
+/// two, which decide whether an individual QUIET move (futility) or
+/// this node's ENTIRE move loop (razoring) can plausibly change a
+/// pessimistic verdict, this technique's own static eval only has to
+/// clear a single, symmetric bar -- "is the position already good
+/// enough" -- which stays a meaningfully reliable signal somewhat
+/// deeper than "how much could still change" does. kSeePruningMaxDepth
+/// (`negamax()`'s own SEE-based capture-pruning check, above) is the
+/// only other pruning technique in this file that already reaches this
+/// same depth-6 ceiling, for a related reason (its own verdict --
+/// "this one capture is clearly bad" -- is similarly a stronger,
+/// longer-lived signal than futility/razoring's own margin estimates).
+constexpr int kReverseFutilityMaxDepth = 6;
+constexpr std::array<int, kReverseFutilityMaxDepth + 1> kReverseFutilityMargins = {
+    0, 90, 180, 270, 360, 450, 540,
+};
+
 /// ProbCut (CPW "ProbCut", negamax()'s own node-level check just before
 /// the main move loop below) constants. Opposite end of the depth
 /// spectrum from futility/razoring above: those apply near the leaves
@@ -855,6 +892,20 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
 /// mate-range clamp and for the identical reason: a raw score from a
 /// REDUCED search shouldn't be trusted as an exact mate distance).
 ///
+/// Reverse futility / static null-move pruning (CPW's own name for
+/// this technique -- see this file's own kReverseFutility* constants,
+/// above, for the full rationale and its relationship to razoring/
+/// futility/ProbCut) is the node-level check right after IIR, before
+/// NMP, below -- the cheapest of this function's static-eval-based
+/// pruning techniques (a single eval::evaluate() call, no move made,
+/// no recursive search at all), which is why it runs FIRST among them:
+/// if this node's static eval already clears beta by more than a
+/// depth-scaled margin, that's taken as strong enough evidence a real
+/// search here would also fail high that it's worth pruning outright,
+/// fail-soft (the static eval itself), without paying for NMP's own
+/// reduced-depth recursive probe or reaching razoring/futility's own,
+/// separately-computed static eval at all.
+///
 /// Null-move pruning (see the NMP block right after IIR, below) needs
 /// one more piece of state IIR/IID's own logic never did: whether a
 /// null move is even allowed at this node. `allow_null_move` defaults
@@ -1234,6 +1285,30 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // searched, not the depth this call was originally asked for.
     if (!probe.hit && depth >= kIIRMinDepth) {
         depth -= kIIRReduction;
+    }
+
+    // Reverse futility / static null-move pruning (CPW's own name;
+    // this function's own header comment and this file's own
+    // kReverseFutility* constants, above, have the full rationale):
+    // the cheapest of this function's static-eval-based pruning
+    // techniques, so it runs first -- before NMP's own reduced-depth
+    // recursive probe, and before razoring/futility's own, separately-
+    // computed static eval further below. Guards mirror NMP's own,
+    // just below, for the identical reasons: not in check (a static
+    // eval taken while in check is meaningless -- the side to move
+    // has no quiet options to weigh); shallow remaining depth only
+    // (kReverseFutilityMaxDepth -- the margin's own reliability
+    // shrinks the deeper the remaining search is, same reasoning as
+    // futility/razoring's own depth ceilings); and beta not already
+    // mate-range (an inflated fail-high verdict built from comparing
+    // an ordinary static eval against a MATE score would be
+    // meaningless, same reasoning as NMP's own beta guard just below).
+    if (!in_check(pos) && depth <= kReverseFutilityMaxDepth && beta < kMateThreshold) {
+        const int white_relative = eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights);
+        const int rfp_static_eval = us == Color::White ? white_relative : -white_relative;
+        if (rfp_static_eval - kReverseFutilityMargins[static_cast<std::size_t>(depth)] >= beta) {
+            return rfp_static_eval;
+        }
     }
 
     // Null-move pruning (CPW "Null Move Pruning"): if we're not in
