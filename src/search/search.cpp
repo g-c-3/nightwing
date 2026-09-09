@@ -9,6 +9,7 @@
 #include <chrono>
 #include <memory>
 #include <new>
+#include <optional>
 #include <span>
 #include <thread>
 #include <utility>
@@ -108,11 +109,66 @@ constexpr std::size_t kDefaultEvalCacheSizeKB = 2048;
 /// where malloc failure is reported normally), but is not, by itself,
 /// a substitute for keeping `kMaxHashMB` realistic for the machines
 /// this engine actually runs on.
+///
+/// Promoted out of this file's anonymous namespace (ROADMAP.md Priority
+/// Fixes, 2026-09-08, "Persistent, engine-lifetime transposition
+/// table") and declared publicly in search.h so src/uci/uci.cpp can
+/// construct its own persistent TranspositionTable with the exact same
+/// graceful-fallback behavior every top-level search call already
+/// gets, rather than calling TranspositionTable's raw constructor
+/// directly and losing this function's own std::bad_alloc handling for
+/// that one object specifically. Every existing in-file caller
+/// (search_fixed_depth(), search_iterative_deepening(),
+/// search_iterative_deepening_multipv()) is unaffected -- unqualified
+/// calls to this name from elsewhere in this same translation unit
+/// resolve identically whether the function lives inside the anonymous
+/// namespace or, as now, directly in the enclosing nightwing::search
+/// namespace.
+} // namespace
+
 [[nodiscard]] TranspositionTable make_transposition_table(std::size_t requested_mb) {
     std::size_t size_mb = requested_mb < 1 ? 1 : requested_mb;
     while (true) {
         try {
             return TranspositionTable(size_mb);
+        } catch (const std::bad_alloc&) {
+            if (size_mb <= 1) {
+                throw; // Nothing smaller left to try -- let it propagate.
+            }
+            size_mb /= 2;
+            if (size_mb < 1) {
+                size_mb = 1;
+            }
+        }
+    }
+}
+
+namespace {
+
+/// Fills `opt` with a TranspositionTable sized to `requested_mb`, using
+/// the exact same graceful, halve-and-retry std::bad_alloc fallback as
+/// make_transposition_table() (search.h/.cpp, above) -- but by calling
+/// TranspositionTable's own real constructor (a plain std::size_t
+/// argument) directly via std::optional::emplace(), rather than move-
+/// constructing from an already-built temporary the way
+/// `TranspositionTable tt = make_transposition_table(...)` can. That
+/// distinction matters here specifically: TranspositionTable (via
+/// TTEntry's/its own current_age_'s atomic members, tt.h) is neither
+/// copyable nor movable, so `opt.emplace(make_transposition_table(...))`
+/// would try to move-construct into the optional's storage and fail to
+/// compile -- emplace()'ing the plain size_t argument instead sidesteps
+/// that entirely, since the table is then constructed in place, not
+/// built elsewhere and relocated. Used by every "no external_tt was
+/// supplied" fallback path below (ROADMAP.md Priority Fixes,
+/// 2026-09-08, "Persistent, engine-lifetime transposition table")
+/// instead of duplicating this retry loop three times.
+void emplace_transposition_table(std::optional<TranspositionTable>& opt,
+                                  std::size_t requested_mb) {
+    std::size_t size_mb = requested_mb < 1 ? 1 : requested_mb;
+    while (true) {
+        try {
+            opt.emplace(size_mb);
+            return;
         } catch (const std::bad_alloc&) {
             if (size_mb <= 1) {
                 throw; // Nothing smaller left to try -- let it propagate.
@@ -2224,7 +2280,8 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
 
 SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::uint64_t> game_history,
                                  const eval::MaterialWeights* material_weights, int num_threads,
-                                 std::size_t hash_size_mb, int contempt_cp) {
+                                 std::size_t hash_size_mb, int contempt_cp,
+                                 TranspositionTable* external_tt) {
     assert(depth >= 1 && "search_fixed_depth: depth must be at least 1");
 
     // Contempt (ROADMAP.md Phase 8, "Contempt / draw score adjustment"):
@@ -2244,14 +2301,25 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
 
     // Fresh, private tables for this one call (see tt.h's header
     // comment, which applies equally to KillerTable/HistoryTable/
-    // ContinuationHistoryTable -- search/ordering.h). `hash_size_mb`
-    // (defaulting to search.h's kDefaultTTSizeMB) is the UCI `Hash`
-    // option's value (ROADMAP.md Phase 8) -- the table itself is still
-    // constructed fresh per call, not yet a persistent global resized
-    // in place (tt.h's own LIFETIME NOTE). make_transposition_table()
-    // (above) falls back to a smaller size rather than crashing if
-    // `hash_size_mb` is too large for this machine to actually satisfy.
-    TranspositionTable tt = make_transposition_table(hash_size_mb);
+    // ContinuationHistoryTable -- search/ordering.h) -- UNLESS
+    // `external_tt` was provided (ROADMAP.md Priority Fixes, 2026-09-08,
+    // "Persistent, engine-lifetime transposition table"; this
+    // parameter's own doc comment, search.h), in which case that
+    // caller-owned table is used directly instead, and `hash_size_mb`
+    // is ignored. `owned_tt` only ever gets constructed in the
+    // `external_tt == nullptr` branch -- std::optional so the fallback
+    // path pays zero cost (no default-constructed placeholder table)
+    // when a persistent one was supplied. `hash_size_mb` (defaulting to
+    // search.h's kDefaultTTSizeMB) is the UCI `Hash` option's value
+    // (ROADMAP.md Phase 8) for the `external_tt == nullptr` path only --
+    // make_transposition_table() (search.h/.cpp) falls back to a
+    // smaller size rather than crashing if it's too large for this
+    // machine to actually satisfy.
+    std::optional<TranspositionTable> owned_tt;
+    if (external_tt == nullptr) {
+        emplace_transposition_table(owned_tt, hash_size_mb);
+    }
+    TranspositionTable& tt = external_tt != nullptr ? *external_tt : *owned_tt;
     KillerTable killers;
     HistoryTable history;
     ContinuationHistoryTable cont_history;
@@ -2454,7 +2522,7 @@ SearchResult search_iterative_deepening_multipv(
     Position& pos, int max_depth, int time_limit_ms, std::span<const std::uint64_t> game_history,
     const IterationCallback& on_iteration, const eval::MaterialWeights* material_weights,
     int max_lines, std::atomic<bool>* external_stop, std::size_t hash_size_mb,
-    int contempt_white_pov) {
+    int contempt_white_pov, TranspositionTable* external_tt) {
     const auto start_time = std::chrono::steady_clock::now();
 
     // Same table set, same lifetime rationale, as the single-line path
@@ -2464,8 +2532,16 @@ SearchResult search_iterative_deepening_multipv(
     // this function's own caller constructs an entirely separate set
     // for the single-line path it does NOT take when this function is
     // used instead (search_iterative_deepening()'s own top-of-function
-    // branch, below).
-    TranspositionTable tt = make_transposition_table(hash_size_mb);
+    // branch, below). `external_tt` (ROADMAP.md Priority Fixes,
+    // 2026-09-08, "Persistent, engine-lifetime transposition table")
+    // follows the exact same std::optional-guarded pattern as
+    // search_fixed_depth()'s own copy of this same logic, above --
+    // see that function's comment for the full rationale.
+    std::optional<TranspositionTable> owned_tt;
+    if (external_tt == nullptr) {
+        emplace_transposition_table(owned_tt, hash_size_mb);
+    }
+    TranspositionTable& tt = external_tt != nullptr ? *external_tt : *owned_tt;
     KillerTable killers;
     auto history = std::make_unique<HistoryTable>();
     auto cont_history = std::make_unique<ContinuationHistoryTable>();
@@ -2623,7 +2699,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                                          const eval::MaterialWeights* material_weights,
                                          int num_threads, std::atomic<bool>* external_stop,
                                          std::size_t hash_size_mb, int multi_pv,
-                                         int soft_time_limit_ms, int contempt_cp) {
+                                         int soft_time_limit_ms, int contempt_cp,
+                                         TranspositionTable* external_tt) {
     assert(max_depth >= 1 && "search_iterative_deepening: max_depth must be at least 1");
 
     // Contempt (ROADMAP.md Phase 8, "Contempt / draw score adjustment"):
@@ -2654,7 +2731,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             return search_iterative_deepening_multipv(pos, max_depth, time_limit_ms, game_history,
                                                         on_iteration, material_weights, max_lines,
                                                         external_stop, hash_size_mb,
-                                                        contempt_white_pov);
+                                                        contempt_white_pov, external_tt);
         }
         // max_lines <= 1 (0 or 1 legal root moves): nothing extra to
         // show regardless of what `multi_pv` requested -- fall through
@@ -2673,8 +2750,16 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // (plain or continuation) from a shallower iteration is still a
     // reasonable ordering bet for the next, deeper one, and letting them
     // persist is exactly how real engines use iterative deepening to
-    // make each successive iteration cheaper.
-    TranspositionTable tt = make_transposition_table(hash_size_mb);
+    // make each successive iteration cheaper. `external_tt` (ROADMAP.md
+    // Priority Fixes, 2026-09-08, "Persistent, engine-lifetime
+    // transposition table"): same std::optional-guarded pattern as
+    // search_fixed_depth()'s own copy of this logic -- see that
+    // function's comment for the full rationale.
+    std::optional<TranspositionTable> owned_tt;
+    if (external_tt == nullptr) {
+        emplace_transposition_table(owned_tt, hash_size_mb);
+    }
+    TranspositionTable& tt = external_tt != nullptr ? *external_tt : *owned_tt;
     KillerTable killers;
     // Heap-allocated, not stack locals -- see run_lazy_smp_helper()'s
     // own identical pattern and comment just above in this file for the

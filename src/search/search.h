@@ -46,6 +46,17 @@
 
 namespace nightwing::search {
 
+// Forward declaration only -- full definition lives in search/tt.h.
+// Neither search_fixed_depth() nor search_iterative_deepening() below
+// need anything but a pointer to it (the `external_tt` parameter,
+// ROADMAP.md Priority Fixes, 2026-09-08, "Persistent, engine-lifetime
+// transposition table"), so this file deliberately does not #include
+// "search/tt.h" itself -- callers that actually construct/own a
+// TranspositionTable (src/uci/uci.cpp) already include tt.h (or get it
+// transitively via this header's own make_transposition_table()
+// declaration below) for the real definition.
+class TranspositionTable;
+
 /// Mate/draw score constants, expressed in the same centipawn-like
 /// units as eval::evaluate() so search and eval scores compose
 /// directly. Mate scores encode "distance to mate in plies" by being
@@ -76,6 +87,22 @@ inline constexpr int kMateThreshold = kMateScore - 1000;
 /// lifetime, which this option's value feeds into every `go` call
 /// rather than a table actually being resized in place.
 inline constexpr std::size_t kDefaultTTSizeMB = 16;
+
+/// Constructs a TranspositionTable sized to `requested_mb` megabytes,
+/// with the same graceful, halve-and-retry fallback on std::bad_alloc
+/// every top-level search call already gets internally -- see
+/// search.cpp's own definition for the full behavior and its own
+/// documented limitations (ASan/OS-OOM-kill paths it can't catch).
+/// Declared here (defined in search.cpp, outside that file's anonymous
+/// namespace) specifically so src/uci/uci.cpp can construct its own
+/// persistent TranspositionTable (ROADMAP.md Priority Fixes,
+/// 2026-09-08, "Persistent, engine-lifetime transposition table") the
+/// same safe way, rather than calling TranspositionTable's raw
+/// constructor directly. Callers need the full definition of
+/// TranspositionTable (search/tt.h) to actually call this -- this
+/// header only forward-declares the type (above) since it otherwise
+/// only ever needs a pointer to one.
+[[nodiscard]] TranspositionTable make_transposition_table(std::size_t requested_mb);
 
 /// Shared state for mid-search time-budget interruption (ROADMAP.md
 /// Priority Fix, "Mid-search time checks" — promoted once its own
@@ -335,13 +362,31 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// pre-existing behavior (a plain, uncontemptuous 0 for every draw) --
 /// every pre-existing caller (every test, `bench`, the tuner) is
 /// completely unaffected.
+///
+/// `external_tt` (ROADMAP.md Priority Fixes, 2026-09-08, "Persistent,
+/// engine-lifetime transposition table"): `nullptr` (the default) is
+/// the pre-existing behavior, completely unchanged -- this call
+/// constructs its own fresh, private TranspositionTable sized by
+/// `hash_size_mb` exactly as it always has (tt.h's own LIFETIME NOTE).
+/// When non-null, this call uses `*external_tt` directly INSTEAD of
+/// constructing a private one -- `hash_size_mb` is then ignored
+/// entirely (the caller already sized `*external_tt` when it was
+/// constructed; this function has no way to resize an existing table
+/// in place, nor any need to). The canonical use is src/uci/uci.cpp's
+/// own persistent, engine-lifetime table, shared across every real
+/// `go` call within one UCI session so hash information genuinely
+/// carries over from one move to the next the way a real timed game
+/// expects -- every test/bench/tuner call site that doesn't pass this
+/// parameter is entirely unaffected, still getting its own private,
+/// game-independent table exactly as before this parameter existed.
 [[nodiscard]] SearchResult search_fixed_depth(board::Position& pos, int depth,
                                                std::span<const std::uint64_t> game_history = {},
                                                const eval::MaterialWeights* material_weights =
                                                    nullptr,
                                                int num_threads = 1,
                                                std::size_t hash_size_mb = kDefaultTTSizeMB,
-                                               int contempt_cp = 0);
+                                               int contempt_cp = 0,
+                                               TranspositionTable* external_tt = nullptr);
 
 /// Runs iterative deepening: searches at depth = 1, 2, 3, ... up to
 /// `max_depth`, keeping the most recently *completed* iteration's
@@ -542,11 +587,23 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// `MultiPV` compose correctly together with no special-casing needed
 /// by a caller using both at once. Defaults to 0, the pre-existing
 /// behavior -- every pre-existing caller is completely unaffected.
+///
+/// `external_tt` (ROADMAP.md Priority Fixes, 2026-09-08, "Persistent,
+/// engine-lifetime transposition table"): same meaning, and same
+/// `nullptr`-default-means-completely-unaffected contract, as
+/// search_fixed_depth()'s own parameter of the same name above --
+/// `hash_size_mb` is ignored whenever this is non-null. Threaded
+/// through to search_iterative_deepening_multipv() too (this file's
+/// internal MultiPV implementation) when `multi_pv` genuinely takes
+/// effect, so a persistent table set up by src/uci/uci.cpp keeps
+/// working correctly regardless of whether `MultiPV` is active for a
+/// given `go`.
 [[nodiscard]] SearchResult search_iterative_deepening(
     board::Position& pos, int max_depth, int time_limit_ms = 0,
     std::span<const std::uint64_t> game_history = {}, IterationCallback on_iteration = nullptr,
     const eval::MaterialWeights* material_weights = nullptr, int num_threads = 1,
     std::atomic<bool>* external_stop = nullptr, std::size_t hash_size_mb = kDefaultTTSizeMB,
-    int multi_pv = 1, int soft_time_limit_ms = 0, int contempt_cp = 0);
+    int multi_pv = 1, int soft_time_limit_ms = 0, int contempt_cp = 0,
+    TranspositionTable* external_tt = nullptr);
 
 } // namespace nightwing::search
