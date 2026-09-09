@@ -520,6 +520,40 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
 }
 
 TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "LMR's continuous-formula reduction (lmr_reduction()) in place of the old two-tier step "
+          "function",
+          "[search][lmr]") {
+    init_all();
+    // Session 98: the test just above already regression-tests "mate
+    // still found with LMR active" in general, but predates the
+    // continuous-formula change (lmr_reduction(), search.cpp) and so
+    // never actually exercised it -- this is that same regression
+    // re-run specifically against the NEW reduction magnitude, not just
+    // a duplicate. lmr_reduction() itself lives in search.cpp's
+    // anonymous namespace (no header declaration), so it isn't directly
+    // unit-testable from this file the way, say, CaptureHistoryTable's
+    // own public methods are (ordering_tests.cpp) -- an
+    // integration-level check via the real search entry point, reusing
+    // this file's own established shared fixture, is the only testing
+    // seam available for it, same as every other negamax()-internal
+    // technique this file already regression-tests this way (IIR/NMP/
+    // RFP tests just above). Depth 6 is unchanged from the original LMR
+    // test above for the identical reason (comfortably exceeds
+    // kLMRMinDepth/kLMRMinMoveIndex at internal nodes, so the new
+    // formula -- not just the old eligibility gating, which is
+    // unchanged -- gets real exercise here). A version of this test run
+    // against a first, uncorrected coefficient pair (kLMRBase=0.5,
+    // kLMRScale=0.4) still passed -- this mate-in-3 fixture did not
+    // itself catch that session's regression (docs/DECISIONS.md,
+    // 2026-09-10); the KBPK fortress case in endgame_suite_tests.cpp
+    // did. Kept here anyway as this file's own standing per-technique
+    // regression check, not as a substitute for that other coverage.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
           "late move pruning active",
           "[search][lmp]") {
     init_all();
