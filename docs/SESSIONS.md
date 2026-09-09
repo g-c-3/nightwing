@@ -4,7 +4,22 @@ Newest entry at top.
 
 ---
 
-### Session 96 — 2026-09-09 — Persistent, engine-lifetime transposition table
+### Session 97 — 2026-09-09 — Reverse futility / static null-move pruning
+
+**Built:**
+- `src/search/search.cpp`: new `kReverseFutilityMaxDepth`/`kReverseFutilityMargins` constants (fixed lookup table, index 0 unused, linear 90cp/ply, depth-6 ceiling); new pruning check in `negamax()`, placed right after IIR and before null-move pruning — the cheapest of this function's static-eval-based checks, so it runs first among them. `negamax()`'s own header doc comment gained a new paragraph documenting the addition and its placement rationale.
+- `docs/ROADMAP.md`: Reverse futility / static null-move pruning item in the Priority Fixes (2026-09-08) section checked off.
+- `tests/search_tests.cpp`: 1 new regression test, reusing the same forced-mate-in-3 fixture every other move-ordering/pruning technique in this file already regression-tests against, inserted right after the IIR test (matching this new check's own execution-order placement in `negamax()`, right after IIR).
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-09 (2) — placement before NMP (cheapest check first); a deeper depth ceiling than futility/razoring (matching `kSeePruningMaxDepth`'s own depth-6 precedent) and why; the real bench node-count drop this produced; a deterministic (confirmed via a controlled A/B and 4 repeated runs, not flaky) 47-assertion test-count shift traced to this codebase's known class of wall-clock-time-sensitive tests, judged benign without further root-causing since zero tests failed either way.
+
+**Verification:** `search.cpp` compiled standalone with `-Wall -Wextra -Wpedantic` first: zero warnings. Full suite (raw-`g++`-against-fetched-Catch2-amalgamated, same faster sandbox path as Session 96): **527 test cases, 53,411 assertions, all green, zero failures.** A controlled A/B (identical build, this session's own new check's guard forced `false`) confirmed 53,410 (before this session's own new dedicated `[rfp]` regression test in `tests/search_tests.cpp` added one more passing assertion, bringing the final count to 53,411) vs. Session 96's own exact 53,457-assertion baseline when disabled, isolating this session's change as the sole source of the difference. `bench` re-run: **21,938 total nodes, down from Session 96's own 81,197-node baseline (-73%)** — a large, expected drop for a genuine new whole-node pruning technique; no strength claim made from the node-count change alone (no `nightwing_match`/`nightwing_sprt` run this session). A separate ASan+UBSan full-suite run came back fully clean (527/527, zero findings, including the new `[rfp]` test). The real, compiled `nightwing` UCI binary was hand-exercised on an out-of-book position (`go depth 10`): sane, legal PVs at every depth, no crash.
+
+**Next session starts:** top of the Priority Fixes (2026-09-08) section's remaining items — "LMR as a continuous formula" is next (`R = a + ln(depth)*ln(move_count)*b` in place of the current 2-value step table). Read `src/search/search.cpp`'s existing LMR implementation (the move loop's own reduction logic, `negamax()`) before writing anything — check whether `<cmath>` is already included for `std::log()`.
+
+---
+
+
 
 **Built:**
 - `src/search/search.h`/`.cpp`: `TranspositionTable` forward-declared; `make_transposition_table()` promoted out of `search.cpp`'s anonymous namespace to a public declaration in `search.h` (usable by other translation units, though `uci.cpp` ended up needing its own small variant instead — see docs/DECISIONS.md). New trailing `TranspositionTable* external_tt = nullptr` parameter on `search_fixed_depth()`, `search_iterative_deepening()`, and the internal `search_iterative_deepening_multipv()` — `nullptr` (default) is byte-for-byte the old behavior; non-null uses that caller-owned table directly, ignoring `hash_size_mb`. New internal `emplace_transposition_table()` helper works around a real compile hazard (`TranspositionTable` is non-movable/non-copyable via its atomic members) found during this session's own build-and-test pass.

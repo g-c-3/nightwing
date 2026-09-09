@@ -476,10 +476,24 @@ Priority Fixes section above).
       Session 95's own baseline exactly, as expected since `run_bench()`
       deliberately still constructs its own private table for
       reproducibility — untouched by this change).
-- [ ] Reverse futility / static null-move pruning — a node-level pre-
+- [x] Reverse futility / static null-move pruning — was a node-level pre-
       move-loop check (`if static_eval - margin*depth >= beta: return
       static_eval`), the natural third leg alongside the existing
-      futility and razoring, currently absent.
+      futility and razoring, previously absent. DONE, Session 97: a new
+      cascading check in `negamax()` (`src/search/search.cpp`), placed
+      right after IIR and before null-move pruning (the cheapest of
+      this function's static-eval-based pruning techniques — no move
+      made, no recursive search — so it runs first among them); new
+      `kReverseFutilityMaxDepth`/`kReverseFutilityMargins` constants,
+      same fixed-lookup-table shape as `kFutilityMargins`/
+      `kRazorMargins` but reaching a deeper ceiling (depth 6, matching
+      this same file's `kSeePruningMaxDepth`) since this technique's
+      own verdict is a more reliable signal than futility/razoring's.
+      See docs/DECISIONS.md, 2026-09-09 (2), including the real bench
+      node-count drop this produced (a large one, as expected for a
+      genuine new pruning technique, not a bug) and the deterministic
+      (not flaky) small test-assertion-count shift it also produced,
+      isolated to time-budget-sensitive tests and confirmed benign.
 - [ ] LMR as a continuous formula (e.g. `R = a + ln(depth)*ln(move_count)*b`)
       rather than the current 2-value step table.
 - [ ] An "improving" flag (is static eval better than 2 plies ago?)
