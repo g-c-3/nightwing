@@ -336,6 +336,66 @@ int lmr_reduction(int depth, int move_index) {
     return static_cast<int>(table[static_cast<std::size_t>(d)][static_cast<std::size_t>(m)]);
 }
 
+/// Sentinel for "no genuine static eval recorded at this ply" in
+/// negamax()'s own `static_eval_history` array (its own doc comment,
+/// negamax() below, has the full rationale) -- written whenever a node
+/// is in check (a static eval taken while in check is meaningless, the
+/// same reasoning RFP/NMP/razoring/futility already exclude in-check
+/// nodes for elsewhere in this file) instead of a real number, so a
+/// later "improving" comparison against a stale or meaningless sample
+/// can detect and skip it rather than silently comparing against
+/// nonsense. Set to kInfinity (never a genuine eval::evaluate() result,
+/// which is used elsewhere in this file only for the alpha/beta bound
+/// convention, never returned as an actual position's score) so it
+/// can't collide with a real value by construction.
+constexpr int kNoStaticEval = kInfinity;
+
+/// "Improving" flag constants (ROADMAP.md's own "An 'improving' flag"
+/// item, Priority Fixes (2026-09-08) section) -- see negamax()'s own
+/// doc comment on `improving` for the full derivation of what the flag
+/// means and how it's computed. ROADMAP.md's own item text names three
+/// techniques (futility pruning, LMR, NMP); only two ended up actually
+/// applying an adjustment this session -- see kImprovingReductionBonus's
+/// own doc comment just below for LMR's own version, tried and then
+/// dropped after it broke 2 existing regression tests, with no
+/// depth-gating fix found that preserved both tests AND a genuine
+/// LMR-side effect (docs/DECISIONS.md, 2026-09-10 (2), has the full sweep).
+/// Not applied to RFP/razoring/LMP/history pruning either -- a
+/// deliberately narrower scope than "every static-eval-based technique
+/// in this file," left for a future session to extend if warranted,
+/// matching this project's standing "don't expand a queued item's scope
+/// beyond what it actually asked for" convention.
+///
+/// kImprovingReductionBonus: added to NMP's own reduction amount when
+/// NOT improving AND depth >= kNullMoveBigReductionDepth (NMP's own call
+/// site, its own doc comment there has the depth-gating rationale), on
+/// the reasoning that a static-eval trend that hasn't risen over the
+/// last 2 plies of this side's own moves makes the position more likely
+/// to genuinely be as unpromising as it looks, so a shallower
+/// verification is safer to trust there -- left unchanged (0 added)
+/// when improving. An identical adjustment was also tried at LMR's own
+/// call site (same reasoning, same constant) but dropped there
+/// entirely, not just depth-gated -- see this doc comment's own opening
+/// paragraph above for why, and that call site's own comment for the
+/// full account. The name stays generic ("Reduction", not
+/// "NmpReduction") in case a future session finds a working depth-gate
+/// or other fix for LMR's own version and this constant ends up shared
+/// again.
+///
+/// kImprovingFutilityMarginDelta: subtracted from kFutilityMargins'
+/// own per-depth value when NOT improving (shrinking the margin,
+/// making the "hopeless quiet move" verdict easier to reach -- the
+/// opposite-looking but equally-motivated adjustment: futility's own
+/// condition is a fail-LOW judgment, so the identical "trust a
+/// declining trend's own pessimism more" reasoning above pushes this
+/// margin down rather than the reduction up). Clamped to never take
+/// the effective margin below 0 at its own call site.
+///
+/// Neither constant is yet tuned -- same not-yet-SPRT-validated
+/// caveat as every other search constant in this file.
+constexpr int kImprovingReductionBonus = 1;
+constexpr int kImprovingFutilityMarginDelta = 60;
+
 /// Late move pruning (LMP) / move-count based pruning (CPW "Move Count
 /// Based Pruning", negamax()'s move loop below) constants. Only applies
 /// at shallow remaining depth (kLMPMaxDepth) -- the technique's own
@@ -1203,12 +1263,48 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
                                                     : kDrawScore + contempt_white_pov;
 }
 
+/// `static_eval_history` (negamax()'s own new parameter, ROADMAP.md's
+/// "An 'improving' flag" item): a per-ply record of this search's own
+/// static evals, mirroring `path`'s own per-ply-array-reused-across-the-
+/// whole-recursion shape and lifetime (one array, owned by whichever
+/// top-level search entry point started this call tree, threaded
+/// unchanged through every recursive negamax() call below). Written
+/// unconditionally once near the top of every negamax() call (right
+/// after IIR, before RFP -- see that new block's own inline comment),
+/// to `kNoStaticEval` when in check and to a genuine side-to-move-
+/// relative eval::evaluate() result otherwise -- deliberately NOT
+/// gated behind any of RFP/razoring/futility's own depth ceilings the
+/// way each of THEIR individual static-eval computations still is,
+/// since `improving` itself (derived from this array, same block) feeds
+/// LMR and NMP too, neither of which has an upper depth ceiling the way
+/// RFP/razoring/futility do. This is a genuinely new eval::evaluate()
+/// call at nodes deeper than kReverseFutilityMaxDepth that never
+/// computed a static eval at all before this session -- eval_cache
+/// absorbs the cost when the same position gets evaluated again
+/// elsewhere at the same node (razoring/futility's own still-separate
+/// calls, kept deliberately un-merged with this one for a smaller,
+/// lower-risk diff -- see docs/DECISIONS.md, 2026-09-10), but a node
+/// past every other technique's own ceiling now pays for exactly one
+/// eval::evaluate() call it previously avoided entirely. `improving`
+/// itself: true when this node's own static eval is GREATER than the
+/// value recorded 2 plies shallower (the most recent point it was also
+/// this same side's move to move, since turns alternate every ply) --
+/// false whenever that comparison isn't available at all (ply < 2) or
+/// either sample is `kNoStaticEval` (either node was in check, where a
+/// static eval is meaningless), a deliberately conservative default
+/// rather than guessing. Consumed at exactly the three call sites
+/// ROADMAP.md's own item text names -- futility pruning's margin, LMR's
+/// reduction, NMP's reduction (each site's own inline comment) -- not
+/// RFP/razoring, a deliberately narrower scope than "every static-eval
+/// technique in this file" (this constant's own doc comment, above,
+/// has the full rationale for that scope choice).
 int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_t& nodes,
             TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
             ContinuationHistoryTable& cont_history, CaptureHistoryTable& capture_history,
             board::PieceType prev_piece, board::Square prev_to,
             std::span<const std::uint64_t> game_history,
-            std::array<std::uint64_t, kMaxPly>& path, eval::PawnHashTable& pawn_tt,
+            std::array<std::uint64_t, kMaxPly>& path,
+            std::array<int, kMaxPly>& static_eval_history, eval::PawnHashTable& pawn_tt,
             eval::EvalCache& eval_cache, const eval::MaterialWeights* material_weights,
             bool allow_null_move = true, SearchLimits* limits = nullptr,
             int contempt_white_pov = 0) {
@@ -1268,6 +1364,26 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // `path` is written this way, mirroring KillerTable's per-ply
         // array reuse).
         path[static_cast<std::size_t>(ply)] = key;
+        // `static_eval_history[ply]`'s own default for this call,
+        // written here for the identical reason `path[ply]` is written
+        // this early rather than after this function's own early-return
+        // gates just below (TT cutoff, draw, mate-distance pruning) --
+        // see negamax()'s own header-comment paragraph on
+        // `static_eval_history` for the bug this fixes: a first version
+        // of this array only ever got written past ALL of those gates
+        // (this function's own former "improving" block location, right
+        // after IIR), so any node that returned through one of them
+        // left this slot holding whatever a COMPLETELY UNRELATED earlier
+        // call happened to leave there (a stale, cross-branch, possibly
+        // cross-iteration value, not a real ancestor's own eval) --
+        // confirmed via persistent_tt_tests.cpp's own warm-TT-reuse
+        // regression test (more TT cutoffs, i.e. more skipped writes,
+        // measurably WORSENED behavior; docs/DECISIONS.md, 2026-09-10 (2),
+        // has the full diagnosis). Overwritten below, after IIR, with a
+        // genuine value whenever execution actually reaches that point
+        // -- this default is only ever what survives for a node that
+        // returns before then.
+        static_eval_history[static_cast<std::size_t>(ply)] = kNoStaticEval;
     }
     if (is_draw_by_rule(pos, key, ply, game_history, path)) {
         // Not stored in the TT -- see negamax()'s header comment on why
@@ -1361,6 +1477,33 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         depth -= kIIRReduction;
     }
 
+    // "Improving" flag (ROADMAP.md's "An 'improving' flag" item;
+    // negamax()'s own header comment, above `static_eval_history`'s
+    // parameter doc, has the full derivation). `static_eval_history[ply]`
+    // already holds `kNoStaticEval` at this point (written unconditionally
+    // much earlier, at `path[ply]`'s own write point -- see that write's
+    // own comment for why it has to happen that early rather than here);
+    // overwritten here with a genuine value only when this node actually
+    // reaches this point (past TT-cutoff/draw/mate-distance-pruning) AND
+    // isn't in check, exactly matching this file's existing RFP/NMP/
+    // razoring/futility convention of never trusting an in-check static
+    // eval. Computed here, before RFP/NMP/razoring/futility below, so
+    // `improving` is available to every one of them regardless of which
+    // (if any) of their own individual depth/beta/alpha guards this node
+    // happens to satisfy.
+    int node_static_eval = kNoStaticEval;
+    if (!in_check(pos)) {
+        const int white_relative = eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights);
+        node_static_eval = us == Color::White ? white_relative : -white_relative;
+        if (ply < kMaxPly) {
+            static_eval_history[static_cast<std::size_t>(ply)] = node_static_eval;
+        }
+    }
+    const bool improving =
+        ply >= 2 && node_static_eval != kNoStaticEval &&
+        static_eval_history[static_cast<std::size_t>(ply - 2)] != kNoStaticEval &&
+        node_static_eval > static_eval_history[static_cast<std::size_t>(ply - 2)];
+
     // Reverse futility / static null-move pruning (CPW's own name;
     // this function's own header comment and this file's own
     // kReverseFutility* constants, above, have the full rationale):
@@ -1431,13 +1574,38 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         if (eval::is_zugzwang_prone(eval::classify_endgame(pos))) {
             reduction = std::max(reduction - kZugzwangReductionDecrease, kZugzwangMinReduction);
         }
+        // "Improving" adjustment (ROADMAP.md's "improving flag" item;
+        // kImprovingReductionBonus's own doc comment above): a deeper
+        // probe reduction when this node's own static eval hasn't risen
+        // over the last 2 plies of this side's own moves -- the
+        // identical adjustment LMR's move loop applies below, for the
+        // identical reason. Gated to depth >= kNullMoveBigReductionDepth
+        // (the SAME depth already applied here), not applied at shallower
+        // NMP depths -- a first, ungated version of this bonus (applied
+        // at every NMP-eligible depth) broke endgame_suite_tests.cpp's
+        // Lucena-position regression test (docs/DECISIONS.md,
+        // 2026-09-10 (2)): a diagnostic sweep isolated the cause to this
+        // specific adjustment (not LMR's identical one, not the futility
+        // margin change), and gating it to only the already-more-
+        // aggressive big-reduction depth tier -- leaving shallow-depth
+        // NMP, closest to the leaf and so most precision-sensitive,
+        // untouched -- was the smallest change found to fix it. Clamped
+        // to `depth - 1` immediately after (this file's own LMR call
+        // site, below, applies the identical clamp for the identical
+        // reason) so the recursive call's own `depth - 1 - reduction`
+        // formula can never go negative.
+        if (!improving && depth >= kNullMoveBigReductionDepth) {
+            reduction += kImprovingReductionBonus;
+        }
+        reduction = std::min(reduction, depth - 1);
         UndoInfo null_undo;
         board::make_null_move(pos, null_undo);
         const int null_score = -negamax(pos, depth - 1 - reduction, -beta, -beta + 1, ply + 1, nodes,
                                          tt, killers, history, cont_history, capture_history,
                                          /*prev_piece=*/board::PieceType::None, /*prev_to=*/0,
-                                         game_history, path, pawn_tt, eval_cache, material_weights,
-                                         /*allow_null_move=*/false, limits, contempt_white_pov);
+                                         game_history, path, static_eval_history, pawn_tt, eval_cache,
+                                         material_weights, /*allow_null_move=*/false, limits,
+                                         contempt_white_pov);
         board::unmake_null_move(pos, null_undo);
         // A probe interrupted mid-search (limits->stopped) returns a
         // meaningless, truncated-subtree score (SearchLimits' own doc
@@ -1518,8 +1686,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             const int probcut_score =
                 -negamax(pos, depth - kProbCutReduction, -probcut_beta, -probcut_beta + 1, ply + 1,
                          nodes, tt, killers, history, cont_history, capture_history, probcut_moved_piece,
-                         probcut_move.to(), game_history, path, pawn_tt, eval_cache, material_weights,
-                         /*allow_null_move=*/true, limits, contempt_white_pov);
+                         probcut_move.to(), game_history, path, static_eval_history, pawn_tt, eval_cache,
+                         material_weights, /*allow_null_move=*/true, limits, contempt_white_pov);
             board::unmake_move(pos, probcut_move, probcut_undo);
             if (limits != nullptr && limits->stopped) {
                 // Truncated subtree (SearchLimits' own doc comment) --
@@ -1559,9 +1727,20 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         const int white_relative = eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights);
         static_eval = us == Color::White ? white_relative : -white_relative;
     }
-    const bool futility_prune_node =
-        futility_may_apply &&
-        static_eval + kFutilityMargins[static_cast<std::size_t>(depth)] <= alpha;
+    // "Improving" adjustment (ROADMAP.md's "improving flag" item;
+    // kImprovingFutilityMarginDelta's own doc comment above): a smaller
+    // effective margin -- an easier-to-satisfy "hopeless quiet move"
+    // verdict -- when this node's own static eval hasn't risen over the
+    // last 2 plies of this side's own moves. Clamped to never go
+    // negative (a negative margin would let futility_prune_node
+    // trigger even on moves that already RAISE the static eval, which
+    // was never this technique's intent).
+    const int futility_margin =
+        futility_may_apply
+            ? std::max(0, kFutilityMargins[static_cast<std::size_t>(depth)] -
+                              (improving ? 0 : kImprovingFutilityMarginDelta))
+            : 0;
+    const bool futility_prune_node = futility_may_apply && static_eval + futility_margin <= alpha;
 
     int best = -kInfinity;
     Move best_move; // Move() default (null) unless overwritten below — every real position has >=1 move here.
@@ -1668,7 +1847,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 const int alt_score =
                     -negamax(pos, singular_depth, -singular_beta, -singular_beta + 1, ply + 1, nodes,
                              tt, killers, history, cont_history, capture_history, alt_moved_piece, alt_move.to(),
-                             game_history, path, pawn_tt, eval_cache, material_weights,
+                             game_history, path, static_eval_history, pawn_tt, eval_cache, material_weights,
                              /*allow_null_move=*/true, limits, contempt_white_pov);
                 board::unmake_move(pos, alt_move, alt_undo);
                 if (limits != nullptr && limits->stopped) {
@@ -1758,8 +1937,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // ordering.
             score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt, killers,
                               history, cont_history, capture_history, moved_piece, move.to(), game_history, path,
-                              pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits,
-                              contempt_white_pov);
+                              static_eval_history, pawn_tt, eval_cache, material_weights,
+                              /*allow_null_move=*/true, limits, contempt_white_pov);
         } else {
             // Futility pruning (CPW "Futility Pruning", this function's
             // header comment): a node-level condition -- computed once,
@@ -1840,7 +2019,18 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // reduction` (this call site's own formula, just below)
             // can never go negative -- the table itself has no notion
             // of the caller's own depth-1 floor, only of depth/move-
-            // index bounds (see that function's own doc comment).
+            // index bounds (see that function's own doc comment). No
+            // "improving" adjustment here (ROADMAP.md's own "improving
+            // flag" item names futility/LMR/NMP, but NMP's identical
+            // adjustment, just above, is where kImprovingReductionBonus
+            // actually landed this session -- see that constant's own
+            // doc comment for why LMR's own version of it was tried and
+            // then dropped: it broke endgame_suite_tests.cpp's Lucena
+            // regression test AND persistent_tt_tests.cpp's warm-TT-
+            // reuse test simultaneously, and no depth-gating fix that
+            // preserved both this file's own established regression
+            // tests AND a genuine LMR-side "improving" effect was found
+            // -- docs/DECISIONS.md, 2026-09-10 (2), has the full sweep).
             const int reduction =
                 eligible_for_lmr ? std::min(lmr_reduction(depth, i), depth - 1) : 0;
 
@@ -1857,8 +2047,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // below.
             score = -negamax(pos, depth - 1 + extension - reduction, -alpha - 1, -alpha, ply + 1,
                               nodes, tt, killers, history, cont_history, capture_history, moved_piece, move.to(),
-                              game_history, path, pawn_tt, eval_cache, material_weights,
-                              /*allow_null_move=*/true, limits, contempt_white_pov);
+                              game_history, path, static_eval_history, pawn_tt, eval_cache,
+                              material_weights, /*allow_null_move=*/true, limits, contempt_white_pov);
             if ((limits == nullptr || !limits->stopped) && reduction > 0 && score > alpha) {
                 // The reduced probe suggested this move might actually
                 // be good -- not trustworthy on its own (a shallower
@@ -1871,14 +2061,14 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 // the only thing that ever sets extension > 0).
                 score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, ply + 1, nodes, tt,
                                   killers, history, cont_history, capture_history, moved_piece, move.to(), game_history,
-                                  path, pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
-                                  limits, contempt_white_pov);
+                                  path, static_eval_history, pawn_tt, eval_cache, material_weights,
+                                  /*allow_null_move=*/true, limits, contempt_white_pov);
             }
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt,
                                   killers, history, cont_history, capture_history, moved_piece, move.to(), game_history,
-                                  path, pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
-                                  limits, contempt_white_pov);
+                                  path, static_eval_history, pawn_tt, eval_cache, material_weights,
+                                  /*allow_null_move=*/true, limits, contempt_white_pov);
             }
         }
 
@@ -2217,7 +2407,8 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
                           TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
                           ContinuationHistoryTable& cont_history, CaptureHistoryTable& capture_history,
                           std::span<const std::uint64_t> game_history,
-                          std::array<std::uint64_t, kMaxPly>& path, eval::PawnHashTable& pawn_tt,
+                          std::array<std::uint64_t, kMaxPly>& path,
+                          std::array<int, kMaxPly>& static_eval_history, eval::PawnHashTable& pawn_tt,
                           eval::EvalCache& eval_cache, const eval::MaterialWeights* material_weights,
                           SearchLimits* limits = nullptr,
                           std::span<const Move> excluded_moves = {}, int contempt_white_pov = 0) {
@@ -2318,18 +2509,18 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         if (i == 0 || depth == 1) {
             score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt, killers,
                               history, cont_history, capture_history, moved_piece, move.to(), game_history, path,
-                              pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits,
-                              contempt_white_pov);
+                              static_eval_history, pawn_tt, eval_cache, material_weights,
+                              /*allow_null_move=*/true, limits, contempt_white_pov);
         } else {
             score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, 1, result.nodes, tt,
                               killers, history, cont_history, capture_history, moved_piece, move.to(), game_history,
-                              path, pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
-                              limits, contempt_white_pov);
+                              path, static_eval_history, pawn_tt, eval_cache, material_weights,
+                              /*allow_null_move=*/true, limits, contempt_white_pov);
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt,
                                   killers, history, cont_history, capture_history, moved_piece, move.to(), game_history,
-                                  path, pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
-                                  limits, contempt_white_pov);
+                                  path, static_eval_history, pawn_tt, eval_cache, material_weights,
+                                  /*allow_null_move=*/true, limits, contempt_white_pov);
             }
         }
 
@@ -2483,6 +2674,15 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
     // sized via search/ordering.h's existing kMaxPly rather than a new
     // constant.
     std::array<std::uint64_t, kMaxPly> path{};
+    // Matching per-ply static-eval record for the "improving" flag
+    // (negamax()'s own `static_eval_history` parameter doc comment) --
+    // same lifetime/reuse pattern as `path` just above, same "only ever
+    // read at a ply whose true ancestor already wrote it first" safety
+    // argument (is_draw_by_rule()'s own early return happens before
+    // negamax() ever reaches this array's write point, so a ply that
+    // was skipped via a draw return never gets read back as if it were
+    // real -- see negamax()'s own inline comment on this array).
+    std::array<int, kMaxPly> static_eval_history{};
     // Fresh, private pawn hash table for this one call (same lifetime
     // scoping/rationale as tt/killers/history just above -- see
     // eval/pawn_tt.h's header comment).
@@ -2527,9 +2727,9 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
     // search_iterative_deepening() below and docs/DECISIONS.md's
     // aspiration-windows entry) -- always the full window.
     SearchResult result = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history,
-                                       cont_history, capture_history, game_history, path, pawn_tt, eval_cache,
-                                       material_weights, /*limits=*/nullptr, /*excluded_moves=*/{},
-                                       contempt_white_pov);
+                                       cont_history, capture_history, game_history, path,
+                                       static_eval_history, pawn_tt, eval_cache, material_weights,
+                                       /*limits=*/nullptr, /*excluded_moves=*/{}, contempt_white_pov);
 
     // Same stop/join/fold-in-node-counts pattern as
     // search_iterative_deepening()'s own below -- no-op (empty
@@ -2601,6 +2801,10 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
     auto cont_history = std::make_unique<ContinuationHistoryTable>();
     auto capture_history = std::make_unique<CaptureHistoryTable>();
     std::array<std::uint64_t, kMaxPly> path{};
+    // Matching per-ply static-eval record for the "improving" flag --
+    // same reuse pattern as `path` (search_fixed_depth()'s own
+    // corresponding declaration, above, has the full rationale).
+    std::array<int, kMaxPly> static_eval_history{};
     eval::PawnHashTable pawn_tt(kDefaultPawnTTSizeKB);
     eval::EvalCache eval_cache(kDefaultEvalCacheSizeKB);
 
@@ -2629,9 +2833,9 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
         limits.external_stop = const_cast<std::atomic<bool>*>(&stop);
 
         const SearchResult r = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history,
-                                            *cont_history, *capture_history, game_history, path, pawn_tt, eval_cache,
-                                            material_weights, &limits, /*excluded_moves=*/{},
-                                            contempt_white_pov);
+                                            *cont_history, *capture_history, game_history, path,
+                                            static_eval_history, pawn_tt, eval_cache, material_weights,
+                                            &limits, /*excluded_moves=*/{}, contempt_white_pov);
         total_nodes += r.nodes;
 
         if (limits.stopped) {
@@ -2700,6 +2904,10 @@ SearchResult search_iterative_deepening_multipv(
     auto cont_history = std::make_unique<ContinuationHistoryTable>();
     auto capture_history = std::make_unique<CaptureHistoryTable>();
     std::array<std::uint64_t, kMaxPly> path{};
+    // Matching per-ply static-eval record for the "improving" flag --
+    // same reuse pattern as `path` (search_fixed_depth()'s own
+    // corresponding declaration, above, has the full rationale).
+    std::array<int, kMaxPly> static_eval_history{};
     eval::PawnHashTable pawn_tt(kDefaultPawnTTSizeKB);
     eval::EvalCache eval_cache(kDefaultEvalCacheSizeKB);
 
@@ -2715,7 +2923,7 @@ SearchResult search_iterative_deepening_multipv(
     for (int line = 1; line <= max_lines; ++line) {
         SearchResult r =
             search_root(pos, 1, -kInfinity, kInfinity, tt, killers, *history, *cont_history, *capture_history,
-                        game_history, path, pawn_tt, eval_cache, material_weights,
+                        game_history, path, static_eval_history, pawn_tt, eval_cache, material_weights,
                         /*limits=*/nullptr, excluded, contempt_white_pov);
         total_nodes += r.nodes;
         r.multipv_index = line;
@@ -2793,8 +3001,8 @@ SearchResult search_iterative_deepening_multipv(
 
             SearchResult r =
                 search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history, *cont_history, *capture_history,
-                            game_history, path, pawn_tt, eval_cache, material_weights, &limits,
-                            depth_excluded, contempt_white_pov);
+                            game_history, path, static_eval_history, pawn_tt, eval_cache, material_weights,
+                            &limits, depth_excluded, contempt_white_pov);
             depth_nodes += r.nodes;
             if (limits.stopped) {
                 interrupted = true;
@@ -2943,6 +3151,11 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // overwritten ply-by-ply as each iteration's own root-to-here search
     // proceeds, the same reuse pattern as within a single negamax() call.
     std::array<std::uint64_t, kMaxPly> path{};
+    // Matching per-ply static-eval record for the "improving" flag,
+    // same shared-across-every-iteration reuse pattern as `path` just
+    // above (search_fixed_depth()'s own corresponding declaration has
+    // the full rationale).
+    std::array<int, kMaxPly> static_eval_history{};
     // Shared across every iteration too -- see eval/pawn_tt.h's header
     // comment for the same lifetime rationale as tt/killers/history.
     eval::PawnHashTable pawn_tt(kDefaultPawnTTSizeKB);
@@ -2956,9 +3169,9 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // to aspirate around (see the depth-2-onward loop below).
     tt.new_search();
     SearchResult result = search_root(pos, 1, -kInfinity, kInfinity, tt, killers, *history,
-                                       *cont_history, *capture_history, game_history, path, pawn_tt, eval_cache,
-                                       material_weights, /*limits=*/nullptr, /*excluded_moves=*/{},
-                                       contempt_white_pov);
+                                       *cont_history, *capture_history, game_history, path,
+                                       static_eval_history, pawn_tt, eval_cache, material_weights,
+                                       /*limits=*/nullptr, /*excluded_moves=*/{}, contempt_white_pov);
     std::uint64_t total_nodes = result.nodes;
 
     // Position already over (checkmate/stalemate at the root): every
@@ -3116,9 +3329,9 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
 
             for (;;) {
                 next = search_root(pos, depth, window_alpha, window_beta, tt, killers, *history,
-                                    *cont_history, *capture_history, game_history, path, pawn_tt, eval_cache,
-                                    material_weights, &limits, /*excluded_moves=*/{},
-                                    contempt_white_pov);
+                                    *cont_history, *capture_history, game_history, path,
+                                    static_eval_history, pawn_tt, eval_cache, material_weights, &limits,
+                                    /*excluded_moves=*/{}, contempt_white_pov);
 
                 if (limits.stopped) {
                     // Interrupted mid-retry -- see the post-loop
@@ -3161,8 +3374,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             }
         } else {
             next = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history, *cont_history, *capture_history,
-                                game_history, path, pawn_tt, eval_cache, material_weights, &limits,
-                                /*excluded_moves=*/{}, contempt_white_pov);
+                                game_history, path, static_eval_history, pawn_tt, eval_cache, material_weights,
+                                &limits, /*excluded_moves=*/{}, contempt_white_pov);
         }
 
         // `next.nodes` reflects real work done regardless of whether
