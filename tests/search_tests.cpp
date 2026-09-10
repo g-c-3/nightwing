@@ -618,6 +618,36 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
 }
 
 TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "correction history active",
+          "[search][correction_history]") {
+    init_all();
+    // Session 98 (this session, continued a fourth time): ROADMAP.md's
+    // "Correction history" item (Priority Fixes, 2026-09-08) added
+    // CorrectionHistoryTable (search/ordering.h/.cpp -- that class's own
+    // header comment has the full design) and threaded it through
+    // negamax() the same way capture_history already was, applying its
+    // own correction at all 4 of this file's existing static-eval
+    // consumer sites (RFP, razoring, futility, and node_static_eval/
+    // "improving") and updating it once per node, at the very end of
+    // negamax(), only on an EXACT bound with a genuine non-mate score.
+    // Reusing this file's own established shared mate-in-3 fixture, same
+    // rationale as every other negamax()-internal technique this file
+    // already regression-tests this way: correction history feeds
+    // directly into pruning decisions (RFP/razoring/futility can all
+    // return or skip early based on a CORRECTED static eval now, not
+    // just a raw one), so confirming a genuine forced mate still survives
+    // that correction being folded in is worth checking directly, not
+    // just inferring from CorrectionHistoryTable's own isolated unit
+    // tests (ordering_tests.cpp). Depth 6 gives the table several
+    // real nodes' worth of updates within a single search to actually
+    // exercise both its update() and correction() paths, not just leave
+    // it permanently at its own all-zero starting state.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
           "late move pruning active",
           "[search][lmp]") {
     init_all();

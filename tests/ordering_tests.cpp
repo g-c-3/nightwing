@@ -311,6 +311,70 @@ TEST_CASE("CaptureHistoryTable: malus score is floored and never underflows",
     REQUIRE(score >= -8192); // matches kCaptureHistoryMax's mirrored floor (private, checked by value)
 }
 
+TEST_CASE("CorrectionHistoryTable: an unrecorded pawn structure corrects by 0",
+          "[ordering][correction_history]") {
+    CorrectionHistoryTable correction_history;
+    REQUIRE(correction_history.correction(Color::White, /*pawn_key=*/0x1234) == 0);
+    REQUIRE(correction_history.correction(Color::Black, /*pawn_key=*/0x1234) == 0);
+}
+
+TEST_CASE("CorrectionHistoryTable: update() nudges the correction toward a clamped error by "
+          "1/kCorrectionWeight of the remaining distance",
+          "[ordering][correction_history]") {
+    CorrectionHistoryTable correction_history;
+    // 320 exceeds kCorrectionMax (256, private -- checked by value below,
+    // same "verify the constant's effect, not its name" convention
+    // CaptureHistoryTable's own clamp tests above use), so the FIRST
+    // update should move from 0 toward the CLAMPED 256, not toward 320:
+    // (256 - 0) / 32 = 8, if kCorrectionWeight is also 32 (matching this
+    // file's own header comment's stated design) -- checked indirectly
+    // via the numeric result, not by naming the private constant.
+    correction_history.update(Color::White, /*pawn_key=*/0x1234, /*error=*/320);
+    REQUIRE(correction_history.correction(Color::White, /*pawn_key=*/0x1234) == 8);
+}
+
+TEST_CASE("CorrectionHistoryTable: repeated updates converge toward (but never exceed) the clamp",
+          "[ordering][correction_history]") {
+    CorrectionHistoryTable correction_history;
+    for (int i = 0; i < 500; ++i) {
+        correction_history.update(Color::White, /*pawn_key=*/0x1234, /*error=*/10000); // far over the clamp
+    }
+    const int correction = correction_history.correction(Color::White, /*pawn_key=*/0x1234);
+    REQUIRE(correction > 0);
+    REQUIRE(correction <= 256); // matches CorrectionHistoryTable::kCorrectionMax (private, checked by value)
+}
+
+TEST_CASE("CorrectionHistoryTable: repeated negative-error updates converge toward (but never go "
+          "below) the mirrored floor",
+          "[ordering][correction_history]") {
+    CorrectionHistoryTable correction_history;
+    for (int i = 0; i < 500; ++i) {
+        correction_history.update(Color::White, /*pawn_key=*/0x1234, /*error=*/-10000);
+    }
+    const int correction = correction_history.correction(Color::White, /*pawn_key=*/0x1234);
+    REQUIRE(correction < 0);
+    REQUIRE(correction >= -256); // mirrored floor, same rationale as the clamp test above
+}
+
+TEST_CASE("CorrectionHistoryTable: distinct pawn keys are independent", "[ordering][correction_history]") {
+    CorrectionHistoryTable correction_history;
+    correction_history.update(Color::White, /*pawn_key=*/0x1234, /*error=*/320);
+    REQUIRE(correction_history.correction(Color::White, /*pawn_key=*/0x1234) == 8);
+    REQUIRE(correction_history.correction(Color::White, /*pawn_key=*/0x5678) == 0); // different key
+}
+
+TEST_CASE("CorrectionHistoryTable: the two colors are independent even for the identical pawn key",
+          "[ordering][correction_history]") {
+    // The entire point of indexing by color too, not pawn key alone
+    // (this class's own header comment, ordering.h): a correction
+    // learned from White's own perspective on a pawn structure must not
+    // silently leak into Black's.
+    CorrectionHistoryTable correction_history;
+    correction_history.update(Color::White, /*pawn_key=*/0x1234, /*error=*/320);
+    REQUIRE(correction_history.correction(Color::White, /*pawn_key=*/0x1234) == 8);
+    REQUIRE(correction_history.correction(Color::Black, /*pawn_key=*/0x1234) == 0);
+}
+
 TEST_CASE("order_moves: capture history re-ranks two captures that MVV-LVA alone scores identically",
           "[ordering][capture_history]") {
     init_all();
