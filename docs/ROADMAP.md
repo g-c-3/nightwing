@@ -531,10 +531,31 @@ Priority Fixes section above).
       the same point `path[ply]` is already written. See
       docs/DECISIONS.md, 2026-09-10 (2) and (3), for the full sweep, the
       stale-read bug, and the reasoning behind LMR's own final shape.
-- [ ] Correction history — a running per-pawn-structure (optionally per-
+- [x] Correction history — a running per-pawn-structure (optionally per-
       piece-type) estimate of static-eval error vs. actual search
       result, used to adjust static eval before it drives pruning
-      decisions.
+      decisions. DONE, Session 98 (continued a fourth time): a new
+      `CorrectionHistoryTable` class (`src/search/ordering.h`/`.cpp`) —
+      a bounded exponential moving average, indexed by
+      `[color][pawn-only Zobrist key]` (`board::compute_pawn_hash()`,
+      the same key `eval::PawnHashTable` uses), tracking how far a
+      node's own corrected static eval still was from its real, searched
+      result. Threaded through `negamax()`/`search_root()`/all 4
+      top-level entry points the same way `capture_history` already was.
+      Applied at all 4 of this file's existing static-eval-driven
+      pruning sites (RFP, razoring, futility, and the "improving" flag's
+      own `node_static_eval`), each independently (matching this file's
+      own established "double/triple/quadruple-evaluate, `eval_cache`
+      absorbs it" pattern rather than a riskier shared-computation
+      refactor). Updated once per node, at the very end of `negamax()`,
+      gated on an EXACT bound (reusing the bound classification already
+      computed there for the TT store) and a non-mate score — a
+      fail-high/fail-low bound isn't real evidence of the position's own
+      true value, so it isn't used to teach the correction table
+      anything. Per-pawn-structure only in this pass, not per-piece-type
+      — the spec's own parenthetical "optionally" scope left for a
+      future session. See docs/DECISIONS.md, 2026-09-10 (4), for the
+      full design.
 - [ ] Recapture extension (extend on an immediate recapture on the
       opponent's last capture square) and a small passed-pawn-push
       extension near promotion (rank 6/7) — only check and singular
