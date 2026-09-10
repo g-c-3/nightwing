@@ -561,25 +561,57 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
     // Session 98 (this session, continued): ROADMAP.md's "An 'improving'
     // flag" item (Priority Fixes, 2026-09-08) added `improving`
     // (negamax()'s own header comment on `static_eval_history` has the
-    // full derivation) and applied it at 2 of the 3 call sites
-    // ROADMAP.md's own item text named -- NMP's reduction (depth-gated)
-    // and futility's margin; LMR's own version was tried and dropped
-    // after it broke this file's endgame_suite_tests.cpp Lucena test
-    // AND persistent_tt_tests.cpp's warm-TT-reuse test simultaneously
-    // (kImprovingReductionBonus's own doc comment, search.cpp, has the
-    // full sweep; docs/DECISIONS.md, 2026-09-10 (2), has the full account).
-    // Reusing this file's own established shared mate-in-3 fixture,
-    // same rationale as every other negamax()-internal technique this
-    // file already regression-tests this way (IIR/NMP/RFP/LMR/LMP tests
-    // above): NMP in particular is not a provably-exact technique (a
-    // reduced probe that happens to stay <= alpha is trusted without
-    // ever re-verifying at full depth), so a genuine forced mate
-    // surviving an EXTRA layer of NMP aggression on top of its own
-    // pre-existing reduction is worth checking directly, not just
-    // inferring from the Lucena/persistent_tt tests' own more narrowly
-    // targeted checks. Depth 6 reaches kNullMoveBigReductionDepth (6)
-    // at the root itself, so NMP's own depth-gated "improving" bonus
-    // gets real exercise here, not just the ungated futility margin.
+    // full derivation) and applied it at all 3 call sites ROADMAP.md's
+    // own item text named -- NMP's reduction (depth-gated), futility's
+    // margin, and (in a later pass, this same session) LMR's own
+    // reduction too, via a differently-shaped adjustment (this test's
+    // own sibling `[search][lmr]` test just below covers that one
+    // specifically; kImprovingLmrDiscount's own doc comment, search.cpp,
+    // has the full reasoning). Reusing this file's own established
+    // shared mate-in-3 fixture, same rationale as every other
+    // negamax()-internal technique this file already regression-tests
+    // this way (IIR/NMP/RFP/LMR/LMP tests above): NMP in particular is
+    // not a provably-exact technique (a reduced probe that happens to
+    // stay <= alpha is trusted without ever re-verifying at full
+    // depth), so a genuine forced mate surviving an EXTRA layer of NMP
+    // aggression on top of its own pre-existing reduction is worth
+    // checking directly, not just inferring from the Lucena/
+    // persistent_tt tests' own more narrowly targeted checks. Depth 6
+    // reaches kNullMoveBigReductionDepth (6) at the root itself, so
+    // NMP's own depth-gated "improving" bonus gets real exercise here,
+    // not just the ungated futility margin.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "LMR's own \"improving\"-discount adjustment active",
+          "[search][improving][lmr]") {
+    init_all();
+    // Session 98 (this session, continued further): a first, additive
+    // "+1 reduction when not improving" shape for LMR (the same shape
+    // that worked for NMP just above) was tried and dropped after it
+    // broke 2 existing regression tests simultaneously
+    // (endgame_suite_tests.cpp's Lucena test; persistent_tt_tests.cpp's
+    // warm-TT-reuse test) -- kImprovingLmrDiscount's own doc comment
+    // (search.cpp) and docs/DECISIONS.md, 2026-09-10 (3), have the full
+    // reasoning for why that shape was too coarse for a technique that
+    // fires on every eligible move rather than once per node, and for
+    // the differently-shaped fix that replaced it (subtract from the
+    // reduction when improving, never add when not, so search can only
+    // ever get MORE thorough than the already-tuned baseline, never
+    // less). Reusing this file's own established shared mate-in-3
+    // fixture, same rationale as every other negamax()-internal
+    // technique this file already regression-tests this way: LMR's
+    // reduced probe, like NMP's, is trusted without full re-verification
+    // whenever it stays <= alpha, so confirming a genuine forced mate
+    // survives this EXTRA discount on top of LMR's own pre-existing
+    // continuous-formula reduction is worth checking directly. Depth 6
+    // gives ample room for `i >= kLMRMinMoveIndex` quiet moves at
+    // `depth >= kLMRMinDepth` to actually get reduced AND for the
+    // "improving" comparison itself (`ply >= 2`) to have real samples
+    // to compare against well before the leaf.
     Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
     const SearchResult result = search_iterative_deepening(pos, 6);
     REQUIRE(result.score >= kMateThreshold);
