@@ -506,25 +506,31 @@ Priority Fixes section above).
       first, more aggressive pair of coefficients caused (and how it was
       caught and corrected) before landing on the final ones.
 - [x] An "improving" flag (is static eval better than 2 plies ago?)
-      feeding into futility/LMR/NMP margins. DONE, Session 98 (continued):
-      a new `static_eval_history` per-ply array (`src/search/search.cpp`,
-      mirroring `path[]`'s own reuse pattern) and an `improving` flag
-      derived from it (this node's static eval vs. the same side's own
-      eval 2 plies back) were added to `negamax()`. Applied to only 2 of
-      the 3 named techniques: futility pruning's margin
-      (`kImprovingFutilityMarginDelta`) and NMP's reduction
+      feeding into futility/LMR/NMP margins. DONE, Session 98 (continued
+      twice): a new `static_eval_history` per-ply array
+      (`src/search/search.cpp`, mirroring `path[]`'s own reuse pattern)
+      and an `improving` flag derived from it (this node's static eval
+      vs. the same side's own eval 2 plies back) were added to
+      `negamax()`. Applied at all 3 named call sites, but LMR's own
+      version uses a DIFFERENT shape from futility's/NMP's: futility's
+      margin (`kImprovingFutilityMarginDelta`) and NMP's reduction
       (`kImprovingReductionBonus`, gated to
-      `depth >= kNullMoveBigReductionDepth`) — LMR's own version of the
-      identical adjustment was tried and then DROPPED entirely after it
-      broke 2 existing regression tests simultaneously, with no
-      depth-gating fix found that preserved both tests and a genuine
-      LMR-side effect. A real bug was also found and fixed mid-session:
-      a first version of `static_eval_history` was written too late
-      (after TT-cutoff/IIR), leaving stale cross-branch values behind on
-      any early return; fixed by moving the write to the same point
-      `path[ply]` is already written. See docs/DECISIONS.md,
-      2026-09-10 (2), for the full sweep, the stale-read bug, and the
-      scope-narrowing rationale.
+      `depth >= kNullMoveBigReductionDepth`) both ADD an adjustment when
+      NOT improving; LMR's own reduction instead SUBTRACTS
+      (`kImprovingLmrDiscount`, clamped to never go below 0) when
+      improving, leaving the not-improving case exactly at the
+      already-tuned baseline. This asymmetry wasn't arbitrary: a first,
+      additive "+1 when not improving" shape for LMR (matching NMP's own
+      pattern) was tried first and broke 2 existing regression tests
+      simultaneously — a high-frequency, per-move technique reacts very
+      differently to a flat additive bonus than a once-per-node probe
+      does. A real bug was also found and fixed mid-session, independent
+      of either LMR shape: a first version of `static_eval_history` was
+      written too late (after TT-cutoff/IIR), leaving stale cross-branch
+      values behind on any early return; fixed by moving the write to
+      the same point `path[ply]` is already written. See
+      docs/DECISIONS.md, 2026-09-10 (2) and (3), for the full sweep, the
+      stale-read bug, and the reasoning behind LMR's own final shape.
 - [ ] Correction history — a running per-pawn-structure (optionally per-
       piece-type) estimate of static-eval error vs. actual search
       result, used to adjust static eval before it drives pruning
