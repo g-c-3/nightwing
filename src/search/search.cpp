@@ -353,18 +353,16 @@ constexpr int kNoStaticEval = kInfinity;
 /// "Improving" flag constants (ROADMAP.md's own "An 'improving' flag"
 /// item, Priority Fixes (2026-09-08) section) -- see negamax()'s own
 /// doc comment on `improving` for the full derivation of what the flag
-/// means and how it's computed. ROADMAP.md's own item text names three
-/// techniques (futility pruning, LMR, NMP); only two ended up actually
-/// applying an adjustment this session -- see kImprovingReductionBonus's
-/// own doc comment just below for LMR's own version, tried and then
-/// dropped after it broke 2 existing regression tests, with no
-/// depth-gating fix found that preserved both tests AND a genuine
-/// LMR-side effect (docs/DECISIONS.md, 2026-09-10 (2), has the full sweep).
-/// Not applied to RFP/razoring/LMP/history pruning either -- a
-/// deliberately narrower scope than "every static-eval-based technique
-/// in this file," left for a future session to extend if warranted,
-/// matching this project's standing "don't expand a queued item's scope
-/// beyond what it actually asked for" convention.
+/// means and how it's computed. Applied at all 3 of ROADMAP.md's own
+/// named call sites (futility pruning, LMR, NMP), but LMR's own version
+/// uses a DIFFERENT shape from the other two -- see kImprovingLmrDiscount's
+/// own doc comment just below for why, and docs/DECISIONS.md,
+/// 2026-09-10 (3), for the reasoning and the sweep that confirmed it.
+/// Not applied to RFP/razoring/LMP/history pruning -- a deliberately
+/// narrower scope than "every static-eval-based technique in this
+/// file," left for a future session to extend if warranted, matching
+/// this project's standing "don't expand a queued item's scope beyond
+/// what it actually asked for" convention.
 ///
 /// kImprovingReductionBonus: added to NMP's own reduction amount when
 /// NOT improving AND depth >= kNullMoveBigReductionDepth (NMP's own call
@@ -373,14 +371,38 @@ constexpr int kNoStaticEval = kInfinity;
 /// last 2 plies of this side's own moves makes the position more likely
 /// to genuinely be as unpromising as it looks, so a shallower
 /// verification is safer to trust there -- left unchanged (0 added)
-/// when improving. An identical adjustment was also tried at LMR's own
-/// call site (same reasoning, same constant) but dropped there
-/// entirely, not just depth-gated -- see this doc comment's own opening
-/// paragraph above for why, and that call site's own comment for the
-/// full account. The name stays generic ("Reduction", not
-/// "NmpReduction") in case a future session finds a working depth-gate
-/// or other fix for LMR's own version and this constant ends up shared
-/// again.
+/// when improving. NMP fires at most once per node (a single probe), so
+/// this flat, node-level bonus is low-leverage; LMR does NOT reuse this
+/// constant (kImprovingLmrDiscount's own doc comment has the reason).
+///
+/// kImprovingLmrDiscount: SUBTRACTED from LMR's own continuous-formula
+/// reduction when improving, clamped to never take it below 0 -- left
+/// unchanged (not added to) when NOT improving. Deliberately the
+/// opposite shape from kImprovingReductionBonus's own "add when not
+/// improving" pattern, for a leverage reason specific to LMR: unlike
+/// NMP (one probe per node), LMR's move loop applies its own reduction
+/// to potentially a dozen or more sibling moves per node, and
+/// lmr_reduction()'s own table already returns small values near the
+/// eligibility threshold (kLMRBase = 0.0) -- a flat ADDITIVE bonus
+/// there is a large relative change compounding across every eligible
+/// move in every node, not a small per-node nudge. A first,
+/// ungated version of exactly that additive shape (this session's own
+/// earlier attempt, since reverted) broke 2 existing regression tests
+/// simultaneously; the mechanism suspected is that an over-deepened
+/// reduction makes the reduced null-window probe coarser, increasing
+/// how often it comes back > alpha and triggers this file's own
+/// existing PVS re-search cascade (more expensive re-searches, not
+/// fewer nodes overall) -- consistent with the persistent-TT
+/// regression test's own actual symptom (a warm search visiting MORE
+/// nodes, not fewer). Subtracting from the formula's own already-tuned
+/// baseline only for the improving subset, instead, can never make
+/// search shallower than that already-verified baseline -- it only
+/// ever searches a SUBSET of moves (the improving ones) slightly more
+/// thoroughly, which is the same direction real engines converge on
+/// (a rising eval trend over the last 2 plies is treated as reason to
+/// double-check a promising line more closely, not reason to prune it
+/// harder). Confirmed via the same 2-test sweep this session's earlier
+/// attempt failed: both pass with this shape.
 ///
 /// kImprovingFutilityMarginDelta: subtracted from kFutilityMargins'
 /// own per-depth value when NOT improving (shrinking the margin,
@@ -391,9 +413,10 @@ constexpr int kNoStaticEval = kInfinity;
 /// margin down rather than the reduction up). Clamped to never take
 /// the effective margin below 0 at its own call site.
 ///
-/// Neither constant is yet tuned -- same not-yet-SPRT-validated
+/// None of these 3 constants is yet tuned -- same not-yet-SPRT-validated
 /// caveat as every other search constant in this file.
 constexpr int kImprovingReductionBonus = 1;
+constexpr int kImprovingLmrDiscount = 1;
 constexpr int kImprovingFutilityMarginDelta = 60;
 
 /// Late move pruning (LMP) / move-count based pruning (CPW "Move Count
@@ -2014,25 +2037,24 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             const bool eligible_for_lmr = !us_in_check && depth >= kLMRMinDepth &&
                                            i >= kLMRMinMoveIndex && !move.is_capture() &&
                                            !move.is_promotion() && !move_gives_check;
-            // lmr_reduction()'s own continuous-formula result is clamped
-            // to `depth - 1` here (never below) so `depth - 1 -
-            // reduction` (this call site's own formula, just below)
-            // can never go negative -- the table itself has no notion
-            // of the caller's own depth-1 floor, only of depth/move-
-            // index bounds (see that function's own doc comment). No
-            // "improving" adjustment here (ROADMAP.md's own "improving
-            // flag" item names futility/LMR/NMP, but NMP's identical
-            // adjustment, just above, is where kImprovingReductionBonus
-            // actually landed this session -- see that constant's own
-            // doc comment for why LMR's own version of it was tried and
-            // then dropped: it broke endgame_suite_tests.cpp's Lucena
-            // regression test AND persistent_tt_tests.cpp's warm-TT-
-            // reuse test simultaneously, and no depth-gating fix that
-            // preserved both this file's own established regression
-            // tests AND a genuine LMR-side "improving" effect was found
-            // -- docs/DECISIONS.md, 2026-09-10 (2), has the full sweep).
+            // lmr_reduction()'s own continuous-formula result gets an
+            // "improving" adjustment -- SUBTRACTED (never added) when
+            // improving, clamped to never go below 0, leaving the
+            // baseline formula completely untouched when not improving
+            // (kImprovingLmrDiscount's own doc comment above has the
+            // full reasoning for this shape, and why it's the opposite
+            // of NMP's own "add when not improving" pattern just above)
+            // -- before being clamped to `depth - 1` here (never below)
+            // so `depth - 1 - reduction` (this call site's own formula,
+            // just below) can never go negative. The table itself has
+            // no notion of either clamp, only of depth/move-index
+            // bounds (see that function's own doc comment).
+            const int lmr_base_reduction = lmr_reduction(depth, i);
+            const int lmr_improving_reduction =
+                improving ? std::max(0, lmr_base_reduction - kImprovingLmrDiscount)
+                          : lmr_base_reduction;
             const int reduction =
-                eligible_for_lmr ? std::min(lmr_reduction(depth, i), depth - 1) : 0;
+                eligible_for_lmr ? std::min(lmr_improving_reduction, depth - 1) : 0;
 
             // PVS: probe every later move with a null (zero-width)
             // window first -- cheap, since it only needs to prove
