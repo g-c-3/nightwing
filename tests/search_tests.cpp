@@ -554,6 +554,38 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
 }
 
 TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "the \"improving\" flag active (NMP's own reduction bonus and futility's own margin "
+          "delta, both gated on it)",
+          "[search][improving]") {
+    init_all();
+    // Session 98 (this session, continued): ROADMAP.md's "An 'improving'
+    // flag" item (Priority Fixes, 2026-09-08) added `improving`
+    // (negamax()'s own header comment on `static_eval_history` has the
+    // full derivation) and applied it at 2 of the 3 call sites
+    // ROADMAP.md's own item text named -- NMP's reduction (depth-gated)
+    // and futility's margin; LMR's own version was tried and dropped
+    // after it broke this file's endgame_suite_tests.cpp Lucena test
+    // AND persistent_tt_tests.cpp's warm-TT-reuse test simultaneously
+    // (kImprovingReductionBonus's own doc comment, search.cpp, has the
+    // full sweep; docs/DECISIONS.md, 2026-09-10 (2), has the full account).
+    // Reusing this file's own established shared mate-in-3 fixture,
+    // same rationale as every other negamax()-internal technique this
+    // file already regression-tests this way (IIR/NMP/RFP/LMR/LMP tests
+    // above): NMP in particular is not a provably-exact technique (a
+    // reduced probe that happens to stay <= alpha is trusted without
+    // ever re-verifying at full depth), so a genuine forced mate
+    // surviving an EXTRA layer of NMP aggression on top of its own
+    // pre-existing reduction is worth checking directly, not just
+    // inferring from the Lucena/persistent_tt tests' own more narrowly
+    // targeted checks. Depth 6 reaches kNullMoveBigReductionDepth (6)
+    // at the root itself, so NMP's own depth-gated "improving" bonus
+    // gets real exercise here, not just the ungated futility margin.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
           "late move pruning active",
           "[search][lmp]") {
     init_all();
