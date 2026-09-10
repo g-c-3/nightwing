@@ -16,6 +16,7 @@
 #include <utility>
 
 #include "board/movegen.h"
+#include "board/zobrist.h" // board::compute_pawn_hash() -- CorrectionHistoryTable's own key, search/ordering.h
 #include "eval/endgame.h"
 #include "eval/eval.h"
 #include "eval/eval_cache.h"
@@ -1324,8 +1325,8 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
 int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_t& nodes,
             TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
             ContinuationHistoryTable& cont_history, CaptureHistoryTable& capture_history,
-            board::PieceType prev_piece, board::Square prev_to,
-            std::span<const std::uint64_t> game_history,
+            CorrectionHistoryTable& correction_history, board::PieceType prev_piece,
+            board::Square prev_to, std::span<const std::uint64_t> game_history,
             std::array<std::uint64_t, kMaxPly>& path,
             std::array<int, kMaxPly>& static_eval_history, eval::PawnHashTable& pawn_tt,
             eval::EvalCache& eval_cache, const eval::MaterialWeights* material_weights,
@@ -1445,6 +1446,20 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 
     const int alpha_orig = alpha;
     const Color us = pos.side_to_move;
+    // Correction history's own key (ROADMAP.md's "Correction history"
+    // item; CorrectionHistoryTable's own header comment, search/
+    // ordering.h, has the full derivation) -- computed once here,
+    // unconditionally, function-wide, rather than separately at each of
+    // this function's own 4 consumer sites below (the "improving"
+    // block just below, RFP, razoring, futility) or at this function's
+    // own end-of-node update: `pos` is unchanged between here and every
+    // one of those points (no move has been made yet), so one shared
+    // value is correct everywhere it's used, and board::
+    // compute_pawn_hash() is cheap enough (pawn-bitboard-only, not a
+    // full position scan) that computing it even on paths that end up
+    // not needing it (an in-check node, or one where nothing that
+    // consumes it happens to trigger) costs essentially nothing.
+    const std::uint64_t pawn_key = board::compute_pawn_hash(pos);
     // Prefetches THIS node's own TT bucket, at the very top of the
     // function, before probe() below needs it (ROADMAP.md Phase 8, "TT
     // prefetch verified..." item; docs/DECISIONS.md has the full
@@ -1513,11 +1528,19 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // eval. Computed here, before RFP/NMP/razoring/futility below, so
     // `improving` is available to every one of them regardless of which
     // (if any) of their own individual depth/beta/alpha guards this node
-    // happens to satisfy.
+    // happens to satisfy. Correction history's own adjustment (ROADMAP.md's
+    // "Correction history" item; CorrectionHistoryTable's own header
+    // comment, search/ordering.h, has the full derivation) is folded in
+    // immediately, before storing into `static_eval_history` -- so
+    // `improving`'s own 2-plies-back comparison, and this function's own
+    // end-of-node correction_history.update() call, both operate on the
+    // CORRECTED value consistently, not a mix of raw and corrected
+    // samples.
     int node_static_eval = kNoStaticEval;
     if (!in_check(pos)) {
         const int white_relative = eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights);
-        node_static_eval = us == Color::White ? white_relative : -white_relative;
+        node_static_eval = (us == Color::White ? white_relative : -white_relative) +
+                            correction_history.correction(us, pawn_key);
         if (ply < kMaxPly) {
             static_eval_history[static_cast<std::size_t>(ply)] = node_static_eval;
         }
@@ -1545,7 +1568,14 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // meaningless, same reasoning as NMP's own beta guard just below).
     if (!in_check(pos) && depth <= kReverseFutilityMaxDepth && beta < kMateThreshold) {
         const int white_relative = eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights);
-        const int rfp_static_eval = us == Color::White ? white_relative : -white_relative;
+        // Correction history folded in here too (ROADMAP.md's
+        // "Correction history" item) -- this site's own static eval is
+        // computed independently of node_static_eval above (this file's
+        // own established "double-evaluate" pattern, eval_cache absorbs
+        // the redundant eval::evaluate() cost), so it needs its own
+        // correction term rather than inheriting node_static_eval's.
+        const int rfp_static_eval = (us == Color::White ? white_relative : -white_relative) +
+                                     correction_history.correction(us, pawn_key);
         if (rfp_static_eval - kReverseFutilityMargins[static_cast<std::size_t>(depth)] >= beta) {
             return rfp_static_eval;
         }
@@ -1625,6 +1655,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         board::make_null_move(pos, null_undo);
         const int null_score = -negamax(pos, depth - 1 - reduction, -beta, -beta + 1, ply + 1, nodes,
                                          tt, killers, history, cont_history, capture_history,
+                                         correction_history,
                                          /*prev_piece=*/board::PieceType::None, /*prev_to=*/0,
                                          game_history, path, static_eval_history, pawn_tt, eval_cache,
                                          material_weights, /*allow_null_move=*/false, limits,
@@ -1654,7 +1685,11 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // independently confirms the same conclusion.
     if (!in_check(pos) && depth <= kRazorMaxDepth && alpha < kMateThreshold) {
         const int white_relative = eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights);
-        const int razor_static_eval = us == Color::White ? white_relative : -white_relative;
+        // Correction history folded in here too (ROADMAP.md's
+        // "Correction history" item) -- same independent-computation
+        // rationale as RFP's own site above.
+        const int razor_static_eval = (us == Color::White ? white_relative : -white_relative) +
+                                       correction_history.correction(us, pawn_key);
         if (razor_static_eval + kRazorMargins[static_cast<std::size_t>(depth)] <= alpha) {
             const int razor_score = quiescence(pos, alpha, beta, ply, nodes,
                                                 /*include_checks=*/true, &pawn_tt, &eval_cache,
@@ -1708,9 +1743,10 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             board::make_move(pos, probcut_move, probcut_undo);
             const int probcut_score =
                 -negamax(pos, depth - kProbCutReduction, -probcut_beta, -probcut_beta + 1, ply + 1,
-                         nodes, tt, killers, history, cont_history, capture_history, probcut_moved_piece,
-                         probcut_move.to(), game_history, path, static_eval_history, pawn_tt, eval_cache,
-                         material_weights, /*allow_null_move=*/true, limits, contempt_white_pov);
+                         nodes, tt, killers, history, cont_history, capture_history, correction_history,
+                         probcut_moved_piece, probcut_move.to(), game_history, path, static_eval_history,
+                         pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits,
+                         contempt_white_pov);
             board::unmake_move(pos, probcut_move, probcut_undo);
             if (limits != nullptr && limits->stopped) {
                 // Truncated subtree (SearchLimits' own doc comment) --
@@ -1748,7 +1784,11 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     int static_eval = 0;
     if (futility_may_apply) {
         const int white_relative = eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights);
-        static_eval = us == Color::White ? white_relative : -white_relative;
+        // Correction history folded in here too (ROADMAP.md's
+        // "Correction history" item) -- same independent-computation
+        // rationale as RFP's/razoring's own sites above.
+        static_eval = (us == Color::White ? white_relative : -white_relative) +
+                      correction_history.correction(us, pawn_key);
     }
     // "Improving" adjustment (ROADMAP.md's "improving flag" item;
     // kImprovingFutilityMarginDelta's own doc comment above): a smaller
@@ -1869,9 +1909,10 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 board::make_move(pos, alt_move, alt_undo);
                 const int alt_score =
                     -negamax(pos, singular_depth, -singular_beta, -singular_beta + 1, ply + 1, nodes,
-                             tt, killers, history, cont_history, capture_history, alt_moved_piece, alt_move.to(),
-                             game_history, path, static_eval_history, pawn_tt, eval_cache, material_weights,
-                             /*allow_null_move=*/true, limits, contempt_white_pov);
+                             tt, killers, history, cont_history, capture_history, correction_history,
+                             alt_moved_piece, alt_move.to(), game_history, path, static_eval_history,
+                             pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits,
+                             contempt_white_pov);
                 board::unmake_move(pos, alt_move, alt_undo);
                 if (limits != nullptr && limits->stopped) {
                     // Truncated subtree -- stop the verification loop
@@ -1959,9 +2000,9 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // deserves the extra ply regardless of its position in the
             // ordering.
             score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt, killers,
-                              history, cont_history, capture_history, moved_piece, move.to(), game_history, path,
-                              static_eval_history, pawn_tt, eval_cache, material_weights,
-                              /*allow_null_move=*/true, limits, contempt_white_pov);
+                              history, cont_history, capture_history, correction_history, moved_piece,
+                              move.to(), game_history, path, static_eval_history, pawn_tt, eval_cache,
+                              material_weights, /*allow_null_move=*/true, limits, contempt_white_pov);
         } else {
             // Futility pruning (CPW "Futility Pruning", this function's
             // header comment): a node-level condition -- computed once,
@@ -2068,9 +2109,10 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // see it for how that interacts with the two fallback steps
             // below.
             score = -negamax(pos, depth - 1 + extension - reduction, -alpha - 1, -alpha, ply + 1,
-                              nodes, tt, killers, history, cont_history, capture_history, moved_piece, move.to(),
-                              game_history, path, static_eval_history, pawn_tt, eval_cache,
-                              material_weights, /*allow_null_move=*/true, limits, contempt_white_pov);
+                              nodes, tt, killers, history, cont_history, capture_history,
+                              correction_history, moved_piece, move.to(), game_history, path,
+                              static_eval_history, pawn_tt, eval_cache, material_weights,
+                              /*allow_null_move=*/true, limits, contempt_white_pov);
             if ((limits == nullptr || !limits->stopped) && reduction > 0 && score > alpha) {
                 // The reduced probe suggested this move might actually
                 // be good -- not trustworthy on its own (a shallower
@@ -2082,15 +2124,17 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 // was true, which requires !move_gives_check, which is
                 // the only thing that ever sets extension > 0).
                 score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, ply + 1, nodes, tt,
-                                  killers, history, cont_history, capture_history, moved_piece, move.to(), game_history,
-                                  path, static_eval_history, pawn_tt, eval_cache, material_weights,
-                                  /*allow_null_move=*/true, limits, contempt_white_pov);
+                                  killers, history, cont_history, capture_history, correction_history,
+                                  moved_piece, move.to(), game_history, path, static_eval_history,
+                                  pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
+                                  limits, contempt_white_pov);
             }
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt,
-                                  killers, history, cont_history, capture_history, moved_piece, move.to(), game_history,
-                                  path, static_eval_history, pawn_tt, eval_cache, material_weights,
-                                  /*allow_null_move=*/true, limits, contempt_white_pov);
+                                  killers, history, cont_history, capture_history, correction_history,
+                                  moved_piece, move.to(), game_history, path, static_eval_history,
+                                  pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
+                                  limits, contempt_white_pov);
             }
         }
 
@@ -2244,6 +2288,37 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // search at this same position.
     if (limits == nullptr || !limits->stopped) {
         tt.store(key, depth, best, bound_type, best_move, ply);
+    }
+
+    // Correction history update (ROADMAP.md's "Correction history"
+    // item; CorrectionHistoryTable's own header comment, search/
+    // ordering.h, has the full derivation). Only on an EXACT bound
+    // (`bound_type`, computed just above) -- a fail-high/fail-low
+    // `best` is only a bound on this node's true value, not the value
+    // itself, and using an untrustworthy bound as "ground truth" for
+    // how wrong this node's static eval was would teach the table a
+    // biased correction rather than a representative one. Also
+    // requires a genuine static eval was actually recorded for this
+    // node (`node_static_eval != kNoStaticEval` -- an in-check node's
+    // static eval is meaningless, so there's nothing sensible to
+    // correct against), a non-mate score (`kMateThreshold` on both
+    // sides -- a forced mate's own "error" vs. static eval isn't
+    // evidence about ordinary positional eval accuracy, and its far
+    // larger magnitude would swamp this table's usual small
+    // corrections if ever averaged in), and the same "not truncated by
+    // the deadline" guard the TT store just above already applies, for
+    // the identical reason (a `best` from a stopped search doesn't
+    // reflect this depth's genuine result). `best - node_static_eval`
+    // measures how far the CORRECTED static eval (node_static_eval
+    // already includes this same table's own prior correction -- see
+    // that block's own comment, above) still was from the real,
+    // searched result -- a self-referential error signal, not a
+    // one-shot "raw eval was wrong by X" measurement, so the moving
+    // average converges toward a stable correction rather than
+    // repeatedly re-learning the same offset from scratch.
+    if ((limits == nullptr || !limits->stopped) && bound_type == Bound::Exact &&
+        node_static_eval != kNoStaticEval && best < kMateThreshold && best > -kMateThreshold) {
+        correction_history.update(us, pawn_key, best - node_static_eval);
     }
 
     return best;
@@ -2428,6 +2503,7 @@ std::vector<Move> extract_pv(Position pos, const TranspositionTable& tt, Move ro
 SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int aspiration_beta,
                           TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
                           ContinuationHistoryTable& cont_history, CaptureHistoryTable& capture_history,
+                          CorrectionHistoryTable& correction_history,
                           std::span<const std::uint64_t> game_history,
                           std::array<std::uint64_t, kMaxPly>& path,
                           std::array<int, kMaxPly>& static_eval_history, eval::PawnHashTable& pawn_tt,
@@ -2530,19 +2606,21 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         int score;
         if (i == 0 || depth == 1) {
             score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt, killers,
-                              history, cont_history, capture_history, moved_piece, move.to(), game_history, path,
-                              static_eval_history, pawn_tt, eval_cache, material_weights,
-                              /*allow_null_move=*/true, limits, contempt_white_pov);
+                              history, cont_history, capture_history, correction_history, moved_piece,
+                              move.to(), game_history, path, static_eval_history, pawn_tt, eval_cache,
+                              material_weights, /*allow_null_move=*/true, limits, contempt_white_pov);
         } else {
             score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, 1, result.nodes, tt,
-                              killers, history, cont_history, capture_history, moved_piece, move.to(), game_history,
-                              path, static_eval_history, pawn_tt, eval_cache, material_weights,
-                              /*allow_null_move=*/true, limits, contempt_white_pov);
+                              killers, history, cont_history, capture_history, correction_history,
+                              moved_piece, move.to(), game_history, path, static_eval_history, pawn_tt,
+                              eval_cache, material_weights, /*allow_null_move=*/true, limits,
+                              contempt_white_pov);
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt,
-                                  killers, history, cont_history, capture_history, moved_piece, move.to(), game_history,
-                                  path, static_eval_history, pawn_tt, eval_cache, material_weights,
-                                  /*allow_null_move=*/true, limits, contempt_white_pov);
+                                  killers, history, cont_history, capture_history, correction_history,
+                                  moved_piece, move.to(), game_history, path, static_eval_history,
+                                  pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
+                                  limits, contempt_white_pov);
             }
         }
 
@@ -2690,6 +2768,11 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
     HistoryTable history;
     ContinuationHistoryTable cont_history;
     CaptureHistoryTable capture_history;
+    // Fresh, per-call correction history (ROADMAP.md's "Correction
+    // history" item; CorrectionHistoryTable's own header comment,
+    // search/ordering.h, has the full rationale) -- same lifetime
+    // scoping as capture_history/history/cont_history just above.
+    CorrectionHistoryTable correction_history;
     // Fresh, zero-initialized per-ply hash record for this one call (see
     // negamax()'s header comment and is_draw_by_rule()) -- a fixed-size
     // stack array, not heap-allocated (ARCHITECTURE.md "Memory & Cache"),
@@ -2749,8 +2832,8 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
     // search_iterative_deepening() below and docs/DECISIONS.md's
     // aspiration-windows entry) -- always the full window.
     SearchResult result = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history,
-                                       cont_history, capture_history, game_history, path,
-                                       static_eval_history, pawn_tt, eval_cache, material_weights,
+                                       cont_history, capture_history, correction_history, game_history,
+                                       path, static_eval_history, pawn_tt, eval_cache, material_weights,
                                        /*limits=*/nullptr, /*excluded_moves=*/{}, contempt_white_pov);
 
     // Same stop/join/fold-in-node-counts pattern as
@@ -2822,6 +2905,7 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
     auto history = std::make_unique<HistoryTable>();
     auto cont_history = std::make_unique<ContinuationHistoryTable>();
     auto capture_history = std::make_unique<CaptureHistoryTable>();
+    auto correction_history = std::make_unique<CorrectionHistoryTable>();
     std::array<std::uint64_t, kMaxPly> path{};
     // Matching per-ply static-eval record for the "improving" flag --
     // same reuse pattern as `path` (search_fixed_depth()'s own
@@ -2855,9 +2939,10 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
         limits.external_stop = const_cast<std::atomic<bool>*>(&stop);
 
         const SearchResult r = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history,
-                                            *cont_history, *capture_history, game_history, path,
-                                            static_eval_history, pawn_tt, eval_cache, material_weights,
-                                            &limits, /*excluded_moves=*/{}, contempt_white_pov);
+                                            *cont_history, *capture_history, *correction_history,
+                                            game_history, path, static_eval_history, pawn_tt, eval_cache,
+                                            material_weights, &limits, /*excluded_moves=*/{},
+                                            contempt_white_pov);
         total_nodes += r.nodes;
 
         if (limits.stopped) {
@@ -2925,6 +3010,7 @@ SearchResult search_iterative_deepening_multipv(
     auto history = std::make_unique<HistoryTable>();
     auto cont_history = std::make_unique<ContinuationHistoryTable>();
     auto capture_history = std::make_unique<CaptureHistoryTable>();
+    auto correction_history = std::make_unique<CorrectionHistoryTable>();
     std::array<std::uint64_t, kMaxPly> path{};
     // Matching per-ply static-eval record for the "improving" flag --
     // same reuse pattern as `path` (search_fixed_depth()'s own
@@ -2945,8 +3031,8 @@ SearchResult search_iterative_deepening_multipv(
     for (int line = 1; line <= max_lines; ++line) {
         SearchResult r =
             search_root(pos, 1, -kInfinity, kInfinity, tt, killers, *history, *cont_history, *capture_history,
-                        game_history, path, static_eval_history, pawn_tt, eval_cache, material_weights,
-                        /*limits=*/nullptr, excluded, contempt_white_pov);
+                        *correction_history, game_history, path, static_eval_history, pawn_tt,
+                        eval_cache, material_weights, /*limits=*/nullptr, excluded, contempt_white_pov);
         total_nodes += r.nodes;
         r.multipv_index = line;
         excluded.push_back(r.best_move);
@@ -3023,8 +3109,8 @@ SearchResult search_iterative_deepening_multipv(
 
             SearchResult r =
                 search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history, *cont_history, *capture_history,
-                            game_history, path, static_eval_history, pawn_tt, eval_cache, material_weights,
-                            &limits, depth_excluded, contempt_white_pov);
+                            *correction_history, game_history, path, static_eval_history, pawn_tt,
+                            eval_cache, material_weights, &limits, depth_excluded, contempt_white_pov);
             depth_nodes += r.nodes;
             if (limits.stopped) {
                 interrupted = true;
@@ -3165,6 +3251,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     auto history = std::make_unique<HistoryTable>();
     auto cont_history = std::make_unique<ContinuationHistoryTable>();
     auto capture_history = std::make_unique<CaptureHistoryTable>();
+    auto correction_history = std::make_unique<CorrectionHistoryTable>();
     // Shared across every iteration of this call too, same rationale as
     // tt/killers/history just above (see negamax()'s header comment and
     // is_draw_by_rule()) -- a later, deeper iteration re-deriving the
@@ -3191,9 +3278,10 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // to aspirate around (see the depth-2-onward loop below).
     tt.new_search();
     SearchResult result = search_root(pos, 1, -kInfinity, kInfinity, tt, killers, *history,
-                                       *cont_history, *capture_history, game_history, path,
-                                       static_eval_history, pawn_tt, eval_cache, material_weights,
-                                       /*limits=*/nullptr, /*excluded_moves=*/{}, contempt_white_pov);
+                                       *cont_history, *capture_history, *correction_history,
+                                       game_history, path, static_eval_history, pawn_tt, eval_cache,
+                                       material_weights, /*limits=*/nullptr, /*excluded_moves=*/{},
+                                       contempt_white_pov);
     std::uint64_t total_nodes = result.nodes;
 
     // Position already over (checkmate/stalemate at the root): every
@@ -3351,9 +3439,9 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
 
             for (;;) {
                 next = search_root(pos, depth, window_alpha, window_beta, tt, killers, *history,
-                                    *cont_history, *capture_history, game_history, path,
-                                    static_eval_history, pawn_tt, eval_cache, material_weights, &limits,
-                                    /*excluded_moves=*/{}, contempt_white_pov);
+                                    *cont_history, *capture_history, *correction_history, game_history,
+                                    path, static_eval_history, pawn_tt, eval_cache, material_weights,
+                                    &limits, /*excluded_moves=*/{}, contempt_white_pov);
 
                 if (limits.stopped) {
                     // Interrupted mid-retry -- see the post-loop
@@ -3396,8 +3484,9 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             }
         } else {
             next = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history, *cont_history, *capture_history,
-                                game_history, path, static_eval_history, pawn_tt, eval_cache, material_weights,
-                                &limits, /*excluded_moves=*/{}, contempt_white_pov);
+                                *correction_history, game_history, path, static_eval_history, pawn_tt,
+                                eval_cache, material_weights, &limits, /*excluded_moves=*/{},
+                                contempt_white_pov);
         }
 
         // `next.nodes` reflects real work done regardless of whether

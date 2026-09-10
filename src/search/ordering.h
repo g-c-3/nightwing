@@ -303,6 +303,95 @@ private:
     std::array<std::array<int, board::kNumPieceTypes>, board::kNumPieceTypes> table_{};
 };
 
+/// Correction history (ROADMAP.md's "Correction history" item, Priority
+/// Fixes (2026-09-08) section; a newer technique with no CPW article of
+/// its own -- popularized by Stockfish's own more recent search code,
+/// described there and on its own public wiki rather than CPW; this is
+/// a from-scratch, deliberately simpler implementation, no code
+/// copied): a running, per-pawn-structure estimate of how far off
+/// eval::evaluate()'s own static eval tends to be from this node's own
+/// REAL (searched, not just statically evaluated) result, used to nudge
+/// static eval toward the historically more-accurate value before
+/// search.cpp's own static-eval-driven pruning (RFP, razoring,
+/// futility) and its "improving" flag use it.
+///
+/// Indexed by [color][pawn-only Zobrist key, masked] -- board::
+/// compute_pawn_hash() (board/zobrist.h), the SAME key eval/pawn_tt.h's
+/// own PawnHashTable uses, for the identical reason given there: pawn
+/// structure changes far less often move-to-move than the rest of the
+/// position, so a correction keyed on it is meaningfully reusable
+/// across many search nodes that share a pawn structure even when
+/// nothing else about the position matches. Indexed by color too, not
+/// just pawn key, matching HistoryTable's own convention above -- even
+/// though eval::evaluate()'s own White/Black symmetry SHOULD make a
+/// shared, color-independent table mathematically sound on its own,
+/// indexing by color anyway costs one array dimension and guards
+/// against any residual eval asymmetry (tempo, contempt) silently
+/// corrupting the correction for one side using data really only
+/// observed for the other.
+///
+/// Deliberately simpler than a full Stockfish-style correction history
+/// (no separate non-pawn/material/minor-piece tables, no per-move-count
+/// decay weighting) -- one pawn-structure table only, matching
+/// ROADMAP.md's own item text ("optionally per-piece-type" -- left for
+/// a future session to add if warranted). A plain bounded exponential
+/// moving average (kCorrectionWeight below), the same "simplest
+/// defensible first draft, not yet tuned" level of sophistication as
+/// this file's own HistoryTable/ContinuationHistoryTable/
+/// CaptureHistoryTable above, rather than Stockfish's own more elaborate
+/// gravity-style formula. Scoped like every other per-search table
+/// above: one instance per top-level search call.
+class CorrectionHistoryTable {
+public:
+    /// Nudges this pawn structure's own stored correction toward
+    /// `error` (a node's own real searched result minus its static
+    /// eval, both side-to-move-relative -- search.cpp's own call site
+    /// has the exact values used) by 1/kCorrectionWeight of the
+    /// remaining distance -- a standard bounded exponential moving
+    /// average, not a full replacement, so one unusual node can't
+    /// overwrite many prior samples' worth of signal in a single
+    /// update. `error` is clamped to +/-kCorrectionMax BEFORE the
+    /// update (not just the stored result after) so a single wild
+    /// outlier (a missed tactic, far outside normal positional eval
+    /// error) can't drag the moving average itself toward an equally
+    /// wild value even temporarily -- and, as a consequence of clamping
+    /// the input to every update rather than the output of just one,
+    /// the stored correction itself can never leave that same range
+    /// either (a weighted average of values already within
+    /// +/-kCorrectionMax can't land outside it).
+    void update(board::Color us, std::uint64_t pawn_key, int error) noexcept;
+
+    /// Returns the current correction for this pawn structure (0 if
+    /// never recorded) -- ADD this to a raw static eval, don't replace
+    /// it; this table only ever tracks a small nudge, not a substitute
+    /// evaluation.
+    [[nodiscard]] int correction(board::Color us, std::uint64_t pawn_key) const noexcept;
+
+private:
+    /// Power-of-2 so `& (kCorrectionTableSize - 1)` is a valid, cheap
+    /// mask -- see search/tt.h's identical sizing convention. Fixed at
+    /// compile time (not a constructor `size_kb` parameter like
+    /// TranspositionTable/PawnHashTable) -- matching HistoryTable/
+    /// CaptureHistoryTable's own "heuristic ordering/pruning-adjustment
+    /// table, not a position cache" sizing convention above, not the
+    /// "large, tuned runtime capacity" convention search/tt.h and
+    /// eval/pawn_tt.h both use for genuine position caches.
+    static constexpr std::size_t kCorrectionTableSize = 16384;
+    /// Symmetric bound on both a single update's own `error` input AND
+    /// (as a consequence -- see update()'s own doc comment) the stored
+    /// correction itself: kept modest (a fraction of a pawn) since this
+    /// is meant to be a small nudge to an already-reasonable eval, not
+    /// a second evaluation function running in parallel.
+    static constexpr int kCorrectionMax = 256;
+    /// Divisor for update()'s own moving-average step -- how many
+    /// roughly-equal-error samples it takes to converge close to a new
+    /// steady-state correction. Not yet tuned, same caveat as every
+    /// other not-yet-SPRT-validated constant in this file.
+    static constexpr int kCorrectionWeight = 32;
+
+    std::array<std::array<int, kCorrectionTableSize>, board::kNumColors> table_{};
+};
+
 /// MVV-LVA (Most Valuable Victim, Least Valuable Attacker): favors
 /// capturing the most valuable piece with the least valuable attacker.
 /// `move` must be a genuine capture (is_capture() == true) of `pos`,
