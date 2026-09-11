@@ -649,45 +649,85 @@ constexpr int kSingularMarginPerPly = 2;
 constexpr int kSingularDepthDivisor = 2;
 constexpr int kSingularExtensionPly = 1;
 
-/// Passed-pawn-push extension (ROADMAP.md's own "Recapture extension"
-/// item, Priority Fixes (2026-09-08) section, names 2 extensions; only
-/// this one is implemented this session -- see docs/DECISIONS.md's own
-/// entry for the full account of why the OTHER one, recapture
-/// extension, was investigated, built, and then dropped: it's
-/// conditioned on the PARENT move (was the move that reached this
-/// position itself a capture on this exact square?), which makes a
-/// node's own extension decision depend on WHICH PATH reached it, not
-/// just the position/depth/bounds tuple every other technique in this
-/// file already treats as a node's complete identity -- a genuine
-/// transposition-table-determinism conflict confirmed via
-/// persistent_tt_tests.cpp's own warm-TT-reuse test, not fixable by
-/// capping chain length since a single ambiguous transposition (not a
-/// long chain) is enough to trigger it). Passed-pawn-push extension has
-/// no such conflict: it depends only on THIS move and THIS resulting
-/// position (a pawn moved, is it on rank 6/7, is it genuinely passed
-/// there) -- the same purely-local, path-independent shape every other
-/// technique in this file already has. No CPW article specific to this
-/// one, but a well-known idea in many real engines: a passed pawn
-/// (board::passed_pawn_mask(), board/masks.h -- the identical mask
-/// eval/pawns.cpp's own pawn-structure scoring already uses) reaching
-/// relative rank 6 or 7 (0-indexed 5 or 6 -- kPassedPawnExtensionMinRank
-/// below; ROADMAP.md's own item text says "rank 6/7" in ordinary
-/// 1-indexed algebraic terms) is close enough to promoting that the
-/// position is often now entirely about that pawn, not a generic quiet
-/// move. ROADMAP.md's own item text calls this "a small" extension --
-/// this file's own extension machinery has no fractional-ply
-/// granularity to make it literally smaller in magnitude than check/
-/// singular's own full ply (`depth` is a plain int throughout this
-/// file, not a fixed-point fractional-ply representation the way some
-/// engines use), so "small" is read here as "small in SCOPE" (a single,
-/// narrow, late-in-the-pawn's-life trigger condition, gated on relative
-/// rank so it fires rarely) rather than "small in magnitude" -- still
-/// combined via the same std::max(), same 1-ply size, as check/singular.
-/// No per-line cap needed (unlike the abandoned recapture attempt): a
-/// single pawn can trigger this at most twice in one line (once at rank
-/// 6, once at rank 7, before promoting), and a position has at most 8
-/// pawns per side, so the worst-case total is inherently small without
-/// any additional bookkeeping.
+/// Recapture handling (ROADMAP.md's own item, Priority Fixes
+/// (2026-09-08) section; CPW "Recapture Extensions" describes the
+/// classic depth-extension version of this idea) -- implemented here as
+/// an exemption from SEE-based capture pruning (kSeePruningMaxDepth's
+/// own block, below), NOT as a depth extension, after a depth-extension
+/// version was built, tested, and found to have a real correctness
+/// problem worth recording in full:
+///
+/// A first version added a ply to `depth - 1 + extension` (this file's
+/// own move-loop formula) whenever `is_recapture` (below) held --
+/// literally what CPW's own article and ROADMAP.md's own item text
+/// describe. That value becomes the CHILD's own `depth` argument, which
+/// is exactly what gets stored as that child position's own depth in
+/// the TT. `is_recapture` depends on `prev_to`/`prev_was_capture` --
+/// properties of the EDGE used to reach the CURRENT position, not the
+/// position itself -- and a transposition can reach the identical
+/// position via a capturing last move on one path and a non-capturing
+/// one on another. So the same child position could be stored in the TT
+/// at two different depths depending purely on which path got there
+/// first, and — critically, this is what made it a real bug and not
+/// just a documentation nitpick — WHICH of those two paths runs first
+/// depends on move ordering, which a warm TT changes. Confirmed via a
+/// concrete, reproducible failure on `persistent_tt_tests.cpp`'s own
+/// warm-TT-reuse test (startpos, depth 6): a warm search of the
+/// IDENTICAL position visited 2174 nodes and returned one best move,
+/// while a cold search of the same position visited 946 nodes and
+/// returned a DIFFERENT best move -- not merely a different but
+/// equally-valid result; the warm run did MORE work AND returned a
+/// different answer, meaning the extension made persistent-TT reuse
+/// actively counterproductive for that position, not just
+/// non-bit-reproducible. A per-line cap on cumulative extension depth
+/// was tried first as a fix and made no difference (the divergence
+/// doesn't require a long chain, a single ambiguous transposition is
+/// enough), and a "cumulative extensions used" counter tried as a
+/// second fix was itself new path-dependent state compounding the exact
+/// problem it was meant to solve.
+///
+/// The exemption-from-pruning version below avoids all of this because
+/// it never changes what depth any move gets searched to -- every move
+/// is still searched at exactly `depth - 1` (plus whatever check/
+/// singular/passed-pawn extension it separately, ordinarily qualifies
+/// for), so the child's own TT depth is identical regardless of which
+/// path reached the parent. `is_recapture` here only ever decides
+/// whether THIS node bothers trying a particular capture that SEE-based
+/// pruning would otherwise skip outright -- a real gain (a forced
+/// recapture with superficially bad SEE, e.g. because of a follow-up
+/// tactic SEE's own pure material count can't see, no longer gets
+/// silently pruned away, the actual point of the ROADMAP item) without
+/// ever touching the one quantity (child depth) whose divergence
+/// actually broke TT reuse. `is_recapture` itself: this exact move must
+/// be a capture landing on the EXACT square the opponent's own last
+/// move (`prev_to`) captured on -- `prev_was_capture` rules out an
+/// ordinary capture that merely happens to share a destination square
+/// with an unrelated, non-capturing prior move.
+/// Passed-pawn-push extension (ROADMAP.md's own item, same section) --
+/// no dedicated CPW article for this specific one, but a well-known
+/// idea in many real engines: a passed pawn (board::passed_pawn_mask(),
+/// board/masks.h -- the identical mask eval/pawns.cpp's own pawn-
+/// structure scoring already uses) reaching relative rank 6 or 7 (0-
+/// indexed 5 or 6 -- see kPassedPawnExtensionMinRank below; ROADMAP.md's
+/// own item text says "rank 6/7" in ordinary 1-indexed algebraic terms)
+/// is close enough to promoting that the position is often now ENTIRELY
+/// about that pawn, not a generic quiet move. ROADMAP.md's own item text
+/// calls this "a small" extension -- this file's own extension
+/// machinery has no fractional-ply granularity to make it literally
+/// smaller in magnitude than check/singular/recapture's own full ply
+/// (`depth` is a plain int throughout this file, not a fixed-point
+/// fractional-ply representation the way some engines use), so "small"
+/// is read here as "small in SCOPE" (a single, narrow, late-in-the-
+/// pawn's-life trigger condition, gated on relative rank so it fires
+/// rarely) rather than "small in magnitude" -- still combined via the
+/// same std::max(), same 1-ply size, as every other extension in this
+/// file. Same `ply + 1 < kMaxPly` correctness guard as the others.
+/// Unlike recapture extension above, this one depends only on THIS move
+/// and THIS resulting position (a pawn moved, is it on rank 6/7, is it
+/// genuinely passed there) -- the same purely-local, path-independent
+/// shape every technique in this file other than recapture extension
+/// already has, so it carries none of that extension's own TT-
+/// determinism trade-off.
 constexpr int kPassedPawnExtensionMinRank = 5; // 0-indexed; algebraic rank 6
 constexpr int kPassedPawnExtensionPly = 1;
 
@@ -1148,7 +1188,35 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
 /// null move (this function's own NMP block skips passing continuation
 /// context to its null-move child for exactly that reason) -- which
 /// makes continuation history contribute nothing at that node, same as
-/// if the table were empty. `tt` (search/tt.h) is
+/// if the table were empty. `prev_was_capture` describes that same
+/// preceding move too (`false` at the identical "no real preceding
+/// move" points `prev_piece` is `None` at) -- ROADMAP.md's own
+/// "Recapture extension" item added it specifically so this function's
+/// own move loop can distinguish a genuine recapture (this exact move
+/// landing on `prev_to` AND the move that reached `prev_to` having
+/// itself been a capture) from an ordinary capture that merely happens
+/// to share a destination square with an unrelated, non-capturing prior
+/// move -- `move.to() == prev_to` alone can't tell those two apart.
+///
+/// `prev_was_capture`/`prev_to` describe the EDGE used to reach `pos`,
+/// not `pos` itself -- unlike every other piece of state this function
+/// conditions its decisions on (TT probes, mate-distance pruning, RFP/
+/// NMP/razoring/futility/the "improving" flag/correction history, LMR,
+/// check/singular extensions, all of which depend only on `(position,
+/// depth, alpha, beta[, ply])`). This matters because a first design
+/// used `is_recapture` (this function's own move loop, below) to grant
+/// an extra ply of DEPTH, which broke `persistent_tt_tests.cpp`'s own
+/// warm-TT-reuse test in a real, not merely cosmetic, way (the recapture
+/// constants' own doc comment, above, has the full account with actual
+/// numbers). The version actually shipped instead uses `is_recapture`
+/// only to EXEMPT a move from SEE-based capture pruning (that pruning
+/// block's own comment has the detail) -- it never changes what depth
+/// any move gets searched to, so the child's own TT-stored depth is
+/// identical regardless of which path reached the parent, and the
+/// path-dependence above, while still technically true of
+/// `prev_was_capture` as a value, no longer has anywhere to cause the
+/// kind of divergence the depth-extension version did.
+/// `tt` (search/tt.h) is
 /// also keyed and mate-distance-adjusted around this same `ply`
 /// convention — see tt.cpp's adjustment functions.
 ///
@@ -1369,7 +1437,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
             ContinuationHistoryTable& cont_history, CaptureHistoryTable& capture_history,
             CorrectionHistoryTable& correction_history, board::PieceType prev_piece,
-            board::Square prev_to, std::span<const std::uint64_t> game_history,
+            board::Square prev_to, bool prev_was_capture,
+            std::span<const std::uint64_t> game_history,
             std::array<std::uint64_t, kMaxPly>& path,
             std::array<int, kMaxPly>& static_eval_history, eval::PawnHashTable& pawn_tt,
             eval::EvalCache& eval_cache, const eval::MaterialWeights* material_weights,
@@ -1700,9 +1769,9 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                                          tt, killers, history, cont_history, capture_history,
                                          correction_history,
                                          /*prev_piece=*/board::PieceType::None, /*prev_to=*/0,
-                                         game_history, path, static_eval_history, pawn_tt, eval_cache,
-                                         material_weights, /*allow_null_move=*/false, limits,
-                                         contempt_white_pov);
+                                         /*prev_was_capture=*/false, game_history, path,
+                                         static_eval_history, pawn_tt, eval_cache, material_weights,
+                                         /*allow_null_move=*/false, limits, contempt_white_pov);
         board::unmake_null_move(pos, null_undo);
         // A probe interrupted mid-search (limits->stopped) returns a
         // meaningless, truncated-subtree score (SearchLimits' own doc
@@ -1787,9 +1856,9 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             const int probcut_score =
                 -negamax(pos, depth - kProbCutReduction, -probcut_beta, -probcut_beta + 1, ply + 1,
                          nodes, tt, killers, history, cont_history, capture_history, correction_history,
-                         probcut_moved_piece, probcut_move.to(), game_history, path, static_eval_history,
-                         pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits,
-                         contempt_white_pov);
+                         probcut_moved_piece, probcut_move.to(), probcut_move.is_capture(), game_history,
+                         path, static_eval_history, pawn_tt, eval_cache, material_weights,
+                         /*allow_null_move=*/true, limits, contempt_white_pov);
             board::unmake_move(pos, probcut_move, probcut_undo);
             if (limits != nullptr && limits->stopped) {
                 // Truncated subtree (SearchLimits' own doc comment) --
@@ -1953,9 +2022,9 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 const int alt_score =
                     -negamax(pos, singular_depth, -singular_beta, -singular_beta + 1, ply + 1, nodes,
                              tt, killers, history, cont_history, capture_history, correction_history,
-                             alt_moved_piece, alt_move.to(), game_history, path, static_eval_history,
-                             pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits,
-                             contempt_white_pov);
+                             alt_moved_piece, alt_move.to(), alt_move.is_capture(), game_history, path,
+                             static_eval_history, pawn_tt, eval_cache, material_weights,
+                             /*allow_null_move=*/true, limits, contempt_white_pov);
                 board::unmake_move(pos, alt_move, alt_undo);
                 if (limits != nullptr && limits->stopped) {
                     // Truncated subtree -- stop the verification loop
@@ -2030,6 +2099,18 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // twice for two different reasons at once.
         const int check_extension = (move_gives_check && ply + 1 < kMaxPly) ? kCheckExtensionPly : 0;
 
+        // Recapture detection (the recapture-handling doc comment,
+        // above, has the full rationale, including why this is a
+        // pruning EXEMPTION rather than a depth extension): this exact
+        // move must itself be a capture landing on the EXACT square the
+        // opponent's own last move (this call's own `prev_to`) captured
+        // on -- `prev_was_capture` rules out the case where
+        // `move.to() == prev_to` merely by coincidence against a prior
+        // NON-capturing move. Used below, at the SEE-pruning check, NOT
+        // folded into `extension` -- see the recapture-handling doc
+        // comment above for why.
+        const bool is_recapture = prev_was_capture && move.is_capture() && move.to() == prev_to;
+
         // Passed-pawn-push extension (kPassedPawnExtensionPly's own doc
         // comment, above, has the full rationale). `moved_piece`
         // (computed pre-move, above) must be a pawn, its DESTINATION
@@ -2059,9 +2140,11 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // Combined via std::max(), not summed -- same "a move never gets
         // extended twice for two different reasons at once" rule this
         // function's own header comment already states for check/
-        // singular extensions, now extended to all 3.
-        const int extension =
-            std::max({check_extension, singular_extension, passed_pawn_extension});
+        // singular extensions. Recapture is deliberately NOT one of
+        // these 3 (the recapture-handling doc comment, above, has
+        // the full reasoning) -- it's applied instead, below, as an
+        // exemption from SEE-based capture pruning.
+        const int extension = std::max({check_extension, singular_extension, passed_pawn_extension});
 
         int score;
         if (i == 0) {
@@ -2076,8 +2159,9 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // ordering.
             score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt, killers,
                               history, cont_history, capture_history, correction_history, moved_piece,
-                              move.to(), game_history, path, static_eval_history, pawn_tt, eval_cache,
-                              material_weights, /*allow_null_move=*/true, limits, contempt_white_pov);
+                              move.to(), move.is_capture(), game_history, path, static_eval_history,
+                              pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits,
+                              contempt_white_pov);
         } else {
             // Futility pruning (CPW "Futility Pruning", this function's
             // header comment): a node-level condition -- computed once,
@@ -2135,9 +2219,17 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // already excluded by construction (this whole cascading
             // block only runs in the `else` branch below, never for the
             // ordering-selected first move -- this function's header
-            // comment on the i==0/i!=0 split).
-            if (!us_in_check && move.is_capture() && !move_gives_check && depth <= kSeePruningMaxDepth &&
-                alpha > -kMateThreshold &&
+            // comment on the i==0/i!=0 split). `!is_recapture`
+            // (the recapture-handling doc comment, above, has the
+            // full rationale): a recapture on the opponent's own last
+            // capture square is exempted from this skip even when its
+            // raw SEE value looks bad in isolation -- it's rarely a free
+            // choice, and a real tactical point elsewhere in the
+            // position (a follow-up threat, a discovered attack) is
+            // exactly the kind of thing a purely material-counting SEE
+            // value can miss.
+            if (!us_in_check && move.is_capture() && !move_gives_check && !is_recapture &&
+                depth <= kSeePruningMaxDepth && alpha > -kMateThreshold &&
                 capture_see < kSeePruningThresholds[static_cast<std::size_t>(depth)]) {
                 board::unmake_move(pos, move, undo);
                 continue;
@@ -2185,9 +2277,9 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // below.
             score = -negamax(pos, depth - 1 + extension - reduction, -alpha - 1, -alpha, ply + 1,
                               nodes, tt, killers, history, cont_history, capture_history,
-                              correction_history, moved_piece, move.to(), game_history, path,
-                              static_eval_history, pawn_tt, eval_cache, material_weights,
-                              /*allow_null_move=*/true, limits, contempt_white_pov);
+                              correction_history, moved_piece, move.to(), move.is_capture(),
+                              game_history, path, static_eval_history, pawn_tt, eval_cache,
+                              material_weights, /*allow_null_move=*/true, limits, contempt_white_pov);
             if ((limits == nullptr || !limits->stopped) && reduction > 0 && score > alpha) {
                 // The reduced probe suggested this move might actually
                 // be good -- not trustworthy on its own (a shallower
@@ -2195,21 +2287,26 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 // re-verify at full depth (still a null window -- this
                 // is still just a probe) before deciding whether the
                 // full-window re-search below is warranted. `extension`
-                // is always 0 here (reduction > 0 implies eligible_for_lmr
-                // was true, which requires !move_gives_check, which is
-                // the only thing that ever sets extension > 0).
+                // is not always 0 here: `reduction > 0` implies
+                // eligible_for_lmr was true, which requires
+                // !move.is_capture() and !move_gives_check, so
+                // check_extension and recapture_extension are both
+                // guaranteed 0 -- but a non-capturing, non-check-giving
+                // passed-pawn push past kPassedPawnExtensionMinRank can
+                // still be BOTH LMR-eligible AND separately qualify for
+                // `passed_pawn_extension`.
                 score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, ply + 1, nodes, tt,
                                   killers, history, cont_history, capture_history, correction_history,
-                                  moved_piece, move.to(), game_history, path, static_eval_history,
-                                  pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
-                                  limits, contempt_white_pov);
+                                  moved_piece, move.to(), move.is_capture(), game_history, path,
+                                  static_eval_history, pawn_tt, eval_cache, material_weights,
+                                  /*allow_null_move=*/true, limits, contempt_white_pov);
             }
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt,
                                   killers, history, cont_history, capture_history, correction_history,
-                                  moved_piece, move.to(), game_history, path, static_eval_history,
-                                  pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
-                                  limits, contempt_white_pov);
+                                  moved_piece, move.to(), move.is_capture(), game_history, path,
+                                  static_eval_history, pawn_tt, eval_cache, material_weights,
+                                  /*allow_null_move=*/true, limits, contempt_white_pov);
             }
         }
 
@@ -2706,20 +2803,21 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         if (i == 0 || depth == 1) {
             score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt, killers,
                               history, cont_history, capture_history, correction_history, moved_piece,
-                              move.to(), game_history, path, static_eval_history, pawn_tt, eval_cache,
-                              material_weights, /*allow_null_move=*/true, limits, contempt_white_pov);
+                              move.to(), move.is_capture(), game_history, path, static_eval_history,
+                              pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits,
+                              contempt_white_pov);
         } else {
             score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, 1, result.nodes, tt,
                               killers, history, cont_history, capture_history, correction_history,
-                              moved_piece, move.to(), game_history, path, static_eval_history, pawn_tt,
-                              eval_cache, material_weights, /*allow_null_move=*/true, limits,
-                              contempt_white_pov);
+                              moved_piece, move.to(), move.is_capture(), game_history, path,
+                              static_eval_history, pawn_tt, eval_cache, material_weights,
+                              /*allow_null_move=*/true, limits, contempt_white_pov);
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt,
                                   killers, history, cont_history, capture_history, correction_history,
-                                  moved_piece, move.to(), game_history, path, static_eval_history,
-                                  pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true,
-                                  limits, contempt_white_pov);
+                                  moved_piece, move.to(), move.is_capture(), game_history, path,
+                                  static_eval_history, pawn_tt, eval_cache, material_weights,
+                                  /*allow_null_move=*/true, limits, contempt_white_pov);
             }
         }
 
