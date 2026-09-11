@@ -652,26 +652,54 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
           "[search][extension][passed_pawn]") {
     init_all();
     // Session 98 (this session, continued a fifth time): ROADMAP.md's
-    // own item names 2 extensions (recapture, passed-pawn-push); only
-    // the second is implemented this session -- recapture extension was
-    // built, found to have a fundamental transposition-table-
-    // determinism conflict (conditioned on the PARENT move, so the same
-    // position could get a different amount of search depending on
-    // which path reached it -- confirmed via persistent_tt_tests.cpp's
-    // own warm-TT-reuse test failing regardless of how aggressively the
-    // chain length was capped), and dropped rather than shipped with a
-    // known regression. kPassedPawnExtensionPly's own doc comment
-    // (search.cpp) has the full account. Reusing this file's own
-    // established shared mate-in-3 fixture, same rationale as every
-    // other negamax()-internal technique this file already regression-
-    // tests this way. This particular fixture has no pawns at all, so
-    // it can't directly exercise the extension firing -- it exists here
-    // to confirm the extension's own machinery (the new relative-rank/
-    // passed-pawn-mask check in both negamax()'s and search_root()'s
-    // move loops) doesn't somehow break an ordinary pawnless search.
-    // endgame_suite_tests.cpp's own Lucena position (a real passed pawn
-    // 1 square from promotion) is what actually exercises the extension
-    // firing, and continues to find the correct `1.Rc1` there.
+    // own item names 2 techniques (recapture, passed-pawn-push); this
+    // test covers passed-pawn-push specifically (kPassedPawnExtensionPly's
+    // own doc comment, search.cpp, has the full account) -- recapture's
+    // own dedicated test is just below (`[search][recapture]`), since
+    // it ended up implemented as a fundamentally different MECHANISM
+    // (a SEE-pruning exemption, not a depth extension -- see that
+    // constant's own doc comment for why the classic depth-extension
+    // version was built, found to break persistent_tt_tests.cpp's own
+    // warm-TT-reuse test in a real way, and replaced). Reusing this
+    // file's own established shared mate-in-3 fixture, same rationale
+    // as every other negamax()-internal technique this file already
+    // regression-tests this way. This particular fixture has no pawns
+    // at all, so it can't directly exercise the extension firing -- it
+    // exists here to confirm the extension's own machinery (the new
+    // relative-rank/passed-pawn-mask check in both negamax()'s and
+    // search_root()'s move loops) doesn't somehow break an ordinary
+    // pawnless search. endgame_suite_tests.cpp's own Lucena position (a
+    // real passed pawn 1 square from promotion) is what actually
+    // exercises the extension firing, and continues to find the correct
+    // `1.Rc1` there.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "recapture's own SEE-pruning exemption active",
+          "[search][recapture]") {
+    init_all();
+    // Session 98 (this session, continued a sixth time): recapture
+    // handling (the recapture-handling doc comment, search.cpp,
+    // has the full account of the classic depth-extension version that
+    // was tried first, found to break persistent_tt_tests.cpp's own
+    // warm-TT-reuse test in a real, reproducible way -- not just a
+    // theoretical concern -- and replaced) is implemented as an
+    // exemption from SEE-based capture pruning: a recapture on the
+    // opponent's own last capture square is no longer skipped outright
+    // just because its raw SEE value looks bad in isolation. Reusing
+    // this file's own established shared mate-in-3 fixture, same
+    // rationale as every other negamax()-internal technique this file
+    // already regression-tests this way -- confirming the new
+    // `is_recapture` check (negamax()'s own move loop) and its use at
+    // the SEE-pruning call site don't somehow break an ordinary forced
+    // mate search. persistent_tt_tests.cpp's own warm-TT-reuse test is
+    // what actually confirms the fix for the original bug: a cold and a
+    // warm search of the identical position now return the identical
+    // best move and score, with the warm search visiting dramatically
+    // fewer nodes, exactly as that test's own name promises.
     Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
     const SearchResult result = search_iterative_deepening(pos, 6);
     REQUIRE(result.score >= kMateThreshold);
