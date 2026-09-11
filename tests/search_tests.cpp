@@ -648,6 +648,36 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
 }
 
 TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
+          "the passed-pawn-push extension active",
+          "[search][extension][passed_pawn]") {
+    init_all();
+    // Session 98 (this session, continued a fifth time): ROADMAP.md's
+    // own item names 2 extensions (recapture, passed-pawn-push); only
+    // the second is implemented this session -- recapture extension was
+    // built, found to have a fundamental transposition-table-
+    // determinism conflict (conditioned on the PARENT move, so the same
+    // position could get a different amount of search depending on
+    // which path reached it -- confirmed via persistent_tt_tests.cpp's
+    // own warm-TT-reuse test failing regardless of how aggressively the
+    // chain length was capped), and dropped rather than shipped with a
+    // known regression. kPassedPawnExtensionPly's own doc comment
+    // (search.cpp) has the full account. Reusing this file's own
+    // established shared mate-in-3 fixture, same rationale as every
+    // other negamax()-internal technique this file already regression-
+    // tests this way. This particular fixture has no pawns at all, so
+    // it can't directly exercise the extension firing -- it exists here
+    // to confirm the extension's own machinery (the new relative-rank/
+    // passed-pawn-mask check in both negamax()'s and search_root()'s
+    // move loops) doesn't somehow break an ordinary pawnless search.
+    // endgame_suite_tests.cpp's own Lucena position (a real passed pawn
+    // 1 square from promotion) is what actually exercises the extension
+    // firing, and continues to find the correct `1.Rc1` there.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE(result.score >= kMateThreshold);
+}
+
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly with "
           "late move pruning active",
           "[search][lmp]") {
     init_all();
