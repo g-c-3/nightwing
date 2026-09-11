@@ -16,6 +16,7 @@
 #include <utility>
 
 #include "board/movegen.h"
+#include "board/masks.h" // board::passed_pawn_mask() -- passed-pawn-push extension, this file's own move loop
 #include "board/zobrist.h" // board::compute_pawn_hash() -- CorrectionHistoryTable's own key, search/ordering.h
 #include "eval/endgame.h"
 #include "eval/eval.h"
@@ -647,6 +648,48 @@ constexpr int kSingularTTDepthMargin = 3;
 constexpr int kSingularMarginPerPly = 2;
 constexpr int kSingularDepthDivisor = 2;
 constexpr int kSingularExtensionPly = 1;
+
+/// Passed-pawn-push extension (ROADMAP.md's own "Recapture extension"
+/// item, Priority Fixes (2026-09-08) section, names 2 extensions; only
+/// this one is implemented this session -- see docs/DECISIONS.md's own
+/// entry for the full account of why the OTHER one, recapture
+/// extension, was investigated, built, and then dropped: it's
+/// conditioned on the PARENT move (was the move that reached this
+/// position itself a capture on this exact square?), which makes a
+/// node's own extension decision depend on WHICH PATH reached it, not
+/// just the position/depth/bounds tuple every other technique in this
+/// file already treats as a node's complete identity -- a genuine
+/// transposition-table-determinism conflict confirmed via
+/// persistent_tt_tests.cpp's own warm-TT-reuse test, not fixable by
+/// capping chain length since a single ambiguous transposition (not a
+/// long chain) is enough to trigger it). Passed-pawn-push extension has
+/// no such conflict: it depends only on THIS move and THIS resulting
+/// position (a pawn moved, is it on rank 6/7, is it genuinely passed
+/// there) -- the same purely-local, path-independent shape every other
+/// technique in this file already has. No CPW article specific to this
+/// one, but a well-known idea in many real engines: a passed pawn
+/// (board::passed_pawn_mask(), board/masks.h -- the identical mask
+/// eval/pawns.cpp's own pawn-structure scoring already uses) reaching
+/// relative rank 6 or 7 (0-indexed 5 or 6 -- kPassedPawnExtensionMinRank
+/// below; ROADMAP.md's own item text says "rank 6/7" in ordinary
+/// 1-indexed algebraic terms) is close enough to promoting that the
+/// position is often now entirely about that pawn, not a generic quiet
+/// move. ROADMAP.md's own item text calls this "a small" extension --
+/// this file's own extension machinery has no fractional-ply
+/// granularity to make it literally smaller in magnitude than check/
+/// singular's own full ply (`depth` is a plain int throughout this
+/// file, not a fixed-point fractional-ply representation the way some
+/// engines use), so "small" is read here as "small in SCOPE" (a single,
+/// narrow, late-in-the-pawn's-life trigger condition, gated on relative
+/// rank so it fires rarely) rather than "small in magnitude" -- still
+/// combined via the same std::max(), same 1-ply size, as check/singular.
+/// No per-line cap needed (unlike the abandoned recapture attempt): a
+/// single pawn can trigger this at most twice in one line (once at rank
+/// 6, once at rank 7, before promoting), and a position has at most 8
+/// pawns per side, so the worst-case total is inherently small without
+/// any additional bookkeeping.
+constexpr int kPassedPawnExtensionMinRank = 5; // 0-indexed; algebraic rank 6
+constexpr int kPassedPawnExtensionPly = 1;
 
 // Mid-search time-budget interruption (ROADMAP.md Priority Fix,
 // promoted from the Phase 2 scope cut this comment used to describe,
@@ -1986,7 +2029,39 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // function's header comment) -- a move never gets extended
         // twice for two different reasons at once.
         const int check_extension = (move_gives_check && ply + 1 < kMaxPly) ? kCheckExtensionPly : 0;
-        const int extension = std::max(check_extension, singular_extension);
+
+        // Passed-pawn-push extension (kPassedPawnExtensionPly's own doc
+        // comment, above, has the full rationale). `moved_piece`
+        // (computed pre-move, above) must be a pawn, its DESTINATION
+        // square (`pos` already reflects the move -- same "after
+        // move_gives_check's own in_check(pos) call" timing as
+        // everything else in this block) must be at or past
+        // kPassedPawnExtensionMinRank from `us`'s own perspective, and
+        // it must still be a genuinely passed pawn there
+        // (board::passed_pawn_mask(), the identical mask eval/
+        // pawns.cpp's own pawn-structure scoring already uses, against
+        // the opponent's CURRENT pawns -- `pos` already reflects any
+        // pawn this exact move itself just captured, so this can't be
+        // fooled by a pawn this move just removed).
+        int passed_pawn_extension = 0;
+        if (moved_piece == board::PieceType::Pawn && ply + 1 < kMaxPly) {
+            const int pawn_relative_rank = us == Color::White ? board::rank_of(move.to())
+                                                                : 7 - board::rank_of(move.to());
+            if (pawn_relative_rank >= kPassedPawnExtensionMinRank) {
+                const Color them = us == Color::White ? Color::Black : Color::White;
+                const board::Bitboard enemy_pawns = pos.pieces(them, board::PieceType::Pawn);
+                if ((enemy_pawns & board::passed_pawn_mask(us, move.to())) == 0) {
+                    passed_pawn_extension = kPassedPawnExtensionPly;
+                }
+            }
+        }
+
+        // Combined via std::max(), not summed -- same "a move never gets
+        // extended twice for two different reasons at once" rule this
+        // function's own header comment already states for check/
+        // singular extensions, now extended to all 3.
+        const int extension =
+            std::max({check_extension, singular_extension, passed_pawn_extension});
 
         int score;
         if (i == 0) {
@@ -2579,7 +2654,31 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         // identical to negamax()'s own for a single, consistently-
         // applied rule rather than a root-specific shortcut.
         const bool move_gives_check = in_check(pos);
-        const int extension = (move_gives_check && 1 < kMaxPly) ? kCheckExtensionPly : 0;
+        // Passed-pawn-push extension (kPassedPawnExtensionPly's own doc
+        // comment, negamax()'s own constants section, has the full
+        // rationale) -- mirrored here for the root's own move loop since
+        // it depends only on THIS move and the resulting position.
+        // `pos.side_to_move` has already flipped to the OPPONENT by this
+        // point (the move is already made, above), so the MOVER's own
+        // color (needed for both the relative-rank calculation and
+        // passed_pawn_mask() below) is the opposite of `pos.side_to_move`
+        // here -- this function has no cached pre-move `us` local of its
+        // own to reuse the way negamax()'s own version of this block
+        // does.
+        int passed_pawn_extension = 0;
+        if (moved_piece == board::PieceType::Pawn && 1 < kMaxPly) {
+            const Color mover = pos.side_to_move == Color::White ? Color::Black : Color::White;
+            const int pawn_relative_rank =
+                mover == Color::White ? board::rank_of(move.to()) : 7 - board::rank_of(move.to());
+            if (pawn_relative_rank >= kPassedPawnExtensionMinRank) {
+                const board::Bitboard enemy_pawns = pos.pieces(pos.side_to_move, board::PieceType::Pawn);
+                if ((enemy_pawns & board::passed_pawn_mask(mover, move.to())) == 0) {
+                    passed_pawn_extension = kPassedPawnExtensionPly;
+                }
+            }
+        }
+        const int extension =
+            std::max((move_gives_check && 1 < kMaxPly) ? kCheckExtensionPly : 0, passed_pawn_extension);
 
         // Root-level PVS, mirroring negamax()'s move loop (see its
         // comments for the full rationale) with one deliberate
