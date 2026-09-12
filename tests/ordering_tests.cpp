@@ -610,3 +610,125 @@ TEST_CASE("order_moves: equal-scoring quiets keep move-generation order (stable 
     REQUIRE(moves[0] == first);
     REQUIRE(moves[1] == second);
 }
+
+TEST_CASE("order_moves: tie_break_variant defaulting to 0 reproduces the pre-existing "
+          "stable-sort tie order exactly",
+          "[ordering][smp]") {
+    init_all();
+    // ROADMAP.md's "Lazy SMP helper thread diversification" item
+    // (Priority Fixes, 2026-09-08 section): confirms the new
+    // `tie_break_variant` parameter's own default (0) is a genuine
+    // no-op, not just "close to" the old behavior -- the main search
+    // thread (search.cpp's own negamax()/search_root() calls) never
+    // passes anything else, so this must reproduce the previous test's
+    // own exact result byte for byte.
+    Position pos = parse_fen("4k3/8/8/8/8/8/8/4K3 w - - 0 1");
+    const Move first(make_square(4, 0), make_square(3, 0), MoveFlag::Quiet);
+    const Move second(make_square(4, 0), make_square(5, 0), MoveFlag::Quiet);
+
+    MoveList moves;
+    moves.push_back(first);
+    moves.push_back(second);
+
+    KillerTable killers;
+    HistoryTable history;
+    ContinuationHistoryTable cont_history;
+    CaptureHistoryTable capture_history;
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, capture_history, PieceType::None,
+                0, /*tie_break_variant=*/0);
+    REQUIRE(moves[0] == first);
+    REQUIRE(moves[1] == second);
+}
+
+TEST_CASE("order_moves: a nonzero tie_break_variant never displaces the TT move from first",
+          "[ordering][smp]") {
+    init_all();
+    // The jitter (ordering.cpp's own kTieBreakJitterRange) must be
+    // small enough to never cross into the TT-move score band above
+    // it, regardless of which variant is used -- checked here with
+    // several distinct variants, not just one, since the jitter is
+    // itself a function of `tie_break_variant`.
+    Position pos = parse_fen("4k3/8/2r5/3p4/1NR1Q3/8/8/4K3 w - - 0 1");
+    const Move qxd5(make_square(4, 3), make_square(3, 4), MoveFlag::Capture);
+    const Move rxc6(make_square(2, 3), make_square(2, 5), MoveFlag::Capture);
+
+    KillerTable killers;
+    HistoryTable history;
+    ContinuationHistoryTable cont_history;
+    CaptureHistoryTable capture_history;
+    for (int variant = 1; variant <= 5; ++variant) {
+        MoveList moves;
+        moves.push_back(qxd5);
+        moves.push_back(rxc6);
+        order_moves(moves, pos, /*tt_move=*/qxd5, killers, 0, history, cont_history, capture_history,
+                    PieceType::None, 0, variant);
+        REQUIRE(moves[0] == qxd5);
+    }
+}
+
+TEST_CASE("order_moves: a nonzero tie_break_variant never lets a quiet move outrank a killer",
+          "[ordering][smp]") {
+    init_all();
+    // Same band-crossing safety property as the TT-move test above,
+    // checked at the killer/quiet boundary instead -- a large,
+    // deliberately maxed-out history score on the quiet move (same
+    // setup as "history-scored quiets still rank below killers" above)
+    // makes this the closest a quiet move's own jittered score can ever
+    // get to a killer's, so this is the tightest practical check
+    // available for this property.
+    Position pos = parse_fen("4k3/8/8/8/8/8/8/4K3 w - - 0 1");
+    const Move killer_move(make_square(4, 0), make_square(3, 0), MoveFlag::Quiet);
+    const Move history_move(make_square(4, 0), make_square(5, 0), MoveFlag::Quiet);
+
+    KillerTable killers;
+    killers.update(2, killer_move);
+    HistoryTable history;
+    ContinuationHistoryTable cont_history;
+    CaptureHistoryTable capture_history;
+    for (int i = 0; i < 20; ++i) {
+        history.update(Color::White, history_move, 50);
+    }
+    for (int variant = 1; variant <= 5; ++variant) {
+        MoveList moves;
+        moves.push_back(history_move);
+        moves.push_back(killer_move);
+        order_moves(moves, pos, Move(), killers, 2, history, cont_history, capture_history,
+                    PieceType::None, 0, variant);
+        REQUIRE(moves[0] == killer_move);
+    }
+}
+
+TEST_CASE("order_moves: a nonzero tie_break_variant can reorder moves that would otherwise tie",
+          "[ordering][smp]") {
+    init_all();
+    // The actual point of this parameter: 2 quiet moves with identical
+    // (zero) history score currently always keep move-generation order
+    // regardless of variant (the "equal-scoring quiets keep move-
+    // generation order" test above already covers variant 0
+    // specifically). At least one nonzero variant, out of a reasonable
+    // spread, should break that tie the OTHER way -- if none did, the
+    // jitter would not actually be diversifying anything, silently
+    // defeating this whole ROADMAP item despite every other test above
+    // still passing.
+    Position pos = parse_fen("4k3/8/8/8/8/8/8/4K3 w - - 0 1");
+    const Move first(make_square(4, 0), make_square(3, 0), MoveFlag::Quiet);
+    const Move second(make_square(4, 0), make_square(5, 0), MoveFlag::Quiet);
+
+    KillerTable killers;
+    HistoryTable history;
+    ContinuationHistoryTable cont_history;
+    CaptureHistoryTable capture_history;
+    bool order_flipped_at_least_once = false;
+    for (int variant = 1; variant <= 20; ++variant) {
+        MoveList moves;
+        moves.push_back(first);
+        moves.push_back(second);
+        order_moves(moves, pos, Move(), killers, 0, history, cont_history, capture_history,
+                    PieceType::None, 0, variant);
+        if (moves[0] == second) {
+            order_flipped_at_least_once = true;
+            break;
+        }
+    }
+    REQUIRE(order_flipped_at_least_once);
+}

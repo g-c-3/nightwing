@@ -167,3 +167,33 @@ TEST_CASE("search_iterative_deepening: num_threads == 1 is unaffected by the par
     REQUIRE(default_call.score == explicit_one.score);
     REQUIRE(default_call.nodes == explicit_one.nodes);
 }
+
+TEST_CASE("search_iterative_deepening: helper thread diversification (staggered starting "
+          "depth, occasional depth skip, tie-break jitter) still finds the same forced "
+          "mate-in-3 across several distinct thread counts",
+          "[search][smp]") {
+    init_all();
+    // ROADMAP.md's "Lazy SMP helper thread diversification" item
+    // (Priority Fixes, 2026-09-08 section; run_lazy_smp_helper()'s own
+    // header comment, search.cpp, has the full design). Distinct from
+    // this file's own earlier "num_threads > 1 still finds the same
+    // forced mate-in-3" test above (written before diversification
+    // existed, and still passing with it now that helper_id feeds a
+    // staggered start depth/depth skip/tie-break variant instead of
+    // every helper running an identical loop) -- this test specifically
+    // sweeps thread counts 2 through 5 to exercise several DISTINCT
+    // `helper_id` values (0 through up to 4) in one run, since each id
+    // gets a different starting depth (kLazySmpStartDepthSpread wraps
+    // at 4) and a different tie-break variant, and a bug specific to
+    // one particular id wouldn't necessarily show up at just one thread
+    // count. `search_fixed_depth()`, not `search_iterative_deepening()`,
+    // since it takes a thread count directly without needing a time
+    // budget.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    for (int threads = 2; threads <= 5; ++threads) {
+        const SearchResult result = search_fixed_depth(pos, /*depth=*/6, /*game_history=*/{},
+                                                         /*material_weights=*/nullptr,
+                                                         /*num_threads=*/threads);
+        REQUIRE(result.score >= kMateThreshold);
+    }
+}
