@@ -13,47 +13,78 @@ Standard chess engine, C++20, classical (non-NNUE, non-Syzygy) design philosophy
 | Board representation | Bitboards (uint64_t). Sliding attacks via BMI2 PEXT bitboards on hardware that supports it (Haswell+/Zen3+), with magic bitboards as the portable fallback (compile-time or runtime CPU feature detection) |
 | Move generation | Fully legal move gen (no pseudo-legal + filter) via pin/check masks, to keep search code simple |
 | Search | PVS (Principal Variation Search) over alpha-beta, iterative deepening, aspiration windows |
-| Pruning/extensions | Null-move pruning, late move reductions (LMR), futility pruning, razoring, check extensions, singular extensions (later phase) |
-| Move ordering | TT move → captures (MVV-LVA + SEE) → killers → history heuristic → counter-moves |
-| Eval | Hand-crafted eval (HCE): material, piece-square tables (tapered mg/eg), mobility, king safety, pawn structure (passed/isolated/doubled/backward), hand-built endgame heuristics |
+| Pruning/extensions | Null-move pruning (NMP, with a zugzwang-aware reduction decrease and an "improving"-conditioned reduction bonus at deep NMP tiers), reverse futility / static null-move pruning (RFP), razoring, futility pruning (leaf-level, "improving"-conditioned margin), late move pruning (LMP), history pruning, SEE-based bad-capture pruning (with a recapture exemption — see below), ProbCut, internal iterative reduction (IIR), late move reductions (LMR, a continuous `ln(depth)*ln(move_index)` formula with an "improving"-conditioned discount, not a step function), check extensions, singular extensions, passed-pawn-push extension (rank 6/7). Recapture handling is NOT a depth extension (a first attempt at that broke transposition-table-reuse determinism — see docs/DECISIONS.md, 2026-09-10 (5)/(6)) — it's an exemption from SEE-based capture pruning instead. An "improving" flag (is static eval better than 2 plies ago?) and a per-pawn-structure correction history (a running estimate of static-eval error vs. real search result) both feed several of the above. All of this lives in `src/search/search.cpp`, not a separate pruning module — see Module Layout below. |
+| Move ordering | TT move → captures (MVV-LVA + SEE, with capture history as an additional tie-break) → killers → continuation history → history heuristic → quiets. Lazy SMP helper threads additionally apply a small, score-band-safe tie-break jitter (`order_moves()`'s `tie_break_variant`) so each helper's own move ordering diversifies from the main thread's and from other helpers' — see Multithreading below. |
+| Eval | Hand-crafted eval (HCE): material, piece-square tables (tapered mg/eg), mobility, king safety, pawn structure (passed/isolated/doubled/backward), knight outposts, space, king tropism, trapped pieces, material imbalance, tempo, hand-built endgame heuristics (KPK/KRK/minor-piece/rook endgames, fortress detection). Correction history (per-pawn-structure, per-color) nudges raw static eval toward its own recent real-search accuracy before search-level pruning consumes it — see Pruning/extensions above. |
 | Eval tuning | Texel tuning (gradient descent on eval weights vs. game outcomes) — added once eval has enough terms (Phase 5) |
 | Transposition table | Currently one private TT per top-level search call, not yet the eventual single persistent global (see `src/search/tt.h`'s LIFETIME NOTE — tied to the still-open UCI `Hash` option, ROADMAP.md Phase 8); power-of-2 sized, Zobrist hashing, age + depth replacement scheme; cache-line-aligned entries (16 bytes, 4 entries per 64-byte line), explicit prefetch on probe. Genuinely lock-free for concurrent Lazy SMP use as of Session 72 — CPW "Shared Hash Table" XOR-checksum technique, two atomic 64-bit words per entry, no locks (`src/search/tt.h`'s THREAD-SAFETY NOTE) |
-| Multithreading | Lazy SMP (Phase 7) — helper threads sharing the TT (`search_iterative_deepening()`'s `num_threads` parameter, Session 71) and the TT's lock-free redesign (Session 72) are both landed; a UCI `Threads` option is still an open, separate Phase 7 item |
+| Multithreading | Lazy SMP (Phase 7) — helper threads sharing the TT (`search_iterative_deepening()`'s `num_threads` parameter, Session 71) and the TT's lock-free redesign (Session 72) are both landed. Helper threads are diversified, not identical copies of the main thread's loop (Session 98): each gets a `helper_id`-derived staggered starting depth, an occasional 2-ply jump instead of 1 for odd-numbered ids, and its own move-ordering tie-break variant, propagated through that helper's entire subtree. A UCI `Threads` option is still an open, separate Phase 7 item |
 | Protocol | UCI (Universal Chess Interface) |
 | No NNUE | Hard constraint — do not add |
 | No tablebases | Hard constraint — do not add Syzygy or any external TB; hand-built endgame heuristics substitute |
 
-## Module Layout (planned)
+## Module Layout
+
+This was originally written as a "planned" skeleton before Phase 0; both `src/` and `tests/` have since grown well beyond it (book opening support, an SPRT/self-play tuner, CPU feature detection, many more eval sub-terms, ~48 test files). The tree below is kept illustrative — the real directories are the authoritative source of truth, not this list.
 
 ```
 src/
 ├── board/
-│   ├── bitboard.cpp/.h        # bitboard primitives, magic bitboards
-│   ├── board.cpp/.h           # board state, make/unmake move
-│   ├── movegen.cpp/.h         # legal move generation
-│   └── zobrist.cpp/.h         # hashing
+│   ├── bitboard.cpp/.h         # bitboard primitives, magic bitboards
+│   ├── board.cpp/.h            # board state, make/unmake move
+│   ├── movegen.cpp/.h          # legal move generation
+│   ├── attacks.cpp/.h, masks.cpp/.h, fen.cpp/.h, perft.cpp/.h, move.cpp/.h
+│   └── zobrist.cpp/.h          # hashing
 ├── search/
-│   ├── search.cpp/.h          # PVS, iterative deepening
-│   ├── tt.cpp/.h               # transposition table
-│   ├── ordering.cpp/.h        # move ordering, killers, history
-│   └── pruning.cpp/.h         # null-move, LMR, futility, razoring
+│   ├── search.cpp/.h           # PVS, iterative deepening, and EVERY pruning/
+│   │                           # reduction/extension technique (NMP, RFP,
+│   │                           # razoring, futility, LMP, history pruning,
+│   │                           # SEE-based capture pruning, ProbCut, IIR, LMR,
+│   │                           # check/singular/passed-pawn extensions,
+│   │                           # recapture's SEE-pruning exemption, the
+│   │                           # "improving" flag, Lazy SMP helper spawning
+│   │                           # and diversification) -- there is no separate
+│   │                           # pruning module; this file is intentionally
+│   │                           # where all of that lives
+│   ├── tt.cpp/.h                # transposition table
+│   ├── ordering.cpp/.h         # move ordering: killers, history,
+│   │                           # continuation history, capture history,
+│   │                           # correction history
+│   ├── quiescence.cpp/.h
+│   └── see.cpp/.h, skill.cpp/.h
 ├── eval/
 │   ├── eval.cpp/.h             # top-level eval, tapered eval
 │   ├── psqt.cpp/.h             # piece-square tables
 │   ├── pawns.cpp/.h            # pawn structure eval
 │   ├── pawn_tt.cpp/.h          # pawn hash table (caches pawns.cpp results)
-│   ├── mobility.cpp/.h         # mobility eval
-│   ├── king_safety.cpp/.h
-│   └── endgame.cpp/.h          # KPK/KRK/etc. heuristics
+│   ├── mobility.cpp/.h, king_safety.cpp/.h, king_tropism.cpp/.h
+│   ├── knight_outposts.cpp/.h, space.cpp/.h, threats.cpp/.h,
+│   │   trapped_pieces.cpp/.h, material_imbalance.cpp/.h, tempo.cpp/.h
+│   ├── endgame.cpp/.h          # dispatches to the specialized endgame files below
+│   ├── king_pawn_endgame.cpp/.h, rook_endgame.cpp/.h,
+│   │   minor_piece_endgame.cpp/.h, basic_mates.cpp/.h, fortress.cpp/.h
+│   └── eval_cache.cpp/.h
+├── book/
+│   └── book.cpp/.h              # opening book support
+├── tuner/
+│   ├── tune.cpp/.h              # Texel tuning
+│   ├── selfplay.cpp/.h, match.cpp/.h, sprt.cpp/.h  # self-play/match/SPRT harness
+│   └── *_main.cpp                # standalone entry points for each tuner tool
+├── support/
+│   └── cpu_features.cpp/.h      # BMI2/POPCNT runtime detection
 ├── uci/
-│   └── uci.cpp/.h              # UCI protocol loop
+│   └── uci.cpp/.h                # UCI protocol loop
+├── bench.cpp / bench_positions.h
 └── main.cpp
-tests/
-├── perft_tests.cpp
-├── eval_tests.cpp
-├── search_tests.cpp
-└── endgame_tests.cpp     # curated known-result K+P/rook-ending positions, Phase 6
+tests/                            # ~48 files; one per src/ module plus
+                                   # cross-cutting suites (lazy_smp_tests.cpp,
+                                   # persistent_tt_tests.cpp,
+                                   # thread_regression_tests.cpp,
+                                   # endgame_suite_tests.cpp, contempt_tests.cpp,
+                                   # pondering_tests.cpp, sprt_tests.cpp,
+                                   # tune_tests.cpp, selfplay_tests.cpp, etc.)
 ```
+
 
 ## Startup Sequence (mandatory order)
 
@@ -99,5 +130,5 @@ Since this project deliberately avoids NNUE/tablebases and leans on classical te
 
 - Every movegen change must pass perft to known depth/node-count references (standard perft suite: startpos, Kiwipete, etc.)
 - Every search change must pass existing search regression tests (no more than X% node count regression without justification — track in DECISIONS.md when this happens)
-- Every Phase 6 endgame-theory change must pass the dedicated endgame test suite (`endgame_tests.cpp`) — curated known-correct K+P and rook-ending positions, kept separate from perft/search/eval regression tests since it validates correctness of algorithmic judgment, not node counts or bulk legality
+- Every Phase 6 endgame-theory change must pass the dedicated endgame test suite (`endgame_suite_tests.cpp`) — curated known-correct K+P and rook-ending positions, kept separate from perft/search/eval regression tests since it validates correctness of algorithmic judgment, not node counts or bulk legality
 - `ctest` must be fully green before any file is considered committable
