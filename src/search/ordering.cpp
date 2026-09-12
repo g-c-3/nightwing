@@ -42,6 +42,16 @@ constexpr int kPromotionBase = 900'000;
 constexpr int kKiller1Score = 800'000;
 constexpr int kKiller2Score = 799'000;
 
+/// Tie-break jitter magnitude (order_moves()'s own `tie_break_variant`
+/// parameter, ordering.h -- that parameter's own doc comment has the
+/// full rationale). +/-16 is comfortably inside HistoryTable's own
+/// [-kHistoryMax, kHistoryMax] = [-8192, 8192] range (so it perturbs
+/// quiet-move ties without ever itself becoming the dominant signal in
+/// a quiet move's own score) and vastly smaller than the >700,000-point
+/// gap between kHistoryMax and kKiller2Score above -- no jitter this
+/// small can ever push a score across a band boundary.
+constexpr int kTieBreakJitterRange = 16;
+
 } // namespace
 
 int mvv_lva_score(const Position& pos, Move move) noexcept {
@@ -212,7 +222,7 @@ int CorrectionHistoryTable::correction(Color us, std::uint64_t pawn_key) const n
 void order_moves(MoveList& moves, const Position& pos, Move tt_move, const KillerTable& killers,
                   int ply, const HistoryTable& history, const ContinuationHistoryTable& cont_history,
                   const CaptureHistoryTable& capture_history, PieceType prev_piece,
-                  board::Square prev_to) noexcept {
+                  board::Square prev_to, int tie_break_variant) noexcept {
     struct ScoredMove {
         Move move;
         int score;
@@ -221,15 +231,38 @@ void order_moves(MoveList& moves, const Position& pos, Move tt_move, const Kille
     const int count = moves.size();
     std::array<ScoredMove, board::kMaxMoves> scored{};
     for (int i = 0; i < count; ++i) {
-        scored[static_cast<std::size_t>(i)] = {
-            moves[i], score_move(pos, moves[i], tt_move, killers, ply, history, cont_history,
-                                  capture_history, prev_piece, prev_to)};
+        int score = score_move(pos, moves[i], tt_move, killers, ply, history, cont_history,
+                                capture_history, prev_piece, prev_to);
+        if (tie_break_variant != 0) {
+            // Cheap, deterministic per-(move, variant) jitter -- see
+            // this function's own header comment (ordering.h) and
+            // kTieBreakJitterRange's own comment (above) for why this
+            // is safe against ever crossing a score-band boundary.
+            // `move.raw()` (board/move.h) is this move's own packed
+            // from/to/flag bits -- a cheap, always-available per-move
+            // discriminator, multiplied by 2 well-known 32-bit
+            // multiplicative-hash constants (Knuth's own, and a common
+            // paired constant) then XORed together and reduced modulo
+            // the jitter's own range -- not a cryptographic hash, just
+            // enough bit-mixing that adjacent moves (which often have
+            // adjacent `raw()` values, e.g. same piece stepping one
+            // square further) don't jitter in obviously-correlated
+            // ways.
+            const std::uint32_t h = (static_cast<std::uint32_t>(moves[i].raw()) * 2654435761u) ^
+                                     (static_cast<std::uint32_t>(tie_break_variant) * 40503u);
+            score += static_cast<int>(h % (2 * kTieBreakJitterRange + 1)) - kTieBreakJitterRange;
+        }
+        scored[static_cast<std::size_t>(i)] = {moves[i], score};
     }
 
     // Stable so equal-scored moves (most commonly: untried quiets that
-    // all still sit at history score 0) keep their original move-
-    // generation order rather than an arbitrary one -- deterministic,
-    // reproducible search behavior.
+    // all still sit at history score 0, before any jitter) keep their
+    // original move-generation order rather than an arbitrary one when
+    // `tie_break_variant == 0` -- deterministic, reproducible search
+    // behavior for the main thread. A nonzero variant makes genuine
+    // ties rare in the first place (the jitter above almost always
+    // breaks them), so stability matters less there, but costs nothing
+    // to keep either way.
     std::stable_sort(scored.begin(), scored.begin() + count,
                       [](const ScoredMove& a, const ScoredMove& b) { return a.score > b.score; });
 

@@ -427,10 +427,30 @@ private:
 /// file's own CaptureHistoryTable header comment) -- unlike
 /// `cont_history`, it needs no null-context sentinel, since every
 /// capture always has a genuine attacker and victim to key on.
+/// `tie_break_variant` (ROADMAP.md's "Lazy SMP helper thread
+/// diversification" item, Priority Fixes (2026-09-08) section):
+/// defaults to 0, which reproduces this function's own pre-existing
+/// behavior EXACTLY (every score unchanged, ties broken purely by
+/// original move-generation order, same as before this parameter
+/// existed) -- the main search thread never passes anything else.
+/// A nonzero value adds a small, deterministic, per-(move, variant)
+/// jitter to every move's score before sorting, letting a Lazy SMP
+/// helper thread (search.cpp's own run_lazy_smp_helper()) explore
+/// genuinely different move orderings than the main thread and than
+/// each other, rather than all following identical tie-breaks whenever
+/// their own history tables haven't yet diverged (early plies, or
+/// moves neither side has tried before). The jitter magnitude
+/// (kTieBreakJitterRange, ordering.cpp) is small enough that it can
+/// never move a score across any of this file's own score-band
+/// boundaries (see this file's header comment on each band's own
+/// generous headroom) -- a TT move, capture, promotion, or killer is
+/// never displaced by a lower-priority move because of this; only
+/// same-band ties (most visibly: untried quiet moves, which all start
+/// at history score 0) get broken differently.
 void order_moves(board::MoveList& moves, const board::Position& pos, board::Move tt_move,
                   const KillerTable& killers, int ply, const HistoryTable& history,
                   const ContinuationHistoryTable& cont_history,
                   const CaptureHistoryTable& capture_history, board::PieceType prev_piece,
-                  board::Square prev_to) noexcept;
+                  board::Square prev_to, int tie_break_variant = 0) noexcept;
 
 } // namespace nightwing::search

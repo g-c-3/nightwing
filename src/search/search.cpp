@@ -731,6 +731,28 @@ constexpr int kSingularExtensionPly = 1;
 constexpr int kPassedPawnExtensionMinRank = 5; // 0-indexed; algebraic rank 6
 constexpr int kPassedPawnExtensionPly = 1;
 
+/// Lazy SMP helper thread diversification (ROADMAP.md's own item,
+/// Priority Fixes (2026-09-08) section; run_lazy_smp_helper()'s own doc
+/// comment, below, has the full account of what these drive and why).
+/// Neither constant is yet tuned -- same not-yet-SPRT-validated caveat
+/// as every other search constant in this file.
+///
+/// kLazySmpStartDepthSpread: helper ids cycle through starting depths
+/// 1..kLazySmpStartDepthSpread (id 0 always starts at depth 1,
+/// preserving the original, undiversified behavior for at least one
+/// helper). Kept modest -- a handful of plies, not dozens -- since the
+/// whole point is avoiding redundant cheap shallow work across threads,
+/// not skipping meaningful search depth outright.
+constexpr int kLazySmpStartDepthSpread = 4;
+
+/// kLazySmpSkipPeriod: for ODD-numbered helper ids only, every this-
+/// many-th depth gets skipped by 2 instead of 1 -- deliberately not
+/// every iteration (this thread should still eventually cover every
+/// depth over a long enough search) and deliberately not EVERY helper
+/// (even ids never skip), so at least half of all helpers always follow
+/// the plain, dense depth sequence.
+constexpr int kLazySmpSkipPeriod = 3;
+
 // Mid-search time-budget interruption (ROADMAP.md Priority Fix,
 // promoted from the Phase 2 scope cut this comment used to describe,
 // once its own documented revisit trigger -- real wtime/btime/movetime
@@ -1216,6 +1238,20 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
 /// path-dependence above, while still technically true of
 /// `prev_was_capture` as a value, no longer has anywhere to cause the
 /// kind of divergence the depth-extension version did.
+///
+/// `tie_break_variant` (ROADMAP.md's "Lazy SMP helper thread
+/// diversification" item, Priority Fixes (2026-09-08) section):
+/// defaults to 0 (order_moves()'s own header comment, search/ordering.h,
+/// has the full derivation of what a nonzero value does there) and is
+/// simply passed straight through to every recursive call unchanged --
+/// the SAME value for this entire top-level search call, the same
+/// "constant for one whole call tree" pattern `material_weights`
+/// already uses, not path-dependent state. Only `run_lazy_smp_helper()`
+/// (this file, below) ever passes anything other than the default,
+/// deriving one small nonzero value from its own `helper_id` once, up
+/// front, so an entire helper thread's own subtree diversifies its
+/// quiet-move tie-breaking consistently rather than just its own root
+/// move once.
 /// `tt` (search/tt.h) is
 /// also keyed and mate-distance-adjusted around this same `ply`
 /// convention — see tt.cpp's adjustment functions.
@@ -1443,7 +1479,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             std::array<int, kMaxPly>& static_eval_history, eval::PawnHashTable& pawn_tt,
             eval::EvalCache& eval_cache, const eval::MaterialWeights* material_weights,
             bool allow_null_move = true, SearchLimits* limits = nullptr,
-            int contempt_white_pov = 0) {
+            int contempt_white_pov = 0, int tie_break_variant = 0) {
     // Mid-search time-budget interruption fast path (search.h's
     // SearchLimits doc comment has the full contract): checked before
     // anything else, including the depth <= 0 quiescence delegation
@@ -1771,7 +1807,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                                          /*prev_piece=*/board::PieceType::None, /*prev_to=*/0,
                                          /*prev_was_capture=*/false, game_history, path,
                                          static_eval_history, pawn_tt, eval_cache, material_weights,
-                                         /*allow_null_move=*/false, limits, contempt_white_pov);
+                                         /*allow_null_move=*/false, limits, contempt_white_pov,
+                                         tie_break_variant);
         board::unmake_null_move(pos, null_undo);
         // A probe interrupted mid-search (limits->stopped) returns a
         // meaningless, truncated-subtree score (SearchLimits' own doc
@@ -1825,7 +1862,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         return in_check(pos) ? -(kMateScore - ply) : contempt_draw_score(pos, contempt_white_pov);
     }
 
-    order_moves(moves, pos, tt_move, killers, ply, history, cont_history, capture_history, prev_piece, prev_to);
+    order_moves(moves, pos, tt_move, killers, ply, history, cont_history, capture_history, prev_piece,
+                prev_to, tie_break_variant);
 
     // Computed once, reused by LMR's eligibility check below (moves
     // themselves don't change whether the position THEY'RE PLAYED FROM
@@ -1858,7 +1896,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                          nodes, tt, killers, history, cont_history, capture_history, correction_history,
                          probcut_moved_piece, probcut_move.to(), probcut_move.is_capture(), game_history,
                          path, static_eval_history, pawn_tt, eval_cache, material_weights,
-                         /*allow_null_move=*/true, limits, contempt_white_pov);
+                         /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant);
             board::unmake_move(pos, probcut_move, probcut_undo);
             if (limits != nullptr && limits->stopped) {
                 // Truncated subtree (SearchLimits' own doc comment) --
@@ -2024,7 +2062,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                              tt, killers, history, cont_history, capture_history, correction_history,
                              alt_moved_piece, alt_move.to(), alt_move.is_capture(), game_history, path,
                              static_eval_history, pawn_tt, eval_cache, material_weights,
-                             /*allow_null_move=*/true, limits, contempt_white_pov);
+                             /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant);
                 board::unmake_move(pos, alt_move, alt_undo);
                 if (limits != nullptr && limits->stopped) {
                     // Truncated subtree -- stop the verification loop
@@ -2161,7 +2199,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                               history, cont_history, capture_history, correction_history, moved_piece,
                               move.to(), move.is_capture(), game_history, path, static_eval_history,
                               pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits,
-                              contempt_white_pov);
+                              contempt_white_pov, tie_break_variant);
         } else {
             // Futility pruning (CPW "Futility Pruning", this function's
             // header comment): a node-level condition -- computed once,
@@ -2279,7 +2317,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                               nodes, tt, killers, history, cont_history, capture_history,
                               correction_history, moved_piece, move.to(), move.is_capture(),
                               game_history, path, static_eval_history, pawn_tt, eval_cache,
-                              material_weights, /*allow_null_move=*/true, limits, contempt_white_pov);
+                              material_weights, /*allow_null_move=*/true, limits, contempt_white_pov,
+                              tie_break_variant);
             if ((limits == nullptr || !limits->stopped) && reduction > 0 && score > alpha) {
                 // The reduced probe suggested this move might actually
                 // be good -- not trustworthy on its own (a shallower
@@ -2290,23 +2329,26 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 // is not always 0 here: `reduction > 0` implies
                 // eligible_for_lmr was true, which requires
                 // !move.is_capture() and !move_gives_check, so
-                // check_extension and recapture_extension are both
-                // guaranteed 0 -- but a non-capturing, non-check-giving
-                // passed-pawn push past kPassedPawnExtensionMinRank can
-                // still be BOTH LMR-eligible AND separately qualify for
+                // check_extension is guaranteed 0 (recapture is no
+                // longer part of `extension` at all -- it's a SEE-
+                // pruning exemption instead, this file's own recapture-
+                // handling doc comment has the account) -- but a non-
+                // capturing, non-check-giving passed-pawn push past
+                // kPassedPawnExtensionMinRank can still be BOTH LMR-
+                // eligible AND separately qualify for
                 // `passed_pawn_extension`.
                 score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, ply + 1, nodes, tt,
                                   killers, history, cont_history, capture_history, correction_history,
                                   moved_piece, move.to(), move.is_capture(), game_history, path,
                                   static_eval_history, pawn_tt, eval_cache, material_weights,
-                                  /*allow_null_move=*/true, limits, contempt_white_pov);
+                                  /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant);
             }
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt,
                                   killers, history, cont_history, capture_history, correction_history,
                                   moved_piece, move.to(), move.is_capture(), game_history, path,
                                   static_eval_history, pawn_tt, eval_cache, material_weights,
-                                  /*allow_null_move=*/true, limits, contempt_white_pov);
+                                  /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant);
             }
         }
 
@@ -2681,7 +2723,8 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
                           std::array<int, kMaxPly>& static_eval_history, eval::PawnHashTable& pawn_tt,
                           eval::EvalCache& eval_cache, const eval::MaterialWeights* material_weights,
                           SearchLimits* limits = nullptr,
-                          std::span<const Move> excluded_moves = {}, int contempt_white_pov = 0) {
+                          std::span<const Move> excluded_moves = {}, int contempt_white_pov = 0,
+                          int tie_break_variant = 0) {
     SearchResult result;
 
     MoveList moves;
@@ -2727,7 +2770,7 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
     const Move tt_move = root_probe.hit ? root_probe.move : Move();
 
     order_moves(moves, pos, tt_move, killers, /*ply=*/0, history, cont_history, capture_history,
-                /*prev_piece=*/board::PieceType::None, /*prev_to=*/0);
+                /*prev_piece=*/board::PieceType::None, /*prev_to=*/0, tie_break_variant);
 
     int alpha = aspiration_alpha;
     const int beta = aspiration_beta;
@@ -2805,19 +2848,19 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
                               history, cont_history, capture_history, correction_history, moved_piece,
                               move.to(), move.is_capture(), game_history, path, static_eval_history,
                               pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits,
-                              contempt_white_pov);
+                              contempt_white_pov, tie_break_variant);
         } else {
             score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, 1, result.nodes, tt,
                               killers, history, cont_history, capture_history, correction_history,
                               moved_piece, move.to(), move.is_capture(), game_history, path,
                               static_eval_history, pawn_tt, eval_cache, material_weights,
-                              /*allow_null_move=*/true, limits, contempt_white_pov);
+                              /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant);
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt,
                                   killers, history, cont_history, capture_history, correction_history,
                                   moved_piece, move.to(), move.is_capture(), game_history, path,
                                   static_eval_history, pawn_tt, eval_cache, material_weights,
-                                  /*allow_null_move=*/true, limits, contempt_white_pov);
+                                  /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant);
             }
         }
 
@@ -2916,7 +2959,7 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
                           std::span<const std::uint64_t> game_history,
                           const eval::MaterialWeights* material_weights,
                           const std::atomic<bool>& stop, std::uint64_t& nodes_out,
-                          int contempt_white_pov = 0);
+                          int contempt_white_pov = 0, int helper_id = 0);
 } // namespace
 
 SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::uint64_t> game_history,
@@ -3021,7 +3064,7 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
                                         // own identical comment below.
             helpers.emplace_back(run_lazy_smp_helper, std::move(helper_pos), depth, std::ref(tt),
                                   game_history, material_weights, std::cref(smp_stop),
-                                  std::ref(helper_nodes[i]), contempt_white_pov);
+                                  std::ref(helper_nodes[i]), contempt_white_pov, static_cast<int>(i));
         }
     }
 
@@ -3072,12 +3115,37 @@ namespace {
 /// into the overall SearchResult -- a plain (non-atomic) uint64_t is
 /// fine here since each helper thread writes to its own, distinct
 /// `nodes_out` slot (see the caller's per-helper storage below), never
-/// one shared across threads.
+/// one shared across threads. `helper_id` (ROADMAP.md's "Lazy SMP
+/// helper thread diversification" item, Priority Fixes (2026-09-08)
+/// section) is this helper's own 0-based index among ITS OWN caller's
+/// helpers specifically (both spawn sites, below, pass their own loop
+/// index directly) -- NOT a globally unique thread id across both
+/// possible callers, which this function has no way to know and
+/// doesn't need: each call to this function only ever diversifies
+/// relative to its own siblings from the SAME spawn site, which is all
+/// that matters (the goal is helpers not redundantly repeating each
+/// other's or the main thread's exact work, not a globally unique
+/// fingerprint). Used to derive: (1) a per-helper STARTING depth
+/// (kLazySmpStartDepthSpread's own comment below), (2) an occasional
+/// DEPTH SKIP for a subset of helpers (kLazySmpSkipPeriod's own comment
+/// below), and (3) order_moves()'s own `tie_break_variant` (search/
+/// ordering.h's own doc comment on that parameter), so this helper's
+/// entire subtree diversifies its quiet-move tie-breaking consistently,
+/// not just its own root move. Before this item, every helper thread
+/// ran an identical, plain, non-aspirating loop starting at depth 1 --
+/// this function's own name and role (widen/diversify what's been
+/// explored via the shared TT, per this function's own header comment
+/// on its caller) were only half-realized: helpers already searched
+/// independently and shared TT results, but never actually explored
+/// anything DIFFERENT from each other or from the main thread when
+/// their own history tables hadn't yet diverged (early plies
+/// especially, before any thread's own experience-driven move ordering
+/// has had a chance to develop).
 void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
                           std::span<const std::uint64_t> game_history,
                           const eval::MaterialWeights* material_weights,
                           const std::atomic<bool>& stop, std::uint64_t& nodes_out,
-                          int contempt_white_pov) {
+                          int contempt_white_pov, int helper_id) {
     KillerTable killers;
     // Heap-allocated, not stack locals: HistoryTable and
     // ContinuationHistoryTable together are roughly 176KB
@@ -3112,7 +3180,24 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
     eval::EvalCache eval_cache(kDefaultEvalCacheSizeKB);
 
     std::uint64_t total_nodes = 0;
-    for (int depth = 1; depth <= max_depth; ++depth) {
+    // Per-helper starting depth (kLazySmpStartDepthSpread's own comment
+    // below): helper_id 0 starts at depth 1 (the ORIGINAL, undiversified
+    // behavior, preserved exactly for at least one helper), later ids
+    // start progressively deeper, wrapping back to 1 after
+    // kLazySmpStartDepthSpread ids so the stagger stays modest even with
+    // many helper threads (starting absurdly deep would waste that
+    // helper's own early iterations' own cheap, TT-seeding value, and
+    // gains nothing further beyond a small handful of plies of offset).
+    const int start_depth = 1 + (helper_id % kLazySmpStartDepthSpread);
+    // Tie-break variant (order_moves()'s own parameter, search/
+    // ordering.h): nonzero for every real helper (helper_id is always
+    // >= 0, so this is always >= 1) -- the main thread never passes
+    // anything but the default 0 (search_iterative_deepening()'s own
+    // negamax()/search_root() calls, below, don't pass this argument at
+    // all), so helper threads are the only source of diversified tie-
+    // breaking, distinct from both the main thread and from each other.
+    const int tie_break_variant = helper_id + 1;
+    for (int depth = start_depth; depth <= max_depth; /* incremented below */) {
         if (stop.load(std::memory_order_relaxed)) {
             break;
         }
@@ -3139,12 +3224,27 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
                                             *cont_history, *capture_history, *correction_history,
                                             game_history, path, static_eval_history, pawn_tt, eval_cache,
                                             material_weights, &limits, /*excluded_moves=*/{},
-                                            contempt_white_pov);
+                                            contempt_white_pov, tie_break_variant);
         total_nodes += r.nodes;
 
         if (limits.stopped) {
             break;
         }
+
+        // Occasional depth skip (ROADMAP.md's own item text): every
+        // kLazySmpSkipPeriod-th depth, a helper whose own id is ODD
+        // jumps by 2 plies instead of 1, deliberately falling out of
+        // lockstep with the main thread and with even-numbered helpers,
+        // which never skip. Only a SUBSET of helpers ever skip (odd
+        // ids), and even those only do so periodically, not every
+        // iteration -- this thread still eventually covers every depth
+        // over a long enough search (unlike the starting-depth stagger
+        // above, which permanently skips the depths below its own
+        // `start_depth`), it's just no longer synchronized with every
+        // other thread's own iteration boundaries at every depth.
+        const bool skip_this_depth =
+            (helper_id % 2 == 1) && (depth % kLazySmpSkipPeriod == 0);
+        depth += skip_this_depth ? 2 : 1;
     }
     nodes_out = total_nodes;
 }
@@ -3540,7 +3640,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             Position helper_pos = pos; // synchronous copy on the calling thread -- see above
             helpers.emplace_back(run_lazy_smp_helper, std::move(helper_pos), max_depth,
                                   std::ref(tt), game_history, material_weights, std::cref(smp_stop),
-                                  std::ref(helper_nodes[i]), contempt_white_pov);
+                                  std::ref(helper_nodes[i]), contempt_white_pov, static_cast<int>(i));
         }
     }
 
