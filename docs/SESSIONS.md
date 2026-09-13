@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 99 — 2026-09-14 — Candidate passed pawns (Priority Fixes, 2026-09-08 section)
+
+**Built:**
+- `src/eval/pawns.h`: new `kCandidatePassedPawnBonus` table (same relative-rank indexing convention as `kPassedPawnBonus`, scaled to roughly 40% of its magnitude at each rank — a real but deliberately smaller bonus, since becoming passed here is conditional on a trade actually happening, not yet a certainty). `pawn_structure_value()`'s own doc comment extended with the exact two-part candidate test.
+- `src/eval/pawns.cpp`: new file-local `is_candidate_passed_pawn()` helper. Part (a): no enemy pawn anywhere ahead of the pawn on its own file (a straight-ahead blocker can never be traded away, since pawns don't capture straight ahead — this alone rules out candidacy regardless of the adjacent files). Part (b): among the up to two ADJACENT files only, the count of own pawns at-or-behind this pawn's own rank is >= the count of enemy pawns ahead of it (a symmetric trade-count argument — a tie counts as qualifying). Applied inside the existing `if (!passed)` block in the main per-pawn loop, alongside (not replacing) the pre-existing backward-pawn check — the two are independent and a pawn can be both.
+- `docs/ROADMAP.md`: "Candidate passed pawns" item in the Priority Fixes (2026-09-08) section's five-gap list checked off.
+- `tests/pawns_tests.cpp`: 2 new test cases — a genuine candidate with a tied adjacent-file count (own support numerically matches the enemy blocker), and a same-file-blocker negative case demonstrating part (a) overrides part (b) regardless of adjacent-file support. 1 pre-existing test's own expected value corrected (not just a new test added) — one of its two White pawns (e4, in the "phalanx pair where only ONE pawn is passed" test) turned out to also newly qualify as a candidate once this feature existed, exactly the same category of discovery Session 98's own `kConnectedPassedPawnBonus` work hit with a different pre-existing test.
+
+**Bugs found and fixed (during this session's own development, before delivery):** none in the shipped code — but the pre-existing test correction above was caught by this session's own real build-and-test run (the test failed on first compile/run, not assumed to still pass), not source review alone.
+
+**Decisions made:** the two-part test's own design (straight-ahead-blocker exclusion as a hard requirement, independent of the adjacent-file count) is documented directly at `kCandidatePassedPawnBonus`'s and `pawn_structure_value()`'s own doc comments (`src/eval/pawns.h`) rather than in a separate DECISIONS.md entry, matching this file's own established convention of keeping a term's full rationale next to its constant when the reasoning is self-contained and doesn't involve weighing alternative designs against each other.
+
+**Verification performed:** `src/eval/pawns.cpp` compiled standalone with `-Wall -Wextra -Wpedantic`: zero warnings. Full suite (raw-`g++`-against-fetched-Catch2-amalgamated, same sandbox path as recent sessions): **548 test cases, 27,729 assertions, all green, zero failures** (546/27,727 baseline confirmed by rebuilding the pre-change source directly — +2 tests/+2 assertions, exactly matching this session's own new cases). `bench`: **23,301 total nodes** (23,621 before this session — a real, expected shift from a new eval term feeding into every static eval call: kiwipete up 5736→7008, quiet_middlegame down 8018→6426, startpos/endgame_mate_in_3 unchanged). A full ASan+UBSan build of the `[pawns]`-tagged subset came back clean (9/9, zero findings). The real, compiled `nightwing` UCI binary was hand-exercised on an out-of-book position (`go depth 8`): legal `bestmove`, no crash, all UCI options advertised correctly.
+
+**Next session starts:** the Priority Fixes (2026-09-08) section's five-gap eval-feature list has one item left after this one done — "Outside passed pawns" is next (a passer on the side of the board away from the pawn majority; a specific, cheap-to-detect sub-case of the existing passed-pawn bucket). Read `src/eval/pawns.cpp` before writing anything — this session's own new `is_candidate_passed_pawn()`/`kCandidatePassedPawnBonus` work is directly adjacent (both concern passed-pawn-adjacent detection in the same file/loop). After that, "Pawn islands," "Back-rank weakness," and "Overloaded pieces" remain, followed by Tier 0 (the large multi-session tuner-extension effort).
+
+---
+
 ### Session 98 — 2026-09-10 — LMR as a continuous formula; an "improving" flag
 
 **Built (LMR as a continuous formula):**

@@ -631,8 +631,35 @@ Priority Fixes section above).
       machinery and, per that review's own framing, standard sub-checks
       within already-implemented top-level buckets rather than new
       buckets of their own:
-    - [ ] Candidate passed pawns — a pawn not yet passed but positioned
-          to become passed after a likely, forceable pawn trade.
+    - [x] Candidate passed pawns — a pawn not yet passed but positioned
+          to become passed after a likely, forceable pawn trade. DONE,
+          Session 99: `eval::pawns.cpp`'s existing per-pawn loop gained a
+          new `is_candidate_passed_pawn()` helper and a new
+          `kCandidatePassedPawnBonus` table (`src/eval/pawns.h`, same
+          relative-rank indexing convention as `kPassedPawnBonus`, scaled
+          to roughly 40% of its magnitude), applied inside the same
+          `if (!passed)` block the backward-pawn check already uses — a
+          genuinely independent, sibling check, not a replacement for it
+          (a pawn can be both backward and a candidate simultaneously).
+          A deliberately simplified, from-scratch two-part test (CPW's
+          general idea, not a literal search over every capture
+          sequence — see the constant's own doc comment, `pawns.h`, for
+          the full account of why): (a) no enemy pawn stands anywhere
+          ahead of it on its own file (a straight-ahead blocker can
+          never be traded away, since pawns don't capture straight
+          ahead, ruling out candidacy regardless of the adjacent files);
+          (b) among the up to two ADJACENT files only, the number of own
+          pawns at-or-behind this pawn's own rank is >= the number of
+          enemy pawns ahead of it (a symmetric trade-count argument). A
+          pre-existing `tests/pawns_tests.cpp` test's own expected value
+          needed correcting (not just a new test added) — one of its two
+          White pawns turned out to also newly qualify as a candidate
+          once this feature existed, exactly the same category of
+          discovery Session 98's own `kConnectedPassedPawnBonus` work
+          hit with a different pre-existing test. 2 new dedicated test
+          cases (a genuine tied-count candidate; a same-file-blocker
+          negative case demonstrating part (a) overrides part (b)
+          regardless of support).
     - [ ] Outside passed pawns — a passer on the side of the board away
           from the pawn majority; a specific, cheap-to-detect sub-case
           of the existing passed-pawn bucket.
