@@ -17,6 +17,20 @@ using board::PieceType;
 using board::Position;
 using board::Square;
 
+/// Relative rank of `sq` from `c`'s own perspective: 0 = `c`'s own back
+/// rank, 7 = the opposite back rank (where `c` promotes). Used only to
+/// index kPawnStormPenalty (king_safety.h) -- a real pawn's relative
+/// rank is always in [1, 6] in any legal position (pawns never rest on
+/// rank 1 or 8). File-private and duplicated here rather than shared
+/// via a board/ utility -- this project's own established convention
+/// for this exact small computation (eval/pawns.cpp and several of the
+/// endgame eval files each have their own identical copy; no shared
+/// utility exists, and none is claimed here either).
+[[nodiscard]] constexpr int relative_rank(Color c, Square sq) noexcept {
+    const int rank = board::rank_of(sq);
+    return c == Color::White ? rank : 7 - rank;
+}
+
 /// Per-attacking-piece-type weight for the attacker-weighting component
 /// (king_safety.h's own header comment) — first-draft hand estimates,
 /// loosely following each piece type's own relative material value
@@ -155,6 +169,41 @@ Score king_safety_value(const Position& pos) noexcept {
             } else {
                 side_score += kSemiOpenFileNearKingPenalty;
             }
+        }
+
+        // Pawn storms (king_safety.h's own header comment has the full
+        // rationale): for the SAME 3 files just checked above, find the
+        // most-advanced ENEMY pawn on each (if any) and penalize based
+        // on how far it's advanced. Deliberately a SEPARATE loop over
+        // the same file range, not folded into the open/semi-open loop
+        // above -- that loop `continue`s immediately whenever an own
+        // pawn is present on the file, but a storming enemy pawn matters
+        // regardless of whether the king's own pawn is still there too.
+        for (int df = -1; df <= 1; ++df) {
+            const int f = king_file + df;
+            if (f < 0 || f >= board::kNumFiles) {
+                continue;
+            }
+            Bitboard storm_pawns = enemy_pawns & board::file_mask(f);
+            if (storm_pawns == 0) {
+                continue;
+            }
+            // Most advanced from the STORMING side's own perspective --
+            // the highest enemy-relative rank among (possibly doubled)
+            // enemy pawns on this file. Only the frontmost stormer
+            // matters: it's the one that reaches the king's shelter
+            // first and forces a resolution (a trade, a further
+            // advance, or a block) before whatever pawn stands behind it
+            // on the same file ever becomes relevant.
+            int most_advanced_rank = 0;
+            while (storm_pawns != 0) {
+                const Square sq = board::pop_lsb(storm_pawns);
+                const int r = relative_rank(enemy, sq);
+                if (r > most_advanced_rank) {
+                    most_advanced_rank = r;
+                }
+            }
+            side_score += kPawnStormPenalty[static_cast<std::size_t>(most_advanced_rank)];
         }
 
         // Attacker weighting.
