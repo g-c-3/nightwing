@@ -49,6 +49,26 @@ Score pawn_structure_value(const Position& pos) noexcept {
                 board::popcount(own_pawns & board::file_mask(f));
         }
 
+        // Precomputed once up front, same rationale as file_counts above:
+        // the connected-passed-pawns bonus (kConnectedPassedPawnBonus,
+        // pawns.h) needs to know, for a given pawn already known to be
+        // passed, whether the SPECIFIC friendly pawn defending or
+        // standing beside it is ALSO passed -- not just present. Scanning
+        // all of `own_pawns` once here to build that bitboard is simpler
+        // and no more expensive than re-deriving it per pawn inside the
+        // main loop below (each check is itself a single mask-and-
+        // compare, and there are at most 8 pawns per side).
+        Bitboard passed_pawns_bb = board::kEmptyBitboard;
+        {
+            Bitboard scan = own_pawns;
+            while (scan != 0) {
+                const Square sq = board::pop_lsb(scan);
+                if ((enemy_pawns & board::passed_pawn_mask(c, sq)) == 0) {
+                    board::set_bit(passed_pawns_bb, sq);
+                }
+            }
+        }
+
         Score side_score;
         Bitboard bb = own_pawns;
         while (bb != 0) {
@@ -84,12 +104,29 @@ Score pawn_structure_value(const Position& pos) noexcept {
             // Phalanx (same-rank neighbor) is checked separately since
             // pawn_attacks() only ever covers the two diagonal squares,
             // never the same-rank ones a phalanx partner stands on.
-            const bool defended = (board::pawn_attacks(them, sq) & own_pawns) != 0;
+            const Bitboard defenders = board::pawn_attacks(them, sq) & own_pawns;
             const Bitboard phalanx_mask =
                 board::adjacent_files_mask(file) & board::rank_mask(board::rank_of(sq));
-            const bool phalanx = (own_pawns & phalanx_mask) != 0;
-            if (defended || phalanx) {
+            const Bitboard phalanx_partners = own_pawns & phalanx_mask;
+            if (defenders != 0 || phalanx_partners != 0) {
                 side_score += kConnectedPawnBonus;
+
+                // Connected PASSED pawns (kConnectedPassedPawnBonus's own
+                // doc comment, pawns.h, has the full rationale): on top
+                // of the plain connected bonus just above, a passed pawn
+                // whose specific defender/phalanx partner is ALSO passed
+                // gets this additional bonus. Deliberately checked
+                // against `passed_pawns_bb` (this pawn's own defenders/
+                // phalanx partners intersected with the precomputed
+                // passed-pawn set), not merely "is this pawn passed AND
+                // is it connected to SOMETHING" -- the whole point is the
+                // MUTUAL passed-pair relationship, not two unrelated
+                // facts about the same pawn.
+                if (passed &&
+                    ((defenders & passed_pawns_bb) != 0 || (phalanx_partners & passed_pawns_bb) != 0)) {
+                    side_score +=
+                        kConnectedPassedPawnBonus[static_cast<std::size_t>(relative_rank(c, sq))];
+                }
             }
 
             // Backward: only meaningful for a pawn that isn't already

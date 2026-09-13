@@ -2,7 +2,9 @@
 // src/eval/pawns.h
 //
 // Pawn structure evaluation: passed, isolated, doubled, backward, and
-// connected pawns (ROADMAP.md Phase 5's "Pawn structure" item). Concepts
+// connected pawns, plus a connected-PASSED-pawns bonus (ROADMAP.md
+// Phase 5's "Pawn structure" item, extended by a later Priority Fixes
+// item; see kConnectedPassedPawnBonus's own doc comment below). Concepts
 // and general shape are the standard, widely-published ones described
 // on the Chess Programming Wiki ("Passed Pawn", "Isolated Pawn",
 // "Doubled Pawn", "Backward Pawn", "Connected Pawns") -- from-scratch
@@ -74,6 +76,38 @@ inline constexpr Score kBackwardPawnPenalty = {-8, -12};
 /// (mutual, so a defended/phalanx PAIR nets roughly double this) --
 /// pawn chains and phalanxes are generally sturdier than lone pawns.
 inline constexpr Score kConnectedPawnBonus = {5, 8};
+
+/// Connected PASSED pawns (ROADMAP.md's own item, Priority Fixes
+/// (2026-09-08) section) -- an ADDITIONAL bonus, on top of both
+/// kPassedPawnBonus and kConnectedPawnBonus above (each already applies
+/// independently to a pawn that happens to be both), for the specific
+/// case where a passed pawn is ALSO defended-by-or-phalanx-with ANOTHER
+/// passed pawn specifically -- not just any friendly pawn. CPW doesn't
+/// have a single dedicated article for this exact combination, but
+/// describes the underlying idea across "Passed Pawn" and "Connected
+/// Pawns": a mutually-defending passed PAIR is harder to stop than
+/// either pawn would be alone (the defender can recapture if the enemy
+/// king or a piece takes on the advancer, and vice versa), so it's
+/// worth more than the sum of two individually-scored passers. Indexed
+/// by the SAME relative-rank convention as kPassedPawnBonus (0 = own
+/// back rank, 7 = promotion -- indices 0 and 7 never occur for a real
+/// pawn and are zeroed for the identical reason kPassedPawnBonus's own
+/// comment gives), and applied ONCE PER PAWN in the pair (so, like
+/// kConnectedPawnBonus, a genuine pair nets roughly double this).
+/// First-draft hand estimate, scaled to roughly half of
+/// kPassedPawnBonus's own magnitude at each rank -- a meaningful but
+/// deliberately secondary bonus, not a replacement for it -- not yet
+/// Texel-tuned, same caveat as every other constant in this file.
+inline constexpr std::array<Score, 8> kConnectedPassedPawnBonus = {{
+    {0, 0},
+    {3, 5},
+    {5, 10},
+    {10, 18},
+    {18, 28},
+    {28, 40},
+    {40, 55},
+    {0, 0},
+}};
 
 /// Evaluates pawn structure for BOTH sides and returns a single
 /// White-relative Score (positive favors White, matching
