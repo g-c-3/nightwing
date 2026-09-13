@@ -109,16 +109,28 @@ TEST_CASE("pawn_structure_value: a phalanx pair where only ONE pawn is passed ge
     // backward-pawn check is also skipped despite not being passed --
     // d4 sits in e4's own backward_support_mask (adjacent file, same
     // rank counts as "at or behind"), so `has_support` is true there.
-    // The f6 Black pawn is itself evaluated too, on the OTHER side of
-    // the same call: it's isolated (no Black pawn on the adjacent e/g
-    // files) AND backward (no Black pawn at-or-behind it on an adjacent
-    // file to support it, and its own push square, f5, is attacked by
-    // the White e4 pawn) -- both penalties against Black, which get
-    // SUBTRACTED into this White-relative total (`score -= side_score`
-    // for Black, pawn_structure_value()'s own loop), so they show up
-    // here as a net POSITIVE contribution for White.
+    // e4 DOES pick up the candidate-passed-pawn bonus (Priority Fixes
+    // (2026-09-08) section, kCandidatePassedPawnBonus's own doc comment)
+    // though, independent of the backward check above: no Black pawn
+    // stands anywhere ahead of it on its own (e) file (part (a)
+    // passes), and among the adjacent d/f files, White's own d4
+    // (relative rank 3, at-or-behind e4's own rank 3) matches Black's
+    // f6 (relative rank 5, ahead) one-for-one (part (b)'s own tie case,
+    // same as this file's dedicated candidate-passed-pawn test's first
+    // scenario). The f6 Black pawn is itself evaluated too, on the
+    // OTHER side of the same call: it's isolated (no Black pawn on the
+    // adjacent e/g files) AND backward (no Black pawn at-or-behind it
+    // on an adjacent file to support it, and its own push square, f5,
+    // is attacked by the White e4 pawn) -- both penalties against
+    // Black, which get SUBTRACTED into this White-relative total
+    // (`score -= side_score` for Black, pawn_structure_value()'s own
+    // loop), so they show up here as a net POSITIVE contribution for
+    // White. f6 is NOT itself a candidate passed pawn (e4 directly
+    // blocks its own file ahead of it from Black's perspective, failing
+    // part (a) the same way the dedicated same-file-blocker test below
+    // demonstrates).
     const Score d4_total = kPassedPawnBonus[3] + kConnectedPawnBonus;
-    const Score e4_total = kConnectedPawnBonus;
+    const Score e4_total = kConnectedPawnBonus + kCandidatePassedPawnBonus[3];
     const Score f6_penalty = kIsolatedPawnPenalty + kBackwardPawnPenalty;
     REQUIRE(pawn_structure_value(pos) == d4_total + e4_total - f6_penalty);
 }
@@ -165,6 +177,79 @@ TEST_CASE("pawn_structure_value: two pawns on the same file are both doubled and
     const Score e2_total = kIsolatedPawnPenalty + kDoubledPawnPenalty + kPassedPawnBonus[1];
     const Score e4_total = kIsolatedPawnPenalty + kDoubledPawnPenalty + kPassedPawnBonus[3];
     REQUIRE(pawn_structure_value(pos) == e2_total + e4_total);
+}
+
+TEST_CASE("pawn_structure_value: a supported, not-yet-passed pawn with a numerically-losable "
+          "adjacent-file blocker is a candidate passed pawn",
+          "[eval][pawns]") {
+    init_masks();
+    Position pos = empty_position();
+    pos.place_piece(make_square(0, 0), Piece::WhiteKing); // a1, out of the way
+    pos.place_piece(make_square(0, 7), Piece::BlackKing); // a8, out of the way
+    pos.place_piece(make_square(2, 1), Piece::WhitePawn); // c2
+    pos.place_piece(make_square(3, 3), Piece::WhitePawn); // d4
+    pos.place_piece(make_square(4, 4), Piece::BlackPawn); // e5
+    // d4 is not passed (Black's e5 sits on an adjacent file ahead of it,
+    // inside passed_pawn_mask()'s own cone) and not backward (c2, an
+    // adjacent-file pawn at-or-behind d4's own rank, supports it) --
+    // but IS a candidate passed pawn: no enemy pawn stands anywhere
+    // ahead of it on its own (d) file (part (a)), and among the
+    // adjacent files only, White's own pawn count at-or-behind (c2,
+    // counting 1) matches Black's own count of pawns ahead (e5,
+    // counting 1) (part (b), a tie counts as "own pawns don't come out
+    // numerically behind"). c2 itself is unopposed on its own adjacent
+    // files (b/d have no Black pawn ahead of it -- e5 is on e, not
+    // adjacent to c) and so is genuinely passed, not merely a
+    // candidate. Black's e5 is isolated (no Black pawn on the d/f
+    // files) and nothing else (not backward: its own push square e4
+    // isn't attacked by any White pawn; not a candidate either: d4
+    // itself directly blocks e5's own file ahead of it, failing part
+    // (a) for e5 the same way it passes part (a) for d4 -- e5 is
+    // "ahead" of d4 from White's perspective but "blocking" d4's own
+    // file is a Black-file question, not White's, and vice versa; see
+    // this test's own sibling below for the fully-blocked case).
+    const Score white_total = kPassedPawnBonus[1] + kCandidatePassedPawnBonus[3];
+    const Score black_penalty = kIsolatedPawnPenalty;
+    REQUIRE(pawn_structure_value(pos) == white_total - black_penalty);
+}
+
+TEST_CASE("pawn_structure_value: a pawn with a direct same-file blocker is never a candidate, "
+          "regardless of adjacent-file support",
+          "[eval][pawns]") {
+    init_masks();
+    Position pos = empty_position();
+    pos.place_piece(make_square(0, 0), Piece::WhiteKing); // a1, out of the way
+    pos.place_piece(make_square(0, 7), Piece::BlackKing); // a8, out of the way
+    pos.place_piece(make_square(2, 1), Piece::WhitePawn); // c2, otherwise a real supporter
+    pos.place_piece(make_square(3, 3), Piece::WhitePawn); // d4
+    pos.place_piece(make_square(3, 4), Piece::BlackPawn); // d5, directly blocks d4's own file
+    // A straight-ahead enemy pawn can never be traded away (pawns don't
+    // capture straight ahead), so neither d4 nor d5 can ever become a
+    // candidate passed pawn here, regardless of what the adjacent files
+    // look like -- this is exactly candidate-passed-pawn test's part
+    // (a), independent of and stricter than part (b)'s own count
+    // comparison. d4 itself: not isolated (c2 present), not passed
+    // (blocked by d5 on its own file), not connected (c2 doesn't
+    // defend or stand beside d4), not backward (c2 supports it),
+    // and NOT a candidate (part (a) fails: d5 blocks its own file) --
+    // contributes nothing. c2 itself: not isolated (d4 present), not
+    // passed (d5 sits in its own passed_pawn_mask() cone via the
+    // adjacent d-file), not connected, not backward (its own push
+    // square c3 isn't attacked by anything), and not a candidate
+    // either (part (b) fails: zero own-pawn support on the b/d files
+    // at-or-behind its own rank versus Black's one blocker on d) --
+    // also contributes nothing, so White's side totals exactly zero.
+    // Black's d5: isolated (no Black pawn on c/e), not passed (blocked
+    // by both c2 and d4), not connected, not backward (its own push
+    // square d4 isn't enemy-pawn-attacked -- occupied by White's own
+    // pawn, but this test, matching CPW's own convention and this
+    // file's pre-existing "an unsupported pawn..." test above, checks
+    // attack status only, not occupancy), and not a candidate (part (a)
+    // fails: d4 blocks its own file too) -- contributes only the
+    // isolation penalty.
+    const Score white_total = Score{0, 0};
+    const Score black_penalty = kIsolatedPawnPenalty;
+    REQUIRE(pawn_structure_value(pos) == white_total - black_penalty);
 }
 
 TEST_CASE("pawn_structure_value: an unsupported pawn facing a controlling enemy pawn is "
