@@ -73,12 +73,78 @@ TEST_CASE("pawn_structure_value: a phalanx pair is neither isolated, and both ge
     // each removes the other's isolation and grants the other a
     // phalanx connected bonus, while both remain passed and unopposed
     // (no Black pawns at all) at the same relative rank as the previous
-    // test. Expected: twice (kPassedPawnBonus[3] + kConnectedPawnBonus)
-    // -- no isolation penalty this time, applied identically to both
-    // pawns by the position's own d4/e4 symmetry.
-    const Score per_pawn = kPassedPawnBonus[3] + kConnectedPawnBonus;
+    // test. Since each pawn's own phalanx PARTNER is also passed (both
+    // are, here), each also gets kConnectedPassedPawnBonus on top of the
+    // plain connected bonus (pawns.h's own doc comment on that
+    // constant). Expected: twice (kPassedPawnBonus[3] +
+    // kConnectedPawnBonus + kConnectedPassedPawnBonus[3]) -- no
+    // isolation penalty this time, applied identically to both pawns by
+    // the position's own d4/e4 symmetry.
+    const Score per_pawn = kPassedPawnBonus[3] + kConnectedPawnBonus + kConnectedPassedPawnBonus[3];
     const Score expected = per_pawn + per_pawn;
     REQUIRE(pawn_structure_value(pos) == expected);
+}
+
+TEST_CASE("pawn_structure_value: a phalanx pair where only ONE pawn is passed gets no "
+          "connected-passed-pawns bonus for either",
+          "[eval][pawns]") {
+    init_masks();
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing); // e1
+    pos.place_piece(make_square(4, 7), Piece::BlackKing); // e8
+    pos.place_piece(make_square(3, 3), Piece::WhitePawn); // d4
+    pos.place_piece(make_square(4, 3), Piece::WhitePawn); // e4
+    pos.place_piece(make_square(5, 5), Piece::BlackPawn); // f6 -- blocks e4's own
+                                                           // passed status (f is
+                                                           // adjacent to e) but NOT
+                                                           // d4's (f is not adjacent
+                                                           // to d)
+    // kConnectedPassedPawnBonus (pawns.h's own doc comment) requires the
+    // SPECIFIC defender/phalanx partner to also be passed, not merely
+    // that this pawn itself is. d4 is passed but its only phalanx
+    // partner (e4) is not, so d4 gets no connected-passed bonus; e4
+    // isn't even passed itself, so it never reaches that check at all.
+    // Both still get the plain kConnectedPawnBonus regardless (that one
+    // only cares about presence, not passed status). e4's own
+    // backward-pawn check is also skipped despite not being passed --
+    // d4 sits in e4's own backward_support_mask (adjacent file, same
+    // rank counts as "at or behind"), so `has_support` is true there.
+    // The f6 Black pawn is itself evaluated too, on the OTHER side of
+    // the same call: it's isolated (no Black pawn on the adjacent e/g
+    // files) AND backward (no Black pawn at-or-behind it on an adjacent
+    // file to support it, and its own push square, f5, is attacked by
+    // the White e4 pawn) -- both penalties against Black, which get
+    // SUBTRACTED into this White-relative total (`score -= side_score`
+    // for Black, pawn_structure_value()'s own loop), so they show up
+    // here as a net POSITIVE contribution for White.
+    const Score d4_total = kPassedPawnBonus[3] + kConnectedPawnBonus;
+    const Score e4_total = kConnectedPawnBonus;
+    const Score f6_penalty = kIsolatedPawnPenalty + kBackwardPawnPenalty;
+    REQUIRE(pawn_structure_value(pos) == d4_total + e4_total - f6_penalty);
+}
+
+TEST_CASE("pawn_structure_value: a passed pawn defended (not phalanx) by another passed pawn "
+          "gets the connected-passed-pawns bonus, asymmetrically like the plain connected bonus",
+          "[eval][pawns]") {
+    init_masks();
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing); // e1
+    pos.place_piece(make_square(4, 7), Piece::BlackKing); // e8
+    pos.place_piece(make_square(3, 3), Piece::WhitePawn); // d4
+    pos.place_piece(make_square(4, 4), Piece::WhitePawn); // e5, defended by d4
+    // No Black pawns at all -- both unopposed and passed. d4 (relative
+    // rank 3) is diagonally BEHIND e5, so it defends e5 (the standard
+    // "defended," not phalanx, connected-pawns pattern) -- but e5 does
+    // NOT defend or stand beside d4 (it's ahead, not beside or behind),
+    // so the plain kConnectedPawnBonus ALREADY only ever applies to e5
+    // here, not d4, matching this file's own existing asymmetric-
+    // connection precedent. The new kConnectedPassedPawnBonus follows
+    // that same asymmetry: only e5 (whose specific defender, d4, is
+    // also passed) gets it. Neither pawn is isolated (each has an own
+    // pawn on an adjacent FILE, regardless of rank).
+    const Score d4_total = kPassedPawnBonus[3];
+    const Score e5_total = kPassedPawnBonus[4] + kConnectedPawnBonus + kConnectedPassedPawnBonus[4];
+    REQUIRE(pawn_structure_value(pos) == d4_total + e5_total);
 }
 
 TEST_CASE("pawn_structure_value: two pawns on the same file are both doubled and isolated, "

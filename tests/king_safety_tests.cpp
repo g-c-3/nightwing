@@ -135,6 +135,74 @@ TEST_CASE("king_safety_value: an enemy queen bearing down on the king zone is pe
     REQUIRE(king_safety_value(safe).mg > king_safety_value(threatened).mg);
 }
 
+TEST_CASE("king_safety_value: a pawn storm further advanced toward the king scores worse than "
+          "an identically-semi-open one that's barely advanced",
+          "[eval][king_safety]") {
+    init_all();
+    // ROADMAP.md's own "pawn storms" item (Priority Fixes, 2026-09-08
+    // section; king_safety.h's own header comment has the full
+    // rationale). King on a1 (file 0, so only files a/b are checked --
+    // file -1 is off-board and skipped), same isolation trick this
+    // file's own existing open/semi-open-file test above already uses:
+    // an enemy pawn on the SAME file in both configs (so both are
+    // equally semi-open, contributing an identical constant penalty
+    // that cancels out of the comparison) but at very different ranks,
+    // isolating the comparison to the storm term specifically. The
+    // b-file stays pawnless in both, for the same "contributes an
+    // equal constant, cancels out" reason.
+    Position barely_advanced = empty_position();
+    barely_advanced.place_piece(make_square(0, 0), Piece::WhiteKing); // a1
+    barely_advanced.place_piece(make_square(0, 5), Piece::BlackPawn); // a6 -- Black's own
+                                                                       // relative rank 2
+                                                                       // (7 - rank_of(a6)=5),
+                                                                       // still close to
+                                                                       // Black's own side
+    barely_advanced.place_piece(make_square(7, 7), Piece::BlackKing); // h8
+
+    Position far_advanced = empty_position();
+    far_advanced.place_piece(make_square(0, 0), Piece::WhiteKing);
+    far_advanced.place_piece(make_square(0, 2), Piece::BlackPawn); // a3 -- Black's own
+                                                                    // relative rank 5
+                                                                    // (7 - rank_of(a3)=2),
+                                                                    // deep into White's
+                                                                    // own territory, right
+                                                                    // beside the king
+    far_advanced.place_piece(make_square(7, 7), Piece::BlackKing);
+
+    REQUIRE(king_safety_value(barely_advanced).mg > king_safety_value(far_advanced).mg);
+}
+
+TEST_CASE("king_safety_value: a storming enemy pawn on the king's own file scores worse than no "
+          "enemy pawn there at all, even though both leave the file merely open, not "
+          "additionally weakened by the storm penalty in the open case",
+          "[eval][king_safety]") {
+    init_all();
+    // A direct check that the storm penalty is a REAL, distinct
+    // contribution, not merely a relabeling of the existing open/semi-
+    // open-file penalty this file's own earlier test already covers:
+    // `no_storm` has no a/b-file pawn at all (fully open, per this
+    // file's own kOpenFileNearKingPenalty = {-24,-4}), while `storming`
+    // has the SAME file merely semi-open (a SMALLER base penalty,
+    // kSemiOpenFileNearKingPenalty = {-12,-2}) but with the enemy pawn
+    // deep into White's own territory (relative rank 5, kPawnStormPenalty
+    // = {-24,-4} at that rank -- comfortably more than the 12-point mg
+    // gap semi-open saves versus fully-open). If the storm term
+    // contributed nothing, `storming` would score BETTER than
+    // `no_storm` (semi-open alone beats fully-open alone) -- this
+    // confirms the storm penalty is large enough at this rank to flip
+    // that comparison the other way instead.
+    Position no_storm = empty_position();
+    no_storm.place_piece(make_square(0, 0), Piece::WhiteKing); // a1
+    no_storm.place_piece(make_square(7, 7), Piece::BlackKing); // h8, nothing on a/b at all
+
+    Position storming = empty_position();
+    storming.place_piece(make_square(0, 0), Piece::WhiteKing);
+    storming.place_piece(make_square(0, 2), Piece::BlackPawn); // a3, relative rank 5 -- deep
+    storming.place_piece(make_square(7, 7), Piece::BlackKing);
+
+    REQUIRE(king_safety_value(no_storm).mg > king_safety_value(storming).mg);
+}
+
 TEST_CASE("king_safety_value: a king with no legal position (defensive: missing king entirely) "
           "contributes nothing rather than crashing",
           "[eval][king_safety]") {
