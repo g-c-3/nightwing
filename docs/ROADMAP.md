@@ -609,10 +609,21 @@ Priority Fixes section above).
       design and verification, including the established
       `[smp]`+`[tt]`-tagged-tests-x8-under-ASan/UBSan check this
       project's own prior SMP-touching sessions use.
-- [ ] Eval: pawn storms (enemy pawns advancing on the king's shelter,
+- [x] Eval: pawn storms (enemy pawns advancing on the king's shelter,
       the aggressive complement to the existing defensive king-safety
       terms) and a connected-passed-pawns bonus (a mutually-defending
       passed pair worth more than two individually-scored passers).
+      DONE, Session 98 (continued a ninth time): `kPawnStormPenalty`
+      (`src/eval/king_safety.h`/`.cpp`) penalizes the enemy's own most-
+      advanced pawn on the king's file and its 2 neighbors, scaled by
+      relative rank, as a 4th component alongside the existing shield/
+      open-file/attacker-weighting terms. `kConnectedPassedPawnBonus`
+      (`src/eval/pawns.h`/`.cpp`) adds an additional per-pawn bonus, on
+      top of the existing passed and connected bonuses, specifically
+      when a passed pawn's own defender or phalanx partner is ALSO
+      passed, not merely present. See docs/DECISIONS.md, 2026-09-10 (8),
+      for the exact design (including a real hand-derivation mistake
+      caught during this session's own test-writing, not shipped).
       Five further concrete, low-risk gaps identified by cross-
       referencing a bucketed CPW/Stockfish-classical eval-feature
       review against `src/eval/` (docs/DECISIONS.md, 2026-09-08 (5)),
