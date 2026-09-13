@@ -109,6 +109,31 @@ inline constexpr std::array<Score, 8> kConnectedPassedPawnBonus = {{
     {0, 0},
 }};
 
+/// Candidate passed pawn (CPW "Candidate Passed Pawn", Priority Fixes
+/// (2026-09-08) section) -- a pawn that is NOT yet passed, but would
+/// become passed after a plausible, forceable sequence of pawn trades.
+/// See pawn_structure_value()'s own doc comment for the exact two-part
+/// test this project uses (a deliberately simplified, from-scratch
+/// formulation of the general CPW idea, not a literal search over every
+/// possible trade sequence). Indexed by the SAME relative-rank
+/// convention as kPassedPawnBonus (0 = own back rank, 7 = promotion --
+/// indices 0 and 7 zeroed for the identical reason). Scaled to roughly
+/// 40% of kPassedPawnBonus's own magnitude at each rank -- real, but
+/// deliberately smaller than an ALREADY-passed pawn's own bonus, since
+/// becoming passed here is conditional on a trade actually happening,
+/// not yet a certainty. First-draft hand estimate, not yet Texel-tuned,
+/// same caveat as every other constant in this file.
+inline constexpr std::array<Score, 8> kCandidatePassedPawnBonus = {{
+    {0, 0},
+    {2, 4},
+    {4, 8},
+    {8, 14},
+    {14, 22},
+    {22, 32},
+    {32, 44},
+    {0, 0},
+}};
+
 /// Evaluates pawn structure for BOTH sides and returns a single
 /// White-relative Score (positive favors White, matching
 /// material_value()/psqt_value()'s sign convention in eval.cpp).
@@ -124,6 +149,24 @@ inline constexpr std::array<Score, 8> kConnectedPassedPawnBonus = {{
 /// pure efficiency short-circuit -- a passed pawn has no enemy pawn
 /// anywhere ahead of it by definition, so part (b) can never hold for
 /// one anyway).
+///
+/// Candidate-passed-pawn test (CPW "Candidate Passed Pawn", used for
+/// kCandidatePassedPawnBonus above), also only ever checked for a pawn
+/// that isn't already passed: (a) no enemy pawn stands anywhere ahead
+/// of it on its OWN file -- a straight-ahead blocker can never be
+/// removed by a pawn trade (pawns never capture straight ahead), so a
+/// pawn failing this can never become passed via trades alone,
+/// regardless of the adjacent-file count below; AND (b) among the up to
+/// two ADJACENT files only, the number of own pawns standing at or
+/// behind this pawn's own rank is >= the number of enemy pawns standing
+/// ahead of it -- a simple, symmetric "trade count" argument: if own
+/// pawns numerically match or outnumber the enemy pawns capable of
+/// blocking/capturing on those diagonals, a forced sequence of
+/// exchanges there can clear them without this side ending up
+/// outnumbered on those files. Deliberately simpler than a literal
+/// search over every capture sequence (see kCandidatePassedPawnBonus's
+/// own doc comment, pawns.h) -- a first-draft heuristic, not a
+/// guaranteed-correct trade resolver.
 ///
 /// Precondition: board::init_masks() has been called (this function
 /// uses board::passed_pawn_mask()/backward_support_mask()/

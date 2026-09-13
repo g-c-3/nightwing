@@ -28,6 +28,60 @@ using board::Square;
     return c == Color::White ? rank : 7 - rank;
 }
 
+/// True when `sq` (a `c`-colored pawn) is a candidate passed pawn --
+/// see pawns.h's own doc comment on pawn_structure_value() for the full
+/// two-part test this implements. Only meaningful (and only ever
+/// called) for a pawn that isn't already passed.
+[[nodiscard]] bool is_candidate_passed_pawn(Color c, Square sq, Bitboard own_pawns,
+                                             Bitboard enemy_pawns) noexcept {
+    const int file = board::file_of(sq);
+    const int my_rank = relative_rank(c, sq);
+
+    // Part (a): a straight-ahead enemy pawn on this pawn's OWN file can
+    // never be removed by a trade (pawns don't capture straight ahead),
+    // so it rules out ever becoming passed via trades alone regardless
+    // of what the adjacent files look like.
+    {
+        Bitboard scan = enemy_pawns & board::file_mask(file);
+        while (scan != 0) {
+            const Square s = board::pop_lsb(scan);
+            if (relative_rank(c, s) > my_rank) {
+                return false;
+            }
+        }
+    }
+
+    // Part (b): among the (up to two) adjacent files only, compare own
+    // pawns at-or-behind this pawn's own rank (potential future
+    // supporters/replacements, including this pawn itself) against
+    // enemy pawns ahead of it (potential blockers/capturers).
+    const Bitboard adjacent = board::adjacent_files_mask(file);
+
+    int own_count = 0;
+    {
+        Bitboard scan = own_pawns & adjacent;
+        while (scan != 0) {
+            const Square s = board::pop_lsb(scan);
+            if (relative_rank(c, s) <= my_rank) {
+                ++own_count;
+            }
+        }
+    }
+
+    int enemy_count = 0;
+    {
+        Bitboard scan = enemy_pawns & adjacent;
+        while (scan != 0) {
+            const Square s = board::pop_lsb(scan);
+            if (relative_rank(c, s) > my_rank) {
+                ++enemy_count;
+            }
+        }
+    }
+
+    return own_count >= enemy_count;
+}
+
 } // namespace
 
 Score pawn_structure_value(const Position& pos) noexcept {
@@ -154,6 +208,18 @@ Score pawn_structure_value(const Position& pos) noexcept {
                             side_score += kBackwardPawnPenalty;
                         }
                     }
+                }
+
+                // Candidate passed pawn (kCandidatePassedPawnBonus's own
+                // doc comment, pawns.h, has the full rationale): a
+                // separate, independent check from backward-pawn above
+                // -- a pawn can in principle be both (a not-yet-passed
+                // pawn with no straight-ahead blocker but genuinely
+                // unsupported right now still counts its own future
+                // adjacent-file trade prospects).
+                if (is_candidate_passed_pawn(c, sq, own_pawns, enemy_pawns)) {
+                    side_score += kCandidatePassedPawnBonus[static_cast<std::size_t>(
+                        relative_rank(c, sq))];
                 }
             }
         }
