@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 101 — 2026-09-14 — Pawn islands (Priority Fixes, 2026-09-08 section)
+
+**Built:**
+- `src/eval/pawns.h`: new `kPawnIslandPenalty`, a single flat `Score` (not rank-indexed, unlike every other constant in this file — an island count has no notion of "how far advanced" the way a per-pawn term does) charged once per island beyond the first. `pawn_structure_value()`'s own doc comment extended to note this is the file's only per-SIDE, not per-pawn, term.
+- `src/eval/pawns.cpp`: a new per-side check appended right after the existing per-pawn loop (deliberately outside it — the check depends on the shape of the whole `file_counts` array at once, not any single pawn's own square). A single scan across all 8 files, counting maximal runs of consecutive own-pawn-occupied files; `islands - 1` charges of `kPawnIslandPenalty` via `Score::operator*(int)` when `islands >= 2`, nothing otherwise (a no-pawns side correctly counts zero islands and is charged nothing).
+- `docs/ROADMAP.md`: "Pawn islands" item in the Priority Fixes (2026-09-08) section's five-gap list checked off. (A stray accidental duplicate of this same bullet, introduced by a slip in this session's own doc-editing script, was caught and removed before delivery — the tarball/build verification loop doesn't cover docs prose, so this was a manual re-read catch, not a compiled/tested one; worth a second look at doc diffs going forward, not just code diffs.)
+- `tests/pawns_tests.cpp`: 2 new dedicated test cases (a clean 2-island case, charged once; a 3-island case, charged twice, confirming the penalty scales with `islands - 1` rather than being a flat per-side charge regardless of count). 1 pre-existing test's own expected value corrected — Session 100's own "outside passed pawn" test happens to place its two White pawns (a5, e2) exactly 4 files apart with 3 empty files in between, which is itself 2 separate islands; the third session running (98, 99, 100→101) to hit this same category of discovery, where a new per-side/per-pawn term retroactively applies to an earlier session's hand-built test position.
+
+**Bugs found and fixed:** the ROADMAP.md duplicate bullet noted above (doc-only, caught before delivery, not a code/test issue).
+
+**Decisions made:** none requiring a DECISIONS.md entry — the design rationale (per-side gating, "beyond the first" charging convention) is documented directly at `kPawnIslandPenalty`'s and `pawn_structure_value()`'s own doc comments (`src/eval/pawns.h`), matching the established convention from Sessions 99/100.
+
+**Verification performed:** `src/eval/pawns.cpp` compiled standalone with `-Wall -Wextra -Wpedantic`: zero warnings. Full suite (raw-`g++`-against-fetched-Catch2-amalgamated, same sandbox path as recent sessions): **552 test cases, 27,730 assertions, all green, zero failures** (550/27,731 baseline from Session 100 — +2 test cases, as expected from this session's own 2 new cases, but a net -1 assertion rather than the naive +2: `tests/selfplay_tests.cpp` exists in the suite and most plausibly plays out a fixed number of full games rather than a fixed number of plies, so a new eval term nudging search's move choices can change total game length/ply count and therefore total assertion count, without indicating any actual failure — every test case, including that file's own, still reports fully green). `bench`: **23,260 total nodes** (23,301 before this session — a further small, expected shift consistent with a new term feeding every static eval call, not a regression: kiwipete/quiet_middlegame/startpos each moved slightly, endgame_mate_in_3 unchanged as in prior sessions). A full ASan+UBSan build of the `[pawns]`-tagged subset came back clean (13/13, zero findings). The real, compiled `nightwing` UCI binary was hand-exercised on an out-of-book Ruy-Lopez-ish position (`go depth 8`): legal `bestmove`, no crash.
+
+**Next session starts:** the Priority Fixes (2026-09-08) section's five-gap eval-feature list has two items left — "Back-rank weakness" (a concrete, well-defined pattern: an open back rank with the king stuck on it) is next. This one likely belongs in a different file than `pawns.cpp` — it's a king-safety/structural pattern involving the king and rook files, not a pawn-only property — so check `docs/ARCHITECTURE.md`'s own module layout for where the existing king-safety evaluation code lives before assuming it's another `pawns.cpp` addition. After that, "Overloaded pieces" (a piece defending two or more things it cannot actually defend if any one is taken/attacked, detectable via the existing Threats bucket's attack-bitboard machinery) is the last of the five, followed by Tier 0 (the large multi-session tuner-extension effort).
+
+---
+
 ### Session 100 — 2026-09-14 — Outside passed pawns (Priority Fixes, 2026-09-08 section)
 
 **Built:**

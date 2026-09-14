@@ -688,10 +688,29 @@ Priority Fixes section above).
           98/99's own experience), since none of the earlier tests'
           hand-built positions happen to place a passed pawn 3+ files
           from every other pawn on the board.
-    - [ ] Pawn islands — a simple count of contiguous same-color pawn
-          groups; correlates well with structural weakness.
-    - [ ] Pawn islands — a simple count of contiguous same-color pawn
-          groups; correlates well with structural weakness.
+    - [x] Pawn islands — a simple count of contiguous same-color pawn
+          groups; correlates well with structural weakness. DONE,
+          Session 101: `eval::pawns.cpp` gained a new, deliberately
+          per-SIDE (not per-pawn) check appended right after the
+          existing per-pawn loop -- a single scan across all 8 files'
+          worth of the already-precomputed `file_counts` array,
+          counting maximal runs of consecutive own-pawn-occupied files.
+          `src/eval/pawns.h` gained `kPawnIslandPenalty`, a single flat
+          `Score` (not rank-indexed, unlike every other constant in
+          this file, since island count has no notion of "how far
+          advanced") charged ONCE PER ISLAND BEYOND THE FIRST (a single
+          island, however wide, costs nothing; 2 islands costs one
+          charge, 3 costs two, via `Score::operator*(int)`). Fixing the
+          candidate/outside-passed-pawn tests (Sessions 99/100) needed
+          one pre-existing test's expected value corrected once again
+          (the Session 100 "outside passed pawn" test's own White pawns,
+          a5 and e2, happen to sit 4 files apart with 3 empty files in
+          between -- exactly 2 separate islands) -- the third session in
+          a row to hit this exact category of discovery. 2 new dedicated
+          test cases (a clean 2-island case, charged once; a 3-island
+          case, charged twice, demonstrating the penalty scales with
+          `islands - 1` rather than being a flat per-side charge
+          regardless of count).
     - [ ] Back-rank weakness — a concrete, well-defined pattern (an open
           back rank with the king stuck on it).
     - [ ] Overloaded pieces — a piece defending two or more things it
