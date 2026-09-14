@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 100 — 2026-09-14 — Outside passed pawns (Priority Fixes, 2026-09-08 section)
+
+**Built:**
+- `src/eval/pawns.h`: new `kOutsidePassedPawnMinFileGap` (3) threshold constant and new `kOutsidePassedPawnBonus` table (same relative-rank indexing convention as `kPassedPawnBonus`, scaled to roughly 30% of its magnitude — deliberately smaller than `kConnectedPassedPawnBonus`'s own 50%, since being merely far away from the rest of the pawns is a weaker, more situational asset than having a genuine mutual defender). `pawn_structure_value()`'s own doc comment extended with the outside-passed-pawn test.
+- `src/eval/pawns.cpp`: new file-local `is_outside_passed_pawn()` helper — the minimum file-distance from the pawn to every OTHER pawn on the board (either color) must be at least `kOutsidePassedPawnMinFileGap`. A new `total_pawns` bitboard (`own_pawns | enemy_pawns`) is precomputed once per side, alongside the existing `file_counts`/`passed_pawns_bb` precomputation, so the per-pawn check can cheaply exclude just the current square (`board::clear_bit()`) rather than re-deriving the union every iteration. Applied inside the existing `if (passed)` block — the opposite gating from the candidate-passed-pawn/backward checks (both `!passed`-gated) added in Session 99, on top of the plain `kPassedPawnBonus` that block already applies.
+- `docs/ROADMAP.md`: "Outside passed pawns" item in the Priority Fixes (2026-09-08) section's five-gap list checked off.
+- `tests/pawns_tests.cpp`: 2 new test cases — a genuine outside passer (target pawn 4 files from its nearest other pawn, past the threshold) and a boundary negative case (exactly 2 files away, symmetric on both sides, demonstrating the threshold is a hard cutoff rather than a fuzzy preference). No pre-existing test needed correcting this time (unlike Sessions 98's `kConnectedPassedPawnBonus` work and Session 99's own `kCandidatePassedPawnBonus` work, both of which hit a pre-existing test whose hand-built position happened to newly qualify) — none of the file's existing hand-built positions place a passed pawn 3+ files from every other pawn on the board.
+
+**Bugs found and fixed:** none — this session's own real build-and-test run passed on the first attempt, including every pre-existing test in the file.
+
+**Decisions made:** the test's own design (gated on `passed`, the opposite of the candidate/backward checks) and the threshold/magnitude choices are documented directly at `kOutsidePassedPawnBonus`'s and `pawn_structure_value()`'s own doc comments (`src/eval/pawns.h`), matching Session 99's own established convention of keeping a term's full rationale next to its constant when the reasoning is self-contained.
+
+**Verification performed:** `src/eval/pawns.cpp` compiled standalone with `-Wall -Wextra -Wpedantic`: zero warnings. Full suite (raw-`g++`-against-fetched-Catch2-amalgamated, same sandbox path as recent sessions): **550 test cases, 27,731 assertions, all green, zero failures** (548/27,729 baseline from Session 99 — +2 tests/+2 assertions, exactly matching this session's own new cases). `bench`: **23,301 total nodes, unchanged from Session 99's own baseline exactly** — none of the 4 fixed bench positions happen to contain a genuinely outside passed pawn at the depths searched, so this session's new term is confirmed additive/inert on that specific fixed set, not a sign the code path is unreachable (the dedicated new unit tests directly exercise and confirm it fires). A full ASan+UBSan build of the `[pawns]`-tagged subset came back clean (11/11, zero findings). The real, compiled `nightwing` UCI binary was hand-exercised on an out-of-book Queen's-Gambit-ish position (`go depth 8`): sane, legal PVs at every depth, no crash.
+
+**Next session starts:** the Priority Fixes (2026-09-08) section's five-gap eval-feature list has two items left — "Pawn islands" (a simple count of contiguous same-color pawn groups) is next. Read `src/eval/pawns.cpp` before writing anything — same file this session's and Session 99's own work both touched, though pawn islands is a per-SIDE structural count rather than a per-pawn check, so it likely wants its own small loop over `file_counts` (already precomputed in this function) rather than slotting into the existing per-pawn loop the way the candidate/outside checks did. After that, "Back-rank weakness" and "Overloaded pieces" remain, followed by Tier 0 (the large multi-session tuner-extension effort).
+
+---
+
 ### Session 99 — 2026-09-14 — Candidate passed pawns (Priority Fixes, 2026-09-08 section)
 
 **Built:**

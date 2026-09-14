@@ -660,9 +660,36 @@ Priority Fixes section above).
           cases (a genuine tied-count candidate; a same-file-blocker
           negative case demonstrating part (a) overrides part (b)
           regardless of support).
-    - [ ] Outside passed pawns — a passer on the side of the board away
+    - [x] Outside passed pawns — a passer on the side of the board away
           from the pawn majority; a specific, cheap-to-detect sub-case
-          of the existing passed-pawn bucket.
+          of the existing passed-pawn bucket. DONE, Session 100:
+          `eval::pawns.cpp`'s existing per-pawn loop gained a new
+          `is_outside_passed_pawn()` helper, a new `kOutsidePassedPawnBonus`
+          table, and a new `kOutsidePassedPawnMinFileGap` (3) threshold
+          constant (`src/eval/pawns.h`, same relative-rank indexing
+          convention as `kPassedPawnBonus`, scaled to roughly 30% of its
+          magnitude — smaller than `kConnectedPassedPawnBonus`'s own
+          50%, since being merely far away is a weaker, more situational
+          asset than having a genuine mutual defender). Applied inside
+          the existing `if (passed)` block (the opposite gating from
+          the candidate/backward checks, which both require `!passed`):
+          the minimum file-distance from the pawn to every OTHER pawn
+          on the board, either color, must be at least
+          `kOutsidePassedPawnMinFileGap` — wide enough that no other
+          pawn's own natural advance could ever interact with this one.
+          A `total_pawns` bitboard (own | enemy) is now precomputed once
+          per side, alongside the existing `file_counts`/`passed_pawns_bb`
+          precomputation, so the per-pawn check doesn't have to re-OR
+          the two bitboards on every iteration. 2 new test cases (a
+          genuine outside passer, 4 files from its nearest neighbor;
+          a boundary negative case at exactly 2 files, demonstrating the
+          threshold is a hard cutoff, not a fuzzy preference) — no
+          pre-existing test needed correcting this time (unlike Sessions
+          98/99's own experience), since none of the earlier tests'
+          hand-built positions happen to place a passed pawn 3+ files
+          from every other pawn on the board.
+    - [ ] Pawn islands — a simple count of contiguous same-color pawn
+          groups; correlates well with structural weakness.
     - [ ] Pawn islands — a simple count of contiguous same-color pawn
           groups; correlates well with structural weakness.
     - [ ] Back-rank weakness — a concrete, well-defined pattern (an open
