@@ -34,6 +34,22 @@
 //     only measures whether the KING'S OWN structure has already broken
 //     down, not whether the enemy's is actively advancing to break it
 //     down.
+//   - Back-rank weakness (another Priority Fixes item, ROADMAP.md
+//     2026-09-08): a penalty when the king sits on its own back rank
+//     with every existing square directly in front of it (up to 3 --
+//     fewer on the a/h files) occupied by an own pawn, leaving no
+//     pawn-created "luft" square to step up to off the back rank, AND
+//     the enemy still has at least one rook or queen on the board (the
+//     specific piece types that actually deliver a back-rank check/mate
+//     along an open rank or file -- without one, the weakness is purely
+//     theoretical, nothing left on the board to exploit it). See
+//     king_safety.cpp's own doc comment on the exact test. Distinct from
+//     the pawn-shield component above: a full 3-pawn shield still
+//     directly in front of the king is exactly the condition that
+//     traps it here, so this term and the shield bonus can and often do
+//     both fire on the very same king at once, for opposite reasons
+//     (the shield blocks approach from the front; back-rank weakness is
+//     about having nowhere to run along the back rank itself).
 //
 // Deliberately MG-heavy, EG-light in every constant below (mobility.cpp
 // mirrors this same "eg at or above mg" preference for the OPPOSITE
@@ -109,11 +125,51 @@ inline constexpr std::array<Score, 8> kPawnStormPenalty = {{
     {0, 0},
 }};
 
+/// Back-rank weakness penalty (this file's own header comment has the
+/// full rationale) -- a single flat Score, applied at most ONCE per
+/// side per call (unlike kPawnStormPenalty, this isn't indexed by
+/// anything; the king either has the weakness or it doesn't, there's no
+/// notion of "how far advanced" the way a storming pawn has). Real, but
+/// smaller in magnitude than kOpenFileNearKingPenalty -- being trapped
+/// on the back rank only matters if the enemy can actually mount a
+/// rank/file attack there (this file's own header comment covers the
+/// major-piece-presence gate that makes this conditional in the first
+/// place; kOpenFileNearKingPenalty and kAttackUnitPenalty above already
+/// capture most of the danger of an exposed king more generally, so
+/// this term is a smaller, additional nudge specifically for the
+/// "trapped with no flight square" shape, not a wholesale re-scoring of
+/// king danger from scratch). Deliberately MG-heavy, EG-light like
+/// every other constant in this file (this file's own header comment
+/// has the shared rationale) -- doubly so here, since major pieces
+/// (the entire precondition for this term firing at all) are
+/// specifically what tends to be traded off by the time a real
+/// endgame arrives, at which point eval::taper() (eval/score.h) fades
+/// this out same as everything else here. First-draft hand estimate,
+/// not yet Texel-tuned, same caveat as every other constant in this
+/// file.
+inline constexpr Score kBackRankWeaknessPenalty = {-14, -2};
+
 /// Evaluates king safety for BOTH sides and returns a single
 /// White-relative Score (positive favors White, matching every other
 /// eval/*.h term's sign convention in eval.cpp). See this file's header
-/// comment for the four components summed into each side's own
+/// comment for the five components summed into each side's own
 /// contribution before being combined White-minus-Black.
+///
+/// Back-rank-weakness test (this file's own header comment, used for
+/// kBackRankWeaknessPenalty above), spelled out here since that
+/// constant's own comment refers back to this one: the king must be on
+/// its own back rank (rank 0 for White, rank 7 for Black), EVERY
+/// existing square directly one rank in front of it (same file, and
+/// each adjacent file that exists on the board -- up to 3, fewer on the
+/// a/h files) must be occupied by an OWN pawn (a single open front
+/// square is enough to rule this out -- the king could step up there),
+/// AND the enemy must have at least one rook or queen currently on the
+/// board. All three conditions are required together; this is
+/// deliberately NOT scaled by how many rooks/queens the enemy has (a
+/// flat penalty either applies or it doesn't) or by anything about the
+/// king's own file being open/closed (that's kOpenFileNearKingPenalty/
+/// kSemiOpenFileNearKingPenalty's own job, checked completely
+/// independently above).
 ///
 /// Precondition: board::init_masks() and board::init_magic_bitboards()
 /// have both been called (this function uses board::king_attacks() and,

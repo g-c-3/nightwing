@@ -211,6 +211,37 @@ Score king_safety_value(const Position& pos) noexcept {
         const int units = attack_units_on(pos, enemy, king_zone);
         side_score += kAttackUnitPenalty * units;
 
+        // Back-rank weakness (king_safety.h's own header comment, and
+        // king_safety_value()'s own doc comment, have the full
+        // rationale/exact test). Only meaningful when the king is on
+        // its own back rank at all -- everywhere else, "no escape
+        // square in front" isn't the same kind of weakness (there's a
+        // whole extra rank behind it to retreat into instead).
+        const int back_rank = (c == Color::White) ? 0 : (board::kNumRanks - 1);
+        if (king_rank == back_rank) {
+            const int direction = (c == Color::White) ? 1 : -1;
+            const int front_rank = king_rank + direction;
+            bool has_luft = false;
+            for (int df = -1; df <= 1; ++df) {
+                const int f = king_file + df;
+                if (f < 0 || f >= board::kNumFiles) {
+                    continue;
+                }
+                const Square front_sq = board::make_square(f, front_rank);
+                if (!board::test_bit(own_pawns, front_sq)) {
+                    has_luft = true;
+                    break;
+                }
+            }
+            if (!has_luft) {
+                const bool major_piece_threat =
+                    pos.pieces(enemy, PieceType::Rook) != 0 || pos.pieces(enemy, PieceType::Queen) != 0;
+                if (major_piece_threat) {
+                    side_score += kBackRankWeaknessPenalty;
+                }
+            }
+        }
+
         if (c == Color::White) {
             score += side_score;
         } else {
