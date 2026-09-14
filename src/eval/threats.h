@@ -21,13 +21,26 @@
 //      attacked/defended check instead of SEE" below for why this
 //      doesn't attempt a full Static-Exchange-Evaluation-accurate
 //      "would the exchange actually favor the attacker" judgment.
+//   3. Overloaded (ROADMAP.md Priority Fixes, 2026-09-08, "Overloaded
+//      pieces" -- the last of that section's 5 eval-feature gaps): a
+//      piece that is the SOLE own defender of two or more own pieces
+//      that are each themselves currently attacked by the enemy --
+//      CPW's "Overloading" (https://www.chessprogramming.org/Overloading):
+//      the defender can only actually recapture on one of those squares
+//      if the enemy captures there, so the other one is effectively
+//      undefended in practice despite superficially having a defender
+//      on record. Built from the SAME per-piece attack bitboards the
+//      other two checks already compute -- see overloaded_piece_value()'s
+//      own doc comment (this file, below the constants) for the exact
+//      "sole defender of 2+ attacked pieces" test.
 //
-// The two penalties are independent and stack when both apply to the
-// same piece (a pawn-attacked AND undefended piece is worse than
-// either condition alone, and is scored that way) -- the same
-// "independent signals add" philosophy eval/piece_bonuses.h's own
-// open-file + 7th-rank stacking and eval/space.h's own
-// occupancy + attack stacking already establish for this codebase.
+// The three penalties are independent and stack when more than one
+// applies to the same piece (an overloaded piece that's ALSO pawn-
+// attacked or hanging in its own right is worse than any one condition
+// alone, and is scored that way) -- the same "independent signals add"
+// philosophy eval/piece_bonuses.h's own open-file + 7th-rank stacking
+// and eval/space.h's own occupancy + attack stacking already establish
+// for this codebase.
 //
 // From-scratch implementation here, no code copied, per
 // ARCHITECTURE.md's Attribution Policy.
@@ -41,7 +54,15 @@
 // material_value() itself the moment it's actually captured, and a
 // "hanging king" isn't a coherent concept in eval at all (an attacked
 // king is check, which search handles directly, never an eval-time
-// judgment call).
+// judgment call). The overloaded-piece check (added later, same file)
+// keeps this exact same minor/major-only scope on BOTH ends of the
+// relationship for consistency: only a knight/bishop/rook/queen is ever
+// evaluated as the overloaded DEFENDER, and only a knight/bishop/rook/
+// queen is ever counted as one of the DEFENDED pieces whose attacked
+// status matters -- a piece solely defending a pawn (or the king, which
+// is never actually "defended" in the capturable sense at all) doesn't
+// enter into this specific check, for the identical reasons already
+// given for excluding pawns/king from the two checks above.
 //
 // Why a boolean attacked/defended check instead of SEE: search/see.h's
 // static_exchange_evaluation() already exists and is more precise (it
@@ -100,9 +121,53 @@ inline constexpr Score kBishopHangingPenalty = {-30, -25};
 inline constexpr Score kRookHangingPenalty = {-40, -30};
 inline constexpr Score kQueenHangingPenalty = {-50, -35};
 
+/// Penalty for a knight/bishop/rook/queen that is the SOLE own defender
+/// of two or more own knights/bishops/rooks/queens each currently
+/// attacked by the enemy (this file's header comment's "Overloaded"
+/// entry has the concept; overloaded_piece_value()'s own doc comment,
+/// below, has the exact test). Same Rook/Queen-larger-than-Knight/
+/// Bishop value-scaling logic as the two penalty tables above, but
+/// smaller in magnitude than either: unlike a pawn-attacked or hanging
+/// piece, an overloaded piece isn't itself under any direct attack at
+/// all -- the danger is a FUTURE tactic (the enemy capturing one of the
+/// two defended pieces to exploit the divided duty), not a current,
+/// already-realized threat, so this is scored as a real but smaller
+/// structural weakness rather than with the same weight as an
+/// immediate material threat. `mg` above `eg`, matching both tables
+/// above, for the same underlying reason: exploiting an overload takes
+/// active, contested play to actually convert, which matters most while
+/// there's still a lot of that play ahead.
+inline constexpr Score kKnightOverloadedPenalty = {-18, -8};
+inline constexpr Score kBishopOverloadedPenalty = {-18, -8};
+inline constexpr Score kRookOverloadedPenalty = {-24, -10};
+inline constexpr Score kQueenOverloadedPenalty = {-30, -12};
+
 /// Evaluates the threats term for BOTH sides and returns a single
 /// White-relative Score (positive favors White, matching every other
 /// eval/*.h term's sign convention in eval.cpp).
+///
+/// Overloaded-piece test (this file's header comment's "Overloaded"
+/// entry, used for kKnightOverloadedPenalty/kBishopOverloadedPenalty/
+/// kRookOverloadedPenalty/kQueenOverloadedPenalty above): for each own
+/// knight/bishop/rook/queen D, count how many other own knights/
+/// bishops/rooks/queens T satisfy BOTH (a) T is currently attacked by
+/// the enemy, AND (b) D is the ONLY own piece whose own individual
+/// attack bitboard covers T's square (not merely one of several
+/// defenders -- see threats.cpp's own implementation comment for
+/// exactly how "only" is checked, since threats_value()'s own existing
+/// attacks_by_side() union bitboards don't by themselves distinguish
+/// "one defender" from "several"). D is overloaded, and penalized once
+/// (not once per over-defended piece -- see this function's own
+/// implementation comment for why), whenever that count reaches 2 or
+/// more. Deliberately does NOT attempt to determine whether the enemy
+/// could actually WIN material by exploiting the overload (that would
+/// need a real capture-sequence evaluation -- search/see.h's own
+/// static_exchange_evaluation(), which this file's header comment's "Why
+/// a boolean attacked/defended check instead of SEE" section already
+/// explains eval/ deliberately doesn't depend on) -- purely a structural
+/// "this piece has more defensive duties than it can actually fulfill"
+/// signal, same deliberately-simplified spirit as the hanging-piece
+/// check just above it.
 ///
 /// Precondition: board::init_masks() AND board::init_magic_bitboards()
 /// have both been called -- unlike eval/piece_bonuses.h's

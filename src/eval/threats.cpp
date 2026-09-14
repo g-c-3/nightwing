@@ -4,6 +4,9 @@
 
 #include "eval/threats.h"
 
+#include <array>
+#include <cstddef>
+
 #include "board/attacks.h"
 #include "board/bitboard.h"
 #include "board/masks.h"
@@ -109,6 +112,147 @@ using board::Square;
     }
 }
 
+/// Returns the overloaded-piece penalty for a piece of `pt` (only ever
+/// called with Knight/Bishop/Rook/Queen -- see threats.cpp's own call
+/// site).
+[[nodiscard]] constexpr Score overloaded_penalty(PieceType pt) noexcept {
+    switch (pt) {
+        case PieceType::Knight:
+            return kKnightOverloadedPenalty;
+        case PieceType::Bishop:
+            return kBishopOverloadedPenalty;
+        case PieceType::Rook:
+            return kRookOverloadedPenalty;
+        case PieceType::Queen:
+            return kQueenOverloadedPenalty;
+        case PieceType::Pawn:
+        case PieceType::King:
+        case PieceType::None:
+        default:
+            return {0, 0};
+    }
+}
+
+/// Generous fixed capacity for the per-side scratch array
+/// overloaded_piece_value() below builds (one entry per own knight/
+/// bishop/rook/queen currently on the board) -- a fixed-size stack
+/// array rather than a heap-allocated one, matching this codebase's
+/// existing "no heap allocation in per-node eval code" convention
+/// (ARCHITECTURE.md, and e.g. search/ordering.h's own kMaxPly-sized
+/// arrays). 16 comfortably covers every realistic game (at most 2
+/// knights + 2 bishops + 2 rooks + 1 queen = 7 per side without any
+/// promotion at all) with generous headroom left over for promoted
+/// pieces from a hand-built test FEN; any piece beyond this count is
+/// silently excluded from the overloaded-piece check specifically
+/// (defensive, not a crash) rather than attempting an unbounded-size
+/// allocation in eval code -- a scenario this constant's own margin
+/// makes exceeding it, even deliberately, difficult to construct.
+constexpr int kMaxOverloadScopedPieces = 16;
+
+/// One own knight/bishop/rook/queen's square, type, and own individual
+/// attack bitboard -- the per-piece detail overloaded_piece_value()'s
+/// "sole defender" test needs that attacks_by_side()'s own UNION
+/// bitboard (used by the pawn-attack/hanging checks above) doesn't
+/// preserve: a union can tell you a square is defended by SOMETHING,
+/// but not by exactly how many, or which, own pieces.
+struct ScopedPiece {
+    Square sq;
+    PieceType pt;
+    Bitboard attacks;
+};
+
+/// Collects every `c`-colored knight/bishop/rook/queen currently on the
+/// board into `out`, each with its own individually-computed attack
+/// bitboard, and returns how many were written (capped at
+/// kMaxOverloadScopedPieces -- see that constant's own comment).
+[[nodiscard]] int collect_scoped_pieces(
+    const Position& pos, Color c,
+    std::array<ScopedPiece, kMaxOverloadScopedPieces>& out) noexcept {
+    const Bitboard occupied = pos.occupied();
+    int count = 0;
+    for (const PieceType pt :
+         {PieceType::Knight, PieceType::Bishop, PieceType::Rook, PieceType::Queen}) {
+        Bitboard pieces = pos.pieces(c, pt);
+        while (pieces != 0 && count < kMaxOverloadScopedPieces) {
+            const Square sq = board::pop_lsb(pieces);
+            Bitboard attacks = board::kEmptyBitboard;
+            switch (pt) {
+                case PieceType::Knight:
+                    attacks = board::knight_attacks(sq);
+                    break;
+                case PieceType::Bishop:
+                    attacks = board::bishop_attacks(sq, occupied);
+                    break;
+                case PieceType::Rook:
+                    attacks = board::rook_attacks(sq, occupied);
+                    break;
+                case PieceType::Queen:
+                    attacks = board::queen_attacks(sq, occupied);
+                    break;
+                default:
+                    break; // unreachable: this loop only ever iterates N/B/R/Q
+            }
+            out[static_cast<std::size_t>(count)] = ScopedPiece{sq, pt, attacks};
+            ++count;
+        }
+    }
+    return count;
+}
+
+/// Adds this side's own overloaded-piece penalty (this file's header
+/// comment's "Overloaded" entry; threats_value()'s own doc comment has
+/// the exact test) into `side_score`. Two passes over the same `count`-
+/// sized scratch array, O(count^2) total rather than the O(count^3) a
+/// naive "for each candidate defender, for each target, recount every
+/// possible defender" approach would cost: the first pass computes,
+/// for every piece that's currently enemy-attacked, whether it has
+/// EXACTLY one own defender and, if so, which -- `sole_defender_of[i]`
+/// is that defender's own index into the same array, or -1 if piece i
+/// isn't attacked at all or has 0 or 2+ defenders (either way, not
+/// relevant to which single piece is carrying sole responsibility for
+/// it). The second pass simply tallies, per candidate defender index,
+/// how many targets named it as their one-and-only defender -- 2 or
+/// more means that piece is overloaded.
+void add_overloaded_penalty(const Position& pos, Color c, Bitboard enemy_attacks,
+                             Score& side_score) noexcept {
+    std::array<ScopedPiece, kMaxOverloadScopedPieces> pieces{};
+    const int count = collect_scoped_pieces(pos, c, pieces);
+
+    std::array<int, kMaxOverloadScopedPieces> sole_defender_of{};
+    for (int i = 0; i < count; ++i) {
+        sole_defender_of[static_cast<std::size_t>(i)] = -1;
+        if (!board::test_bit(enemy_attacks, pieces[static_cast<std::size_t>(i)].sq)) {
+            continue;
+        }
+        int defender_count = 0;
+        int last_defender = -1;
+        for (int k = 0; k < count; ++k) {
+            if (board::test_bit(pieces[static_cast<std::size_t>(k)].attacks,
+                                 pieces[static_cast<std::size_t>(i)].sq)) {
+                ++defender_count;
+                last_defender = k;
+            }
+        }
+        if (defender_count == 1) {
+            sole_defender_of[static_cast<std::size_t>(i)] = last_defender;
+        }
+    }
+
+    std::array<int, kMaxOverloadScopedPieces> overload_count{};
+    for (int i = 0; i < count; ++i) {
+        const int defender = sole_defender_of[static_cast<std::size_t>(i)];
+        if (defender != -1) {
+            ++overload_count[static_cast<std::size_t>(defender)];
+        }
+    }
+
+    for (int k = 0; k < count; ++k) {
+        if (overload_count[static_cast<std::size_t>(k)] >= 2) {
+            side_score += overloaded_penalty(pieces[static_cast<std::size_t>(k)].pt);
+        }
+    }
+}
+
 } // namespace
 
 Score threats_value(const Position& pos) noexcept {
@@ -150,6 +294,8 @@ Score threats_value(const Position& pos) noexcept {
                 }
             }
         }
+
+        add_overloaded_penalty(pos, c, enemy_attacks, side_score);
 
         if (c == Color::White) {
             score += side_score;
