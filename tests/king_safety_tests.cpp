@@ -203,6 +203,79 @@ TEST_CASE("king_safety_value: a storming enemy pawn on the king's own file score
     REQUIRE(king_safety_value(no_storm).mg > king_safety_value(storming).mg);
 }
 
+TEST_CASE("king_safety_value: a king trapped on its own back rank by its own pawns, facing an "
+          "enemy rook, is penalized more than an identical king with a rook-provided flight "
+          "square",
+          "[eval][king_safety]") {
+    init_all();
+    // King on a1 with a full a2/b2 pawn wall directly in front of it,
+    // and a Black rook on the board (anywhere; king_safety_value()'s
+    // own back-rank test only checks for PRESENCE, not whether that
+    // specific rook currently attacks anything) to satisfy the
+    // "something to actually exploit it" gate. `with_luft` moves the
+    // b-pawn one square further forward (b2 -> b3) rather than removing
+    // it outright -- b3 is still within shield_zone()'s own 2-rank-deep
+    // zone (so the plain pawn-shield bonus, which only counts presence
+    // anywhere in that zone, is completely unchanged) and the b-file
+    // still has an own pawn somewhere on it (so it stays closed, not
+    // open -- kOpenFileNearKingPenalty/kSemiOpenFileNearKingPenalty
+    // don't change either). The ONLY thing that changes is whether b2
+    // ITSELF, directly in front of the king, is empty -- which is
+    // exactly what flips the back-rank term from "no luft" to "has
+    // luft," isolating this comparison to precisely that one term.
+    Position trapped = empty_position();
+    trapped.place_piece(make_square(0, 0), Piece::WhiteKing); // a1
+    trapped.place_piece(make_square(0, 1), Piece::WhitePawn); // a2
+    trapped.place_piece(make_square(1, 1), Piece::WhitePawn); // b2
+    trapped.place_piece(make_square(7, 7), Piece::BlackKing); // h8
+    trapped.place_piece(make_square(7, 4), Piece::BlackRook); // h5, present but not
+                                                                // currently attacking a1's
+                                                                // zone at all
+
+    Position with_luft = trapped;
+    with_luft.remove_piece(make_square(1, 1));
+    with_luft.place_piece(make_square(1, 2), Piece::WhitePawn); // b3 -- still shields, still
+                                                                  // keeps the b-file closed,
+                                                                  // but b2 itself is now open
+    REQUIRE(king_safety_value(with_luft).mg > king_safety_value(trapped).mg);
+}
+
+TEST_CASE("king_safety_value: a king trapped on its own back rank scores IDENTICALLY whether "
+          "or not the enemy has a rook or queen, unless one is actually present",
+          "[eval][king_safety]") {
+    init_all();
+    // The same fully-walled-in a1 king as the test above, but this time
+    // Black has NO rook or queen anywhere on the board at all -- only a
+    // king and a lone knight (present specifically to confirm the gate
+    // checks piece TYPE, not merely "does Black have any piece besides
+    // its king"). king_safety_value()'s own doc comment: the back-rank
+    // penalty requires an enemy rook OR queen specifically, since
+    // neither a knight nor a bishop can deliver the along-the-rank/file
+    // check this term is modeling. Adding an actual Black rook should
+    // make the position WORSE for White (the two configs are otherwise
+    // identical -- same a1/a2/b2 wall, same Black king square), and by
+    // exactly kBackRankWeaknessPenalty's own mg magnitude, isolating
+    // the comparison to precisely this one term rather than merely
+    // asserting an inequality the way most of this file's own
+    // comparison tests do.
+    Position no_major_piece = empty_position();
+    no_major_piece.place_piece(make_square(0, 0), Piece::WhiteKing); // a1
+    no_major_piece.place_piece(make_square(0, 1), Piece::WhitePawn); // a2
+    no_major_piece.place_piece(make_square(1, 1), Piece::WhitePawn); // b2
+    no_major_piece.place_piece(make_square(7, 7), Piece::BlackKing); // h8
+    no_major_piece.place_piece(make_square(6, 7), Piece::BlackKnight); // g8, not a rook/queen
+
+    Position with_rook = no_major_piece;
+    with_rook.remove_piece(make_square(6, 7));
+    with_rook.place_piece(make_square(6, 7), Piece::BlackRook); // g8, same square, now a
+                                                                  // qualifying piece type
+
+    const Score without = king_safety_value(no_major_piece);
+    const Score with = king_safety_value(with_rook);
+    REQUIRE(without.mg - with.mg == -kBackRankWeaknessPenalty.mg);
+    REQUIRE(without.eg - with.eg == -kBackRankWeaknessPenalty.eg);
+}
+
 TEST_CASE("king_safety_value: a king with no legal position (defensive: missing king entirely) "
           "contributes nothing rather than crashing",
           "[eval][king_safety]") {

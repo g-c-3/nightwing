@@ -175,6 +175,71 @@ TEST_CASE("search_fixed_depth: reusing an already-populated external_tt for an i
     REQUIRE(third.nodes == first.nodes);
 }
 
+TEST_CASE("search_fixed_depth: a warm external_tt reproduces the cold call's own best move/"
+          "score across EVERY depth from 1 to 8, not just one hand-picked depth",
+          "[search][persistent_tt]") {
+    init_all();
+    // This is a direct, deliberately broader regression guard for a
+    // real, confirmed bug this session found and fixed (docs/
+    // DECISIONS.md has the full account): the test just above this one
+    // only ever checked depth == 6, and PASSED at that one depth on
+    // `main` even while the underlying defect -- Internal Iterative
+    // Reduction (negamax()'s own header comment) firing inconsistently
+    // between a cold and a warm call, since IIR's own gate is `!probe.
+    // hit`, which a warmed-up TT changes by definition -- was ALREADY
+    // present and already reproducible at depth 5 on this exact
+    // position, undetected purely because no existing test happened to
+    // ask at that specific depth. A single hand-picked depth is
+    // therefore not a reliable regression guard for this failure mode
+    // by itself; sweeping every depth from 1 through 8 (comfortably
+    // past kIIRMinDepth (4), the threshold this bug's own fix is gated
+    // on) is a meaningfully stronger one, at a still-modest total cost
+    // (this whole sweep completes in well under a second).
+    for (int depth = 1; depth <= 8; ++depth) {
+        TranspositionTable tt(16);
+        Position cold_pos = start_position();
+        const SearchResult cold = search_fixed_depth(cold_pos, depth, /*game_history=*/{},
+                                                       /*material_weights=*/nullptr,
+                                                       /*num_threads=*/1, /*hash_size_mb=*/16,
+                                                       /*contempt_cp=*/0, &tt);
+        Position warm_pos = start_position();
+        const SearchResult warm = search_fixed_depth(warm_pos, depth, /*game_history=*/{},
+                                                       /*material_weights=*/nullptr,
+                                                       /*num_threads=*/1, /*hash_size_mb=*/16,
+                                                       /*contempt_cp=*/0, &tt);
+        INFO("depth = " << depth);
+        REQUIRE(cold.best_move == warm.best_move);
+        REQUIRE(cold.score == warm.score);
+    }
+}
+
+TEST_CASE("search_iterative_deepening: Internal Iterative Reduction still engages normally at "
+          "depth >= 2 iterations -- this session's own IIR/persistent-TT fix only removed it "
+          "from search_fixed_depth(), not from here",
+          "[search][persistent_tt][iir]") {
+    init_all();
+    // negamax()'s own header comment (search.cpp): IIR is now gated on
+    // `limits != nullptr`, which is true for every
+    // search_iterative_deepening() iteration at depth >= 2 (the one
+    // case where a shallower iteration's own TT entries provide the
+    // genuine self-correction IIR's design assumes) -- unlike
+    // search_fixed_depth(), which always passes `limits == nullptr`
+    // (the test just above this one). This doesn't re-prove IIR's own
+    // node-count benefit in detail (docs/DECISIONS.md's 2026-08-17 (2)
+    // entry already did that, on Kiwipete specifically) -- it's a
+    // narrower confirmation that THIS session's fix genuinely left that
+    // established, validated behavior alone: a plain, un-gated
+    // iterative-deepening search to a depth well past kIIRMinDepth (4)
+    // still completes with a fully sane result, the same coarse
+    // sanity-check shape as tests/search_tests.cpp's own equivalent
+    // search_fixed_depth() case.
+    Position pos = start_position();
+    const SearchResult result = search_iterative_deepening(pos, /*max_depth=*/6);
+    REQUIRE_FALSE(result.best_move.is_null());
+    REQUIRE(result.score > -kMateThreshold);
+    REQUIRE(result.score < kMateThreshold);
+}
+
 TEST_CASE("search_iterative_deepening: a non-null external_tt still works correctly when "
           "MultiPV genuinely takes effect (multi_pv > 1)",
           "[search][persistent_tt][multipv]") {

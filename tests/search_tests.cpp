@@ -972,15 +972,28 @@ TEST_CASE("search_fixed_depth: back-rank mate in 1 is still found exactly when s
     REQUIRE(result.score == kMateScore - 1);
 }
 
-TEST_CASE("search_fixed_depth: completes and returns a legal move at a depth where IIR engages",
+TEST_CASE("search_fixed_depth: completes and returns a legal move at a depth beyond "
+          "kIIRMinDepth, even though IIR itself no longer engages here",
           "[search][iir]") {
     init_all();
     // Coarse regression/safety-net check: a depth request comfortably
     // beyond kIIRMinDepth (4) from the start position doesn't hang,
     // crash, or return anything nonsensical. Doesn't assert an exact
-    // best_move/score (IIR is a heuristic, not exact -- see negamax()'s
-    // header comment -- so unlike the depth-1/depth-2 tests above, an
-    // exact expected value isn't something to hand-verify here).
+    // best_move/score for its own sake (this depth is well within
+    // hand-verifiable range, but the point of this particular test has
+    // always been the coarse sanity check, not a precise value).
+    //
+    // NOTE (this session's own fix, docs/DECISIONS.md): IIR is now
+    // gated on `limits != nullptr` (negamax()'s own header comment has
+    // the full rationale), and search_fixed_depth() always passes
+    // `limits == nullptr` -- so despite this test's own name, IIR does
+    // NOT actually engage anywhere in the call below anymore. The test
+    // is kept, renamed rather than deleted, specifically because it's
+    // still a genuine, useful regression check that a depth in this
+    // range behaves sanely under search_fixed_depth() -- the previous
+    // name's claim about IIR engaging was true when written and is
+    // simply no longer accurate now that the two techniques'
+    // interaction (this session's real bug) has been fixed.
     Position pos = start_position();
     const SearchResult result = search_fixed_depth(pos, 5);
     REQUIRE_FALSE(result.best_move.is_null());
