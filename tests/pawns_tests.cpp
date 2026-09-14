@@ -278,9 +278,14 @@ TEST_CASE("pawn_structure_value: a passed pawn far separated from every other pa
     // isolation penalty (no Black pawn on the adjacent d/f files). The
     // two background pawns' isolation penalties are on OPPOSITE sides
     // of the final White-minus-Black subtraction and are numerically
-    // identical, so they cancel exactly, leaving only a5's own terms.
-    const Score expected =
-        kIsolatedPawnPenalty + kPassedPawnBonus[4] + kOutsidePassedPawnBonus[4];
+    // identical, so they cancel exactly. White's own pawns, though, now
+    // form TWO separate pawn islands (a5 alone, then a gap of 3 empty
+    // files, then e2) -- kPawnIslandPenalty's own doc comment, pawns.h
+    // -- charged once (2 islands - 1); Black has only e5, a single
+    // island, charged nothing. That one island charge is the only term
+    // left standing alongside a5's own passed/outside bonuses.
+    const Score expected = kIsolatedPawnPenalty + kPassedPawnBonus[4] +
+                            kOutsidePassedPawnBonus[4] + kPawnIslandPenalty;
     REQUIRE(pawn_structure_value(pos) == expected);
 }
 
@@ -307,6 +312,66 @@ TEST_CASE("pawn_structure_value: a passed pawn only 2 files from its nearest nei
     // difference of the two plain passed-pawn bonuses with no other
     // term involved.
     const Score expected = kPassedPawnBonus[4] - kPassedPawnBonus[2];
+    REQUIRE(pawn_structure_value(pos) == expected);
+}
+
+TEST_CASE("pawn_structure_value: two separate pawn groups on one side cost exactly one "
+          "pawn-island charge",
+          "[eval][pawns]") {
+    init_masks();
+    Position pos = empty_position();
+    pos.place_piece(make_square(0, 0), Piece::WhiteKing); // a1, out of the way
+    pos.place_piece(make_square(0, 7), Piece::BlackKing); // a8, out of the way
+    pos.place_piece(make_square(0, 1), Piece::WhitePawn); // a2
+    pos.place_piece(make_square(1, 1), Piece::WhitePawn); // b2, contiguous with a2
+    pos.place_piece(make_square(5, 1), Piece::WhitePawn); // f2, a separate group (c/d/e empty)
+    pos.place_piece(make_square(7, 6), Piece::BlackPawn); // h7, unrelated background pawn
+    // White's a2/b2 form one island (contiguous, and a mutual passed
+    // phalanx pair, same shape as this file's own earlier "phalanx
+    // pair" test); f2 is a second, separate island -- 2 islands total,
+    // charged ONCE (kPawnIslandPenalty's own doc comment: per island
+    // BEYOND the first). f2 itself and Black's own h7 are individually
+    // isolated, passed (h7 is far enough from f2 -- 2 files -- that it
+    // doesn't block it, and vice versa), but NOT outside (each only 2
+    // files from the other, short of kOutsidePassedPawnMinFileGap) --
+    // their kIsolatedPawnPenalty and kPassedPawnBonus[1] terms are
+    // numerically identical and land on opposite sides of the final
+    // White-minus-Black subtraction, so they cancel exactly, leaving a
+    // clean result: twice the a2/b2 phalanx-passed-pair total (this
+    // file's own "phalanx pair" test derives that exact per-pawn
+    // formula) plus one single pawn-island charge. Black's own h7 is a
+    // single-file, single-island side -- charged nothing.
+    const Score per_phalanx_pawn =
+        kPassedPawnBonus[1] + kConnectedPawnBonus + kConnectedPassedPawnBonus[1];
+    const Score expected = per_phalanx_pawn + per_phalanx_pawn + kPawnIslandPenalty;
+    REQUIRE(pawn_structure_value(pos) == expected);
+}
+
+TEST_CASE("pawn_structure_value: three separate single pawns cost two pawn-island charges, "
+          "scaling with (islands - 1)",
+          "[eval][pawns]") {
+    init_masks();
+    Position pos = empty_position();
+    pos.place_piece(make_square(0, 0), Piece::WhiteKing); // a1, out of the way
+    pos.place_piece(make_square(0, 7), Piece::BlackKing); // a8, out of the way
+    pos.place_piece(make_square(0, 1), Piece::WhitePawn); // a2, its own island
+    pos.place_piece(make_square(2, 1), Piece::WhitePawn); // c2, its own island
+    pos.place_piece(make_square(4, 1), Piece::WhitePawn); // e2, its own island
+    // No Black pawns at all, so all three are trivially passed (nothing
+    // anywhere to block them) and, being 2 files apart from their
+    // nearest neighbor each way, none is isolated-from-everything...
+    // rather each one IS isolated in the structural sense (no FRIENDLY
+    // pawn on either adjacent file -- b, d, and the a/c-or-c/e pairs
+    // respectively) and none is outside (2 files, short of the 3-file
+    // threshold, from its nearest neighbor either way) or connected
+    // (no adjacent-file own pawn to defend or stand beside). 3 separate
+    // one-file islands -- charged TWICE (3 - 1), demonstrating the
+    // penalty scales with island count rather than being a flat
+    // per-side charge. Black has no pawns at all, so its own file_counts
+    // are all zero, correctly yielding 0 islands and 0 charge, not some
+    // vacuous/undefined case.
+    const Score per_pawn = kIsolatedPawnPenalty + kPassedPawnBonus[1];
+    const Score expected = per_pawn + per_pawn + per_pawn + kPawnIslandPenalty * 2;
     REQUIRE(pawn_structure_value(pos) == expected);
 }
 
