@@ -275,6 +275,29 @@ Score pawn_structure_value(const Position& pos) noexcept {
             }
         }
 
+        // Pawn islands (kPawnIslandPenalty's own doc comment, pawns.h,
+        // has the full rationale): the ONLY per-SIDE, not per-pawn,
+        // term in this function -- deliberately kept OUTSIDE the
+        // per-pawn loop just above, since it depends on the shape of
+        // the whole file_counts array at once, not any single pawn's
+        // own square. A "no pawns at all" side (file_counts all zero)
+        // correctly counts zero islands and so is charged nothing --
+        // there's no structure to have a shape at all.
+        {
+            int islands = 0;
+            bool prev_file_occupied = false;
+            for (int f = 0; f < board::kNumFiles; ++f) {
+                const bool file_occupied = file_counts[static_cast<std::size_t>(f)] > 0;
+                if (file_occupied && !prev_file_occupied) {
+                    ++islands;
+                }
+                prev_file_occupied = file_occupied;
+            }
+            if (islands >= 2) {
+                side_score += kPawnIslandPenalty * (islands - 1);
+            }
+        }
+
         if (c == Color::White) {
             score += side_score;
         } else {

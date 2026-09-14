@@ -179,6 +179,25 @@ inline constexpr std::array<Score, 8> kOutsidePassedPawnBonus = {{
     {0, 0},
 }};
 
+/// Pawn islands (CPW "Pawn Islands", Priority Fixes (2026-09-08)
+/// section) -- unlike every other constant in this file, this is a
+/// PER-SIDE structural penalty, not a per-pawn one: a "pawn island" is
+/// a maximal run of consecutive files that each contain at least one
+/// own pawn, separated from the next island by at least one
+/// completely-pawnless file in between. One island (all own pawns
+/// occupying a single contiguous file-range, however wide) is the
+/// baseline, healthiest shape and gets no penalty at all; this constant
+/// is charged ONCE PER ISLAND BEYOND THE FIRST (so 2 islands costs one
+/// charge, 3 islands costs two, etc.) -- CPW's own general point: more
+/// islands means more separately-defensible pawn groups, which in
+/// practice correlates with more isolated pawns and more squares a
+/// king or piece has to cover to protect them all, even though this
+/// specific constant is deliberately blind to WHICH files are involved
+/// or how many pawns are in each island, just the count of islands
+/// itself. First-draft hand estimate, not yet Texel-tuned, same caveat
+/// as every other constant in this file.
+inline constexpr Score kPawnIslandPenalty = {-4, -6};
+
 /// Evaluates pawn structure for BOTH sides and returns a single
 /// White-relative Score (positive favors White, matching
 /// material_value()/psqt_value()'s sign convention in eval.cpp).
@@ -220,6 +239,13 @@ inline constexpr std::array<Score, 8> kOutsidePassedPawnBonus = {{
 /// every OTHER pawn on the board, either color, must be at least
 /// kOutsidePassedPawnMinFileGap. See is_outside_passed_pawn()'s own doc
 /// comment, pawns.cpp, for the exact bitboard mechanics.
+///
+/// Pawn islands (CPW "Pawn Islands", used for kPawnIslandPenalty
+/// above) -- the ONLY per-SIDE (not per-pawn) term in this file: a
+/// scan across all 8 files, once per side, counting maximal runs of
+/// consecutive own-pawn-occupied files. See kPawnIslandPenalty's own
+/// doc comment (pawns.h) for exactly how the resulting count is
+/// charged.
 ///
 /// Precondition: board::init_masks() has been called (this function
 /// uses board::passed_pawn_mask()/backward_support_mask()/
