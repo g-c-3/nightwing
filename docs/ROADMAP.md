@@ -711,8 +711,65 @@ Priority Fixes section above).
           case, charged twice, demonstrating the penalty scales with
           `islands - 1` rather than being a flat per-side charge
           regardless of count).
-    - [ ] Back-rank weakness — a concrete, well-defined pattern (an open
-          back rank with the king stuck on it).
+    - [x] Back-rank weakness — a concrete, well-defined pattern (an open
+          back rank with the king stuck on it). DONE, Session 102:
+          `eval::king_safety.cpp` (not `pawns.cpp` — a king-safety
+          pattern, not a pawn-structure one; `docs/ARCHITECTURE.md`'s
+          own module layout confirmed the right file before writing
+          anything) gained a 5th component alongside its existing 4:
+          the king must be on its own back rank, EVERY existing square
+          directly in front of it (up to 3, fewer on the a/h files)
+          must be occupied by an own pawn (no pawn-created "luft"
+          square to step up to), AND the enemy must have at least one
+          rook or queen currently on the board (the specific piece
+          types that actually deliver a back-rank check/mate — without
+          one, the weakness is purely theoretical). `src/eval/
+          king_safety.h` gained `kBackRankWeaknessPenalty`, a single
+          flat `Score` (not rank-indexed — the king either has the
+          weakness or it doesn't). 2 new dedicated test cases (a
+          genuinely trapped king penalized more than an otherwise-
+          identical king given a flight square by moving, not removing,
+          a shield pawn one rank further forward; an exact-magnitude
+          isolation test confirming the penalty fires if and only if a
+          rook/queen is actually present, not merely "any enemy piece
+          besides the king"). All 7 of this file's own pre-existing
+          tests passed unchanged (each one's own king already has an
+          open front square, or the enemy has no major piece, in every
+          existing hand-built position — confirmed by re-running them,
+          not merely reasoned about).
+
+          **A real, confirmed, pre-existing search bug was found and
+          fixed as a direct result of adding this term** — see `docs/
+          DECISIONS.md`'s own 2026-09-14 entry for the full account.
+          In short: this term's own contribution to the start
+          position's static eval was enough to expose a latent Internal
+          Iterative Reduction (IIR) / persistent-TT-reuse determinism
+          bug that already existed on unmodified `main` (reproducible
+          at depth 5 with zero eval changes at all) — `search_fixed_
+          depth()`'s own IIR gate depended on TT-hit status, which a
+          warmed-up persistent table changes call-to-call by design,
+          occasionally producing a genuinely different best move/score
+          between a cold and warm call at the identical position/depth.
+          Fixed by gating IIR on `limits != nullptr` (`src/search/
+          search.cpp`'s `negamax()`) — IIR now only fires during a real
+          `search_iterative_deepening()` iteration at depth >= 2, where
+          its own already-documented "self-correction" safety net
+          genuinely exists; `search_fixed_depth()` (bench, the tuner,
+          this exact regression test) no longer gets IIR's node-count
+          benefit at all, a deliberate, documented trade favoring full
+          determinism for those specific tools over a modest,
+          direction-uncertain speed effect. Real gameplay (`search_
+          iterative_deepening()`) is completely unaffected. `tests/
+          persistent_tt_tests.cpp` gained a new depth-1-through-8 sweep
+          test specifically to guard against this exact class of bug
+          recurring undetected (the pre-existing test only ever checked
+          one hand-picked depth, which is exactly how this bug went
+          unnoticed for however many prior sessions it was already
+          latent) plus one confirming IIR still fires normally under
+          real iterative deepening; `tests/search_tests.cpp`'s own
+          pre-existing IIR-in-`search_fixed_depth()` test was renamed
+          and its comment corrected (the behavior it was checking no
+          longer occurs, though its own loose assertions still pass).
     - [ ] Overloaded pieces — a piece defending two or more things it
           cannot actually defend if any one of them is taken/attacked;
           detectable via the same attack-bitboard machinery the existing
