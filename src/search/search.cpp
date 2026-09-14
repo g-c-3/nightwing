@@ -1334,6 +1334,38 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
 /// reflects the depth actually searched, not the depth originally
 /// requested.
 ///
+/// GATED ON `limits != nullptr` (this session's own fix -- see
+/// docs/DECISIONS.md's entry on the confirmed `search_fixed_depth()`/
+/// warm-TT-reuse determinism bug this addresses): the paragraph above
+/// already drew the exact distinction this gate now enforces in code --
+/// IIR's own safety net is iterative deepening's self-correction across
+/// iterations, and `limits` is non-null precisely, and only, on a
+/// search_iterative_deepening() iteration at depth >= 2 (the one case
+/// where a shallower iteration genuinely already ran and populated the
+/// TT first, exactly the "self-correction" this technique's whole
+/// safety argument depends on). `limits` is nullptr for every
+/// search_fixed_depth() call at any depth, AND for
+/// search_iterative_deepening()'s own mandatory depth-1 iteration
+/// (search.cpp's own comment at that construction site) -- both are, by
+/// this same already-existing rationale, cases with "no such correction
+/// available," so IIR now simply doesn't fire there rather than firing
+/// and accepting the accuracy trade this file's own prior analysis
+/// (docs/DECISIONS.md, 2026-08-17 (2)) already flagged as the real,
+/// if generally small, cost of doing so. Before this gate existed, that
+/// "generally small" cost was, in one now-confirmed case, NOT small: a
+/// warm, persistent-TT-reuse repeat call on the IDENTICAL start
+/// position at the IDENTICAL depth could return a genuinely different
+/// best move/score than the cold call immediately before it -- not
+/// because the position or depth differed, but because IIR's own
+/// `!probe.hit` gate is, by definition, sensitive to exactly what a
+/// warmed-up TT changes call-to-call. No existing IIR behavior changes
+/// for search_iterative_deepening() itself at depth >= 2, the case this
+/// technique was designed for and already empirically validated for
+/// (that same DECISIONS.md entry's own Kiwipete sweep) -- only the two
+/// "no self-correction available" cases this paragraph already named
+/// are affected, and only by no longer taking a trade-off this file's
+/// own comments had already identified as inapplicable to them.
+///
 /// `eval_cache` is forwarded to every eval::evaluate()/quiescence() call
 /// this function and its own recursive calls make (razoring and
 /// futility pruning below each call eval::evaluate() independently on
@@ -1659,7 +1691,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // deliberate -- everything below (the move loop's recursive calls,
     // the TT store at the bottom) must reflect what was ACTUALLY
     // searched, not the depth this call was originally asked for.
-    if (!probe.hit && depth >= kIIRMinDepth) {
+    if (!probe.hit && depth >= kIIRMinDepth && limits != nullptr) {
         depth -= kIIRReduction;
     }
 
