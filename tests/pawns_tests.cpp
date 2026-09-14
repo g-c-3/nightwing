@@ -252,6 +252,64 @@ TEST_CASE("pawn_structure_value: a pawn with a direct same-file blocker is never
     REQUIRE(pawn_structure_value(pos) == white_total - black_penalty);
 }
 
+TEST_CASE("pawn_structure_value: a passed pawn far separated from every other pawn on the "
+          "board gets the outside-passed-pawn bonus",
+          "[eval][pawns]") {
+    init_masks();
+    Position pos = empty_position();
+    pos.place_piece(make_square(0, 0), Piece::WhiteKing); // a1, out of the way
+    pos.place_piece(make_square(0, 7), Piece::BlackKing); // a8, out of the way
+    pos.place_piece(make_square(0, 4), Piece::WhitePawn); // a5, the target pawn
+    pos.place_piece(make_square(4, 1), Piece::WhitePawn); // e2, unrelated background pawn
+    pos.place_piece(make_square(4, 4), Piece::BlackPawn); // e5, blocks e2 (not a5)
+    // a5 is passed (no Black pawn on the a/b files at all) AND outside:
+    // its only other pawns on the board, e2 and e5, both sit on the
+    // e-file, 4 files away -- comfortably past kOutsidePassedPawnMinFileGap
+    // (3) -- so it picks up kOutsidePassedPawnBonus on top of the plain
+    // kPassedPawnBonus. a5 is also isolated (no White pawn on the
+    // adjacent b-file). e2 itself is NOT passed (Black's e5 sits
+    // directly ahead of it on the same file) and, having a direct
+    // same-file blocker, is also not a candidate (part (a) of that
+    // test) -- it contributes only its own isolation penalty (no White
+    // pawn on the adjacent d/f files either). Black's e5 is likewise
+    // not passed (White's e2 sits directly ahead of it, from Black's
+    // own advancing direction) and not a candidate for the identical
+    // same-file-blocker reason -- it also contributes only its own
+    // isolation penalty (no Black pawn on the adjacent d/f files). The
+    // two background pawns' isolation penalties are on OPPOSITE sides
+    // of the final White-minus-Black subtraction and are numerically
+    // identical, so they cancel exactly, leaving only a5's own terms.
+    const Score expected =
+        kIsolatedPawnPenalty + kPassedPawnBonus[4] + kOutsidePassedPawnBonus[4];
+    REQUIRE(pawn_structure_value(pos) == expected);
+}
+
+TEST_CASE("pawn_structure_value: a passed pawn only 2 files from its nearest neighbor is NOT "
+          "outside, regardless of being unopposed",
+          "[eval][pawns]") {
+    init_masks();
+    Position pos = empty_position();
+    pos.place_piece(make_square(0, 0), Piece::WhiteKing); // a1, out of the way
+    pos.place_piece(make_square(0, 7), Piece::BlackKing); // a8, out of the way
+    pos.place_piece(make_square(3, 4), Piece::WhitePawn); // d5
+    pos.place_piece(make_square(1, 5), Piece::BlackPawn); // b6
+    // Neither pawn blocks the other's passed status (b is not adjacent
+    // to d, and d is not adjacent to b) -- both are unopposed and
+    // passed. But d5's only other pawn on the board, b6, is just 2
+    // files away -- short of kOutsidePassedPawnMinFileGap (3) -- so
+    // NEITHER pawn gets the outside bonus (checked symmetrically: b6's
+    // own nearest other pawn, d5, is the identical 2 files away). Both
+    // pawns ARE isolated (no OWN-color pawn stands on either one's
+    // adjacent files -- isolation only cares about friendly pawns, and
+    // each side has exactly one), but kIsolatedPawnPenalty is the same
+    // fixed value regardless of rank or file, so it cancels exactly
+    // across the final White-minus-Black subtraction, leaving a clean
+    // difference of the two plain passed-pawn bonuses with no other
+    // term involved.
+    const Score expected = kPassedPawnBonus[4] - kPassedPawnBonus[2];
+    REQUIRE(pawn_structure_value(pos) == expected);
+}
+
 TEST_CASE("pawn_structure_value: an unsupported pawn facing a controlling enemy pawn is "
           "backward; adding real support removes the penalty",
           "[eval][pawns]") {
