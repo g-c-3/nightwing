@@ -82,6 +82,38 @@ using board::Square;
     return own_count >= enemy_count;
 }
 
+/// True when `sq` is an outside passed pawn -- see pawns.h's own doc
+/// comment on pawn_structure_value() for the full test. `other_pawns`
+/// must be every pawn currently on the board, EITHER color, with `sq`
+/// itself already excluded. Only meaningful (and only ever called) for
+/// a pawn that IS already passed.
+[[nodiscard]] bool is_outside_passed_pawn(Square sq, Bitboard other_pawns) noexcept {
+    const int file = board::file_of(sq);
+
+    // board::kNumFiles (8) is used as a sentinel here specifically
+    // because it's strictly larger than any real file-distance on an
+    // 8-file board (the largest possible is 7, between file 0 and file
+    // 7) -- so "no other pawns found" and "found, but too close" can
+    // never be confused with each other below.
+    int min_file_distance = board::kNumFiles;
+    for (int f = 0; f < board::kNumFiles; ++f) {
+        if ((other_pawns & board::file_mask(f)) != 0) {
+            const int distance = f > file ? f - file : file - f;
+            if (distance < min_file_distance) {
+                min_file_distance = distance;
+            }
+        }
+    }
+
+    if (min_file_distance == board::kNumFiles) {
+        // No other pawn anywhere on the board -- nothing for this one
+        // to be meaningfully "outside" of.
+        return false;
+    }
+
+    return min_file_distance >= kOutsidePassedPawnMinFileGap;
+}
+
 } // namespace
 
 Score pawn_structure_value(const Position& pos) noexcept {
@@ -102,6 +134,13 @@ Score pawn_structure_value(const Position& pos) noexcept {
             file_counts[static_cast<std::size_t>(f)] =
                 board::popcount(own_pawns & board::file_mask(f));
         }
+
+        // Every pawn currently on the board, either color -- computed
+        // once up front so the outside-passed-pawn check below (which
+        // needs "every OTHER pawn on the board" per candidate pawn)
+        // doesn't have to re-OR the two bitboards on every iteration of
+        // the main loop.
+        const Bitboard total_pawns = own_pawns | enemy_pawns;
 
         // Precomputed once up front, same rationale as file_counts above:
         // the connected-passed-pawns bonus (kConnectedPassedPawnBonus,
@@ -141,6 +180,18 @@ Score pawn_structure_value(const Position& pos) noexcept {
             const bool passed = (enemy_pawns & board::passed_pawn_mask(c, sq)) == 0;
             if (passed) {
                 side_score += kPassedPawnBonus[static_cast<std::size_t>(relative_rank(c, sq))];
+
+                // Outside passed pawn (kOutsidePassedPawnBonus's own doc
+                // comment, pawns.h, has the full rationale) -- an
+                // additional bonus on top of the plain passed bonus
+                // just above, for a passer sitting meaningfully
+                // separated from every other pawn on the board.
+                Bitboard other_pawns = total_pawns;
+                board::clear_bit(other_pawns, sq);
+                if (is_outside_passed_pawn(sq, other_pawns)) {
+                    side_score += kOutsidePassedPawnBonus[static_cast<std::size_t>(
+                        relative_rank(c, sq))];
+                }
             }
 
             // Connected: defended by, or standing beside (phalanx), a

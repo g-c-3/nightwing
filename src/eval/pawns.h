@@ -134,6 +134,51 @@ inline constexpr std::array<Score, 8> kCandidatePassedPawnBonus = {{
     {0, 0},
 }};
 
+/// Minimum file-distance (see is_outside_passed_pawn(), pawns.cpp) a
+/// passed pawn must have from every OTHER pawn on the board (either
+/// color) to count as "outside" -- see kOutsidePassedPawnBonus's own
+/// doc comment below for why 3. First-draft hand estimate, not yet
+/// Texel-tuned/SPRT-validated, same caveat as every other constant in
+/// this file (though this one is a distance threshold, not a
+/// centipawn value, so a future tuner pass may need to treat it
+/// differently from the Score-valued constants around it).
+inline constexpr int kOutsidePassedPawnMinFileGap = 3;
+
+/// Outside passed pawn (CPW "Outside Passed Pawn", Priority Fixes
+/// (2026-09-08) section) -- an ADDITIONAL bonus, on top of
+/// kPassedPawnBonus above (which already applies to any passed pawn
+/// regardless of location), for a passed pawn that sits meaningfully
+/// separated from the rest of the pawns on the board (either color).
+/// The practical value CPW describes: such a pawn can decoy the
+/// defending king far away to stop it, letting the attacking king
+/// infiltrate and win material elsewhere -- a real endgame technique,
+/// not merely "a passed pawn is nice." See
+/// is_outside_passed_pawn()'s own doc comment (pawns.cpp) for the exact
+/// test: the minimum file-distance from this pawn to every OTHER pawn
+/// on the board must be at least kOutsidePassedPawnMinFileGap (3) --
+/// wide enough that no other pawn's own natural advance could ever
+/// interact with this one, matching the "so far away it's decisive"
+/// spirit of the CPW concept, without attempting the fuller "count the
+/// actual king-race tempo" analysis a truly precise version would need.
+/// Indexed by the SAME relative-rank convention as kPassedPawnBonus (0
+/// = own back rank, 7 = promotion -- indices 0 and 7 zeroed for the
+/// identical reason), scaled to roughly 30% of kPassedPawnBonus's own
+/// magnitude at each rank -- smaller than kConnectedPassedPawnBonus's
+/// own 50%, since being merely far away is a weaker, more situational
+/// asset than having a genuine mutual defender. First-draft hand
+/// estimate, not yet Texel-tuned, same caveat as every other constant
+/// in this file.
+inline constexpr std::array<Score, 8> kOutsidePassedPawnBonus = {{
+    {0, 0},
+    {2, 3},
+    {3, 6},
+    {6, 11},
+    {11, 17},
+    {17, 24},
+    {24, 33},
+    {0, 0},
+}};
+
 /// Evaluates pawn structure for BOTH sides and returns a single
 /// White-relative Score (positive favors White, matching
 /// material_value()/psqt_value()'s sign convention in eval.cpp).
@@ -167,6 +212,14 @@ inline constexpr std::array<Score, 8> kCandidatePassedPawnBonus = {{
 /// search over every capture sequence (see kCandidatePassedPawnBonus's
 /// own doc comment, pawns.h) -- a first-draft heuristic, not a
 /// guaranteed-correct trade resolver.
+///
+/// Outside-passed-pawn test (CPW "Outside Passed Pawn", used for
+/// kOutsidePassedPawnBonus above), only ever checked for a pawn that IS
+/// already passed (the opposite gating from the backward/candidate
+/// checks just above): the minimum file-distance from this pawn to
+/// every OTHER pawn on the board, either color, must be at least
+/// kOutsidePassedPawnMinFileGap. See is_outside_passed_pawn()'s own doc
+/// comment, pawns.cpp, for the exact bitboard mechanics.
 ///
 /// Precondition: board::init_masks() has been called (this function
 /// uses board::passed_pawn_mask()/backward_support_mask()/
