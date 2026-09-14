@@ -770,10 +770,44 @@ Priority Fixes section above).
           pre-existing IIR-in-`search_fixed_depth()` test was renamed
           and its comment corrected (the behavior it was checking no
           longer occurs, though its own loose assertions still pass).
-    - [ ] Overloaded pieces — a piece defending two or more things it
+    - [x] Overloaded pieces — a piece defending two or more things it
           cannot actually defend if any one of them is taken/attacked;
           detectable via the same attack-bitboard machinery the existing
-          Threats bucket already uses.
+          Threats bucket already uses. DONE, Session 103: this was the
+          last of this section's 5 eval-feature gaps — the Priority
+          Fixes (2026-09-08) section's own list is now fully complete.
+          `eval::threats.cpp` gained the check: for each own knight/
+          bishop/rook/queen D, count how many other own knights/
+          bishops/rooks/queens are BOTH currently attacked by the enemy
+          AND have D as their one-and-only own defender (not merely one
+          of several) -- 2 or more such pieces means D is overloaded,
+          via a new `ScopedPiece` scratch array (`kMaxOverloadScopedPieces`
+          = 16, generous fixed-capacity headroom over any realistic
+          piece count, no heap allocation) built once per side from each
+          piece's own individually-computed attack bitboard (the
+          existing `attacks_by_side()` union bitboards this file already
+          had don't preserve per-square defender COUNT, only presence).
+          O(pieces²) per side via two passes (first: which pieces have
+          exactly one defender, and who; second: tally how many name
+          each candidate as their sole defender) rather than the naive
+          O(pieces³) a nested "for each defender, for each target,
+          recount everyone" approach would cost. `src/eval/threats.h`
+          gained 4 new penalties (`kKnightOverloadedPenalty` through
+          `kQueenOverloadedPenalty`, the same Rook/Queen > Knight/Bishop
+          value-scaling convention this file's own hanging-piece table
+          already established, but smaller in magnitude throughout --
+          an overload is a future tactical vulnerability, not an
+          already-realized material threat). 2 new dedicated test cases
+          (a rook overloaded across two perpendicular lines defending a
+          knight and a second rook, each attacked by a different enemy
+          rook -- deliberately built with the two enemy rooks also
+          mutually defending each other, to directly confirm the
+          symmetric check correctly does NOT fire on Black's own side in
+          the same position; and a negative case adding a second
+          defender to just one of the two targets, which drops the
+          count below 2 and removes the penalty entirely even though the
+          other target is still solely defended). All 5 pre-existing
+          tests in this file passed unchanged.
 - [ ] **Tier 0 — extend the tuner to PSQT and beyond (largest item, own
       multi-session design doc reviewed 2026-09-08):** only the 5 base
       material weights are Texel-tuned today; every PSQT cell and every
