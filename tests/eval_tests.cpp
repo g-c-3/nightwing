@@ -262,6 +262,54 @@ TEST_CASE("evaluate: with compute_phase() fixed, the starting position taper()s 
     REQUIRE(evaluate(centralized) < evaluate(back_rank));
 }
 
+TEST_CASE("default_psqt_weights: matches psqt_value()'s default (weights == nullptr) path "
+          "exactly, at every square, for every piece type -- Tier 0 Step 2 (docs/DECISIONS.md, "
+          "this entry's own date)",
+          "[eval][psqt][tuner]") {
+    init_all();
+    const PsqtWeights w = default_psqt_weights();
+    const Piece white_pieces[] = {Piece::WhitePawn,  Piece::WhiteKnight, Piece::WhiteBishop,
+                                   Piece::WhiteRook,  Piece::WhiteQueen,  Piece::WhiteKing};
+    const Piece black_pieces[] = {Piece::BlackPawn,  Piece::BlackKnight, Piece::BlackBishop,
+                                   Piece::BlackRook,  Piece::BlackQueen,  Piece::BlackKing};
+    for (int sq = 0; sq < 64; ++sq) {
+        for (Piece piece : white_pieces) {
+            const Score without = psqt_value(piece, static_cast<Square>(sq));
+            const Score with = psqt_value(piece, static_cast<Square>(sq), &w);
+            REQUIRE(with.mg == without.mg);
+            REQUIRE(with.eg == without.eg);
+        }
+        for (Piece piece : black_pieces) {
+            const Score without = psqt_value(piece, static_cast<Square>(sq));
+            const Score with = psqt_value(piece, static_cast<Square>(sq), &w);
+            REQUIRE(with.mg == without.mg);
+            REQUIRE(with.eg == without.eg);
+        }
+    }
+}
+
+TEST_CASE("psqt_value: a perturbed PsqtWeights field changes only that field's own square/piece, "
+          "not any other -- confirms the weights-supplied path actually reads the specific array "
+          "index it's supposed to, not some other entry or a shared scalar",
+          "[eval][psqt][tuner]") {
+    init_all();
+    PsqtWeights w = default_psqt_weights();
+    const Square d4 = make_square(3, 3);
+    const Score baseline = psqt_value(Piece::WhiteKnight, d4, &w);
+    w.knight_mg[d4] += 37.0;
+    const Score perturbed = psqt_value(Piece::WhiteKnight, d4, &w);
+    REQUIRE(perturbed.mg == baseline.mg + 37);
+    REQUIRE(perturbed.eg == baseline.eg); // knight_eg untouched
+
+    // A different square on the same table is untouched.
+    const Score other_square = psqt_value(Piece::WhiteKnight, make_square(0, 0), &w);
+    REQUIRE(other_square.mg == psqt_value(Piece::WhiteKnight, make_square(0, 0)).mg);
+
+    // A different piece type entirely is untouched.
+    const Score other_piece = psqt_value(Piece::WhitePawn, d4, &w);
+    REQUIRE(other_piece.mg == psqt_value(Piece::WhitePawn, d4).mg);
+}
+
 TEST_CASE("default_material_weights: matches kPawnValue/kKnightValue/.../kQueenValue exactly",
           "[eval][psqt][tuner]") {
     const MaterialWeights defaults = default_material_weights();
