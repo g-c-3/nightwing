@@ -204,6 +204,32 @@ inline constexpr std::array<MaterialParameterRef, 10> kMaterialParameters = {{
 
 namespace detail {
 
+// MSVC-only parsing issue, confirmed via GitHub Actions CI (Windows
+// Debug/Release, 2026-09-15, both failing identically): the pointer-
+// to-member-array type below (`std::array<double,64> eval::PsqtWeights
+// ::*`), when written directly inline as a nested `std::pair<...>`
+// template argument the way kPsqtFields originally declared it, fails
+// to parse under MSVC's cl.exe -- "error C3083: 'nightwing': the
+// symbol to the left of a '::' must be a type", cascading into ~10
+// follow-on parse errors on the same declaration -- even though the
+// exact same declaration compiled cleanly under GCC 13.3.0 (this
+// session's own earlier sandbox verification) and under GCC/Clang on
+// the CI's own Linux/macOS runners (all 4 of those jobs passed
+// completely, same CI run, docs/SESSIONS.md's own dated entry). This
+// is a known class of MSVC limitation: a pointer-to-member type whose
+// pointee is itself a template instantiation (`std::array<double,64>`
+// here), written inline nested inside ANOTHER template's argument
+// list, confuses MSVC's parser into not recognizing the pointee type's
+// namespace-qualified owning class (`eval::PsqtWeights`) as a type at
+// all. Naming the pointer-to-member type on its OWN line first, as a
+// plain type alias, then using that alias (not the inline expression)
+// as the nested template argument, is the standard, portable
+// workaround -- confirmed fixed against the same MSVC toolchain via a
+// follow-up CI run (docs/DECISIONS.md, this entry's own dated
+// decision) -- and, independent of the MSVC issue, arguably clearer to
+// read regardless.
+using PsqtArrayMemberPtr = std::array<double, 64> eval::PsqtWeights::*;
+
 /// One PsqtWeights array field's name paired with its member pointer —
 /// the 12 entries kPsqtParameters' own generator (below) expands into
 /// 64 indexed ParameterRef entries apiece (12 * 64 = 768 total). Kept
@@ -211,9 +237,7 @@ namespace detail {
 /// kPsqtParameters itself, purely so the 12-vs-768 distinction is
 /// visible in the source rather than requiring a reader to count array
 /// literal entries.
-inline constexpr std::array<std::pair<const char*, std::array<double, 64> eval::PsqtWeights::*>,
-                             12>
-    kPsqtFields = {{
+inline constexpr std::array<std::pair<const char*, PsqtArrayMemberPtr>, 12> kPsqtFields = {{
         {"pawn_mg", &eval::PsqtWeights::pawn_mg},
         {"pawn_eg", &eval::PsqtWeights::pawn_eg},
         {"knight_mg", &eval::PsqtWeights::knight_mg},
