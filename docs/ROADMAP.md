@@ -881,17 +881,42 @@ Priority Fixes section above).
           `compute_loss()` at a hand-picked PSQT vector (which is what
           this session's own new tests exercise). See docs/
           DECISIONS.md, this session's entry.
-    - [ ] **Step 5 — L2 regularization:** new `l2_lambda`-gated term
-          (default 0, existing material-only tuning runs unaffected) —
-          needed once the parameter count leaves the current 10-scalar
-          regime for PSQT's up-to-768.
-    - [ ] **Step 6 — analytic gradient for PSQT terms** (PSQT's
-          contribution to `evaluate()` is exactly linear in each table
-          entry, the same property that already makes analytic material
-          gradients feasible), a materially larger self-play corpus, and
-          a real `nightwing_sprt`-gated tuning run before any tuned
-          PSQT values are hand-transcribed into `psqt.cpp`'s `constexpr`
-          tables.
+    - [x] **Step 5 — L2 regularization (implemented externally, verified
+          and integrated this session):** `TuneConfig::l2_lambda` added
+          (default 0.0 — existing material-only tuning runs unaffected
+          bit-for-bit, confirmed by test and by a full pristine-vs-
+          modified build comparison). Applied analytically (closed-form
+          `2*lambda*value` gradient contribution, not finite-difference)
+          via a shared `l2_penalty()` helper templated over `Weights`,
+          used by both `tune()` (`kMaterialParameters`) and the new
+          `tune_psqt()` (`kPsqtParameters`, Step 6). Anchored parameters
+          excluded from the penalty. See docs/DECISIONS.md, this
+          session's entry, for the full verification account.
+    - [x] **Step 6 — analytic gradient for PSQT terms (implemented
+          externally, verified and integrated this session):**
+          `compute_psqt_gradient()` computes PSQT's full 768-entry
+          gradient in one board-scan pass per position (not 1536
+          finite-difference `compute_loss()` calls), exploiting that
+          PSQT's contribution to `evaluate()` is exactly linear in each
+          table cell once `taper()`'s own single, whole-position call
+          site is accounted for. A new `tune_psqt()` runs a real,
+          callable PSQT gradient-descent loop on top of it (material
+          held fixed) — a deliberate SEPARATE function from `tune()`,
+          not a generalized `tune<Weights>()`, since the two functions'
+          gradient *source* differs fundamentally (analytic vs. finite-
+          difference), not just the `Weights` type. `tune_psqt()` is not
+          wired into any CLI tool yet. Still outstanding, by design, per
+          this step's own ROADMAP.md scope: a materially larger self-
+          play training corpus, and a real `nightwing_sprt`-gated match
+          before any `tune_psqt()`-produced weights are hand-
+          transcribed into `psqt.cpp`'s `constexpr` tables. See docs/
+          DECISIONS.md, this session's entry, for the independent
+          cross-check performed against the analytic gradient's
+          correctness (agreement to ~1e-11 at a busier, multi-piece-type
+          position, tighter than the ~8e-6 the original implementation's
+          own single-cell cross-check reported) and the one real issue
+          found and fixed (a GCC `-O3`-only `-Warray-bounds` false
+          positive).
 
 ## NPS / Raw Speed (parallel track — not phase-gated, external review 2026-09-08)
 
