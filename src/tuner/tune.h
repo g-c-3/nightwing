@@ -10,26 +10,35 @@
 // (https://www.chessprogramming.org/Texel%27s_Tuning_Method) — no code
 // copied from Texel or any other engine/tuner.
 //
-// SCOPE, AS OF THIS SESSION: tune()/compute_loss() below still operate
-// on eval::MaterialWeights specifically — only the 5 base material
-// weights (pawn/knight/bishop/rook/queen, mg and eg each, 10 scalars
-// total) are actually Texel-tuned by calling tune() today. Tier 0 Step
-// 3 (docs/DECISIONS.md, this file's own recently-added
-// ParameterRef<Weights> entry) generalized the enumerable-parameter-
-// list ABSTRACTION itself (MaterialParameterRef/kMaterialParameters
-// below) to also cover PsqtWeights (kPsqtParameters, further down this
-// file), but did NOT make tune()/compute_loss() themselves generic over
-// `Weights` yet — that wiring lands together with Tier 0 Step 4
-// (PsqtWeights flowing through compute_loss()/eval::evaluate()'s own
-// nullable-override convention), once there's an actual second code
-// path to make generic against, not before. Every other eval term
-// (mobility, king safety, pawn structure, space, threats, and the rest
-// of eval/*.h) is still read from its own compiled-in constexpr
-// constant and has no ParameterRef table at all yet — see docs/
-// DECISIONS.md for the full rationale on why material values were this
-// module's first covered term, and eval/psqt.h's own MaterialWeights/
-// PsqtWeights doc comments for the runtime-mutable-parameter-vector
-// design those two terms already have.
+// SCOPE, AS OF THIS SESSION: `tune()` below still only tunes
+// `kMaterialParameters` — only the 5 base material weights (pawn/
+// knight/bishop/rook/queen, mg and eg each, 10 scalars total) are
+// actually Texel-tuned by calling tune() today. Tier 0 Step 3 (docs/
+// DECISIONS.md, this file's own ParameterRef<Weights> entry)
+// generalized the enumerable-parameter-list ABSTRACTION itself
+// (MaterialParameterRef/kMaterialParameters below) to also cover
+// PsqtWeights (kPsqtParameters, further down this file); Tier 0 Step 4
+// (docs/DECISIONS.md, this file's own compute_loss() `psqt_weights`
+// entry) then wired `eval::PsqtWeights` all the way through
+// `compute_loss()`/`eval::evaluate()`'s own nullable-override
+// convention — `compute_loss()` below now accepts an OPTIONAL
+// `psqt_weights` parameter alongside its required material `weights`,
+// forwarding both independently to `evaluate()`. `tune()` itself,
+// however, still only enumerates/updates `kMaterialParameters` — it
+// does not yet pass a non-null `psqt_weights` through to
+// `compute_loss()`, so a real PSQT-tuning run isn't possible by
+// calling `tune()` yet, only by calling `compute_loss()` directly at a
+// hand-picked PSQT vector (which is exactly what this session's own
+// new tests below do, to verify the wiring). Generalizing `tune()`
+// itself to actually run a `kPsqtParameters`-driven tuning job is a
+// separate, later step — see ROADMAP.md Tier 0's remaining steps.
+// Every other eval term (mobility, king safety, pawn structure, space,
+// threats, and the rest of eval/*.h) is still read from its own
+// compiled-in constexpr constant and has no ParameterRef table at all
+// yet — see docs/DECISIONS.md for the full rationale on why material
+// values were this module's first covered term, and eval/psqt.h's own
+// MaterialWeights/PsqtWeights doc comments for the runtime-mutable-
+// parameter-vector design those two terms already have.
 //
 // ALGORITHM: for each of `iterations` steps, computes a NUMERICAL
 // (finite-difference) gradient of compute_loss() with respect to every
@@ -419,14 +428,28 @@ struct TuneResult {
 /// empty training set; 0.0 ("no error observed because nothing was
 /// checked") is a more sensible sentinel here than NaN.
 ///
+/// `psqt_weights`, if non-null, is forwarded to eval::evaluate() the
+/// same way `weights` (material) already is — the PSQT-side
+/// counterpart introduced this session (Tier 0 Step 4, docs/
+/// DECISIONS.md, this parameter's own dated entry) specifically so a
+/// call site can compute this loss at a candidate PSQT vector, holding
+/// material at `weights`, without needing a second copy of this
+/// function. Defaults to nullptr (compiled-in PSQT constants) — every
+/// existing caller (tune() below, tests/tune_tests.cpp) is unaffected.
+/// NOTE: tune() itself (below) does NOT yet pass a non-null
+/// `psqt_weights` through to this parameter — it still only tunes
+/// `kMaterialParameters` — see tune()'s own doc comment and ROADMAP.md
+/// Tier 0's remaining steps for why that generalization is deliberately
+/// a separate, later step from this one.
+///
 /// Precondition: same as eval::evaluate()'s own — init_masks()/
 /// init_magic_bitboards() have been called (this function parses each
 /// position's FEN and evaluates it, both of which are transitively
 /// movegen-adjacent — board::parse_fen() itself has no such
 /// precondition, but eval::evaluate() does).
 [[nodiscard]] double compute_loss(const std::vector<SelfPlayPosition>& positions,
-                                   const eval::MaterialWeights& weights,
-                                   double sigmoid_scale) noexcept;
+                                   const eval::MaterialWeights& weights, double sigmoid_scale,
+                                   const eval::PsqtWeights* psqt_weights = nullptr) noexcept;
 
 /// Runs `config.iterations` steps of finite-difference gradient descent
 /// (this file's own header comment for the full algorithm) starting
