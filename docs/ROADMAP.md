@@ -863,8 +863,24 @@ Priority Fixes section above).
           `eval::MaterialWeights` specifically) — that generic wiring is
           Step 4's job, once PsqtWeights actually flows through
           `evaluate()`. See docs/DECISIONS.md, this session's entry.
-    - [ ] **Step 4 — wire `PsqtWeights` through `compute_loss()`/
-          `eval::evaluate()`'s existing nullable-override convention.**
+    - [x] **Step 4 — wire `PsqtWeights` through `compute_loss()`/
+          `eval::evaluate()`'s existing nullable-override convention
+          (Session 104):** `evaluate()` gained a `const PsqtWeights*
+          psqt_weights = nullptr` parameter (its 5th, after
+          `material_weights`), forwarded to `psqt_value()` exactly the
+          way `material_weights` already forwards to `material_value()`
+          — independent of `material_weights` (either, both, or neither
+          may be set on any given call). `eval_cache` is now skipped
+          whenever EITHER override is non-null, not just
+          `material_weights`, for the same staleness reason.
+          `compute_loss()` (`tuner/tune.h`/`.cpp`) gained a matching
+          optional `psqt_weights` parameter, forwarded straight through
+          to `evaluate()`. `tune()` itself is UNCHANGED — it still only
+          enumerates/updates `kMaterialParameters`, so a real
+          `kPsqtParameters`-driven tuning run isn't callable yet, only
+          `compute_loss()` at a hand-picked PSQT vector (which is what
+          this session's own new tests exercise). See docs/
+          DECISIONS.md, this session's entry.
     - [ ] **Step 5 — L2 regularization:** new `l2_lambda`-gated term
           (default 0, existing material-only tuning runs unaffected) —
           needed once the parameter count leaves the current 10-scalar
