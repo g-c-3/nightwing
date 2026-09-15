@@ -820,6 +820,44 @@ Priority Fixes section above).
       before any tuned values are committed) logged in docs/DECISIONS.md,
       2026-09-08 (2). Treated as its own sub-tracked effort, not a single
       checkbox — see that entry for the step-by-step order.
+    - [x] **Step 1 — taper the 5 non-king piece PSQTs (Pawn/Knight/
+          Bishop/Rook/Queen), structurally (Session 104):** `psqt.cpp`'s
+          five single-phase tables (`kPawnTable`, `kKnightTable`,
+          `kBishopTable`, `kRookTable`, `kQueenTable`) each split into an
+          Mg/Eg pair (`kPawnMgTable`/`kPawnEgTable`, etc.), matching the
+          storage shape the king's own `kKingMgTable`/`kKingEgTable`
+          already had. `psqt_value()` now looks up both tables for every
+          piece type, not just the king. The 5 new Eg tables are exact
+          duplicates of their Mg counterparts for now — Michniewski's
+          baseline never published real per-phase values for anything
+          but the king, and this step is deliberately pure plumbing, not
+          a hand-guessed real split — so `ctest`/`bench` are confirmed
+          byte-for-byte unchanged (see docs/SESSIONS.md, Session 104).
+          Unblocks Step 2 (`PsqtWeights`, a runtime-mutable mirror of
+          the now-uniform Mg/Eg table shape, the same role
+          `MaterialWeights` already plays for material values).
+    - [ ] **Step 2 — `PsqtWeights`:** a runtime-mutable mirror of the
+          now-tapered PSQT tables above, the same role `MaterialWeights`
+          (`psqt.h`) already plays for material values.
+    - [ ] **Step 3 — generalized `ParameterRef<Weights>`:** extend the
+          existing pointer-to-member `MaterialParameterRef`/
+          `kMaterialParameters` abstraction (`tuner/tune.h`) to also
+          cover `std::array<double,64> Weights::*` fields (indexed), so
+          `tuner::tune()` can enumerate PSQT cells the same uniform way
+          it already enumerates material scalars.
+    - [ ] **Step 4 — wire `PsqtWeights` through `compute_loss()`/
+          `eval::evaluate()`'s existing nullable-override convention.**
+    - [ ] **Step 5 — L2 regularization:** new `l2_lambda`-gated term
+          (default 0, existing material-only tuning runs unaffected) —
+          needed once the parameter count leaves the current 10-scalar
+          regime for PSQT's up-to-768.
+    - [ ] **Step 6 — analytic gradient for PSQT terms** (PSQT's
+          contribution to `evaluate()` is exactly linear in each table
+          entry, the same property that already makes analytic material
+          gradients feasible), a materially larger self-play corpus, and
+          a real `nightwing_sprt`-gated tuning run before any tuned
+          PSQT values are hand-transcribed into `psqt.cpp`'s `constexpr`
+          tables.
 
 ## NPS / Raw Speed (parallel track — not phase-gated, external review 2026-09-08)
 

@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 104 — 2026-09-15 — Tier 0 Step 1: taper the 5 non-king piece PSQTs (structural plumbing only)
+
+**Built:**
+- `src/eval/psqt.cpp`: `kPawnTable`, `kKnightTable`, `kBishopTable`, `kRookTable`, `kQueenTable` each split into an Mg/Eg pair (`kPawnMgTable`/`kPawnEgTable`, etc.), matching the storage shape `kKingMgTable`/`kKingEgTable` already had. The 5 new Eg tables are exact duplicates of their Mg counterparts (Michniewski's baseline never published real per-phase values for anything but the king — see file header comment, rewritten this session to explain the new shape and why the Eg values aren't yet a real hand-guessed split). `psqt_value()`'s Pawn/Knight/Bishop/Rook/Queen cases rewritten to look up both tables (mirroring the King case's own existing pattern) instead of returning `{v, v}` from one shared table.
+- `src/eval/psqt.h`: header comment updated to stop claiming only the king has a distinct mg/eg pair.
+- `docs/ROADMAP.md`: the Tier 0 item (not itself checked off — it's a multi-session effort per its own text) gained a nested 6-step breakdown matching docs/DECISIONS.md's 2026-09-08 (2) design-doc order, with Step 1 (this session's work) checked off and Steps 2-6 listed as what's next.
+- `docs/DECISIONS.md`: new entry — why the 5 new Eg tables are exact Mg duplicates rather than hand-guessed real endgame values, and the byte-for-byte verification that this step is genuinely behavior-inert.
+
+**Bugs found and fixed:** none.
+
+**Decisions made:** see docs/DECISIONS.md's new 2026-09-15 entry — duplicating Mg into Eg for now (not hand-guessing real endgame PSQT values), and why this step is scoped as pure structural plumbing rather than combined with any real eval-strength change.
+
+**Verification performed:** `psqt.cpp` compiled standalone with `-Wall -Wextra -Wpedantic`: zero warnings. Two full from-scratch CMake+Catch2 builds were run side by side — the unmodified repo and this session's modified tree — in both Release and Debug/ASan+UBSan configs: all four report identical results, **560 test cases, 53,489 assertions, zero failures, zero sanitizer findings**, confirming this session's own environment/build-method baseline (a different count from Session 103's own reported 558/27,761, itself built via a different, raw-`g++`-against-fetched-Catch2 method in an earlier sandbox — not a regression, just two different counting conventions; the pristine-vs-modified comparison within this same session's own build method is the meaningful check here, and it came back exactly equal). `bench` totals confirmed byte-for-byte unchanged at **38,378 total nodes**, matching Session 103's own last-reported total exactly (startpos 2277, kiwipete 13913, quiet_middlegame 2798, endgame_mate_in_3 19390 — every one of the 4 fixed positions individually unchanged, not just the sum). The real, compiled `nightwing` UCI binary was hand-exercised on an out-of-book Ruy-Lopez-ish position (`go depth 8`): legal `bestmove`, no crash, identical output to the pristine build.
+
+**Next session starts:** Tier 0 Step 2 — build `PsqtWeights`, a runtime-mutable mirror of the now-uniformly-tapered PSQT tables in `psqt.cpp`, playing the same role `MaterialWeights` (`psqt.h`) already plays for material values (every field defaulting to the corresponding `kXxxMgTable`/`kXxxEgTable` entry via a `default_psqt_weights()`-style function, same pattern as `default_material_weights()`). Read `src/eval/psqt.h`'s `MaterialWeights`/`default_material_weights()`/`material_value()` and `src/tuner/tune.h`'s `MaterialParameterRef`/`kMaterialParameters` before starting — Step 3 (the generalized `ParameterRef<Weights>`) is the very next step after this one and will need to point at whatever shape `PsqtWeights` ends up being, so it's worth glancing at `tune.h`'s existing abstraction now even though Step 3 itself isn't this session's scope.
+
+---
+
 ### Session 103 — 2026-09-14 — Overloaded pieces (Priority Fixes, 2026-09-08 section — last of its 5 gaps)
 
 **Built:**
