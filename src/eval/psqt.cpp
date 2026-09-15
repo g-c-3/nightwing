@@ -47,6 +47,8 @@
 
 #include "eval/psqt.h"
 
+#include <algorithm>
+
 namespace nightwing::eval {
 namespace {
 
@@ -212,36 +214,87 @@ constexpr int kKingEgTable[64] = {
 
 } // namespace
 
-Score psqt_value(Piece piece, Square sq) noexcept {
+PsqtWeights default_psqt_weights() noexcept {
+    PsqtWeights w;
+    std::copy(std::begin(kPawnMgTable), std::end(kPawnMgTable), w.pawn_mg.begin());
+    std::copy(std::begin(kPawnEgTable), std::end(kPawnEgTable), w.pawn_eg.begin());
+    std::copy(std::begin(kKnightMgTable), std::end(kKnightMgTable), w.knight_mg.begin());
+    std::copy(std::begin(kKnightEgTable), std::end(kKnightEgTable), w.knight_eg.begin());
+    std::copy(std::begin(kBishopMgTable), std::end(kBishopMgTable), w.bishop_mg.begin());
+    std::copy(std::begin(kBishopEgTable), std::end(kBishopEgTable), w.bishop_eg.begin());
+    std::copy(std::begin(kRookMgTable), std::end(kRookMgTable), w.rook_mg.begin());
+    std::copy(std::begin(kRookEgTable), std::end(kRookEgTable), w.rook_eg.begin());
+    std::copy(std::begin(kQueenMgTable), std::end(kQueenMgTable), w.queen_mg.begin());
+    std::copy(std::begin(kQueenEgTable), std::end(kQueenEgTable), w.queen_eg.begin());
+    std::copy(std::begin(kKingMgTable), std::end(kKingMgTable), w.king_mg.begin());
+    std::copy(std::begin(kKingEgTable), std::end(kKingEgTable), w.king_eg.begin());
+    return w;
+}
+
+Score psqt_value(Piece piece, Square sq, const PsqtWeights* weights) noexcept {
     const PieceType type = board::piece_type_of(piece);
     const Color color = board::color_of(piece);
 
+    if (weights == nullptr) {
+        switch (type) {
+            case PieceType::Pawn: {
+                const int idx = color == Color::White ? sq : mirror_vertical(sq);
+                return {kPawnMgTable[idx], kPawnEgTable[idx]};
+            }
+            case PieceType::Knight: {
+                // No color distinction for knights (see table comment) --
+                // `sq` used directly, not mirrored.
+                return {kKnightMgTable[sq], kKnightEgTable[sq]};
+            }
+            case PieceType::Bishop: {
+                const int idx = color == Color::White ? sq : mirror_vertical(sq);
+                return {kBishopMgTable[idx], kBishopEgTable[idx]};
+            }
+            case PieceType::Rook: {
+                const int idx = color == Color::White ? sq : mirror_vertical(sq);
+                return {kRookMgTable[idx], kRookEgTable[idx]};
+            }
+            case PieceType::Queen: {
+                // No color distinction for queens (see table comment) --
+                // `sq` used directly, not mirrored.
+                return {kQueenMgTable[sq], kQueenEgTable[sq]};
+            }
+            case PieceType::King: {
+                const int idx = color == Color::White ? sq : mirror_vertical(sq);
+                return {kKingMgTable[idx], kKingEgTable[idx]};
+            }
+            case PieceType::None:
+            default:
+                return {0, 0};
+        }
+    }
+
+    // `weights`-supplied path — same per-piece color/mirroring rules as
+    // above, but reading (and round_to_int()-rounding, the same
+    // convention material_value()'s own `weights` path uses) from the
+    // caller-supplied PsqtWeights instead of the constexpr tables.
     switch (type) {
         case PieceType::Pawn: {
             const int idx = color == Color::White ? sq : mirror_vertical(sq);
-            return {kPawnMgTable[idx], kPawnEgTable[idx]};
+            return {round_to_int(weights->pawn_mg[idx]), round_to_int(weights->pawn_eg[idx])};
         }
         case PieceType::Knight: {
-            // No color distinction for knights (see table comment) --
-            // `sq` used directly, not mirrored.
-            return {kKnightMgTable[sq], kKnightEgTable[sq]};
+            return {round_to_int(weights->knight_mg[sq]), round_to_int(weights->knight_eg[sq])};
         }
         case PieceType::Bishop: {
             const int idx = color == Color::White ? sq : mirror_vertical(sq);
-            return {kBishopMgTable[idx], kBishopEgTable[idx]};
+            return {round_to_int(weights->bishop_mg[idx]), round_to_int(weights->bishop_eg[idx])};
         }
         case PieceType::Rook: {
             const int idx = color == Color::White ? sq : mirror_vertical(sq);
-            return {kRookMgTable[idx], kRookEgTable[idx]};
+            return {round_to_int(weights->rook_mg[idx]), round_to_int(weights->rook_eg[idx])};
         }
         case PieceType::Queen: {
-            // No color distinction for queens (see table comment) --
-            // `sq` used directly, not mirrored.
-            return {kQueenMgTable[sq], kQueenEgTable[sq]};
+            return {round_to_int(weights->queen_mg[sq]), round_to_int(weights->queen_eg[sq])};
         }
         case PieceType::King: {
             const int idx = color == Color::White ? sq : mirror_vertical(sq);
-            return {kKingMgTable[idx], kKingEgTable[idx]};
+            return {round_to_int(weights->king_mg[idx]), round_to_int(weights->king_eg[idx])};
         }
         case PieceType::None:
         default:

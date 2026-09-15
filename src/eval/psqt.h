@@ -20,6 +20,8 @@
 // of their Mg counterparts for now (structural plumbing, not yet a
 // hand-guessed or tuned real split) -- see psqt.cpp's header comment.
 
+#include <array>
+
 #include "board/board.h"
 #include "eval/score.h"
 
@@ -166,10 +168,86 @@ struct MaterialWeights {
     }
 }
 
+/// Runtime-mutable counterpart to psqt.cpp's own internal kXxxMgTable/
+/// kXxxEgTable constants (12 tables total, one Mg/Eg pair per piece
+/// type, as of Tier 0 Step 1 — docs/DECISIONS.md, 2026-09-15) — the
+/// PSQT half of the "runtime-mutable parameter-vector abstraction over
+/// eval's currently-constexpr named constants" MaterialWeights above
+/// already built the material half of (this struct's own docs/
+/// DECISIONS.md introducing entry, Tier 0 Step 2, has the full
+/// rationale). `std::array<double, 64>` per field (768 doubles total),
+/// not 768 individual named scalars: Tier 0's own design doc (docs/
+/// DECISIONS.md, 2026-09-08 (2)) calls for a generalized
+/// `ParameterRef<Weights>` (Tier 0 Step 3, not yet built) that can
+/// enumerate an INDEXED array field the same uniform way
+/// MaterialParameterRef (tuner/tune.h) already enumerates a plain
+/// scalar one — 768 hand-written `{"pawn_mg_a1", &PsqtWeights::pawn_mg_a1}`-
+/// style entries would defeat that entire point, and would also make
+/// this struct itself far larger to read and modify than the array form.
+///
+/// Deliberately NOT constexpr-constructible the way MaterialWeights is
+/// (no `= {100.0, ...}` default-member-initializers below): psqt.cpp's
+/// own kXxxMgTable/kXxxEgTable constants live in that file's own
+/// anonymous namespace (internal linkage), not this header, so there is
+/// no header-visible constant this struct's own default-member-
+/// initializers could name the way MaterialWeights' can name
+/// kPawnValue.mg and friends directly. default_psqt_weights() below
+/// (defined in psqt.cpp, where those tables ARE visible) is this
+/// struct's only supported way to obtain the engine's current
+/// compiled-in values — a freshly `PsqtWeights{}`-default-constructed
+/// instance is all-zero, not populated. Every field's field-name
+/// convention (pawn_mg/pawn_eg/.../king_mg/king_eg) exactly matches
+/// MaterialWeights' own naming, and each entry's array index is the
+/// same LERF Square convention (0 = a1, 63 = h8) psqt.cpp's own header
+/// comment documents for its internal tables.
+struct PsqtWeights {
+    std::array<double, 64> pawn_mg;
+    std::array<double, 64> pawn_eg;
+    std::array<double, 64> knight_mg;
+    std::array<double, 64> knight_eg;
+    std::array<double, 64> bishop_mg;
+    std::array<double, 64> bishop_eg;
+    std::array<double, 64> rook_mg;
+    std::array<double, 64> rook_eg;
+    std::array<double, 64> queen_mg;
+    std::array<double, 64> queen_eg;
+    std::array<double, 64> king_mg;
+    std::array<double, 64> king_eg;
+};
+
+/// Returns a PsqtWeights populated from psqt.cpp's own internal
+/// kXxxMgTable/kXxxEgTable constants exactly — the natural starting
+/// point for a future PSQT-aware tuning run (mirroring
+/// default_material_weights()'s own role for MaterialWeights above),
+/// and for tests confirming psqt_value()'s `weights`-supplied path
+/// agrees with its default (`weights == nullptr`) path at every square.
+/// NOT constexpr (see PsqtWeights' own doc comment on why this struct
+/// isn't constexpr-constructible the way MaterialWeights is) — defined
+/// out-of-line in psqt.cpp, the one translation unit where the
+/// internal tables this function copies from are actually visible.
+[[nodiscard]] PsqtWeights default_psqt_weights() noexcept;
+
 /// Piece-square table value (mg, eg) for `piece` (a specific color+type)
 /// standing on `sq`. Positive always favors `piece`'s own color — the
 /// caller (eval.cpp) adds this for White pieces and subtracts it for
 /// Black, exactly as it does with material_value().
-[[nodiscard]] Score psqt_value(board::Piece piece, board::Square sq) noexcept;
+///
+/// `weights`, if non-null, is used INSTEAD of psqt.cpp's own internal
+/// kXxxMgTable/kXxxEgTable constants — the exact same nullable-override
+/// convention material_value() above already established, deliberately
+/// kept identical rather than inventing a second convention for this
+/// struct (docs/DECISIONS.md, this parameter's introducing entry, Tier
+/// 0 Step 2). As of this session no production call site passes
+/// `weights` (eval.cpp's own call still omits it — wiring it through
+/// evaluate() the way `material_weights` already is is Tier 0 Step 4,
+/// deliberately not this session's scope), so this parameter's mere
+/// existence changes nothing for any caller outside the not-yet-built
+/// PSQT-aware tuner. Every value read out of `weights` is passed
+/// through round_to_int() before returning, the same as
+/// material_value()'s `weights` path — a tuning run's own in-progress
+/// `double`s never reach a caller without first being rounded back to
+/// the plain int a Score actually stores.
+[[nodiscard]] Score psqt_value(board::Piece piece, board::Square sq,
+                                const PsqtWeights* weights = nullptr) noexcept;
 
 } // namespace nightwing::eval
