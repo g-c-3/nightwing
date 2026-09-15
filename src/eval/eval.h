@@ -140,6 +140,26 @@ namespace nightwing::eval {
 /// "use the compiled-in constants" — every existing caller (all of
 /// search/eval, every existing test) is entirely unaffected.
 ///
+/// `psqt_weights`, if non-null, is forwarded to the internal
+/// psqt_value() call INSTEAD OF its own kXxxMgTable/kXxxEgTable
+/// constants (eval/psqt.h's PsqtWeights, and psqt_value()'s own doc
+/// comment on this parameter) — the PSQT-side counterpart to
+/// `material_weights` above, introduced this session (Tier 0 Step 4,
+/// docs/DECISIONS.md, this parameter's own dated entry) specifically so
+/// a future PSQT-aware tuning run (ROADMAP.md Tier 0's own multi-step
+/// plan) can call evaluate() at a candidate PSQT weight vector the same
+/// way `material_weights` already lets it do for material. Independent
+/// of `material_weights` — either, both, or neither may be non-null on
+/// any given call, e.g. tuning PSQT while material stays at its
+/// compiled-in defaults, or vice versa. `eval_cache` is DELIBERATELY
+/// NEVER consulted whenever `psqt_weights != nullptr` either, for
+/// exactly the same staleness reason `material_weights` already
+/// disables it (this doc comment's own paragraph above) — the cache
+/// key says nothing about which PSQT weight vector produced a cached
+/// result any more than it says which material weight vector did.
+/// Defaults to nullptr, meaning "use the compiled-in constants" — every
+/// existing caller is entirely unaffected.
+///
 /// Precondition: board::init_masks() AND board::init_magic_bitboards()
 /// have both been called. Before eval/mobility.h's mobility_value() term
 /// existed, evaluate() only needed init_masks() (material/PSQT/pawn
@@ -151,6 +171,7 @@ namespace nightwing::eval {
 /// would now silently read uninitialized attack tables.
 [[nodiscard]] int evaluate(const board::Position& pos, PawnHashTable* pawn_tt = nullptr,
                             EvalCache* eval_cache = nullptr,
-                            const MaterialWeights* material_weights = nullptr) noexcept;
+                            const MaterialWeights* material_weights = nullptr,
+                            const PsqtWeights* psqt_weights = nullptr) noexcept;
 
 } // namespace nightwing::eval
