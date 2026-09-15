@@ -69,17 +69,17 @@ TuneResult tune(const std::vector<SelfPlayPosition>& positions,
                 continue;
             }
 
-            const auto member = kMaterialParameters[i].member;
-            const double original = result.weights.*member;
+            const MaterialParameterRef& param = kMaterialParameters[i];
+            const double original = param.get(result.weights);
 
-            result.weights.*member = original + config.finite_diff_epsilon;
+            param.set(result.weights, original + config.finite_diff_epsilon);
             const double loss_plus = compute_loss(positions, result.weights, config.sigmoid_scale);
 
-            result.weights.*member = original - config.finite_diff_epsilon;
+            param.set(result.weights, original - config.finite_diff_epsilon);
             const double loss_minus =
                 compute_loss(positions, result.weights, config.sigmoid_scale);
 
-            result.weights.*member = original; // restore before moving to the next parameter
+            param.set(result.weights, original); // restore before moving to the next parameter
             gradient[i] = (loss_plus - loss_minus) / (2.0 * config.finite_diff_epsilon);
         }
 
@@ -100,8 +100,8 @@ TuneResult tune(const std::vector<SelfPlayPosition>& positions,
             if (kMaterialParameters[i].anchored) {
                 continue;
             }
-            const auto member = kMaterialParameters[i].member;
-            result.weights.*member -= config.learning_rate * gradient[i];
+            const MaterialParameterRef& param = kMaterialParameters[i];
+            param.set(result.weights, param.get(result.weights) - config.learning_rate * gradient[i]);
         }
 
         const double loss_after_step = compute_loss(positions, result.weights, config.sigmoid_scale);

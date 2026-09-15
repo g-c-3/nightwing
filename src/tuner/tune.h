@@ -10,16 +10,26 @@
 // (https://www.chessprogramming.org/Texel%27s_Tuning_Method) — no code
 // copied from Texel or any other engine/tuner.
 //
-// SCOPE, AS OF THIS SESSION: tunes ONLY eval::MaterialWeights (eval/
-// psqt.h) — the five base piece values (pawn/knight/bishop/rook/queen,
-// mg and eg each, 10 scalars total). Every other eval term (PSQT
-// tables, pawn structure, mobility, king safety, and the rest of
-// eval/*.h) is still read from its own compiled-in constexpr constant
-// and is NOT yet tunable through this module — see docs/DECISIONS.md
-// for the full rationale on why material values are this session's
-// first (not only, eventually) covered term, and eval/psqt.h's own
-// MaterialWeights doc comment for the runtime-mutable-parameter-vector
-// design this will extend to cover more terms in a future session.
+// SCOPE, AS OF THIS SESSION: tune()/compute_loss() below still operate
+// on eval::MaterialWeights specifically — only the 5 base material
+// weights (pawn/knight/bishop/rook/queen, mg and eg each, 10 scalars
+// total) are actually Texel-tuned by calling tune() today. Tier 0 Step
+// 3 (docs/DECISIONS.md, this file's own recently-added
+// ParameterRef<Weights> entry) generalized the enumerable-parameter-
+// list ABSTRACTION itself (MaterialParameterRef/kMaterialParameters
+// below) to also cover PsqtWeights (kPsqtParameters, further down this
+// file), but did NOT make tune()/compute_loss() themselves generic over
+// `Weights` yet — that wiring lands together with Tier 0 Step 4
+// (PsqtWeights flowing through compute_loss()/eval::evaluate()'s own
+// nullable-override convention), once there's an actual second code
+// path to make generic against, not before. Every other eval term
+// (mobility, king safety, pawn structure, space, threats, and the rest
+// of eval/*.h) is still read from its own compiled-in constexpr
+// constant and has no ParameterRef table at all yet — see docs/
+// DECISIONS.md for the full rationale on why material values were this
+// module's first covered term, and eval/psqt.h's own MaterialWeights/
+// PsqtWeights doc comments for the runtime-mutable-parameter-vector
+// design those two terms already have.
 //
 // ALGORITHM: for each of `iterations` steps, computes a NUMERICAL
 // (finite-difference) gradient of compute_loss() with respect to every
@@ -59,6 +69,7 @@
 
 #include <cstddef>
 #include <array>
+#include <utility>
 #include <vector>
 
 #include "eval/psqt.h"
@@ -66,26 +77,90 @@
 
 namespace nightwing::tuner {
 
-/// One entry in the enumerable material-weights parameter list — a
-/// human-readable name paired with a pointer-to-member so
-/// compute_gradient()/tune() (tune.cpp) can read and perturb every
-/// field generically, in a loop, rather than ten hand-written per-field
-/// lines — the "enumerable" half of the "enumerable, runtime-mutable
-/// weights" abstraction docs/DECISIONS.md called for. A future session
-/// extending coverage to another eval module's terms would add that
-/// module's own fields to its own such table the same way, not change
-/// this one's shape.
+/// One entry in an enumerable parameter list — a human-readable name
+/// paired with EITHER a plain scalar member-pointer (`member`, for a
+/// `double Weights::*` field like MaterialWeights' own 10) OR an
+/// indexed array member-pointer (`array_member` + `index`, for a
+/// `std::array<double,64> Weights::*` field like PsqtWeights' own 12)
+/// — so compute_gradient()/tune() (tune.cpp) can read and perturb every
+/// field generically, in a loop, through get()/set() below, regardless
+/// of which of the two shapes a given `Weights` type's fields happen to
+/// be. Originally just `MaterialParameterRef` (this struct's own prior,
+/// material-only version, ROADMAP.md Tier 0 Step 1-and-earlier), now
+/// generalized as `ParameterRef<Weights>` — a template rather than a
+/// second, PSQT-specific struct — per Tier 0 Step 3 (docs/DECISIONS.md,
+/// this entry's own date): kMaterialParameters and kPsqtParameters
+/// below are both `std::array<ParameterRef<...>, N>` instantiated over
+/// their own `Weights` type, sharing one generic get()/set()
+/// implementation and one generic tune()/compute_gradient() consumer
+/// (tune.cpp), rather than parallel material-specific and PSQT-specific
+/// code paths.
+///
+/// Precondition: exactly one of `member`/`array_member` is non-null for
+/// any given entry — `get()`/`set()` below branch on `array_member`
+/// being non-null, so a (never intentionally constructed) entry with
+/// BOTH non-null would silently ignore `member` entirely, and an entry
+/// with NEITHER set would dereference a null member pointer. Every
+/// entry in kMaterialParameters/kPsqtParameters below satisfies this by
+/// construction (kMaterialParameters sets only `member`; kPsqtParameters'
+/// own generator, further down this file, sets only `array_member`+
+/// `index`), so this is a structural invariant of how those two tables
+/// are BUILT, not something a caller needs to check per lookup.
+///
+/// Field order is deliberate: `name`, `member`, `anchored` are first,
+/// in that exact order, matching this struct's own pre-generalization
+/// shape exactly — kMaterialParameters' existing 3-and-2-positional-
+/// argument brace-init entries below (`{"pawn_mg", &..., true}`,
+/// `{"knight_mg", &...}`) and existing tests (tests/tune_tests.cpp's
+/// own direct `.member`/positional-init usage) both keep compiling
+/// completely unchanged this way — the two new fields (`array_member`,
+/// `index`) are appended at the end specifically so nothing already
+/// relying on this struct's original 3-field positional shape needed
+/// to be touched by this generalization.
 ///
 /// `anchored`: if true, tune() (tune.cpp) never estimates a gradient
 /// for or updates this field — it stays exactly equal to whatever
 /// `initial_weights` passed it, for the entire run. See kMaterialParameters'
 /// own comment below for why pawn_mg/pawn_eg specifically are marked
-/// this way.
-struct MaterialParameterRef {
+/// this way; kPsqtParameters' own comment below has this session's
+/// decision on why no PSQT parameter is anchored (yet).
+template <typename Weights>
+struct ParameterRef {
     const char* name;
-    double eval::MaterialWeights::*member;
+    double Weights::* member = nullptr;
     bool anchored = false;
+    std::array<double, 64> Weights::* array_member = nullptr;
+    int index = 0;
+
+    /// Reads this parameter's current value out of `w` — `w.*array_member
+    /// [index]` if this is an indexed-array entry, `w.*member` otherwise.
+    [[nodiscard]] double get(const Weights& w) const noexcept {
+        return array_member != nullptr ? (w.*array_member)[index] : w.*member;
+    }
+
+    /// Writes `value` into this parameter's field in `w` — the exact
+    /// inverse of get() above, same branch condition.
+    void set(Weights& w, double value) const noexcept {
+        if (array_member != nullptr) {
+            (w.*array_member)[index] = value;
+        } else {
+            w.*member = value;
+        }
+    }
 };
+
+/// Backward-compatible name for `ParameterRef<eval::MaterialWeights>` —
+/// this struct's own pre-generalization name (Tier 0 Step 1-and-earlier),
+/// kept as an alias rather than renamed at every existing call site
+/// (tune.cpp, tests/tune_tests.cpp) purely to minimize this session's
+/// own diff; a future session has no obligation to keep this alias if
+/// it ever becomes confusing to have two names for the same type.
+using MaterialParameterRef = ParameterRef<eval::MaterialWeights>;
+
+/// `ParameterRef<eval::PsqtWeights>` — the PSQT-side counterpart to
+/// MaterialParameterRef above, introduced this session (Tier 0 Step 3)
+/// alongside kPsqtParameters below.
+using PsqtParameterRef = ParameterRef<eval::PsqtWeights>;
 
 /// Every MaterialWeights field, in declaration order — see
 /// MaterialParameterRef's own comment above. pawn_mg/pawn_eg are
@@ -126,6 +201,89 @@ inline constexpr std::array<MaterialParameterRef, 10> kMaterialParameters = {{
     {"queen_mg", &eval::MaterialWeights::queen_mg},
     {"queen_eg", &eval::MaterialWeights::queen_eg},
 }};
+
+namespace detail {
+
+/// One PsqtWeights array field's name paired with its member pointer —
+/// the 12 entries kPsqtParameters' own generator (below) expands into
+/// 64 indexed ParameterRef entries apiece (12 * 64 = 768 total). Kept
+/// as its own small private (detail-namespace) table, separate from
+/// kPsqtParameters itself, purely so the 12-vs-768 distinction is
+/// visible in the source rather than requiring a reader to count array
+/// literal entries.
+inline constexpr std::array<std::pair<const char*, std::array<double, 64> eval::PsqtWeights::*>,
+                             12>
+    kPsqtFields = {{
+        {"pawn_mg", &eval::PsqtWeights::pawn_mg},
+        {"pawn_eg", &eval::PsqtWeights::pawn_eg},
+        {"knight_mg", &eval::PsqtWeights::knight_mg},
+        {"knight_eg", &eval::PsqtWeights::knight_eg},
+        {"bishop_mg", &eval::PsqtWeights::bishop_mg},
+        {"bishop_eg", &eval::PsqtWeights::bishop_eg},
+        {"rook_mg", &eval::PsqtWeights::rook_mg},
+        {"rook_eg", &eval::PsqtWeights::rook_eg},
+        {"queen_mg", &eval::PsqtWeights::queen_mg},
+        {"queen_eg", &eval::PsqtWeights::queen_eg},
+        {"king_mg", &eval::PsqtWeights::king_mg},
+        {"king_eg", &eval::PsqtWeights::king_eg},
+    }};
+
+/// Expands kPsqtFields' 12 array-field descriptors into the full
+/// 768-entry kPsqtParameters table below (one PsqtParameterRef per
+/// piece/phase/square) — a `constexpr` loop rather than 768 hand-typed
+/// initializer lines, both because typing 768 lines by hand invites
+/// transcription errors this table's own entries have no independent
+/// source to cross-check against (unlike psqt.cpp's own table VALUES,
+/// which were cross-checked against two published transcriptions -- see
+/// psqt.cpp's header comment), and because the whole point of
+/// generalizing ParameterRef this session was to make exactly this kind
+/// of enumeration mechanical rather than manual.
+[[nodiscard]] constexpr std::array<PsqtParameterRef, 768> make_psqt_parameters() noexcept {
+    std::array<PsqtParameterRef, 768> result{};
+    std::size_t out = 0;
+    for (const auto& field : kPsqtFields) {
+        for (int sq = 0; sq < 64; ++sq) {
+            result[out] = PsqtParameterRef{.name = field.first, .array_member = field.second,
+                                            .index = sq};
+            ++out;
+        }
+    }
+    return result;
+}
+
+} // namespace detail
+
+/// Every PsqtWeights array field, every square, in kPsqtFields' own
+/// declaration order (pawn_mg[0..63], pawn_eg[0..63], ..., king_eg
+/// [0..63]) — the PSQT-side counterpart to kMaterialParameters above,
+/// introduced this session (Tier 0 Step 3, docs/DECISIONS.md, this
+/// entry's own date) specifically so a future PSQT-aware tune() call
+/// can enumerate every PSQT cell the same uniform, loop-driven way
+/// tune()/compute_gradient() (tune.cpp) already enumerate
+/// kMaterialParameters' 10 scalars, once Tier 0 Step 4 (wiring
+/// PsqtWeights through compute_loss()/eval::evaluate()'s own nullable-
+/// override convention, ROADMAP.md) makes a PSQT-aware compute_loss()
+/// actually possible to call.
+///
+/// NOT YET CONSUMED by tune()/compute_loss() below, which as of this
+/// session still operate on eval::MaterialWeights specifically, not a
+/// `Weights`-templated Weights parameter — this table exists and is
+/// independently correct/tested (tests/tune_tests.cpp) ahead of that
+/// wiring, not as a half-finished dependency of it. Every PSQT
+/// parameter here has `anchored = false` (the field's own default):
+/// unlike kMaterialParameters' pawn_mg/pawn_eg, PSQT terms don't share
+/// material's specific flat-scaling-direction degeneracy (docs/
+/// DECISIONS.md, kMaterialParameters' own comment above) -- ADDING a
+/// per-square PSQT bonus doesn't multiplicatively rescale every other
+/// term the way MULTIPLYING every material weight together does, so
+/// there is no known equivalent degenerate direction here to anchor
+/// against yet. A real production PSQT tuning run (once Steps 4-6 land)
+/// may surface a different, PSQT-specific degeneracy worth anchoring
+/// against -- revisit this decision then, against real data, rather
+/// than guessing an anchor now the same way kMaterialParameters' own
+/// comment above describes an untested learning_rate=1.0 guess having
+/// gone wrong for a different parameter.
+inline constexpr std::array<PsqtParameterRef, 768> kPsqtParameters = detail::make_psqt_parameters();
 
 /// Tunable knobs for the tuning run itself (distinct from
 /// eval::MaterialWeights, the values BEING tuned).
