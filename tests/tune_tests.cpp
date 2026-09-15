@@ -402,3 +402,230 @@ TEST_CASE("kPsqtParameters: get() agrees with default_psqt_weights()/psqt_value(
     REQUIRE(knight_eg_a1.get(w) == defaults.knight_eg[0]);
 }
 
+// --- ROADMAP.md Tier 0 Step 5 -- L2 regularization (TuneConfig::l2_lambda) ---
+
+TEST_CASE("tune: l2_lambda == 0.0 (the default) leaves TuneResult::initial_loss identical to "
+          "bare compute_loss() -- a default (unregularized) run is unaffected by Step 5's new "
+          "field at all",
+          "[tuner][tune]") {
+    init_all();
+    std::vector<SelfPlayPosition> positions{SelfPlayPosition{"4k3/8/8/8/8/8/8/4K3 w - - 0 1", 0.5}};
+    TuneConfig config;
+    config.iterations = 0;
+    const MaterialWeights weights = default_material_weights();
+    const TuneResult result = tune(positions, weights, config);
+    REQUIRE(result.initial_loss == compute_loss(positions, weights, config.sigmoid_scale));
+}
+
+TEST_CASE("tune: l2_lambda > 0.0 adds exactly lambda * sum(non-anchored weight^2) to the "
+          "reported loss, on top of compute_loss()'s own bare MSE",
+          "[tuner][tune]") {
+    init_all();
+    std::vector<SelfPlayPosition> positions{SelfPlayPosition{"4k3/8/8/8/8/8/8/4K3 w - - 0 1", 0.5}};
+    TuneConfig config;
+    config.iterations = 0;
+    config.l2_lambda = 0.001;
+    const MaterialWeights weights = default_material_weights();
+    const TuneResult result = tune(positions, weights, config);
+
+    // Hand-rolled sum over every NON-ANCHORED kMaterialParameters entry
+    // (pawn_mg/pawn_eg excluded) -- independent of l2_penalty()'s own
+    // (internal, untested-directly) implementation in tune.cpp.
+    double sum_squares = 0.0;
+    for (const MaterialParameterRef& param : kMaterialParameters) {
+        if (param.anchored) {
+            continue;
+        }
+        const double value = param.get(weights);
+        sum_squares += value * value;
+    }
+    const double expected =
+        compute_loss(positions, weights, config.sigmoid_scale) + config.l2_lambda * sum_squares;
+    REQUIRE(result.initial_loss == expected);
+}
+
+TEST_CASE("tune: a non-zero l2_lambda adds exactly the closed-form 2*lambda*value gradient "
+          "contribution -- confirmed over a single iteration by comparing against an otherwise-"
+          "identical unregularized run that shares the exact same finite-difference MSE "
+          "gradient (both start from the same weights)",
+          "[tuner][tune]") {
+    init_all();
+    // Same knight-imbalance fixture as the pre-existing "reduces loss"
+    // test above.
+    Position pos;
+    pos.side_to_move = Color::White;
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(4, 7), Piece::BlackKing);
+    pos.place_piece(make_square(1, 0), Piece::WhiteKnight);
+    const std::string fen = to_fen(pos);
+
+    std::vector<SelfPlayPosition> positions;
+    for (int i = 0; i < 8; ++i) {
+        positions.push_back(SelfPlayPosition{fen, 0.5});
+    }
+
+    TuneConfig unregularized;
+    unregularized.iterations = 1;
+    const MaterialWeights start = default_material_weights();
+    const TuneResult without_l2 = tune(positions, start, unregularized);
+
+    TuneConfig regularized = unregularized;
+    regularized.l2_lambda = 0.01;
+    const TuneResult with_l2 = tune(positions, start, regularized);
+
+    // Both runs computed their finite-difference MSE gradient at the
+    // exact same starting weights (one iteration each) -- the only
+    // difference in knight_eg's resulting value is the L2 term's own
+    // extra, closed-form 2*lambda*knight_eg contribution to the
+    // regularized run's gradient (tune.cpp's own comment at that line).
+    const double expected_knight_eg =
+        without_l2.weights.knight_eg -
+        regularized.learning_rate * 2.0 * regularized.l2_lambda * start.knight_eg;
+    const double diff = with_l2.weights.knight_eg - expected_knight_eg;
+    REQUIRE(diff < 1e-6);
+    REQUIRE(diff > -1e-6);
+    REQUIRE(with_l2.weights.knight_eg != without_l2.weights.knight_eg);
+}
+
+// --- ROADMAP.md Tier 0 Step 6 -- analytic PSQT gradient + tune_psqt() ---
+
+TEST_CASE("compute_psqt_gradient: an empty position list returns an all-zero PsqtWeights, "
+          "matching compute_loss()'s own 0.0-for-empty convention",
+          "[tuner][tune]") {
+    const PsqtWeights gradient =
+        compute_psqt_gradient({}, default_material_weights(), default_psqt_weights(), 400.0);
+    for (double v : gradient.pawn_mg) {
+        REQUIRE(v == 0.0);
+    }
+    for (double v : gradient.king_eg) {
+        REQUIRE(v == 0.0);
+    }
+}
+
+TEST_CASE("compute_psqt_gradient: agrees with a hand-rolled finite-difference probe of "
+          "compute_loss() at a spot-checked cell -- an independent cross-check of the analytic "
+          "derivation against the exact numerical method tune()'s own material gradient already "
+          "relies on",
+          "[tuner][tune]") {
+    init_all();
+    // A lone White knight on b1, otherwise bare kings -- same fixture
+    // shape as this file's existing Tier 0 Step 4 test above.
+    Position pos;
+    pos.side_to_move = Color::White;
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(4, 7), Piece::BlackKing);
+    pos.place_piece(make_square(1, 0), Piece::WhiteKnight);
+    const std::string fen = to_fen(pos);
+    const std::vector<SelfPlayPosition> positions{SelfPlayPosition{fen, 0.5}};
+
+    const MaterialWeights material = default_material_weights();
+    const PsqtWeights psqt = default_psqt_weights();
+    const double sigmoid_scale = 400.0;
+    const int b1 = make_square(1, 0);
+
+    const PsqtWeights analytic = compute_psqt_gradient(positions, material, psqt, sigmoid_scale);
+
+    const double eps = 1.0;
+    PsqtWeights plus = psqt;
+    plus.knight_mg[b1] += eps;
+    const double loss_plus = compute_loss(positions, material, sigmoid_scale, &plus);
+    PsqtWeights minus = psqt;
+    minus.knight_mg[b1] -= eps;
+    const double loss_minus = compute_loss(positions, material, sigmoid_scale, &minus);
+    const double numeric_gradient = (loss_plus - loss_minus) / (2.0 * eps);
+
+    const double diff = analytic.knight_mg[b1] - numeric_gradient;
+    // A central finite difference at eps=1.0 (the smallest value that
+    // reliably crosses psqt_value()'s own round_to_int() boundary in
+    // both directions -- tune.h's own finite_diff_epsilon doc comment)
+    // carries real O(eps^2) truncation error against compute_loss()'s
+    // genuinely nonlinear (sigmoid-of-eval) shape, so this is a looser
+    // tolerance than the two values' underlying agreement actually is --
+    // loose enough to pass on a correct implementation, tight enough
+    // that a wrong scaling factor or sign error (order-of-magnitude or
+    // larger) would still fail it.
+    REQUIRE(diff < 5e-5);
+    REQUIRE(diff > -5e-5);
+
+    // No piece of any OTHER field/square combination exists on this
+    // board (only a knight on b1 and two kings on e1/e8) -- every other
+    // cell's gradient must come out exactly 0.0, not just small.
+    REQUIRE(analytic.pawn_mg[b1] == 0.0);
+    REQUIRE(analytic.queen_mg[b1] == 0.0);
+    // This exact fixture has zero non-pawn material other than the one
+    // knight (compute_phase() near 0), so the mg-side gradient above is
+    // near its largest possible magnitude while knight_eg's own gradient
+    // (same cell, eg component) is comparatively small but still
+    // generally non-zero at this phase -- not independently asserted
+    // here, since this test's purpose is the mg-side numeric cross-check
+    // above, not a full accounting of every field.
+}
+
+TEST_CASE("tune_psqt: a training signal that consistently disagrees with a deliberately-bad "
+          "PSQT cell reduces loss over the course of the run",
+          "[tuner][tune]") {
+    init_all();
+    // A lone White knight parked on a1 (kKnightMgTable's own worst
+    // square, -50) but every position is labeled a clear White win
+    // (1.0) -- a strong, consistent "this square is worth more than the
+    // current table says" signal, the PSQT-side counterpart to this
+    // file's existing material-side "reduces loss" test above.
+    Position pos;
+    pos.side_to_move = Color::White;
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(4, 7), Piece::BlackKing);
+    pos.place_piece(make_square(0, 0), Piece::WhiteKnight); // a1
+    const std::string fen = to_fen(pos);
+
+    std::vector<SelfPlayPosition> positions;
+    for (int i = 0; i < 8; ++i) {
+        positions.push_back(SelfPlayPosition{fen, 1.0});
+    }
+
+    TuneConfig config;
+    config.iterations = 20;
+    // A much smaller learning rate than tune()'s own production default
+    // (20000.0, tune.h's own doc comment: empirically chosen against
+    // MaterialWeights' specific gradient scale) -- PSQT's per-position
+    // gradient touches every one of 768 cells at once rather than a
+    // single term's worth of 10, and this test's own scale was checked
+    // directly against a couple of candidate values before landing here,
+    // the same "measure before hand-picking a step size" discipline
+    // tune.h's own learning_rate doc comment describes.
+    config.learning_rate = 100.0;
+    const PsqtTuneResult result = tune_psqt(positions, default_material_weights(),
+                                             default_psqt_weights(), config);
+
+    REQUIRE(result.history.size() == static_cast<std::size_t>(config.iterations + 1));
+    REQUIRE(result.final_loss < result.initial_loss);
+    // The a1 knight_mg cell specifically should have moved UP (less
+    // negative) -- the direction that makes evaluate() agree more with
+    // this training set's consistent "White is winning here" label.
+    REQUIRE(result.weights.knight_mg[make_square(0, 0)] >
+            default_psqt_weights().knight_mg[make_square(0, 0)]);
+}
+
+TEST_CASE("tune_psqt: TuneConfig::l2_lambda applies the same closed-form penalty it does in "
+          "tune(), against kPsqtParameters instead of kMaterialParameters",
+          "[tuner][tune]") {
+    init_all();
+    std::vector<SelfPlayPosition> positions{SelfPlayPosition{"4k3/8/8/8/8/8/8/4K3 w - - 0 1", 0.5}};
+    TuneConfig config;
+    config.iterations = 0;
+    config.l2_lambda = 0.0001;
+    const PsqtWeights psqt = default_psqt_weights();
+    const PsqtTuneResult result =
+        tune_psqt(positions, default_material_weights(), psqt, config);
+
+    double sum_squares = 0.0;
+    for (const PsqtParameterRef& param : kPsqtParameters) {
+        const double value = param.get(psqt); // no PSQT parameter is anchored (its own doc
+                                               // comment, tune.h)
+        sum_squares += value * value;
+    }
+    const double expected =
+        compute_loss(positions, default_material_weights(), config.sigmoid_scale, &psqt) +
+        config.l2_lambda * sum_squares;
+    REQUIRE(result.initial_loss == expected);
+}
+
