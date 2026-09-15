@@ -40,6 +40,17 @@
 // MaterialWeights/PsqtWeights doc comments for the runtime-mutable-
 // parameter-vector design those two terms already have.
 //
+// Tier 0 Step 5 (docs/DECISIONS.md, this file's own dated entry) added
+// TuneConfig::l2_lambda, an optional L2 regularization term (default
+// 0.0, so every pre-existing tuning run is unaffected) applied inside
+// tune()'s own gradient-descent loop — see that field's own doc comment
+// below. Tier 0 Step 6 added compute_psqt_gradient() and tune_psqt(),
+// further down this file: an analytic (not finite-difference) gradient
+// for PSQT's 768 cells, and a real, callable PSQT-tuning loop built on
+// top of it — see both of their own doc comments for why an analytic
+// gradient is valid here specifically (PSQT is exactly linear in each
+// table cell) and what Step 6's own remaining, non-code items still are.
+//
 // ALGORITHM: for each of `iterations` steps, computes a NUMERICAL
 // (finite-difference) gradient of compute_loss() with respect to every
 // NON-ANCHORED parameter in kMaterialParameters (below) — pawn_mg/
@@ -141,6 +152,40 @@ struct ParameterRef {
     std::array<double, 64> Weights::* array_member = nullptr;
     int index = 0;
 
+    // GCC -O3 -Warray-bounds false positive, confirmed via direct
+    // investigation (docs/DECISIONS.md, this entry's own dated account):
+    // when get()/set() are inlined into a caller holding a `Weights`
+    // instance smaller than `std::array<double,64>` (e.g. MaterialWeights,
+    // 80 bytes, vs. the 512-byte array a `std::array<double,64>
+    // Weights::*` indexed access implies), GCC's array-bounds analysis
+    // warns about the `array_member`-indexed branch as if it could be
+    // taken with that smaller object -- even though `array_member` is
+    // PROVABLY nullptr for every ParameterRef<MaterialWeights> entry
+    // that exists (kMaterialParameters' own construction, this file,
+    // never sets it), so that branch is genuinely unreachable there, not
+    // merely believed to be. Confirmed as a pure false positive, not a
+    // real bug, three ways: (1) rewriting the ternary below as an
+    // explicit if/else -- a common fix for this exact GCC false-positive
+    // class -- did NOT silence it, meaning it's tied to the pointer-to-
+    // member field itself, not the branch's surface shape; (2) a full
+    // Debug/ASan+UBSan build and test run (which this warning does NOT
+    // appear in at all -- ASan/UBSan builds use -O0, and this is an
+    // -O3-only heuristic) found zero memory-safety issues anywhere in
+    // this code; (3) every one of kMaterialParameters'/kPsqtParameters'
+    // own entries was hand-verified to set exactly one of
+    // `member`/`array_member`, matching this struct's own documented
+    // precondition above. Suppressed locally, narrowly (this class's own
+    // member functions only, not this file's other code), rather than
+    // restructured further or suppressed project-wide, since no
+    // restructuring attempted actually resolved it and a narrow,
+    // well-justified suppression is preferable to leaving a real build
+    // warning unresolved or disabling this diagnostic more broadly than
+    // this one confirmed false positive needs.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
+
     /// Reads this parameter's current value out of `w` — `w.*array_member
     /// [index]` if this is an indexed-array entry, `w.*member` otherwise.
     [[nodiscard]] double get(const Weights& w) const noexcept {
@@ -156,6 +201,10 @@ struct ParameterRef {
             w.*member = value;
         }
     }
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 };
 
 /// Backward-compatible name for `ParameterRef<eval::MaterialWeights>` —
@@ -377,6 +426,23 @@ struct TuneConfig {
     /// header comment on why this is a fixed default, not fit from data,
     /// in this first version.
     double sigmoid_scale = 400.0;
+
+    /// L2 regularization strength (ROADMAP.md Tier 0 Step 5): adds
+    /// `l2_lambda * sum(param^2)`, over every NON-ANCHORED parameter
+    /// currently being tuned, to the objective tune() descends —
+    /// discouraging any single parameter from drifting to an extreme
+    /// magnitude purely because the (comparatively small, 10-scalar)
+    /// training set doesn't constrain it well, a real risk once a tuning
+    /// run's parameter count grows toward PSQT's up-to-768 (kPsqtParameters
+    /// below) and a fixed corpus has to constrain far more freedom.
+    /// Defaults to 0.0 (no regularization at all) — every existing
+    /// material-only tuning run/test is unaffected byte-for-byte, since
+    /// the penalty and its gradient contribution (tune.cpp) are both
+    /// exactly zero whenever this is zero. Anchored parameters (pawn_mg/
+    /// pawn_eg) are excluded from the penalty regardless of this value —
+    /// tune() never moves them, so penalizing their fixed magnitude
+    /// would only distort the reported loss, not the actual descent.
+    double l2_lambda = 0.0;
 };
 
 /// One entry in TuneResult::history below — a single iteration's
@@ -399,6 +465,11 @@ struct TuneResult {
     /// history.front().loss (iteration 0, before any gradient step) —
     /// convenience accessor for "did tuning even help," without needing
     /// to separately compute compute_loss() at the original weights.
+    /// Includes the L2 penalty (TuneConfig::l2_lambda) whenever that's
+    /// non-zero — this is the actual objective tune() descends, not bare
+    /// compute_loss() MSE, so a run's own reported progress reflects
+    /// what it was really minimizing (they're identical whenever
+    /// l2_lambda == 0.0, the default).
     double initial_loss = 0.0;
 
     /// history.back().loss (the final iteration) — same convenience
@@ -463,5 +534,91 @@ struct TuneResult {
                                const eval::MaterialWeights& initial_weights =
                                    eval::default_material_weights(),
                                const TuneConfig& config = {});
+
+/// ROADMAP.md Tier 0 Step 6 — analytic (not finite-difference) gradient
+/// of compute_loss()'s bare MSE term with respect to every one of
+/// PsqtWeights' 768 cells, computed in a SINGLE board-scan pass per
+/// position rather than kPsqtParameters.size() (768) finite-difference
+/// probe PAIRS (1536 compute_loss() calls) the way tune()'s own
+/// kMaterialParameters loop still does for material. This shortcut is
+/// only valid because PSQT's contribution to evaluate() is exactly
+/// linear in each table cell (Tier 0's own design doc, docs/DECISIONS.md
+/// 2026-09-08 (2)): a given cell `psqt_weights.<field>[sq]` affects a
+/// position's white-relative eval by exactly ±(that position's own
+/// mg/eg taper weight) if, and only if, a piece of the matching type
+/// currently occupies the matching square (mirrored for the color-
+/// distinct piece types the same way psqt_value() itself mirrors — see
+/// eval/psqt.cpp's header comment) — so one pass over the 64 squares
+/// already tells you every cell's exact local slope, instead of needing
+/// to perturb each of the 768 cells separately and re-run compute_loss()
+/// to discover it.
+///
+/// Chain rule: d(loss_i)/d(cell) = 2*(predicted_i - result_i) *
+/// predicted_i*(1 - predicted_i) / sigmoid_scale * d(white_relative_i)/
+/// d(cell), averaged over every position — the same sigmoid-MSE
+/// derivative compute_loss()'s own finite-difference gradient
+/// approximates numerically, computed here in closed form instead.
+/// psqt_value()'s round_to_int() step (eval/psqt.h) is treated as the
+/// identity for this purpose — correct everywhere except a measure-zero
+/// set of exact half-integer boundaries, the same approximation a
+/// finite-difference probe with a too-small epsilon would risk getting
+/// wrong in the other direction (tune.h's own finite_diff_epsilon doc
+/// comment has the equivalent note for MaterialWeights).
+///
+/// `material_weights`/`psqt_weights` are both forwarded to evaluate()
+/// exactly the way compute_loss() itself forwards them — this computes
+/// the gradient AT the point those two vectors currently describe, not
+/// at the compiled-in defaults. Returns an all-zero PsqtWeights (every
+/// field's `std::array<double, 64>` value-initialized to 0.0) for an
+/// empty `positions`, matching compute_loss()'s own 0.0-for-empty
+/// convention.
+///
+/// Precondition: same as compute_loss()'s own.
+[[nodiscard]] eval::PsqtWeights
+compute_psqt_gradient(const std::vector<SelfPlayPosition>& positions,
+                       const eval::MaterialWeights& material_weights,
+                       const eval::PsqtWeights& psqt_weights, double sigmoid_scale) noexcept;
+
+/// PSQT-side counterpart to TuneResult — same shape, `weights` typed as
+/// eval::PsqtWeights instead of eval::MaterialWeights.
+struct PsqtTuneResult {
+    eval::PsqtWeights weights;
+    double initial_loss = 0.0;
+    double final_loss = 0.0;
+    std::vector<TuneIteration> history;
+};
+
+/// ROADMAP.md Tier 0 Step 6's other half: a real, callable PSQT tuning
+/// loop, mirroring tune()'s own gradient-descent shape (TuneConfig::
+/// iterations steps of `weights -= learning_rate * gradient`) but
+/// sourcing its gradient from compute_psqt_gradient() above instead of a
+/// per-parameter finite-difference loop — the material weights are held
+/// fixed at `material_weights` for the whole run (only the PSQT vector
+/// moves), the same "tune one term, hold the others at their current
+/// value" convention Tier 0's own design doc calls for. No parameter is
+/// anchored here (kPsqtParameters' own doc comment, tune.h, has this
+/// session's reasoning for why PSQT has no known equivalent to
+/// material's flat-scaling degeneracy yet), so unlike tune() every one
+/// of the 768 cells moves every iteration. TuneConfig::l2_lambda applies
+/// here exactly as it does in tune() — L2's own analytic gradient
+/// (2*lambda*value) is added directly to compute_psqt_gradient()'s
+/// output, and the reported loss (`history`/`initial_loss`/
+/// `final_loss`) includes the same lambda*sum(value^2) penalty term.
+///
+/// NOT wired into `tune()`/`TuneConfig` itself, and not yet run against
+/// a real production corpus — ROADMAP.md Tier 0 Step 6's own remaining,
+/// deliberately-not-code items (a materially larger self-play corpus,
+/// and a real nightwing_sprt-gated match before any tuned PSQT values
+/// are hand-transcribed into psqt.cpp) are still outstanding; this
+/// function makes that eventual run POSSIBLE to call, not something
+/// this session claims to have already produced trustworthy tuned
+/// values from.
+///
+/// Precondition: same as compute_loss()'s own.
+[[nodiscard]] PsqtTuneResult tune_psqt(const std::vector<SelfPlayPosition>& positions,
+                                        const eval::MaterialWeights& material_weights,
+                                        const eval::PsqtWeights& initial_psqt_weights =
+                                            eval::default_psqt_weights(),
+                                        const TuneConfig& config = {});
 
 } // namespace nightwing::tuner

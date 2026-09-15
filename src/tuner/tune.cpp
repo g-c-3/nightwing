@@ -11,6 +11,34 @@
 
 namespace nightwing::tuner {
 
+namespace {
+
+/// L2 penalty (ROADMAP.md Tier 0 Step 5): `lambda * sum(param^2)` over
+/// every NON-ANCHORED entry in `params`, evaluated against `weights`.
+/// Anchored parameters are skipped — see TuneConfig::l2_lambda's own doc
+/// comment (tune.h) for why. Short-circuits to exactly 0.0 for
+/// lambda == 0.0 without touching `params` at all, so a default
+/// (unregularized) run's reported loss is bit-for-bit compute_loss()'s
+/// own bare MSE, not merely "a very small number away from it."
+template <typename Weights, std::size_t N>
+[[nodiscard]] double l2_penalty(const std::array<ParameterRef<Weights>, N>& params,
+                                 const Weights& weights, double lambda) noexcept {
+    if (lambda == 0.0) {
+        return 0.0;
+    }
+    double sum_squares = 0.0;
+    for (const ParameterRef<Weights>& param : params) {
+        if (param.anchored) {
+            continue;
+        }
+        const double value = param.get(weights);
+        sum_squares += value * value;
+    }
+    return lambda * sum_squares;
+}
+
+} // namespace
+
 double sigmoid(double x) noexcept { return 1.0 / (1.0 + std::exp(-x)); }
 
 double compute_loss(const std::vector<SelfPlayPosition>& positions,
@@ -43,7 +71,8 @@ TuneResult tune(const std::vector<SelfPlayPosition>& positions,
                  const eval::MaterialWeights& initial_weights, const TuneConfig& config) {
     TuneResult result;
     result.weights = initial_weights;
-    result.initial_loss = compute_loss(positions, result.weights, config.sigmoid_scale);
+    result.initial_loss = compute_loss(positions, result.weights, config.sigmoid_scale) +
+                           l2_penalty(kMaterialParameters, result.weights, config.l2_lambda);
     result.history.push_back(TuneIteration{0, result.initial_loss});
 
     std::array<double, kMaterialParameters.size()> gradient{};
@@ -83,6 +112,16 @@ TuneResult tune(const std::vector<SelfPlayPosition>& positions,
 
             param.set(result.weights, original); // restore before moving to the next parameter
             gradient[i] = (loss_plus - loss_minus) / (2.0 * config.finite_diff_epsilon);
+
+            // ROADMAP.md Tier 0 Step 5: the L2 penalty's own gradient
+            // (d/dw[lambda*w^2] = 2*lambda*w) is added ANALYTICALLY here
+            // rather than folded into the finite-difference probe above —
+            // it's already known in closed form, exactly, so there's no
+            // reason to spend two more compute_loss() calls (or add any
+            // extra finite-difference noise) discovering a slope this
+            // simple. Exactly 0.0 whenever config.l2_lambda is 0.0 (the
+            // default), leaving this identical to the pre-Step-5 gradient.
+            gradient[i] += 2.0 * config.l2_lambda * original;
         }
 
         // Apply every parameter's step simultaneously (true gradient
@@ -106,7 +145,174 @@ TuneResult tune(const std::vector<SelfPlayPosition>& positions,
             param.set(result.weights, param.get(result.weights) - config.learning_rate * gradient[i]);
         }
 
-        const double loss_after_step = compute_loss(positions, result.weights, config.sigmoid_scale);
+        const double loss_after_step =
+            compute_loss(positions, result.weights, config.sigmoid_scale) +
+            l2_penalty(kMaterialParameters, result.weights, config.l2_lambda);
+        result.history.push_back(TuneIteration{iteration, loss_after_step});
+    }
+
+    result.final_loss = result.history.back().loss;
+    return result;
+}
+
+namespace {
+
+/// Every PsqtWeights field paired with its own analytic-gradient
+/// accumulator field, both `std::array<double, 64>*` — lets
+/// compute_psqt_gradient() below apply "add this position's
+/// contribution" / "divide by N" as one small loop over 12 (field,
+/// gradient-field) pairs instead of 12 hand-repeated statements each.
+struct PsqtFieldPair {
+    std::array<double, 64> eval::PsqtWeights::* field;
+};
+
+// Declaration order matches eval/psqt.cpp's own switch (Pawn, Knight,
+// Bishop, Rook, Queen, King), mg immediately followed by eg for each --
+// purely a readability convention, not load-bearing (each entry is
+// looked up by piece type below, never by position in this array).
+inline constexpr std::array<PsqtFieldPair, 12> kPsqtFieldPairs = {{
+    {&eval::PsqtWeights::pawn_mg},   {&eval::PsqtWeights::pawn_eg},
+    {&eval::PsqtWeights::knight_mg}, {&eval::PsqtWeights::knight_eg},
+    {&eval::PsqtWeights::bishop_mg}, {&eval::PsqtWeights::bishop_eg},
+    {&eval::PsqtWeights::rook_mg},   {&eval::PsqtWeights::rook_eg},
+    {&eval::PsqtWeights::queen_mg},  {&eval::PsqtWeights::queen_eg},
+    {&eval::PsqtWeights::king_mg},   {&eval::PsqtWeights::king_eg},
+}};
+
+/// This piece type's (mg field, eg field) pair in a PsqtWeights —
+/// mirrors eval/psqt.cpp's own psqt_value() switch exactly (same field
+/// per piece type), factored out here so compute_psqt_gradient() below
+/// has one switch, not one per position. Returns {nullptr, nullptr} for
+/// PieceType::None (never actually reached — callers already skip
+/// Piece::None board squares before calling this).
+[[nodiscard]] std::pair<std::array<double, 64> eval::PsqtWeights::*,
+                        std::array<double, 64> eval::PsqtWeights::*>
+psqt_field_pair(board::PieceType type) noexcept {
+    switch (type) {
+        case board::PieceType::Pawn:
+            return {&eval::PsqtWeights::pawn_mg, &eval::PsqtWeights::pawn_eg};
+        case board::PieceType::Knight:
+            return {&eval::PsqtWeights::knight_mg, &eval::PsqtWeights::knight_eg};
+        case board::PieceType::Bishop:
+            return {&eval::PsqtWeights::bishop_mg, &eval::PsqtWeights::bishop_eg};
+        case board::PieceType::Rook:
+            return {&eval::PsqtWeights::rook_mg, &eval::PsqtWeights::rook_eg};
+        case board::PieceType::Queen:
+            return {&eval::PsqtWeights::queen_mg, &eval::PsqtWeights::queen_eg};
+        case board::PieceType::King:
+            return {&eval::PsqtWeights::king_mg, &eval::PsqtWeights::king_eg};
+        case board::PieceType::None:
+        default:
+            return {nullptr, nullptr};
+    }
+}
+
+} // namespace
+
+eval::PsqtWeights compute_psqt_gradient(const std::vector<SelfPlayPosition>& positions,
+                                         const eval::MaterialWeights& material_weights,
+                                         const eval::PsqtWeights& psqt_weights,
+                                         double sigmoid_scale) noexcept {
+    eval::PsqtWeights gradient{}; // every std::array<double, 64> value-initialized to 0.0
+    if (positions.empty()) {
+        return gradient;
+    }
+
+    for (const SelfPlayPosition& position : positions) {
+        const board::Position pos = board::parse_fen(position.fen);
+        const int white_relative =
+            eval::evaluate(pos, nullptr, nullptr, &material_weights, &psqt_weights);
+        const double predicted = sigmoid(static_cast<double>(white_relative) / sigmoid_scale);
+        const double error = predicted - position.result;
+        // d(this position's squared error)/d(white_relative): MSE's own
+        // outer derivative (2*error) times sigmoid's derivative
+        // (predicted*(1-predicted)) times the 1/sigmoid_scale chain-rule
+        // factor evaluate()'s centipawn-to-sigmoid-argument scaling
+        // introduces -- the same quantity a finite-difference probe of
+        // compute_loss() would approximate numerically, in closed form.
+        const double outer = 2.0 * error * predicted * (1.0 - predicted) / sigmoid_scale;
+
+        const int phase = eval::compute_phase(pos);
+        const double mg_weight = static_cast<double>(phase) / eval::kMaxPhase;
+        const double eg_weight = static_cast<double>(eval::kMaxPhase - phase) / eval::kMaxPhase;
+
+        for (board::Square sq = 0; sq < board::kNumSquares; ++sq) {
+            const board::Piece piece = pos.piece_at(sq);
+            if (piece == board::Piece::None) {
+                continue;
+            }
+            const board::PieceType type = board::piece_type_of(piece);
+            const board::Color color = board::color_of(piece);
+
+            // sign: this piece's own contribution to evaluate()'s White-
+            // relative score is ADDED for White, SUBTRACTED for Black
+            // (eval.cpp's material_value()+psqt_value() loop) -- mirrored
+            // here exactly, since that sign is exactly what flows through
+            // to d(white_relative)/d(cell) too.
+            const double sign = (color == board::Color::White) ? 1.0 : -1.0;
+
+            // idx: the exact PsqtWeights cell psqt_value() itself would
+            // have read for this piece/square -- mirror_vertical() (sq
+            // ^ 56) for Black on every color-distinct piece type, `sq`
+            // directly for Knight/Queen (no color distinction -- see
+            // eval/psqt.cpp's own header comment) or for White.
+            const bool color_distinct =
+                type != board::PieceType::Knight && type != board::PieceType::Queen;
+            const int idx = (color == board::Color::White || !color_distinct) ? sq : (sq ^ 56);
+
+            const auto [mg_field, eg_field] = psqt_field_pair(type);
+            if (mg_field == nullptr) {
+                continue; // defensive only -- Piece::None already skipped above
+            }
+            (gradient.*mg_field)[idx] += outer * sign * mg_weight;
+            (gradient.*eg_field)[idx] += outer * sign * eg_weight;
+        }
+    }
+
+    const double n = static_cast<double>(positions.size());
+    for (const PsqtFieldPair& pair : kPsqtFieldPairs) {
+        for (double& value : gradient.*pair.field) {
+            value /= n;
+        }
+    }
+    return gradient;
+}
+
+PsqtTuneResult tune_psqt(const std::vector<SelfPlayPosition>& positions,
+                          const eval::MaterialWeights& material_weights,
+                          const eval::PsqtWeights& initial_psqt_weights, const TuneConfig& config) {
+    PsqtTuneResult result;
+    result.weights = initial_psqt_weights;
+    result.initial_loss =
+        compute_loss(positions, material_weights, config.sigmoid_scale, &result.weights) +
+        l2_penalty(kPsqtParameters, result.weights, config.l2_lambda);
+    result.history.push_back(TuneIteration{0, result.initial_loss});
+
+    for (int iteration = 1; iteration <= config.iterations; ++iteration) {
+        eval::PsqtWeights gradient =
+            compute_psqt_gradient(positions, material_weights, result.weights, config.sigmoid_scale);
+
+        // Step 5's L2 term applies here exactly as it does in tune():
+        // added analytically (2*lambda*value), on top of the analytic
+        // MSE gradient compute_psqt_gradient() already computed above --
+        // no finite differences anywhere in this function at all.
+        if (config.l2_lambda != 0.0) {
+            for (const PsqtParameterRef& param : kPsqtParameters) {
+                // kPsqtParameters has no anchored entries (its own doc
+                // comment, tune.h) -- every cell gets the penalty term.
+                const double value = param.get(result.weights);
+                param.set(gradient, param.get(gradient) + 2.0 * config.l2_lambda * value);
+            }
+        }
+
+        for (const PsqtParameterRef& param : kPsqtParameters) {
+            param.set(result.weights,
+                      param.get(result.weights) - config.learning_rate * param.get(gradient));
+        }
+
+        const double loss_after_step =
+            compute_loss(positions, material_weights, config.sigmoid_scale, &result.weights) +
+            l2_penalty(kPsqtParameters, result.weights, config.l2_lambda);
         result.history.push_back(TuneIteration{iteration, loss_after_step});
     }
 
