@@ -422,3 +422,82 @@ TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a Mat
     REQUIRE(cached == 12345);
 }
 
+TEST_CASE("evaluate: a PsqtWeights override changes evaluate()'s result exactly as expected -- "
+          "Tier 0 Step 4 (docs/DECISIONS.md, this entry's own dated wiring) mirrors the "
+          "MaterialWeights override test above for the new psqt_weights parameter",
+          "[eval][tuner]") {
+    init_all();
+    // Fuller non-pawn material on both sides (mirrored, so material
+    // itself stays balanced) specifically to push compute_phase() well
+    // above the near-fully-endgame phase a truly bare "lone knight vs
+    // bare king" position would have -- this test's own expected
+    // magnitude below was cross-checked against this exact position via
+    // a real compiled-library probe (not hand-derived from taper()'s
+    // formula alone), since a lower-phase position would blend mostly
+    // toward the (untouched) eg table instead of exercising the mg
+    // change this test is actually about.
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(0, 0), Piece::WhiteKnight); // a1 -- the test square
+    pos.place_piece(make_square(1, 0), Piece::WhiteKnight); // b1
+    pos.place_piece(make_square(2, 0), Piece::WhiteBishop); // c1
+    pos.place_piece(make_square(5, 0), Piece::WhiteBishop); // f1
+    pos.place_piece(make_square(3, 0), Piece::WhiteQueen);  // d1
+    pos.place_piece(make_square(7, 0), Piece::WhiteRook);   // h1
+    pos.place_piece(make_square(4, 7), Piece::BlackKing);
+    pos.place_piece(make_square(1, 7), Piece::BlackKnight); // b8
+    pos.place_piece(make_square(6, 7), Piece::BlackKnight); // g8
+    pos.place_piece(make_square(2, 7), Piece::BlackBishop); // c8
+    pos.place_piece(make_square(5, 7), Piece::BlackBishop); // f8
+    pos.place_piece(make_square(3, 7), Piece::BlackQueen);  // d8
+    pos.place_piece(make_square(7, 7), Piece::BlackRook);   // h8
+
+    const int default_eval = evaluate(pos, nullptr, nullptr, nullptr, nullptr);
+
+    // Zero out the corner penalty for this one square/phase pair only --
+    // every other PSQT entry (including knight_eg[a1]) stays at its
+    // compiled-in default.
+    PsqtWeights boosted_knight_corner = default_psqt_weights();
+    boosted_knight_corner.knight_mg[make_square(0, 0)] = 0.0;
+    const int boosted_eval = evaluate(pos, nullptr, nullptr, nullptr, &boosted_knight_corner);
+
+    // Removing a -50 mg penalty should increase White's evaluated
+    // advantage by a healthy fraction of 50 (this position's own real
+    // phase, not kMaxPhase exactly, and mobility/etc. shift slightly
+    // too since removing the corner penalty doesn't move the knight) --
+    // not exactly 50. Threshold picked well below the actual measured
+    // delta at this exact position/phase, not derived by hand alone.
+    REQUIRE(boosted_eval > default_eval);
+    REQUIRE(boosted_eval - default_eval >= 25);
+
+    // material_weights stays independent: passing both a no-op material
+    // override AND the same psqt override produces the identical result
+    // to the psqt-only override above -- the two parameters don't
+    // interact or clobber one another.
+    const MaterialWeights unchanged_material = default_material_weights();
+    const int both_eval =
+        evaluate(pos, nullptr, nullptr, &unchanged_material, &boosted_knight_corner);
+    REQUIRE(both_eval == boosted_eval);
+}
+
+TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a PsqtWeights "
+          "override is supplied, even if a real EvalCache pointer is also passed -- the "
+          "psqt_weights counterpart to the MaterialWeights/eval_cache test above",
+          "[eval][eval_cache][tuner]") {
+    init_all();
+    Position pos = start_position();
+
+    EvalCache cache(2048);
+    cache.store(pos.zobrist_hash, 12345); // same poisoning technique as the MaterialWeights test
+
+    const PsqtWeights weights = default_psqt_weights();
+    const int result = evaluate(pos, nullptr, &cache, nullptr, &weights);
+    REQUIRE(result != 12345);
+    REQUIRE(result == evaluate(pos, nullptr, nullptr, nullptr, &weights));
+
+    const auto [hit, cached] = cache.probe(pos.zobrist_hash);
+    REQUIRE(hit);
+    REQUIRE(cached == 12345); // untouched, not overwritten with a fresh value either
+}
+
+

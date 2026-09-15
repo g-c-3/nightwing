@@ -138,6 +138,45 @@ TEST_CASE("compute_loss: a position whose evaluate() strongly disagrees with its
     REQUIRE(loss > 0.5); // predicted win probability for White is high, label says 0 -- big error
 }
 
+TEST_CASE("compute_loss: an optional psqt_weights argument is forwarded to evaluate() exactly "
+          "the same way the required material `weights` already is -- Tier 0 Step 4 (docs/"
+          "DECISIONS.md, this entry's own dated wiring)",
+          "[tuner][tune]") {
+    init_all();
+    const std::string fen = "4k3/8/8/8/8/8/8/1N2K3 w - - 0 1"; // lone White knight on b1
+    const Position pos = parse_fen(fen);
+    const MaterialWeights weights = default_material_weights();
+    const double sigmoid_scale = 400.0;
+
+    // Default (nullptr psqt_weights): compute_loss()'s own no-argument
+    // default path.
+    const int default_eval = evaluate(pos, nullptr, nullptr, &weights);
+    const double default_label = sigmoid(static_cast<double>(default_eval) / sigmoid_scale);
+    SelfPlayPosition position{fen, default_label};
+    REQUIRE(compute_loss({position}, weights, sigmoid_scale) < 1e-12);
+
+    // A perturbed psqt_weights: compute_loss() must now disagree with
+    // the SAME label (still computed against the default table), since
+    // the underlying evaluate() call it makes has changed -- confirming
+    // psqt_weights is actually reaching evaluate(), not silently
+    // ignored.
+    PsqtWeights perturbed = default_psqt_weights();
+    perturbed.knight_mg[make_square(1, 0)] += 200.0; // b1
+    const double loss_with_override =
+        compute_loss({position}, weights, sigmoid_scale, &perturbed);
+    REQUIRE(loss_with_override > 1e-6);
+
+    // And that loss must exactly match computing evaluate() directly
+    // with the same override and re-deriving the loss by hand --
+    // compute_loss() isn't doing anything to psqt_weights beyond
+    // forwarding it straight through to evaluate().
+    const int perturbed_eval = evaluate(pos, nullptr, nullptr, &weights, &perturbed);
+    const double perturbed_predicted =
+        sigmoid(static_cast<double>(perturbed_eval) / sigmoid_scale);
+    const double expected_error = perturbed_predicted - default_label;
+    REQUIRE(loss_with_override == expected_error * expected_error);
+}
+
 TEST_CASE("tune: an all-neutral (bare kings, 0.5 result) training set leaves material weights "
           "exactly unchanged",
           "[tuner][tune]") {
