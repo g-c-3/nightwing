@@ -836,9 +836,16 @@ Priority Fixes section above).
           Unblocks Step 2 (`PsqtWeights`, a runtime-mutable mirror of
           the now-uniform Mg/Eg table shape, the same role
           `MaterialWeights` already plays for material values).
-    - [ ] **Step 2 — `PsqtWeights`:** a runtime-mutable mirror of the
-          now-tapered PSQT tables above, the same role `MaterialWeights`
-          (`psqt.h`) already plays for material values.
+    - [x] **Step 2 — `PsqtWeights` (Session 104):** a runtime-mutable
+          mirror of the now-tapered PSQT tables above, the same role
+          `MaterialWeights` (`psqt.h`) already plays for material
+          values — 12 `std::array<double,64>` fields (one Mg/Eg pair
+          per piece type), `default_psqt_weights()` populating one from
+          psqt.cpp's own internal tables, and `psqt_value()` extended
+          with the same nullable-override convention `material_value()`
+          already established. No production call site passes it yet
+          (eval.cpp's own call is untouched) — see docs/DECISIONS.md,
+          this session's entry.
     - [ ] **Step 3 — generalized `ParameterRef<Weights>`:** extend the
           existing pointer-to-member `MaterialParameterRef`/
           `kMaterialParameters` abstraction (`tuner/tune.h`) to also
