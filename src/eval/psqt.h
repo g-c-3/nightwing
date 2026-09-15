@@ -12,9 +12,13 @@
 // of hand-guessed ones.
 //
 // See psqt.cpp's header comment for the source cross-checking done
-// before transcribing these numbers, and DECISIONS.md for why only the
-// king gets a distinct middlegame/endgame table pair (Michniewski's
-// original doesn't taper the other five piece types).
+// before transcribing these numbers. As of the Tier 0 tuner-extension
+// effort's first step (docs/DECISIONS.md, 2026-09-08 (2)), every piece
+// type has a distinct middlegame/endgame table pair in psqt.cpp -- not
+// just the king, which is the only one Michniewski's own original
+// design tapered. The five newly-split Eg tables are exact duplicates
+// of their Mg counterparts for now (structural plumbing, not yet a
+// hand-guessed or tuned real split) -- see psqt.cpp's header comment.
 
 #include "board/board.h"
 #include "eval/score.h"

@@ -27,11 +27,23 @@
 // as positive instead of negative). Those typos are NOT reproduced
 // here — the values below are the corrected/cross-verified ones.
 //
-// Per DECISIONS.md: only the king gets a genuinely distinct mg/eg table
-// pair (Michniewski's original design). The other five piece types
-// reuse their single table for both phases via material_value()/
-// psqt_value() until Phase 5's Texel tuner has enough terms to learn
-// real per-phase splits instead of us hand-guessing them.
+// Per DECISIONS.md (Tier 0 tuner-extension effort, 2026-09-08 (2), first
+// step): every piece type now has a genuinely distinct mg/eg table pair
+// -- previously only the king did (Michniewski's own original design),
+// with the other five piece types sharing a single table for both
+// phases. The five newly-split Eg tables below are, for NOW, exact
+// duplicates of their Mg counterparts (Michniewski's baseline never
+// published per-phase values for anything but the king), NOT a hand-
+// guessed real split -- this session's change is purely structural
+// plumbing (giving every piece the same mg/eg storage shape the king
+// already had), so `ctest`/`bench` stay byte-for-byte identical before
+// and after it. The point is to unblock the next Tier 0 step (a
+// `PsqtWeights` runtime-mutable mirror, generalized `ParameterRef`) so
+// the eventual Texel tuner can pull these Mg/Eg pairs apart into real,
+// independently-learned values the same way it will for every other
+// term -- exactly the same "separate fields, currently equal, so a
+// tuner can later split them independently" convention psqt.h's own
+// MaterialWeights struct already established for material values.
 
 #include "eval/psqt.h"
 
@@ -45,7 +57,20 @@ using board::Square;
 
 // clang-format off
 
-constexpr int kPawnTable[64] = {
+constexpr int kPawnMgTable[64] = {
+     0,  0,  0,  0,  0,  0,  0,  0,
+     5, 10, 10,-20,-20, 10, 10,  5,
+     5, -5,-10,  0,  0,-10, -5,  5,
+     0,  0,  0, 20, 20,  0,  0,  0,
+     5,  5, 10, 25, 25, 10,  5,  5,
+    10, 10, 20, 30, 30, 20, 10, 10,
+    50, 50, 50, 50, 50, 50, 50, 50,
+     0,  0,  0,  0,  0,  0,  0,  0,
+};
+
+// Duplicate of kPawnMgTable for now -- see file header comment (this is
+// structural plumbing, not a hand-guessed real endgame split yet).
+constexpr int kPawnEgTable[64] = {
      0,  0,  0,  0,  0,  0,  0,  0,
      5, 10, 10,-20,-20, 10, 10,  5,
      5, -5,-10,  0,  0,-10, -5,  5,
@@ -58,7 +83,7 @@ constexpr int kPawnTable[64] = {
 
 // Same table for both colors, per Michniewski's original (see file
 // header comment).
-constexpr int kKnightTable[64] = {
+constexpr int kKnightMgTable[64] = {
     -50,-40,-30,-30,-30,-30,-40,-50,
     -40,-20,  0,  0,  0,  0,-20,-40,
     -30,  0, 10, 15, 15, 10,  0,-30,
@@ -69,7 +94,19 @@ constexpr int kKnightTable[64] = {
     -50,-40,-30,-30,-30,-30,-40,-50,
 };
 
-constexpr int kBishopTable[64] = {
+// Duplicate of kKnightMgTable for now -- see file header comment.
+constexpr int kKnightEgTable[64] = {
+    -50,-40,-30,-30,-30,-30,-40,-50,
+    -40,-20,  0,  0,  0,  0,-20,-40,
+    -30,  0, 10, 15, 15, 10,  0,-30,
+    -30,  5, 15, 20, 20, 15,  5,-30,
+    -30,  0, 15, 20, 20, 15,  0,-30,
+    -30,  5, 10, 15, 15, 10,  5,-30,
+    -40,-20,  0,  5,  5,  0,-20,-40,
+    -50,-40,-30,-30,-30,-30,-40,-50,
+};
+
+constexpr int kBishopMgTable[64] = {
     -20,-10,-10,-10,-10,-10,-10,-20,
     -10,  5,  0,  0,  0,  0,  5,-10,
     -10, 10, 10, 10, 10, 10, 10,-10,
@@ -80,7 +117,31 @@ constexpr int kBishopTable[64] = {
     -20,-10,-10,-10,-10,-10,-10,-20,
 };
 
-constexpr int kRookTable[64] = {
+// Duplicate of kBishopMgTable for now -- see file header comment.
+constexpr int kBishopEgTable[64] = {
+    -20,-10,-10,-10,-10,-10,-10,-20,
+    -10,  5,  0,  0,  0,  0,  5,-10,
+    -10, 10, 10, 10, 10, 10, 10,-10,
+    -10,  0, 10, 10, 10, 10,  0,-10,
+    -10,  5,  5, 10, 10,  5,  5,-10,
+    -10,  0,  5, 10, 10,  5,  0,-10,
+    -10,  0,  0,  0,  0,  0,  0,-10,
+    -20,-10,-10,-10,-10,-10,-10,-20,
+};
+
+constexpr int kRookMgTable[64] = {
+     0,  0,  0,  5,  5,  0,  0,  0,
+    -5,  0,  0,  0,  0,  0,  0, -5,
+    -5,  0,  0,  0,  0,  0,  0, -5,
+    -5,  0,  0,  0,  0,  0,  0, -5,
+    -5,  0,  0,  0,  0,  0,  0, -5,
+    -5,  0,  0,  0,  0,  0,  0, -5,
+     5, 10, 10, 10, 10, 10, 10,  5,
+     0,  0,  0,  0,  0,  0,  0,  0,
+};
+
+// Duplicate of kRookMgTable for now -- see file header comment.
+constexpr int kRookEgTable[64] = {
      0,  0,  0,  5,  5,  0,  0,  0,
     -5,  0,  0,  0,  0,  0,  0, -5,
     -5,  0,  0,  0,  0,  0,  0, -5,
@@ -95,7 +156,19 @@ constexpr int kRookTable[64] = {
 // header comment) — note this table is not rank-mirror-symmetric, so
 // unlike pawn/bishop/rook/king it genuinely couldn't be derived via the
 // sq^56 trick even if we wanted a per-color version.
-constexpr int kQueenTable[64] = {
+constexpr int kQueenMgTable[64] = {
+    -20,-10,-10, -5, -5,-10,-10,-20,
+    -10,  0,  0,  0,  0,  0,  0,-10,
+    -10,  0,  5,  5,  5,  5,  0,-10,
+     -5,  0,  5,  5,  5,  5,  0, -5,
+      0,  0,  5,  5,  5,  5,  0, -5,
+    -10,  5,  5,  5,  5,  5,  0,-10,
+    -10,  0,  5,  0,  0,  0,  0,-10,
+    -20,-10,-10, -5, -5,-10,-10,-20,
+};
+
+// Duplicate of kQueenMgTable for now -- see file header comment.
+constexpr int kQueenEgTable[64] = {
     -20,-10,-10, -5, -5,-10,-10,-20,
     -10,  0,  0,  0,  0,  0,  0,-10,
     -10,  0,  5,  5,  5,  5,  0,-10,
@@ -145,24 +218,26 @@ Score psqt_value(Piece piece, Square sq) noexcept {
 
     switch (type) {
         case PieceType::Pawn: {
-            const int v = kPawnTable[color == Color::White ? sq : mirror_vertical(sq)];
-            return {v, v};
+            const int idx = color == Color::White ? sq : mirror_vertical(sq);
+            return {kPawnMgTable[idx], kPawnEgTable[idx]};
         }
         case PieceType::Knight: {
-            const int v = kKnightTable[sq];
-            return {v, v};
+            // No color distinction for knights (see table comment) --
+            // `sq` used directly, not mirrored.
+            return {kKnightMgTable[sq], kKnightEgTable[sq]};
         }
         case PieceType::Bishop: {
-            const int v = kBishopTable[color == Color::White ? sq : mirror_vertical(sq)];
-            return {v, v};
+            const int idx = color == Color::White ? sq : mirror_vertical(sq);
+            return {kBishopMgTable[idx], kBishopEgTable[idx]};
         }
         case PieceType::Rook: {
-            const int v = kRookTable[color == Color::White ? sq : mirror_vertical(sq)];
-            return {v, v};
+            const int idx = color == Color::White ? sq : mirror_vertical(sq);
+            return {kRookMgTable[idx], kRookEgTable[idx]};
         }
         case PieceType::Queen: {
-            const int v = kQueenTable[sq];
-            return {v, v};
+            // No color distinction for queens (see table comment) --
+            // `sq` used directly, not mirrored.
+            return {kQueenMgTable[sq], kQueenEgTable[sq]};
         }
         case PieceType::King: {
             const int idx = color == Color::White ? sq : mirror_vertical(sq);
