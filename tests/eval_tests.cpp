@@ -138,6 +138,59 @@ TEST_CASE("psqt_value: king centralization is mg-penalized and eg-rewarded", "[e
     REQUIRE(center.eg > back_rank.eg); // centralizing late is encouraged
 }
 
+TEST_CASE("psqt_value: the 5 non-king piece types currently return equal mg/eg at every square "
+          "-- Tier 0 Step 1 (docs/DECISIONS.md, 2026-09-15) split each into a genuine Mg/Eg table "
+          "pair, but seeded the new Eg tables as exact Mg duplicates, not a real tuned split yet. "
+          "This test locks in that current state deliberately: it is EXPECTED to start failing, "
+          "piece by piece, once a later Tier 0 step lands real Texel-tuned Eg values -- at that "
+          "point this test should be narrowed to just the pieces still untuned, not deleted "
+          "outright, so it keeps guarding whichever pieces haven't been tuned yet",
+          "[eval][psqt]") {
+    const Piece white_pieces[] = {Piece::WhitePawn, Piece::WhiteKnight, Piece::WhiteBishop,
+                                   Piece::WhiteRook, Piece::WhiteQueen};
+    for (Piece piece : white_pieces) {
+        for (int sq = 0; sq < 64; ++sq) {
+            const Score s = psqt_value(piece, static_cast<Square>(sq));
+            REQUIRE(s.mg == s.eg);
+        }
+    }
+}
+
+TEST_CASE("psqt_value: the new per-piece Eg tables are genuinely wired up, not left at zero or "
+          "reading stale Mg-table memory -- spot-checks a known non-zero/non-trivial value from "
+          "each of the 5 newly-split tables directly against psqt.cpp's own transcribed constants",
+          "[eval][psqt]") {
+    // Pawn: rank-7 White pawn (one step from promoting), a7 -- Michniewski's
+    // table's own maximal advancement bonus (50), same value in both
+    // Mg/Eg since they're still duplicates (see test above).
+    const Score pawn_rank7 = psqt_value(Piece::WhitePawn, make_square(0, 6)); // a7
+    REQUIRE(pawn_rank7.mg == 50);
+    REQUIRE(pawn_rank7.eg == 50);
+
+    // Knight: a1 corner, the table's own most-penalized square (-50).
+    const Score knight_corner = psqt_value(Piece::WhiteKnight, make_square(0, 0)); // a1
+    REQUIRE(knight_corner.mg == -50);
+    REQUIRE(knight_corner.eg == -50);
+
+    // Bishop: d4/e5-adjacent central square (d3), a positive developed-
+    // bishop entry (10) rather than the table's back-rank/corner 0/-20s.
+    const Score bishop_dev = psqt_value(Piece::WhiteBishop, make_square(3, 2)); // d3
+    REQUIRE(bishop_dev.mg == 10);
+    REQUIRE(bishop_dev.eg == 10);
+
+    // Rook: 7th-rank bonus row (rank index 6), d7 -- the table's own
+    // +10 7th-rank entries for the 6 non-edge files (edge files a/h get
+    // +5 instead, a separate value on the same row).
+    const Score rook_7th = psqt_value(Piece::WhiteRook, make_square(3, 6)); // d7
+    REQUIRE(rook_7th.mg == 10);
+    REQUIRE(rook_7th.eg == 10);
+
+    // Queen: a1 corner, the table's own most-penalized entry (-20).
+    const Score queen_corner = psqt_value(Piece::WhiteQueen, make_square(0, 0)); // a1
+    REQUIRE(queen_corner.mg == -20);
+    REQUIRE(queen_corner.eg == -20);
+}
+
 TEST_CASE("evaluate: a bare kings position stays within a small bound", "[eval]") {
     init_all();
     // Not a mirrored-squares symmetry case (the two kings aren't on
