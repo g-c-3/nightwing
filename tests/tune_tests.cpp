@@ -8,6 +8,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <cstddef>
+#include <string>
 
 #include "board/attacks.h"
 #include "board/board.h"
@@ -282,3 +284,82 @@ TEST_CASE("tune: TuneResult::initial_loss/final_loss match history.front()/histo
     REQUIRE(result.history.front().iteration == 0);
     REQUIRE(result.history.back().iteration == config.iterations);
 }
+
+TEST_CASE("ParameterRef::get/set: a scalar (MaterialParameterRef) entry reads/writes the exact "
+          "field its name and member pointer claim -- Tier 0 Step 3 (docs/DECISIONS.md, this "
+          "entry's own date) generalized MaterialParameterRef into ParameterRef<Weights>, and "
+          "this pins get()/set() agreeing with the raw `.*member` access every existing test "
+          "above already exercises",
+          "[tuner][tune]") {
+    MaterialWeights w = default_material_weights();
+    const MaterialParameterRef& knight_mg = kMaterialParameters[2]; // declaration-order: knight_mg
+    REQUIRE(std::string(knight_mg.name) == "knight_mg");
+    REQUIRE(knight_mg.get(w) == w.knight_mg);
+
+    knight_mg.set(w, 321.0);
+    REQUIRE(w.knight_mg == 321.0);
+    REQUIRE(knight_mg.get(w) == 321.0);
+    REQUIRE(w.knight_eg == default_material_weights().knight_eg); // untouched
+}
+
+TEST_CASE("kPsqtParameters: has exactly 768 entries (12 PsqtWeights array fields * 64 squares "
+          "each), every one an indexed-array entry (array_member set, member null)",
+          "[tuner][tune]") {
+    REQUIRE(kPsqtParameters.size() == 768);
+    for (const PsqtParameterRef& param : kPsqtParameters) {
+        REQUIRE(param.array_member != nullptr);
+        REQUIRE(param.member == nullptr);
+        REQUIRE(param.index >= 0);
+        REQUIRE(param.index < 64);
+        REQUIRE(param.anchored == false); // this session's decision -- see kPsqtParameters'
+                                           // own doc comment (tune.h) for why
+    }
+}
+
+TEST_CASE("kPsqtParameters: get() agrees with default_psqt_weights()/psqt_value() at a spot-"
+          "checked entry from each of the 12 fields, and set() perturbs only that exact "
+          "piece/phase/square -- confirms ParameterRef<PsqtWeights>'s array_member/index "
+          "indexing is wired correctly, not just structurally present",
+          "[tuner][tune]") {
+    const PsqtWeights defaults = default_psqt_weights();
+
+    // kPsqtParameters is laid out as 12 consecutive 64-entry blocks, in
+    // kPsqtFields' own declaration order (pawn_mg, pawn_eg, knight_mg,
+    // knight_eg, bishop_mg, bishop_eg, rook_mg, rook_eg, queen_mg,
+    // queen_eg, king_mg, king_eg) -- index 0 is pawn_mg[a1], index 64 is
+    // pawn_eg[a1], etc. Spot-checking the first entry of each block
+    // (square a1, index 0 within its own block) against psqt.cpp's own
+    // known a1-corner values (already hand-verified once in
+    // eval_tests.cpp's own psqt spot-check test) is enough to confirm
+    // the 12-blocks-of-64 layout is correct without re-deriving all 768
+    // values by hand again here.
+    struct Expected {
+        std::size_t param_index; // block_index * 64 + 0 (square a1)
+        const char* name;
+        double a1_value;
+    };
+    const Expected expectations[] = {
+        {0 * 64, "pawn_mg", 0.0},     {1 * 64, "pawn_eg", 0.0},     {2 * 64, "knight_mg", -50.0},
+        {3 * 64, "knight_eg", -50.0}, {4 * 64, "bishop_mg", -20.0}, {5 * 64, "bishop_eg", -20.0},
+        {6 * 64, "rook_mg", 0.0},     {7 * 64, "rook_eg", 0.0},     {8 * 64, "queen_mg", -20.0},
+        {9 * 64, "queen_eg", -20.0},  {10 * 64, "king_mg", 20.0},   {11 * 64, "king_eg", -50.0},
+    };
+    for (const Expected& e : expectations) {
+        const PsqtParameterRef& param = kPsqtParameters[e.param_index];
+        REQUIRE(std::string(param.name) == e.name);
+        REQUIRE(param.index == 0); // square a1
+        REQUIRE(param.get(defaults) == e.a1_value);
+    }
+
+    // set() perturbation: touching knight_mg's a1 entry must not affect
+    // knight_mg's a2 entry, knight_eg's a1 entry, or any other field.
+    PsqtWeights w = defaults;
+    const PsqtParameterRef& knight_mg_a1 = kPsqtParameters[2 * 64 + 0];
+    const PsqtParameterRef& knight_mg_a2 = kPsqtParameters[2 * 64 + 8]; // a2 = square index 8
+    const PsqtParameterRef& knight_eg_a1 = kPsqtParameters[3 * 64 + 0];
+    knight_mg_a1.set(w, -999.0);
+    REQUIRE(knight_mg_a1.get(w) == -999.0);
+    REQUIRE(knight_mg_a2.get(w) == defaults.knight_mg[8]);
+    REQUIRE(knight_eg_a1.get(w) == defaults.knight_eg[0]);
+}
+
