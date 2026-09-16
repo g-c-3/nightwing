@@ -441,7 +441,25 @@ TEST_CASE("tune: l2_lambda > 0.0 adds exactly lambda * sum(non-anchored weight^2
     }
     const double expected =
         compute_loss(positions, weights, config.sigmoid_scale) + config.l2_lambda * sum_squares;
-    REQUIRE(result.initial_loss == expected);
+    // Epsilon comparison, not exact `==` -- this test has the identical
+    // structural shape (compute_loss() plus a hand-rolled sum, compared
+    // against tune()'s own internal computation of the same quantity)
+    // as the kPsqtParameters version of this test further down this
+    // file, which a real GitHub Actions CI run (macOS Debug/Release,
+    // run 94909780687) found DOES differ at the last representable bit
+    // on that platform/compiler, even though Linux/GCC produced an
+    // exact match for that same run. This test's own sum here is only 8
+    // terms (kMaterialParameters' non-anchored entries), not 768, so it
+    // has not been observed to actually diverge on any tested platform
+    // -- but the underlying risk (floating-point addition is not
+    // associative, and different compilers can reduce even a short
+    // summation loop into a different instruction order) is identical
+    // in kind, just with a currently-lower chance of the gap actually
+    // reaching a representable bit. Fixed preemptively, at the same
+    // 1e-9 absolute tolerance as that test, rather than waiting for a
+    // future compiler version or optimization flag change to make it
+    // fail here too.
+    REQUIRE(std::fabs(result.initial_loss - expected) < 1e-9);
 }
 
 TEST_CASE("tune: a non-zero l2_lambda adds exactly the closed-form 2*lambda*value gradient "
@@ -706,6 +724,25 @@ TEST_CASE("tune_psqt: TuneConfig::l2_lambda applies the same closed-form penalty
     const double expected =
         compute_loss(positions, default_material_weights(), config.sigmoid_scale, &psqt) +
         config.l2_lambda * sum_squares;
-    REQUIRE(result.initial_loss == expected);
+    // Epsilon comparison, not exact `==` -- confirmed via GitHub Actions CI
+    // (macOS Debug/Release, run 94909780687) that this test's own two
+    // independently-summed 768-term sum_squares accumulations (this
+    // loop here vs. whatever summation order tune_psqt()'s own internal
+    // l2_penalty() helper uses) can legitimately differ in their very
+    // last representable bit across compilers -- observed as
+    // 27.82503905843135428 (Linux/GCC) vs. 27.82503905843135072
+    // (macOS/Clang) for the exact same source code and inputs, a
+    // difference of about 3.6e-15 in an ~28-magnitude value, i.e. right
+    // at IEEE 754 double precision's own limit, not a real algorithmic
+    // discrepancy -- floating-point addition is not associative, and
+    // different compilers reduce a summation loop like this one into
+    // SIMD lanes differently, which changes the order additions
+    // actually happen in at the hardware level even though the SOURCE
+    // CODE'S mathematical meaning is identical. A 1e-9 absolute
+    // tolerance is many orders of magnitude looser than that ~3.6e-15
+    // gap while still tight enough to catch any genuine algorithmic
+    // disagreement between this test's own hand-rolled sum and
+    // tune_psqt()'s real implementation.
+    REQUIRE(std::fabs(result.initial_loss - expected) < 1e-9);
 }
 
