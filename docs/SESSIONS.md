@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 107 — 2026-09-16 — Two CI-discovered bugs from a person-supplied log bundle: a second MSVC parse failure, a fragile macOS floating-point test
+
+A person-supplied GitHub Actions log bundle (run 94909780687, covering the Session 106 CLI/`l2_lambda` commit) surfaced two real, platform-specific bugs — one on Windows, one on macOS — that this sandbox's own GCC/Linux-only testing throughout Sessions 105-106 could not have caught.
+
+**Bugs found and fixed:**
+1. **Windows Debug/Release build failure:** `tune.cpp`'s `psqt_field_pair()` hit the identical MSVC pointer-to-member-array parse failure (`error C3083`) that `tune.h`'s `kPsqtFields` already hit and fixed one session earlier (docs/DECISIONS.md, 2026-09-15 (4)) — the same mistake made a second time, in a different file, by the externally-supplied Step 5-6 implementation (Session 105) rather than by this session's own work. Fixed by extracting the pointer-to-member type into a named alias, REUSING the already-existing `detail::PsqtArrayMemberPtr` (tune.h) rather than declaring a second copy — one shared alias is less surface for a third occurrence to slip through.
+2. **macOS Debug AND Release test failure (`tune_psqt`/`l2_lambda` test, test #529):** a strict `REQUIRE(result.initial_loss == expected)` comparing two independently-summed 768-term floating-point reductions failed by ~3.6e-15 on macOS/Clang while passing exactly on Linux/GCC in the same CI run — floating-point addition is not associative, and different compilers can legally reduce a summation loop into SIMD lanes in a different order. Fixed by relaxing to `std::fabs(diff) < 1e-9`, matching this file's own pre-existing tolerant-comparison convention (a different, earlier L2 test already uses this style for the same underlying reason). The material-side counterpart test (identical shape, only 8 terms instead of 768) was fixed preemptively with the same tolerance, since it has the identical structural risk and had simply not yet been unlucky enough to hit a diverging rounding outcome on any tested platform.
+
+**Decisions made:** see docs/DECISIONS.md's new 2026-09-16 entry for the full account of both bugs, their root causes, and why the material-side test was fixed preemptively without its own CI failure demonstrating the risk.
+
+**Verification performed:** full Release and Debug/ASan+UBSan builds (this sandbox's own GCC/Linux environment): 580 test cases, 59,407 assertions — unchanged from before this session's fixes, confirming both fixes are behavior-preserving, not behavior-changing — all green, zero sanitizer findings, `bench` unchanged at 38,378 nodes. `tune.cpp`/`tune_tests.cpp` compiled standalone with `-Wall -Wextra -Wpedantic` at `-O3`: zero warnings. Neither fix could be directly confirmed against the actual failing platform/toolchain in this sandbox (no MSVC toolchain available for Bug 1, no macOS runner available for Bug 2) — both fixes are judged correct by direct inspection (Bug 1 follows an already-proven-effective pattern from the identical prior fix; Bug 2's tolerance is many orders of magnitude looser than the observed discrepancy) but the next CI run is the actual confirmation for both, same honest caveat as the original MSVC fix one session earlier.
+
+**Next session starts:** unchanged from Session 106's own next-start note — Tier 0's two remaining non-code items (a materially larger self-play corpus, and an actual `nightwing_tune --psqt`-driven run followed by a real `nightwing_sprt`-gated match) are still what's next once this fix's own CI run confirms all 6 platforms green. If the next session begins with another CI log bundle, check it BEFORE assuming these two fixes actually resolved both platforms — this session's own fixes are reasoned-correct but not yet empirically confirmed against the real failing toolchains.
+
+---
+
 ### Session 106 — 2026-09-15 (3) — CLI follow-up to Tier 0 Steps 5-6: `--psqt` mode, `l2_lambda` exposed, and a real divergence bug found and fixed
 
 Session 105 verified and integrated an externally-supplied implementation of Tier 0 Steps 5-6 (L2 regularization, analytic PSQT gradient, `tune_psqt()`) into the library, but left a real gap: `tuner/tune_main.cpp` (the `nightwing_tune` CLI) had no way to invoke `tune_psqt()` at all, and no way to set `TuneConfig::l2_lambda` either — the library-level work was real and tested, but nothing outside `tests/tune_tests.cpp` could actually reach it. This session closed that gap.
