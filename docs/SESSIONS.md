@@ -4,6 +4,26 @@ Newest entry at top.
 
 ---
 
+### Session 108 — 2026-09-16 (2) — NPS/Raw Speed "Profile first" completed (`gprof`): `eval::evaluate()` confirmed as the dominant per-node cost; a `Position` cache-line-budget conflict surfaced for the next session to resolve
+
+No source files were modified this session — this was a measurement-only session, ROADMAP.md's own explicit prerequisite before any of the NPS/Raw Speed track's remaining rewrite items are attempted.
+
+**What was built:** a standalone, untracked `-pg`-instrumented Release build (`build_profile/`, LTO disabled) of the current `main` branch, profiled with `gprof` against `bench` plus two longer `go depth` UCI searches (~6.7M nodes, ~26s) chosen specifically because `bench` alone (38,378 nodes, ~100ms) is too short for meaningful `gprof` sampling. `bench`'s node count under this build matched the existing tracked baseline exactly (38,378), confirming the profiling build is behaviorally identical to the tracked source before trusting any of its profiling numbers.
+
+**Findings:** `eval::evaluate()` and its own `eval/*` term functions account for roughly 46% of total profiled self-time in aggregate, with `evaluate()` itself the single largest individual contributor (~14%, 13.9M calls) — confirmed, via the call graph, to be invoked from `negamax()`, `quiescence_impl()`, AND `order_moves()` on very nearly every node the search visits. This directly confirms `eval.cpp`'s own pre-existing comment describing full-recomputation-every-call as a deliberate, profiler-free trade-off, and confirms ROADMAP.md's own stated hypothesis that incremental evaluation is the single biggest available lever on the NPS/Raw Speed track specifically for this codebase, not just as a general classical-engine rule of thumb.
+
+**New conflict surfaced (not resolved this session):** `board.h`'s `Position` struct has an explicit `static_assert(sizeof(Position) <= 192, ...)` already at its ceiling with zero headroom; a material+PSQT accumulator's natural home (a `Score` field inside `Position`, mirroring `zobrist_hash`'s existing role) would breach it. Three options sketched, none chosen — see docs/DECISIONS.md, 2026-09-16 (2), for the full account and the next session's job of deciding among them.
+
+**Bugs fixed:** none — no source changed.
+
+**Decisions made:** tooling substitution (`gprof` in place of unavailable `perf`/`valgrind`), and the `Position` cache-line conflict noted above — both logged in docs/DECISIONS.md, 2026-09-16 (2).
+
+**Verification performed:** profiling build's `bench` node count (38,378) cross-checked against the existing tracked baseline — exact match. No `ctest` run this session (no tracked source touched).
+
+**Next session starts:** ROADMAP.md's NPS/Raw Speed track, "Incremental evaluation" item — but its OWN first step is resolving the `sizeof(Position)` cache-line-budget conflict logged in docs/DECISIONS.md, 2026-09-16 (2) (raise the static_assert ceiling with justification, thread the accumulator outside `Position` instead, or narrow its field width), before writing any accumulator code. Do not skip straight to implementation without that decision being made explicitly and logged.
+
+---
+
 ### Session 107 — 2026-09-16 — Two CI-discovered bugs from a person-supplied log bundle: a second MSVC parse failure, a fragile macOS floating-point test
 
 A person-supplied GitHub Actions log bundle (run 94909780687, covering the Session 106 CLI/`l2_lambda` commit) surfaced two real, platform-specific bugs — one on Windows, one on macOS — that this sandbox's own GCC/Linux-only testing throughout Sessions 105-106 could not have caught.

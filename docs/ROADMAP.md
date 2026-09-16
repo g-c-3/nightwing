@@ -949,15 +949,35 @@ Both matter and are pursued independently — closing the gap with stronger clas
 engines needs both, not one traded off against the other (docs/DECISIONS.md,
 2026-09-08 (5)).
 
-- [ ] **Profile first (do this before any of the items below):** run
-      `perf record`/`perf report` (or `valgrind --tool=callgrind`) on a
-      real search and confirm where the cycles actually go before
-      committing to any rewrite below. `eval::evaluate()`'s own existing
-      code comments already flag the from-scratch-every-node computation
-      below as a deliberate, PROFILER-FREE trade-off ("no profiled hot
-      path to justify the accumulator's extra bookkeeping yet") — the
-      right next step is measurement, not proceeding on assumption alone,
-      per this project's own already-stated instinct on the matter.
+- [x] **Profile first (do this before any of the items below):** DONE,
+      Session 108. Neither `perf` nor `valgrind` is available in this
+      sandbox (no `perf_event_paranoid` access, no `valgrind` package
+      installed) — `gprof` (`-pg` instrumentation) used instead, the
+      standard portable GCC/Clang fallback for function-level hot-path
+      attribution; see docs/DECISIONS.md, 2026-09-16 (2), for why this
+      substitution is judged equivalent for this item's purpose. `bench`
+      alone (38,378 nodes, ~100ms) proved too short for statistically
+      meaningful sampling, so the actual profiled workload was `bench`
+      plus two longer `go depth` searches on busier middlegame/Kiwipete-
+      style positions, ~6.7M nodes over ~26s. Result: `eval::evaluate()`
+      and its own `eval/*` term functions account for roughly 46% of
+      profiled self-time in aggregate, with `evaluate()` itself the
+      single largest individual contributor (~14%) — called from
+      `negamax()`, `order_moves()`, AND `quiescence_impl()` on very
+      nearly every node visited, confirming the from-scratch-every-node
+      pattern this item's own prior comment already flagged, not just
+      assumed. Also surfaced, as a direct consequence of this
+      confirmation: `board.h`'s `sizeof(Position) <= 192` static_assert
+      is already at its documented 3-cache-line ceiling with zero
+      headroom, and an incremental material+PSQT accumulator's most
+      natural home (a `Score` field inside `Position`, the same role
+      `zobrist_hash` already plays) would breach it outright — this is
+      now an explicit open sub-decision the item immediately below must
+      resolve FIRST, before any accumulator code is written, not an
+      implementation detail to discover mid-way. See docs/DECISIONS.md,
+      2026-09-16 (2), for the full flat-profile numbers, the call-graph
+      confirmation, and the three options sketched (not chosen) for the
+      cache-line conflict.
 - [ ] Incremental evaluation (material + PSQT as a running accumulator,
       updated with a small delta on `make_move`/`unmake_move`, instead
       of recomputed from zero on every call to `eval::evaluate()`) — if
