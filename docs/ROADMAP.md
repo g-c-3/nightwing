@@ -904,19 +904,41 @@ Priority Fixes section above).
           held fixed) — a deliberate SEPARATE function from `tune()`,
           not a generalized `tune<Weights>()`, since the two functions'
           gradient *source* differs fundamentally (analytic vs. finite-
-          difference), not just the `Weights` type. `tune_psqt()` is not
-          wired into any CLI tool yet. Still outstanding, by design, per
-          this step's own ROADMAP.md scope: a materially larger self-
-          play training corpus, and a real `nightwing_sprt`-gated match
-          before any `tune_psqt()`-produced weights are hand-
-          transcribed into `psqt.cpp`'s `constexpr` tables. See docs/
-          DECISIONS.md, this session's entry, for the independent
+          difference), not just the `Weights` type. Still outstanding,
+          by design, per this step's own ROADMAP.md scope: a materially
+          larger self-play training corpus, and a real `nightwing_sprt`-
+          gated match before any `tune_psqt()`-produced weights are
+          hand-transcribed into `psqt.cpp`'s `constexpr` tables. See
+          docs/DECISIONS.md, this session's entry, for the independent
           cross-check performed against the analytic gradient's
           correctness (agreement to ~1e-11 at a busier, multi-piece-type
           position, tighter than the ~8e-6 the original implementation's
           own single-cell cross-check reported) and the one real issue
           found and fixed (a GCC `-O3`-only `-Warray-bounds` false
           positive).
+    - [x] **CLI follow-up to Steps 5-6 (Session 106):** `tuner/tune_main.cpp`
+          (`nightwing_tune`) gained a `--psqt` mode running `tune_psqt()`
+          (output as 12 copy-pasteable 8x8 grids matching `psqt.cpp`'s
+          own literal formatting) and a new trailing `l2_lambda`
+          positional argument in both modes — `l2_lambda` (Step 5) had no
+          CLI exposure at all before this session. While hand-testing the
+          new CLI argument, found that `learning_rate`/`l2_lambda`
+          interact MULTIPLICATIVELY, not additively — a modest-looking
+          `l2_lambda=0.001` at material mode's own default
+          `learning_rate=20000.0` diverges every non-anchored parameter
+          GEOMETRICALLY (observed O(100) → O(10^19) in 5 iterations),
+          because the L2 term's own per-iteration multiplier
+          `(1 - 2*learning_rate*l2_lambda)` exceeds magnitude 1 — a
+          combination the original implementation's own L2 tests never
+          exercised (both only ran 1 iteration, which cannot reveal
+          multi-iteration geometric divergence). Fixed by adding
+          `l2_update_is_stable()` (`tune.h`) plus a startup warning in
+          `tune_main.cpp` (not a hard refusal) whenever a supplied
+          `learning_rate`/`l2_lambda` pair crosses that threshold, and
+          locked in with 3 new tests, including one confirming the
+          actual observed divergence against a real `tune()` call, not
+          just the closed-form formula in isolation. See docs/
+          DECISIONS.md, this session's entry, for the full account.
 
 ## NPS / Raw Speed (parallel track — not phase-gated, external review 2026-09-08)
 
