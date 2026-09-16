@@ -442,8 +442,46 @@ struct TuneConfig {
     /// pawn_eg) are excluded from the penalty regardless of this value —
     /// tune() never moves them, so penalizing their fixed magnitude
     /// would only distort the reported loss, not the actual descent.
+    ///
+    /// STABILITY WARNING, confirmed by direct testing (docs/DECISIONS.md,
+    /// this comment's own dated entry), not just derived on paper: this
+    /// field interacts multiplicatively with `learning_rate` above, NOT
+    /// additively — each iteration's own update from the L2 term alone
+    /// multiplies a parameter by `(1 - 2 * learning_rate * l2_lambda)`,
+    /// so once `2 * learning_rate * l2_lambda >= 1.0`, that multiplier's
+    /// own magnitude is >= 1, and every non-anchored parameter diverges
+    /// GEOMETRICALLY, iteration over iteration, regardless of how well
+    /// (or poorly) the MSE term's own gradient is behaving. Concretely,
+    /// at this field's own default `learning_rate` (20000.0), an
+    /// `l2_lambda` as small-looking as 0.001 is already 20x past that
+    /// threshold — confirmed to blow up material weights from O(100) to
+    /// O(10^19) within 5 iterations in direct testing. See
+    /// `l2_update_is_stable()` below, which every caller of `tune()`/
+    /// `tune_psqt()` supplying a non-default `l2_lambda` should check
+    /// before committing to a real run, and which `tune_main.cpp` (the
+    /// CLI) does check, printing a warning (not refusing to run — a
+    /// caller may have their own reasons, e.g. deliberately probing this
+    /// exact boundary) whenever it doesn't hold.
     double l2_lambda = 0.0;
 };
+
+/// Returns whether `learning_rate`/`l2_lambda` together keep the L2
+/// term's own per-iteration parameter update (`param -= learning_rate *
+/// 2 * l2_lambda * param`, i.e. `param *= (1 - 2*learning_rate*
+/// l2_lambda)`) from diverging geometrically — see `TuneConfig::
+/// l2_lambda`'s own doc comment above for the full derivation and a
+/// concrete example of exactly how badly it diverges once this doesn't
+/// hold. Always true when `l2_lambda == 0.0` (the multiplier is exactly
+/// 1, i.e. no change at all from this term), regardless of
+/// `learning_rate`. This checks ONLY the L2 term's own contribution in
+/// isolation — it says nothing about whether the MSE term's own
+/// (separately-estimated) gradient is well-scaled for a given
+/// `learning_rate`, which is a different, longer-standing tuning
+/// concern this function doesn't attempt to detect.
+[[nodiscard]] constexpr bool l2_update_is_stable(double learning_rate,
+                                                   double l2_lambda) noexcept {
+    return l2_lambda == 0.0 || (2.0 * learning_rate * l2_lambda) < 1.0;
+}
 
 /// One entry in TuneResult::history below — a single iteration's
 /// resulting loss, for plotting/logging a tuning run's own convergence
