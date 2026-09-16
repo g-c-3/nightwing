@@ -163,7 +163,7 @@ namespace {
 /// contribution" / "divide by N" as one small loop over 12 (field,
 /// gradient-field) pairs instead of 12 hand-repeated statements each.
 struct PsqtFieldPair {
-    std::array<double, 64> eval::PsqtWeights::* field;
+    detail::PsqtArrayMemberPtr field;
 };
 
 // Declaration order matches eval/psqt.cpp's own switch (Pawn, Knight,
@@ -185,8 +185,20 @@ inline constexpr std::array<PsqtFieldPair, 12> kPsqtFieldPairs = {{
 /// has one switch, not one per position. Returns {nullptr, nullptr} for
 /// PieceType::None (never actually reached — callers already skip
 /// Piece::None board squares before calling this).
-[[nodiscard]] std::pair<std::array<double, 64> eval::PsqtWeights::*,
-                        std::array<double, 64> eval::PsqtWeights::*>
+///
+/// Return type is `detail::PsqtArrayMemberPtr` (tune.h), not the
+/// pointer-to-member-array type written out inline here a second time —
+/// confirmed via GitHub Actions CI (Windows Debug/Release, run
+/// 94909780687) that writing it out inline, nested directly inside this
+/// std::pair<...>, hits the exact same MSVC parser limitation
+/// kPsqtFields' own introducing entry (docs/DECISIONS.md, 2026-09-15
+/// (4)) already found and fixed the same way, in a different file. Two
+/// independent occurrences of the identical MSVC failure mode, in two
+/// different declarations, is why this fix reuses that file's own
+/// existing named alias here rather than introducing a second, separate
+/// one purely local to this file — one alias, defined once, is less
+/// surface for a THIRD occurrence to slip past unnoticed.
+[[nodiscard]] std::pair<detail::PsqtArrayMemberPtr, detail::PsqtArrayMemberPtr>
 psqt_field_pair(board::PieceType type) noexcept {
     switch (type) {
         case board::PieceType::Pawn:
