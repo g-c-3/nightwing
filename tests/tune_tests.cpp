@@ -487,7 +487,87 @@ TEST_CASE("tune: a non-zero l2_lambda adds exactly the closed-form 2*lambda*valu
     REQUIRE(with_l2.weights.knight_eg != without_l2.weights.knight_eg);
 }
 
-// --- ROADMAP.md Tier 0 Step 6 -- analytic PSQT gradient + tune_psqt() ---
+// --- Session 106 -- l2_update_is_stable(), added after discovering the
+// L2 term's own multiplicative interaction with learning_rate could
+// silently diverge a real tuning run when exposed via the CLI ---
+
+TEST_CASE("l2_update_is_stable: always true when l2_lambda == 0.0, regardless of learning_rate",
+          "[tuner][tune]") {
+    REQUIRE(l2_update_is_stable(20000.0, 0.0));
+    REQUIRE(l2_update_is_stable(100.0, 0.0));
+    REQUIRE(l2_update_is_stable(1e9, 0.0));   // even a wildly large learning_rate
+    REQUIRE(l2_update_is_stable(-5.0, 0.0));  // even a nonsensical negative one
+}
+
+TEST_CASE("l2_update_is_stable: false exactly when 2*learning_rate*l2_lambda >= 1.0 -- the "
+          "material CLI default (learning_rate=20000.0) with a modest-looking l2_lambda=0.001 "
+          "is a real example that was NOT caught by this file's own pre-existing single-"
+          "iteration L2 gradient test above, since that test never iterates far enough to "
+          "observe divergence",
+          "[tuner][tune]") {
+    // Material default, l2_lambda=0.001: 2*20000*0.001 = 40 >= 1.0 -- unstable.
+    // (Directly reproduces what a real `nightwing_tune 5 20000 1.0 400 0.001`
+    // invocation was observed to do: loss went from 0.0066 to ~2e19 in 4
+    // iterations.)
+    REQUIRE_FALSE(l2_update_is_stable(20000.0, 0.001));
+
+    // Same learning_rate, a safely small l2_lambda (well under the
+    // 1/(2*20000) = 0.000025 threshold) -- stable.
+    REQUIRE(l2_update_is_stable(20000.0, 0.00001));
+
+    // PSQT's own CLI default (learning_rate=100.0): threshold is
+    // 1/(2*100) = 0.005. The pre-existing tune_psqt() L2 test above used
+    // 0.0001, safely under it (hence why that test never revealed this
+    // either) -- 0.01 is over it.
+    REQUIRE(l2_update_is_stable(100.0, 0.0001));
+    REQUIRE_FALSE(l2_update_is_stable(100.0, 0.01));
+
+    // Exactly at the boundary (2*learning_rate*l2_lambda == 1.0 exactly):
+    // the per-iteration multiplier's magnitude is exactly 1 (a parameter
+    // flips sign every iteration but never grows or shrinks) -- still
+    // classified unstable (the strict "< 1.0" check, not "<= "), since a
+    // parameter oscillating forever without converging is not a usable
+    // tuning outcome either, even though it technically never diverges.
+    REQUIRE_FALSE(l2_update_is_stable(100.0, 0.005));
+}
+
+TEST_CASE("tune: an l2_lambda past l2_update_is_stable()'s own threshold really does diverge "
+          "geometrically over several iterations -- confirms the stability function's "
+          "prediction against tune()'s actual behavior, not just the closed-form formula in "
+          "isolation",
+          "[tuner][tune]") {
+    init_all();
+    Position pos;
+    pos.side_to_move = Color::White;
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(4, 7), Piece::BlackKing);
+    pos.place_piece(make_square(1, 0), Piece::WhiteKnight);
+    const std::string fen = to_fen(pos);
+    std::vector<SelfPlayPosition> positions;
+    for (int i = 0; i < 8; ++i) {
+        positions.push_back(SelfPlayPosition{fen, 0.5});
+    }
+
+    TuneConfig config;
+    config.iterations = 5;
+    config.l2_lambda = 0.001; // past the default learning_rate's own threshold
+    REQUIRE_FALSE(l2_update_is_stable(config.learning_rate, config.l2_lambda));
+
+    const TuneResult result = tune(positions, default_material_weights(), config);
+
+    // knight_mg (non-anchored) must have blown up to a wildly larger
+    // magnitude than any sane piece value -- confirms this is a real,
+    // observable divergence in tune()'s actual output, not merely a
+    // property of the closed-form formula considered on paper.
+    REQUIRE(std::fabs(result.weights.knight_mg) > 1e6);
+
+    // pawn_mg (anchored) is NEVER touched by tune() regardless of
+    // l2_lambda or its own stability -- confirms the divergence is
+    // specific to parameters the descent actually moves, not a blanket
+    // corruption of every field.
+    REQUIRE(result.weights.pawn_mg == default_material_weights().pawn_mg);
+}
+
 
 TEST_CASE("compute_psqt_gradient: an empty position list returns an all-zero PsqtWeights, "
           "matching compute_loss()'s own 0.0-for-empty convention",
