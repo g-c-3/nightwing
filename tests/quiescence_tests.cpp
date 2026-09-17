@@ -174,6 +174,32 @@ TEST_CASE("quiescence: detects stalemate as a draw, not a loss", "[quiescence]")
     REQUIRE(score == kDrawScore);
 }
 
+TEST_CASE("quiescence: a quiet (non-capturing) promotion is still explored, not silently "
+          "stood-pat past (docs/DECISIONS.md has the full bug account)",
+          "[quiescence][promotion]") {
+    init_all();
+    // White pawn a7 about to promote; no black piece anywhere for it to
+    // capture, and the king (h4) is deliberately placed off the a8
+    // rank/file/diagonal so that a7a8=Q does NOT incidentally give
+    // check -- isolating this test to the promotion-specific fix rather
+    // than letting `include_checks`'s own pre-existing check-detection
+    // branch account for it by coincidence. `include_checks=false`
+    // (deliberately, unlike most other tests in this file) is exactly
+    // the condition that used to make this fail before `|| move.is_promotion()`
+    // was added to quiescence_impl()'s candidate-loop condition: before
+    // that fix, this move matched none of the loop's branches (not a
+    // capture, not in check, and `include_checks` is off here so the
+    // checking-move branch doesn't apply either), so `candidates` would
+    // have stayed empty and quiescence would have silently stood pat on
+    // the pre-promotion material -- nodes would have stayed at 1. With
+    // the fix, the promotion is now an unconditional candidate (same as
+    // a capture), so it's genuinely searched: nodes > 1.
+    Position pos = parse_fen("8/P7/8/8/7k/8/8/4K3 w - - 0 1");
+    std::uint64_t nodes = 0;
+    (void)quiescence(pos, -1'000'000, 1'000'000, 0, nodes, /*include_checks=*/false);
+    REQUIRE(nodes > 1);
+}
+
 TEST_CASE("quiescence: leaves the position completely unmodified", "[quiescence]") {
     init_all();
     Position pos = parse_fen("4k3/8/8/3p4/8/8/8/3QK3 w - - 0 1");

@@ -972,6 +972,51 @@ TEST_CASE("search_fixed_depth: back-rank mate in 1 is still found exactly when s
     REQUIRE(result.score == kMateScore - 1);
 }
 
+TEST_CASE("search_fixed_depth: castling's own subtree is searched at full depth, not "
+          "artificially reduced, so a tactical refutation one ply behind it is still found "
+          "(docs/DECISIONS.md has the full bug account and this exact position's verification)",
+          "[search][castling]") {
+    init_all();
+    // A real, material-balanced Italian Game tabiya (1.e4 e5 2.Nf3 Nc6
+    // 3.Bc4 Bc5 4.c3 Nf6 5.d3) -- not a hand-built edge case, an
+    // ordinary opening position with two genuine legal captures for
+    // White available (Nxe5, Bxf7+), both of which outrank O-O in
+    // order_moves()'s own scheme (kCaptureBase > kCastleScore,
+    // search/ordering.cpp), pushing castling to move-index 2 in the
+    // searched list -- enough to engage `move_is_quiet`'s futility/
+    // history-pruning exemption (index-independent) though not
+    // `eligible_for_lmr`'s own `i >= kLMRMinMoveIndex == 4` gate
+    // specifically.
+    //
+    // Empirically verified this session (docs/DECISIONS.md) via a
+    // scratch A/B build with search.cpp's `move_is_quiet`/
+    // `eligible_for_lmr`/post-cutoff-bookkeeping exclusions for
+    // move.is_castle() reverted (ordering.cpp's kCastleScore fix left
+    // in place, isolating this test to the search.cpp half of the
+    // fix): at depth 3, that reverted build returns `bestmove e1g1`
+    // (castling) with `score cp 601`, having pruned/reduced away
+    // Black's actual reply (3...O-O Bxf2!, forking/undermining White's
+    // own kingside once the rook has moved to f1) before ever seeing
+    // it. This fixed build searches that same reply at full depth and
+    // correctly prefers 3.d4 instead, with a realistic score -- not
+    // because castling is objectively wrong here (opening theory is
+    // not this test's concern), but because a build that CAN'T see
+    // Black's refutation to castling should never be able to rate
+    // castling higher than a build that can. This test pins that: the
+    // returned score must stay in a realistic range, not the inflated
+    // ~600cp a build blind to the refutation reports.
+    Position pos = parse_fen(
+        "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2PP1N2/PP3PPP/RNBQK2R w KQkq - 0 1");
+    const Move castle_k(make_square(4, 0), make_square(6, 0), MoveFlag::KingCastle); // e1g1
+    const SearchResult result = search_fixed_depth(pos, 3);
+    REQUIRE_FALSE(result.best_move.is_null());
+    REQUIRE(result.score < 300); // realistic range; the unfixed build reports 601
+    REQUIRE(result.best_move != castle_k); // this depth doesn't yet see enough of
+                                            // castling's OWN line to prefer it once
+                                            // it's no longer artificially inflated --
+                                            // see this test's own header comment
+}
+
 TEST_CASE("search_fixed_depth: completes and returns a legal move at a depth beyond "
           "kIIRMinDepth, even though IIR itself no longer engages here",
           "[search][iir]") {

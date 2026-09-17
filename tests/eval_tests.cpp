@@ -9,6 +9,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <utility>
+
 #include "board/attacks.h"
 #include "board/board.h"
 #include "board/fen.h"
@@ -127,6 +129,61 @@ TEST_CASE("psqt_value: White and Black get equal terms on mirrored squares", "[e
     const Score black_term = psqt_value(Piece::BlackPawn, e7);
     REQUIRE(white_term.mg == black_term.mg);
     REQUIRE(white_term.eg == black_term.eg);
+}
+
+TEST_CASE("psqt_value: EVERY piece type gets equal terms on mirrored squares, not just pawns "
+          "(docs/DECISIONS.md has the full bug account: the test just above only ever checked "
+          "Pawn, which is exactly why a real Knight/Queen mirroring bug went undetected)",
+          "[eval][psqt]") {
+    // Knight and Queen specifically had a real bug: psqt_value() used
+    // `sq` directly for Black instead of mirroring it (unlike every
+    // other piece type), and their own tables are NOT row-for-row
+    // rank-mirror-symmetric (unlike pawn/bishop/rook/king, where
+    // skipping the mirror happened to be invisible) -- so this loop
+    // covers all six piece types, not just the two that were actually
+    // broken, specifically so a future regression in ANY piece type's
+    // mirroring is caught here rather than requiring a fuzzer to find
+    // it again.
+    const std::pair<Piece, Piece> white_black_pairs[] = {
+        {Piece::WhitePawn, Piece::BlackPawn},     {Piece::WhiteKnight, Piece::BlackKnight},
+        {Piece::WhiteBishop, Piece::BlackBishop}, {Piece::WhiteRook, Piece::BlackRook},
+        {Piece::WhiteQueen, Piece::BlackQueen},   {Piece::WhiteKing, Piece::BlackKing},
+    };
+    for (const auto& [white_piece, black_piece] : white_black_pairs) {
+        for (int sq = 0; sq < 64; ++sq) {
+            const int mirror_sq = sq ^ 56; // flips rank, keeps file -- same operation
+                                            // psqt.cpp's own (file-local) mirror_vertical()
+                                            // performs, duplicated here rather than exposed,
+                                            // matching the test-file convention of not
+                                            // reaching into implementation internals
+            const Score white_term = psqt_value(white_piece, static_cast<Square>(sq));
+            const Score black_term = psqt_value(black_piece, static_cast<Square>(mirror_sq));
+            REQUIRE(white_term.mg == black_term.mg);
+            REQUIRE(white_term.eg == black_term.eg);
+        }
+    }
+}
+
+TEST_CASE("psqt_value: the PsqtWeights-supplied lookup path mirrors Knight/Queen too, not just "
+          "the constexpr-table path above -- the same bug was independently duplicated here "
+          "(docs/DECISIONS.md)",
+          "[eval][psqt][tuner]") {
+    const PsqtWeights psqt_weights = default_psqt_weights();
+    const std::pair<Piece, Piece> white_black_pairs[] = {
+        {Piece::WhiteKnight, Piece::BlackKnight},
+        {Piece::WhiteQueen, Piece::BlackQueen},
+    };
+    for (const auto& [white_piece, black_piece] : white_black_pairs) {
+        for (int sq = 0; sq < 64; ++sq) {
+            const int mirror_sq = sq ^ 56;
+            const Score white_term =
+                psqt_value(white_piece, static_cast<Square>(sq), &psqt_weights);
+            const Score black_term =
+                psqt_value(black_piece, static_cast<Square>(mirror_sq), &psqt_weights);
+            REQUIRE(white_term.mg == black_term.mg);
+            REQUIRE(white_term.eg == black_term.eg);
+        }
+    }
 }
 
 TEST_CASE("psqt_value: king centralization is mg-penalized and eg-rewarded", "[eval][psqt]") {

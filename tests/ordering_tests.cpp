@@ -507,6 +507,157 @@ TEST_CASE("order_moves: a non-capture promotion ranks above a plain quiet move",
     REQUIRE(moves[0] == promo);
 }
 
+// --- Castling (docs/DECISIONS.md has the full bug account: before
+// kCastleScore existed, O-O/O-O-O had no dedicated score at all and fell
+// through to the same 0-by-default HistoryTable path as any other
+// untried quiet move) ---
+
+TEST_CASE("order_moves: castling ranks below a capture", "[ordering][castling]") {
+    init_all();
+    // White king e1 with kingside castling rights (h1 rook), plus a
+    // black knight on e4 nominally capturable by the queen on e1 --
+    // same relaxed-legality convention as this file's other tests (see
+    // file header comment): the position doesn't need to be a real,
+    // reachable game state, only geometrically meaningful enough for
+    // piece_at() to reflect a genuine capture.
+    Position pos = parse_fen("4k3/8/8/8/4n3/8/8/4K2R w K - 0 1");
+    const Move castle_k(make_square(4, 0), make_square(6, 0), MoveFlag::KingCastle); // e1g1
+    const Move qxe4(make_square(4, 0), make_square(4, 3), MoveFlag::Capture);        // e1xe4
+
+    MoveList moves;
+    moves.push_back(castle_k);
+    moves.push_back(qxe4);
+
+    KillerTable killers;
+    HistoryTable history;
+    ContinuationHistoryTable cont_history;
+    CaptureHistoryTable capture_history;
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, capture_history, PieceType::None, 0);
+    REQUIRE(moves[0] == qxe4); // any capture still outranks castling
+}
+
+TEST_CASE("order_moves: castling ranks below a non-capture promotion", "[ordering][castling]") {
+    init_all();
+    Position pos = parse_fen("4k3/P7/8/8/8/8/8/4K2R w K - 0 1");
+    const Move castle_k(make_square(4, 0), make_square(6, 0), MoveFlag::KingCastle); // e1g1
+    const Move promo(make_square(0, 6), make_square(0, 7), MoveFlag::PromoQueen);    // a7a8=Q
+
+    MoveList moves;
+    moves.push_back(castle_k);
+    moves.push_back(promo);
+
+    KillerTable killers;
+    HistoryTable history;
+    ContinuationHistoryTable cont_history;
+    CaptureHistoryTable capture_history;
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, capture_history, PieceType::None, 0);
+    REQUIRE(moves[0] == promo);
+}
+
+TEST_CASE("order_moves: castling ranks below the TT move", "[ordering][castling]") {
+    init_all();
+    Position pos = parse_fen("4k3/8/8/8/8/8/8/4K2R w K - 0 1");
+    const Move castle_k(make_square(4, 0), make_square(6, 0), MoveFlag::KingCastle); // e1g1
+    const Move other(make_square(4, 0), make_square(3, 0), MoveFlag::Quiet);         // e1d1
+
+    MoveList moves;
+    moves.push_back(castle_k);
+    moves.push_back(other);
+
+    KillerTable killers;
+    HistoryTable history;
+    ContinuationHistoryTable cont_history;
+    CaptureHistoryTable capture_history;
+    // `other` is the TT move here -- an ordinary quiet move that would
+    // otherwise rank well below castling, promoted to first purely by
+    // being the TT move, confirming the TT-move check is still checked
+    // BEFORE the castling check in score_move() (search/ordering.cpp).
+    order_moves(moves, pos, other, killers, 0, history, cont_history, capture_history, PieceType::None, 0);
+    REQUIRE(moves[0] == other);
+    REQUIRE(moves[1] == castle_k);
+}
+
+TEST_CASE("order_moves: castling ranks above a killer move -- the actual bug this fixes", "[ordering][castling]") {
+    init_all();
+    // Before this fix, castling had no dedicated score and fell through
+    // to the same 0-history-by-default path as `other_quiet` below --
+    // meaning a recorded killer at this ply would have outranked it,
+    // exactly the ordering defect docs/DECISIONS.md's bug account
+    // describes (castling landing late enough in the move list to be
+    // late-move-reduced or pruned before its value was ever seen).
+    Position pos = parse_fen("4k3/8/8/8/8/8/8/4K2R w K - 0 1");
+    const Move castle_k(make_square(4, 0), make_square(6, 0), MoveFlag::KingCastle); // e1g1
+    const Move killer_move(make_square(4, 0), make_square(3, 0), MoveFlag::Quiet);   // e1d1
+
+    MoveList moves;
+    moves.push_back(killer_move);
+    moves.push_back(castle_k);
+
+    KillerTable killers;
+    killers.update(/*ply=*/0, killer_move);
+    HistoryTable history;
+    ContinuationHistoryTable cont_history;
+    CaptureHistoryTable capture_history;
+    order_moves(moves, pos, Move(), killers, /*ply=*/0, history, cont_history, capture_history,
+                PieceType::None, 0);
+    REQUIRE(moves[0] == castle_k);
+}
+
+TEST_CASE("order_moves: castling ranks above a history-scored quiet move, even a maximal one",
+          "[ordering][castling]") {
+    init_all();
+    Position pos = parse_fen("4k3/8/8/8/8/8/8/4K2R w K - 0 1");
+    const Move castle_k(make_square(4, 0), make_square(6, 0), MoveFlag::KingCastle); // e1g1
+    const Move history_move(make_square(4, 0), make_square(3, 0), MoveFlag::Quiet);  // e1d1
+
+    MoveList moves;
+    moves.push_back(history_move);
+    moves.push_back(castle_k);
+
+    KillerTable killers;
+    HistoryTable history;
+    ContinuationHistoryTable cont_history;
+    CaptureHistoryTable capture_history;
+    // Saturate history_move's score at HistoryTable::kHistoryMax -- still
+    // must not outrank castling, mirroring "history-scored quiets still
+    // rank below killers" above applied to the new castling band instead.
+    for (int i = 0; i < 20; ++i) {
+        history.update(Color::White, history_move, 50);
+    }
+    order_moves(moves, pos, Move(), killers, 0, history, cont_history, capture_history, PieceType::None, 0);
+    REQUIRE(moves[0] == castle_k);
+}
+
+TEST_CASE("order_moves: queenside castling scores identically to kingside castling", "[ordering][castling]") {
+    init_all();
+    Position pos = parse_fen("4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1");
+    const Move castle_k(make_square(4, 0), make_square(6, 0), MoveFlag::KingCastle);  // e1g1
+    const Move castle_q(make_square(4, 0), make_square(2, 0), MoveFlag::QueenCastle); // e1c1
+    // e1d1 -- not itself reachable in the same real position as
+    // castle_q, but order_moves() doesn't validate legality (file
+    // header comment), only scores whatever Move objects it's given.
+    const Move killer_move(make_square(4, 0), make_square(3, 0), MoveFlag::Quiet);
+
+    MoveList moves;
+    moves.push_back(killer_move);
+    moves.push_back(castle_q);
+    moves.push_back(castle_k);
+
+    KillerTable killers;
+    killers.update(/*ply=*/0, killer_move);
+    HistoryTable history;
+    ContinuationHistoryTable cont_history;
+    CaptureHistoryTable capture_history;
+    order_moves(moves, pos, Move(), killers, /*ply=*/0, history, cont_history, capture_history,
+                PieceType::None, 0);
+    // Both castling moves outrank the killer -- their relative order
+    // between each other is whatever move-generation order gave them
+    // (stable sort, equal kCastleScore), not asserted here.
+    REQUIRE(moves[0] != killer_move);
+    REQUIRE(moves[1] != killer_move);
+    REQUIRE(moves[2] == killer_move);
+}
+
 TEST_CASE("order_moves: a killer move ranks above an unrelated quiet move with no history", "[ordering]") {
     init_all();
     Position pos = parse_fen("4k3/8/8/8/8/8/8/4K3 w - - 0 1");
