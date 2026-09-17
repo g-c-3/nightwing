@@ -141,7 +141,8 @@ void order_captures_first(MoveList& moves, const Position& pos) noexcept {
 int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& nodes,
                      bool include_checks, int qs_ply, eval::PawnHashTable* pawn_tt,
                      eval::EvalCache* eval_cache, const eval::MaterialWeights* material_weights,
-                     SearchLimits* limits, int contempt_white_pov) noexcept {
+                     SearchLimits* limits, int contempt_white_pov,
+                     const eval::Score* mat_psqt) noexcept {
     // Mid-search time-budget interruption (search.h's SearchLimits):
     // fast-path bail if a shallower quiescence/negamax() frame already
     // noticed the deadline has passed, mirroring negamax()'s own
@@ -191,7 +192,8 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         // even if `us_in_check` (there's no better cheap alternative at
         // this depth, and this branch is not expected to be reached in
         // normal play).
-        const int white_relative = eval::evaluate(pos, pawn_tt, eval_cache, material_weights);
+        const int white_relative = eval::evaluate(pos, pawn_tt, eval_cache, material_weights,
+                                                    /*psqt_weights=*/nullptr, mat_psqt);
         return pos.side_to_move == Color::White ? white_relative : -white_relative;
     }
 
@@ -202,7 +204,8 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         // position is already good enough to beat beta with no more
         // moves played, or better than anything found so far, that's a
         // real, legitimate baseline score, not a placeholder.
-        const int white_relative = eval::evaluate(pos, pawn_tt, eval_cache, material_weights);
+        const int white_relative = eval::evaluate(pos, pawn_tt, eval_cache, material_weights,
+                                                    /*psqt_weights=*/nullptr, mat_psqt);
         best = pos.side_to_move == Color::White ? white_relative : -white_relative;
         if (best >= beta) {
             return best;
@@ -318,11 +321,28 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         }
 
         UndoInfo undo;
+        // `mover`/`moved_piece_type` are read BEFORE make_move() mutates
+        // `pos` -- eval::material_psqt_delta()'s own doc comment
+        // (eval/incremental.h) on why it needs the pre-move piece type
+        // (still a Pawn for a promotion). Only actually needed when
+        // `mat_psqt` is active; computing them unconditionally here is
+        // one cheap read either way, not worth branching around.
+        const Color mover = pos.side_to_move;
+        const board::PieceType moved_piece_type = board::piece_type_of(pos.piece_at(move.from()));
         board::make_move(pos, move, undo);
+
+        eval::Score child_mat_psqt_value{};
+        const eval::Score* child_mat_psqt = nullptr;
+        if (mat_psqt != nullptr) {
+            child_mat_psqt_value =
+                *mat_psqt + eval::material_psqt_delta(mover, moved_piece_type, move, undo);
+            child_mat_psqt = &child_mat_psqt_value;
+        }
+
         const int score = -quiescence_impl(pos, -beta, -alpha, ply + 1, nodes,
                                             /*include_checks=*/false, qs_ply + 1, pawn_tt,
                                             eval_cache, material_weights, limits,
-                                            contempt_white_pov);
+                                            contempt_white_pov, child_mat_psqt);
         board::unmake_move(pos, move, undo);
 
         if (limits != nullptr && limits->stopped) {
@@ -353,9 +373,9 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
 int quiescence(Position& pos, int alpha, int beta, int ply, std::uint64_t& nodes,
                bool include_checks, eval::PawnHashTable* pawn_tt, eval::EvalCache* eval_cache,
                const eval::MaterialWeights* material_weights, SearchLimits* limits,
-               int contempt_white_pov) noexcept {
+               int contempt_white_pov, const eval::Score* mat_psqt) noexcept {
     return quiescence_impl(pos, alpha, beta, ply, nodes, include_checks, /*qs_ply=*/0, pawn_tt,
-                            eval_cache, material_weights, limits, contempt_white_pov);
+                            eval_cache, material_weights, limits, contempt_white_pov, mat_psqt);
 }
 
 } // namespace nightwing::search

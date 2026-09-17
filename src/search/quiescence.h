@@ -20,6 +20,7 @@
 
 #include "board/board.h"
 #include "eval/eval_cache.h"
+#include "eval/incremental.h" // eval::Score -- mat_psqt's accelerated incremental-eval parameter
 #include "eval/pawn_tt.h"
 #include "eval/psqt.h"
 #include "search/search.h" // SearchLimits -- mid-search time-budget interruption
@@ -101,6 +102,19 @@ namespace nightwing::search {
 /// helper). Defaults to 0, meaning "no contempt adjustment": every
 /// existing call site is unaffected.
 ///
+/// `mat_psqt`, if non-null, is search.cpp's own incremental material+
+/// PSQT accumulator (eval/incremental.h's compute_material_psqt()/
+/// material_psqt_delta(), eval::evaluate()'s own `incremental_material_
+/// psqt` parameter has the full design rationale) -- asserted to
+/// already equal exactly what a from-scratch scan of `pos` right now
+/// would produce. Forwarded as-is to this function's own stand-pat and
+/// kMaxQuiescencePly-fallback eval::evaluate() calls, and threaded
+/// (via eval::material_psqt_delta(), recomputed fresh at each
+/// candidate move, exactly like negamax()'s own move loop) through
+/// this function's own recursion into itself. Defaults to nullptr,
+/// meaning "always run the 64-square scan" -- every existing call site
+/// (every test, bench, the tuner) is entirely unaffected.
+///
 /// Precondition: same as negamax()'s own -- init_masks()/
 /// init_magic_bitboards() have been called.
 [[nodiscard]] int quiescence(board::Position& pos, int alpha, int beta, int ply,
@@ -108,7 +122,7 @@ namespace nightwing::search {
                               eval::PawnHashTable* pawn_tt = nullptr,
                               eval::EvalCache* eval_cache = nullptr,
                               const eval::MaterialWeights* material_weights = nullptr,
-                              SearchLimits* limits = nullptr,
-                              int contempt_white_pov = 0) noexcept;
+                              SearchLimits* limits = nullptr, int contempt_white_pov = 0,
+                              const eval::Score* mat_psqt = nullptr) noexcept;
 
 } // namespace nightwing::search

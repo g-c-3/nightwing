@@ -1501,6 +1501,33 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
 /// RFP/razoring, a deliberately narrower scope than "every static-eval
 /// technique in this file" (this constant's own doc comment, above,
 /// has the full rationale for that scope choice).
+///
+/// `mat_psqt` (ROADMAP.md's NPS/Raw Speed track, "Incremental
+/// evaluation" item; docs/DECISIONS.md has the full design rationale,
+/// also repeated at eval/incremental.h's own header comment), if
+/// non-null, is this function's own running material+PSQT accumulator
+/// for `pos` right now -- asserted to already equal exactly what
+/// eval::compute_material_psqt() would produce from a fresh 64-square
+/// scan. search_root() seeds this once per search (computed from
+/// scratch, at the true root, before any move has been made) and every
+/// negamax() call below that receives a non-null `mat_psqt` maintains
+/// it for its own children via eval::material_psqt_delta() -- one
+/// arithmetic step per move instead of a fresh scan -- rather than
+/// letting eval::evaluate() recompute it. Deliberately left nullptr
+/// (i.e. NOT threaded) at every call site below that verifies a
+/// candidate under a hypothetical continuation rather than searching
+/// the main line proper -- null-move's own child call is the one
+/// exception (a null move changes no piece's square, so `mat_psqt`
+/// carries over completely unchanged there, not nullptr) -- ProbCut's
+/// and singular extension's own verification searches still fall back
+/// to a full eval::evaluate() rescan at whatever node they eventually
+/// reach a static eval, a deliberate, documented scope cut for this
+/// item rather than an oversight (those two paths are far colder than
+/// the main PVS move loop below, so wiring them through was judged not
+/// worth the additional diff surface and risk this session -- revisit
+/// if profiling ever shows otherwise). Defaults to nullptr, meaning
+/// "always run the 64-square scan" -- every existing call site (every
+/// test, bench, the tuner) is entirely unaffected.
 int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_t& nodes,
             TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
             ContinuationHistoryTable& cont_history, CaptureHistoryTable& capture_history,
@@ -1511,7 +1538,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             std::array<int, kMaxPly>& static_eval_history, eval::PawnHashTable& pawn_tt,
             eval::EvalCache& eval_cache, const eval::MaterialWeights* material_weights,
             bool allow_null_move = true, SearchLimits* limits = nullptr,
-            int contempt_white_pov = 0, int tie_break_variant = 0) {
+            int contempt_white_pov = 0, int tie_break_variant = 0,
+            const eval::Score* mat_psqt = nullptr) {
     // Mid-search time-budget interruption fast path (search.h's
     // SearchLimits doc comment has the full contract): checked before
     // anything else, including the depth <= 0 quiescence delegation
@@ -1535,7 +1563,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // quiescence.h's own doc comment on why quiescence search
         // participates in the same interruption scheme.
         return quiescence(pos, alpha, beta, ply, nodes, /*include_checks=*/true, &pawn_tt,
-                           &eval_cache, material_weights, limits, contempt_white_pov);
+                           &eval_cache, material_weights, limits, contempt_white_pov, mat_psqt);
     }
 
     // Periodic deadline/external-stop check (search.h's SearchLimits
@@ -1718,7 +1746,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // samples.
     int node_static_eval = kNoStaticEval;
     if (!in_check(pos)) {
-        const int white_relative = eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights);
+        const int white_relative =
+            eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights, /*psqt_weights=*/nullptr, mat_psqt);
         node_static_eval = (us == Color::White ? white_relative : -white_relative) +
                             correction_history.correction(us, pawn_key);
         if (ply < kMaxPly) {
@@ -1747,7 +1776,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // an ordinary static eval against a MATE score would be
     // meaningless, same reasoning as NMP's own beta guard just below).
     if (!in_check(pos) && depth <= kReverseFutilityMaxDepth && beta < kMateThreshold) {
-        const int white_relative = eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights);
+        const int white_relative =
+            eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights, /*psqt_weights=*/nullptr, mat_psqt);
         // Correction history folded in here too (ROADMAP.md's
         // "Correction history" item) -- this site's own static eval is
         // computed independently of node_static_eval above (this file's
@@ -1840,7 +1870,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                                          /*prev_was_capture=*/false, game_history, path,
                                          static_eval_history, pawn_tt, eval_cache, material_weights,
                                          /*allow_null_move=*/false, limits, contempt_white_pov,
-                                         tie_break_variant);
+                                         tie_break_variant, mat_psqt);
         board::unmake_null_move(pos, null_undo);
         // A probe interrupted mid-search (limits->stopped) returns a
         // meaningless, truncated-subtree score (SearchLimits' own doc
@@ -1865,7 +1895,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // terminal status) and only return early if THAT result
     // independently confirms the same conclusion.
     if (!in_check(pos) && depth <= kRazorMaxDepth && alpha < kMateThreshold) {
-        const int white_relative = eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights);
+        const int white_relative =
+            eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights, /*psqt_weights=*/nullptr, mat_psqt);
         // Correction history folded in here too (ROADMAP.md's
         // "Correction history" item) -- same independent-computation
         // rationale as RFP's own site above.
@@ -1874,7 +1905,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         if (razor_static_eval + kRazorMargins[static_cast<std::size_t>(depth)] <= alpha) {
             const int razor_score = quiescence(pos, alpha, beta, ply, nodes,
                                                 /*include_checks=*/true, &pawn_tt, &eval_cache,
-                                                material_weights, limits, contempt_white_pov);
+                                                material_weights, limits, contempt_white_pov,
+                                                mat_psqt);
             if ((limits == nullptr || !limits->stopped) && razor_score <= alpha) {
                 return razor_score;
             }
@@ -1965,7 +1997,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         !us_in_check && depth <= kFutilityMaxDepth && alpha < kMateThreshold;
     int static_eval = 0;
     if (futility_may_apply) {
-        const int white_relative = eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights);
+        const int white_relative =
+            eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights, /*psqt_weights=*/nullptr, mat_psqt);
         // Correction history folded in here too (ROADMAP.md's
         // "Correction history" item) -- same independent-computation
         // rationale as RFP's/razoring's own sites above.
@@ -2135,6 +2168,23 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         UndoInfo undo;
         board::make_move(pos, move, undo);
 
+        // Incremental material+PSQT accumulator for the child position
+        // (ROADMAP.md's NPS/Raw Speed track, "Incremental evaluation"
+        // item; eval/incremental.h has the full design rationale,
+        // repeated in this function's own `mat_psqt` doc comment
+        // above). Only actually computed when `mat_psqt` is active --
+        // `child_mat_psqt` stays nullptr, and every eval::evaluate()/
+        // quiescence() call the recursive negamax() below makes falls
+        // back to its own from-scratch scan, exactly as if this whole
+        // feature didn't exist, whenever it isn't.
+        eval::Score child_mat_psqt_value{};
+        const eval::Score* child_mat_psqt = nullptr;
+        if (mat_psqt != nullptr) {
+            child_mat_psqt_value =
+                *mat_psqt + eval::material_psqt_delta(us, moved_piece, move, undo);
+            child_mat_psqt = &child_mat_psqt_value;
+        }
+
         // Eager TT prefetch for the CHILD position (ROADMAP.md Phase 8,
         // "TT prefetch verified..." item; docs/DECISIONS.md has the full
         // account of what this replaces and why): issued here, right
@@ -2243,7 +2293,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                               history, cont_history, capture_history, correction_history, moved_piece,
                               move.to(), move.is_capture(), game_history, path, static_eval_history,
                               pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits,
-                              contempt_white_pov, tie_break_variant);
+                              contempt_white_pov, tie_break_variant, child_mat_psqt);
         } else {
             // Futility pruning (CPW "Futility Pruning", this function's
             // header comment): a node-level condition -- computed once,
@@ -2363,7 +2413,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                               correction_history, moved_piece, move.to(), move.is_capture(),
                               game_history, path, static_eval_history, pawn_tt, eval_cache,
                               material_weights, /*allow_null_move=*/true, limits, contempt_white_pov,
-                              tie_break_variant);
+                              tie_break_variant, child_mat_psqt);
             if ((limits == nullptr || !limits->stopped) && reduction > 0 && score > alpha) {
                 // The reduced probe suggested this move might actually
                 // be good -- not trustworthy on its own (a shallower
@@ -2386,14 +2436,16 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                                   killers, history, cont_history, capture_history, correction_history,
                                   moved_piece, move.to(), move.is_capture(), game_history, path,
                                   static_eval_history, pawn_tt, eval_cache, material_weights,
-                                  /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant);
+                                  /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant,
+                                  child_mat_psqt);
             }
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt,
                                   killers, history, cont_history, capture_history, correction_history,
                                   moved_piece, move.to(), move.is_capture(), game_history, path,
                                   static_eval_history, pawn_tt, eval_cache, material_weights,
-                                  /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant);
+                                  /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant,
+                                  child_mat_psqt);
             }
         }
 
@@ -2827,6 +2879,24 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
 
     int alpha = aspiration_alpha;
     const int beta = aspiration_beta;
+
+    // Incremental material+PSQT accumulator (ROADMAP.md's NPS/Raw
+    // Speed track, "Incremental evaluation" item; eval/incremental.h
+    // has the full design rationale, repeated in negamax()'s own
+    // `mat_psqt` doc comment). Computed from scratch exactly once here,
+    // at the true search root -- `pos` at this point was NOT reached
+    // via a make_move() this accumulator maintained, so there is
+    // nothing to derive it incrementally from -- and threaded via
+    // eval::material_psqt_delta() into every child from here down,
+    // through negamax()'s own `mat_psqt` parameter, avoiding a fresh
+    // 64-square scan at every one of those descendant nodes instead.
+    // `psqt_weights` is always nullptr here (matching every
+    // eval::evaluate() call this codebase makes today -- no caller
+    // anywhere threads a non-default PSQT weight vector yet); the
+    // incremental path is unaffected either way, since a non-null
+    // `psqt_weights` would disable it entirely regardless (eval.h's
+    // `incremental_material_psqt` doc comment).
+    const eval::Score root_mat_psqt = eval::compute_material_psqt(pos, material_weights, nullptr);
     Move best_move = moves[0];
 
     for (int i = 0; i < moves.size(); ++i) {
@@ -2836,8 +2906,18 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         // threaded into this move's own negamax() children below as
         // their `prev_piece`/`prev_to`.
         const board::PieceType moved_piece = board::piece_type_of(pos.piece_at(move.from()));
+        const Color root_mover = pos.side_to_move;
         UndoInfo undo;
         board::make_move(pos, move, undo);
+
+        // Same incremental-accumulator handoff as negamax()'s own move
+        // loop (that function's own comment on its `child_mat_psqt`
+        // local has the full rationale) -- one delta from
+        // `root_mat_psqt` instead of a fresh scan for this root move's
+        // own subtree.
+        const eval::Score child_mat_psqt_value =
+            root_mat_psqt + eval::material_psqt_delta(root_mover, moved_piece, move, undo);
+        const eval::Score* const child_mat_psqt = &child_mat_psqt_value;
 
         // Check extensions (negamax()'s own header comment) apply
         // symmetrically at the root: a root move that gives check
@@ -2901,19 +2981,21 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
                               history, cont_history, capture_history, correction_history, moved_piece,
                               move.to(), move.is_capture(), game_history, path, static_eval_history,
                               pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits,
-                              contempt_white_pov, tie_break_variant);
+                              contempt_white_pov, tie_break_variant, child_mat_psqt);
         } else {
             score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, 1, result.nodes, tt,
                               killers, history, cont_history, capture_history, correction_history,
                               moved_piece, move.to(), move.is_capture(), game_history, path,
                               static_eval_history, pawn_tt, eval_cache, material_weights,
-                              /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant);
+                              /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant,
+                              child_mat_psqt);
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt,
                                   killers, history, cont_history, capture_history, correction_history,
                                   moved_piece, move.to(), move.is_capture(), game_history, path,
                                   static_eval_history, pawn_tt, eval_cache, material_weights,
-                                  /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant);
+                                  /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant,
+                                  child_mat_psqt);
             }
         }
 
