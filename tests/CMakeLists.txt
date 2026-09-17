@@ -39,6 +39,7 @@ add_executable(nightwing_tests
     book_tests.cpp
     pawn_tt_tests.cpp
     eval_cache_tests.cpp
+    incremental_eval_tests.cpp
     ordering_tests.cpp
     quiescence_tests.cpp
     search_tests.cpp
