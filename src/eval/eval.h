@@ -63,6 +63,7 @@
 
 #include "board/board.h"
 #include "eval/eval_cache.h"
+#include "eval/incremental.h"
 #include "eval/pawn_tt.h"
 #include "eval/psqt.h"
 
@@ -87,13 +88,14 @@ namespace nightwing::eval {
 /// always answers "how good is this position for White," which keeps
 /// the function trivially testable independent of whose turn it is.
 ///
-/// Currently a full from-scratch recomputation each call (scans all 64
-/// squares) rather than an incremental accumulator updated on
-/// make/unmake — ARCHITECTURE.md's "eval on the fly" accumulator
-/// pattern is real but deliberately deferred; see DECISIONS.md for why
-/// this is the right tradeoff for Phase 2's "get something playing"
-/// goal specifically, and revisit once eval has enough terms and a
-/// profiled hot path to justify the accumulator's extra bookkeeping.
+/// Material+PSQT is a full from-scratch 64-square recomputation each
+/// call BY DEFAULT (eval/incremental.h's compute_material_psqt()) —
+/// see `incremental_material_psqt` below for the opt-in accelerated
+/// path search.cpp actually uses, once profiling (docs/DECISIONS.md,
+/// 2026-09-16 (2)) confirmed this scan was worth avoiding. Every other
+/// term (pawn structure aside, which has its own pawn_tt cache below)
+/// is still recomputed fresh on every call regardless — this parameter
+/// only ever short-circuits the material+PSQT portion specifically.
 ///
 /// `pawn_tt`, if non-null, is probed/stored around the pawn_structure_value()
 /// term specifically (eval/pawns.h) via board::compute_pawn_hash() (board/
@@ -160,6 +162,26 @@ namespace nightwing::eval {
 /// Defaults to nullptr, meaning "use the compiled-in constants" — every
 /// existing caller is entirely unaffected.
 ///
+/// `incremental_material_psqt`, if non-null, is used INSTEAD OF running
+/// compute_material_psqt()'s own 64-square scan (eval/incremental.h) —
+/// the caller is asserting that `*incremental_material_psqt` already
+/// equals exactly what that scan would compute for `pos` right now.
+/// search.cpp is the only real caller: it maintains this value across
+/// its own recursion by adding eval::material_psqt_delta() at each
+/// move rather than rescanning the board at every node (docs/
+/// DECISIONS.md, eval/incremental.h's introducing entry, has the full
+/// design rationale, including why this lives in search's own call
+/// frames rather than as a board::Position field). DELIBERATELY
+/// IGNORED WHENEVER EITHER `material_weights` OR `psqt_weights` IS SET,
+/// for the identical staleness reason `eval_cache` is already skipped
+/// under either (this doc comment's own paragraphs above): an
+/// accumulator maintained under the compiled-in constants says nothing
+/// about what a tuner's candidate weight vector would have produced,
+/// so honoring it there would silently return a wrong result computed
+/// under the wrong weights. Defaults to nullptr, meaning "always run
+/// the 64-square scan" — every existing caller (every test, the tuner,
+/// any UCI debug tooling) is entirely unaffected.
+///
 /// Precondition: board::init_masks() AND board::init_magic_bitboards()
 /// have both been called. Before eval/mobility.h's mobility_value() term
 /// existed, evaluate() only needed init_masks() (material/PSQT/pawn
@@ -172,6 +194,7 @@ namespace nightwing::eval {
 [[nodiscard]] int evaluate(const board::Position& pos, PawnHashTable* pawn_tt = nullptr,
                             EvalCache* eval_cache = nullptr,
                             const MaterialWeights* material_weights = nullptr,
-                            const PsqtWeights* psqt_weights = nullptr) noexcept;
+                            const PsqtWeights* psqt_weights = nullptr,
+                            const Score* incremental_material_psqt = nullptr) noexcept;
 
 } // namespace nightwing::eval

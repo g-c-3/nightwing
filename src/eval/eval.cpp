@@ -61,12 +61,8 @@ namespace nightwing::eval {
 }
 
 int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval_cache,
-             const MaterialWeights* material_weights, const PsqtWeights* psqt_weights) noexcept {
-    using board::Color;
-    using board::Piece;
-    using board::PieceType;
-    using board::Square;
-
+             const MaterialWeights* material_weights, const PsqtWeights* psqt_weights,
+             const Score* incremental_material_psqt) noexcept {
     // Eval cache (eval/eval_cache.h): probed first, keyed on the FULL
     // position (pos.zobrist_hash, already incrementally maintained --
     // no extra hash computation needed, unlike pawn_tt's own
@@ -94,25 +90,18 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
         }
     }
 
-    Score score;
-
-    for (Square sq = 0; sq < board::kNumSquares; ++sq) {
-        const Piece piece = pos.piece_at(sq);
-        if (piece == Piece::None) {
-            continue;
-        }
-
-        const PieceType type = board::piece_type_of(piece);
-        const Color color = board::color_of(piece);
-        const Score term =
-            material_value(type, material_weights) + psqt_value(piece, sq, psqt_weights);
-
-        if (color == Color::White) {
-            score += term;
-        } else {
-            score -= term;
-        }
-    }
+    // Material+PSQT (eval/incremental.h): the accelerated path is only
+    // trusted when neither weights-override parameter is set, for the
+    // identical staleness reason eval_cache is skipped under either
+    // (this function's own `incremental_material_psqt` doc comment,
+    // eval.h, has the full rationale) -- an accumulator maintained
+    // under the compiled-in constants says nothing about a tuner's
+    // candidate weight vector.
+    const bool incremental_usable = (incremental_material_psqt != nullptr) &&
+                                     (material_weights == nullptr) && (psqt_weights == nullptr);
+    const Score score = incremental_usable
+                             ? *incremental_material_psqt
+                             : compute_material_psqt(pos, material_weights, psqt_weights);
 
     Score pawn_score;
     if (pawn_tt == nullptr) {
