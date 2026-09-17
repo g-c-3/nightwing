@@ -1044,12 +1044,36 @@ engines needs both, not one traded off against the other (docs/DECISIONS.md,
       2026-09-16 (2), for the full flat-profile numbers, the call-graph
       confirmation, and the three options sketched (not chosen) for the
       cache-line conflict.
-- [ ] Incremental evaluation (material + PSQT as a running accumulator,
+- [x] Incremental evaluation (material + PSQT as a running accumulator,
       updated with a small delta on `make_move`/`unmake_move`, instead
-      of recomputed from zero on every call to `eval::evaluate()`) — if
-      profiling confirms this is in fact the dominant per-node cost (as
-      it typically is in classical engines), this is the single biggest
-      lever on this list.
+      of recomputed from zero on every call to `eval::evaluate()`) —
+      done, 2026-09-18. The `sizeof(Position)` sub-decision above
+      resolved as: the accumulator does NOT live on `board::Position`
+      (Option 1, breaching the 192-byte ceiling) — it's threaded
+      through `negamax()`'s/`quiescence()`'s own recursion instead (a
+      new `eval::Score` parameter, `mat_psqt`, mirroring how
+      `prev_piece`/`prev_to` are already threaded for continuation
+      history), computed once from scratch at the true search root
+      (`eval::compute_material_psqt()`) and updated by one arithmetic
+      step per move from there (`eval::material_psqt_delta()`, new file
+      `src/eval/incremental.h`/`.cpp`) rather than a fresh 64-square
+      scan at every node. `eval::evaluate()` gained a new optional
+      `incremental_material_psqt` parameter (defaults to nullptr,
+      identical behavior to before) rather than changing its existing
+      contract. ProbCut's and singular extension's own verification
+      searches were deliberately left unwired this session (still fall
+      back to a full rescan) — a documented scope cut, not an
+      oversight; see docs/DECISIONS.md, this session's entry, for the
+      full rationale on both the Position-vs-search-frames decision and
+      the scope cut. Verified against the real Catch2 suite (not just a
+      sandbox check): 604/604 tests green, including 14 new tests in
+      `tests/incremental_eval_tests.cpp` covering every delta case
+      (quiet move, capture, en passant, quiet promotion, capture-
+      promotion, underpromotion, all four castling sides, a multi-move
+      chain, and `evaluate()`'s own weights-override fallback). One
+      real bug was caught and fixed during this session's own
+      verification pass — see docs/SESSIONS.md, this entry, "bugs
+      fixed.
 - [ ] Lazy evaluation / early-exit on cheap terms: compute material +
       PSQT first inside `eval::evaluate()`; if that alone already clears
       alpha/beta by a comfortable margin, skip the remaining expensive
