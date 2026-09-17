@@ -940,6 +940,72 @@ Priority Fixes section above).
           just the closed-form formula in isolation. See docs/
           DECISIONS.md, this session's entry, for the full account.
 
+## Priority Fixes (external code review, 2026-09-17)
+
+Not phase-gated — inserted here, ahead of the NPS / Raw Speed track's own
+remaining items (Incremental evaluation was the next item in sequence per
+Session 108's own handoff), per this project's established "bugs before
+enhancements" convention (see both Priority Fixes sections above). Two
+independent audit documents were reviewed against `main` on 2026-09-16 (a
+bug-notes document covering search/ordering/eval correctness issues, and a
+roadmap-sequencing audit confirming Session 108's own "Incremental
+evaluation" handoff and its `sizeof(Position)` prerequisite) — every claim
+in both was independently verified against the actual repository (grep,
+standalone compiled probes, and a scratch A/B build comparison) before any
+fix was written, rather than trusted at face value. See docs/DECISIONS.md,
+2026-09-17, for the full verification account, including the one factual
+error found in the audit documents (a tuning-history claim, not a code
+bug — corrected there, no code implicated).
+
+- [x] Castling invisible to move ordering and pruning — `Move::is_castle()`
+      had zero callers anywhere in `src/`, so a castling move fell through
+      `search/ordering.cpp`'s `score_move()` to the same 0-by-default
+      quiet-move path as any other untried move, and `search/search.cpp`'s
+      `move_is_quiet`/`eligible_for_lmr` didn't exempt it from futility/
+      LMP/history pruning or LMR either — a legal, often strong `O-O`/
+      `O-O-O` could be late-move-reduced or pruned outright before its
+      value was ever seen. Fixed: `ordering.cpp` gives castling its own
+      fixed `kCastleScore` band (between promotions and killers);
+      `search.cpp` excludes `move.is_castle()` from `move_is_quiet`,
+      `eligible_for_lmr`, and the post-cutoff killer/history bookkeeping
+      (which would otherwise write dead entries castling's own fixed
+      score never reads). See docs/DECISIONS.md, 2026-09-17, including an
+      empirical A/B build comparison proving the search.cpp half of this
+      fix changes real search output (a genuine tactical line the
+      unfixed build missed by reducing castling's own subtree).
+- [x] Quiescence search dropped quiet (non-capturing) promotions —
+      `quiescence.cpp`'s candidate filter only kept check-evasions,
+      captures, and (at the first qsearch ply only) checking moves; a
+      quiet promotion matched none of these, so qsearch silently stood
+      pat on the pre-promotion material instead of ever trying it. Fixed:
+      added `|| move.is_promotion()` to the unconditional (not
+      `include_checks`-gated) branch, matching how captures are already
+      handled — a promotion is exactly as forcing/material-changing as a
+      capture, and is already a small, self-limiting candidate set. See
+      docs/DECISIONS.md, 2026-09-17.
+- [x] Knight and Queen PSQT tables never mirrored for Black —
+      `psqt_value()` mirrored the lookup square for Black
+      (`mirror_vertical(sq)`) for every piece type except Knight and
+      Queen, which read `sq` directly, under a comment claiming "no color
+      distinction" for those two tables. That's true of the STORAGE (one
+      table serves both colors, per Michniewski's convention) but false
+      of the LOOKUP: unlike pawn/bishop/rook/king, the knight and queen
+      tables are not row-for-row rank-mirror-symmetric, so skipping the
+      mirror was a real, silent, position-dependent scoring bug for
+      Black's knights and queens, duplicated independently in the
+      tuner's `PsqtWeights`-supplied lookup path. Fixed: both lookup
+      paths now apply `color == Color::White ? sq : mirror_vertical(sq)`
+      to Knight and Queen too, matching every other piece type. Confirmed
+      via a standalone compiled probe before the fix (a true mirror pair,
+      White knight on d2 versus Black knight on d7, scored `{0,0}` vs
+      `{5,5}` — should have matched) and a broad regression test now
+      sweeping all 6 piece types x 64 squares (added this session — the
+      pre-existing symmetry test only ever checked Pawn, which is exactly
+      why this went undetected). See docs/DECISIONS.md, 2026-09-17, for
+      the full account, including the resulting bench node-count shift
+      (38,378 -> 40,656 -- expected, since Black's knight/queen eval
+      values genuinely changed).
+
 ## NPS / Raw Speed (parallel track — not phase-gated, external review 2026-09-08)
 
 Distinct axis from the Priority Fixes section above: that section is entirely about

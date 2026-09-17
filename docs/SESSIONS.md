@@ -4,6 +4,27 @@ Newest entry at top.
 
 ---
 
+### Session 109 — 2026-09-17 — Three confirmed bugs fixed from an external audit: castling invisible to move ordering/pruning, quiescence dropping quiet promotions, PSQT Knight/Queen mirroring
+
+Two external audit documents were reviewed and independently verified against `main` before any fix was written (docs/DECISIONS.md, 2026-09-17, has the full verification account — grep, standalone compiled probes, and a scratch A/B build comparison). One factual error was found in the audit (a tuning-history claim about the large-scale tuning pipeline never having run for real, contradicted by Sessions 61/62's own account) and corrected in discussion; no code was implicated by that correction.
+
+**Bugs fixed (cause / fix / why correct — one sentence each, full accounts in docs/DECISIONS.md, 2026-09-17):**
+1. **Castling invisible to ordering/pruning.** Cause: `Move::is_castle()` had zero callers, so castling scored like an ordinary untried quiet move and was fully subject to futility/LMP/history pruning and LMR. Fix: `ordering.cpp` gives it a dedicated `kCastleScore` band; `search.cpp` excludes `move.is_castle()` from `move_is_quiet`/`eligible_for_lmr`/the post-cutoff history-bookkeeping block. Why correct: mirrors exactly how captures/promotions are already exempted from the same checks, for the same reason. Empirically confirmed via an A/B build: a real opening position, at depth 3, flips from `bestmove e1g1` (`score 601`, castling's own refutation reduced away) to `bestmove d3d4` (`score 161`, refutation now found) purely from this fix.
+2. **Quiescence dropped quiet promotions.** Cause: the qsearch candidate filter had no `is_promotion()` branch, so a non-capturing promotion matched nothing and was silently never tried. Fix: added `|| move.is_promotion()` to the unconditional (not `include_checks`-gated) branch, matching captures. Why correct: delta pruning and SEE pruning already leave promotions untouched once they're candidates, so this gives promotions the same genuine search captures already got.
+3. **Knight/Queen PSQT never mirrored for Black.** Cause: `psqt_value()` used the raw square for Black's knights/queens instead of `mirror_vertical(sq)`, unlike every other piece type, under a comment that conflated "shared table storage" with "no lookup mirroring needed" — real because those two tables (unlike pawn/bishop/rook/king) aren't rank-mirror-symmetric. Fix: both lookup paths (constexpr table and the tuner's `PsqtWeights` path) now mirror Knight/Queen too. Why correct: verified directly via a standalone probe against the real pre-fix object file (a true mirror pair scored `{0,0}` vs `{5,5}` before the fix, identical after).
+
+**Decisions made:** all logged in docs/DECISIONS.md, 2026-09-17 — the verification methodology, each fix's exact rationale, and the scope boundary (dead-code cleanup and the ranked missing-eval-features list were explicitly left out of this session).
+
+**Tests added:** 10 new test cases (580 -> 590 total, 59,407 -> 60,444 assertions, all green). `tests/ordering_tests.cpp`: 6 new castling-ordering tests (below captures/promotions/TT move, above killers and history, kingside/queenside score identically). `tests/search_tests.cpp`: 1 new end-to-end regression test pinning the A/B-verified score bound described above. `tests/quiescence_tests.cpp`: 1 new test confirming a quiet promotion is genuinely explored (`nodes > 1`) under the exact condition (`include_checks=false`) that previously produced `nodes == 1`. `tests/eval_tests.cpp`: 2 new tests sweeping all 6 piece types x 64 squares for both PSQT lookup paths — the pre-existing symmetry test in that file only ever checked Pawn, which is exactly why the Knight/Queen bug went undetected; these close that gap for every piece type going forward.
+
+**Verification performed:** full test suite green (590/60,444, this sandbox's own GCC/Linux build). `bench` moved from 38,378 to 40,656 total nodes, attributable entirely to Fix 3 (Black's knight/queen eval values genuinely changed) — not a regression, and not touched by Fixes 1-2 in `bench`'s own fixed shallow positions. No MSVC/macOS toolchain available in this sandbox, same standing limitation as every prior session — next CI run is the real cross-platform confirmation.
+
+**Files changed:** `src/search/ordering.h`, `src/search/ordering.cpp`, `src/search/search.cpp`, `src/search/quiescence.cpp`, `src/eval/psqt.cpp`, `tests/ordering_tests.cpp`, `tests/search_tests.cpp`, `tests/quiescence_tests.cpp`, `tests/eval_tests.cpp`.
+
+**Next session starts:** ROADMAP.md's NPS/Raw Speed track, "Incremental evaluation" item, exactly where Session 108 left off — its own first step is still resolving the `sizeof(Position)` cache-line-budget conflict logged in docs/DECISIONS.md, 2026-09-16 (2), before writing any accumulator code. This session's fixes are orthogonal to that item (no shared files touched) and don't change its scope.
+
+---
+
 ### Session 108 — 2026-09-16 (2) — NPS/Raw Speed "Profile first" completed (`gprof`): `eval::evaluate()` confirmed as the dominant per-node cost; a `Position` cache-line-budget conflict surfaced for the next session to resolve
 
 No source files were modified this session — this was a measurement-only session, ROADMAP.md's own explicit prerequisite before any of the NPS/Raw Speed track's remaining rewrite items are attempted.
