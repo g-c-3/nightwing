@@ -30,9 +30,20 @@
 //      probably-strong moves first" logic applies -- a from-scratch
 //      extension of the general move-ordering idea, not a separate
 //      named technique)
-//   4. Killer moves: up to 2 quiet moves per ply that caused a beta
+//   4. Castling (kCastleScore below, ordering.cpp): a flat, dedicated
+//      band, added specifically because it was previously MISSING --
+//      castling used to fall all the way through to band 6 below (an
+//      ordinary untried quiet move, starting at plain-history score 0),
+//      which combined with search.cpp not exempting it from LMR/LMP/
+//      futility/history pruning either (also fixed alongside this) meant
+//      a legal, often objectively-strong castling move could be late-
+//      move-reduced or pruned outright before its king-safety/rook-
+//      activation value was ever revealed. See docs/DECISIONS.md for
+//      the full bug account and kCastleScore's own comment
+//      (ordering.cpp) for why this specific band placement.
+//   5. Killer moves: up to 2 quiet moves per ply that caused a beta
 //      cutoff in a SIBLING node at the same ply (CPW "Killer Heuristic")
-//   5. Remaining quiet moves, scored by the history heuristic (CPW
+//   6. Remaining quiet moves, scored by the history heuristic (CPW
 //      "History Heuristic") PLUS continuation history (CPW
 //      "Continuation History", the 1-ply "counter-move history" case of
 //      Stockfish's own generalized scheme) -- the plain history table's
@@ -44,7 +55,7 @@
 //      responsible for threading the "immediately preceding move"
 //      context down through each level of recursion; ordering.cpp
 //      itself has no notion of search history beyond what's passed in.
-//   6. Everything else (untried quiets with no history), left in
+//   7. Everything else (untried quiets with no history), left in
 //      move-generation order (std::stable_sort preserves this as the
 //      tiebreak for equal-scored moves)
 //

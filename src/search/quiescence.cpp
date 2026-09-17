@@ -222,7 +222,25 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
     MoveList candidates;
     for (int i = 0; i < legal_moves.size(); ++i) {
         const Move move = legal_moves[i];
-        if (us_in_check || move.is_capture()) {
+        // Captures AND promotions are always candidates, regardless of
+        // `include_checks` -- both are forcing, material-changing moves
+        // (docs/DECISIONS.md has the full bug account for the promotion
+        // half of this condition). Before `move.is_promotion()` was
+        // added here, a QUIET (non-capturing) promotion -- a pawn push
+        // to the back rank that neither captures nor gives check --
+        // matched none of this loop's branches once full-depth search
+        // handed off to quiescence, so it was silently never tried:
+        // qsearch would stand-pat on the pre-promotion material instead.
+        // Capture-promotions were never affected (move.is_capture() is
+        // already true for those, independent of this addition).
+        // `include_checks` still gates ONLY plain checking quiets below
+        // -- that flag exists to bound branching for a genuinely
+        // unbounded category (any quiet move that happens to give
+        // check), not for promotions, which are already a small, self-
+        // limiting set (at most 4 non-capturing promotion moves exist in
+        // any position -- one per promotable pawn, times up to... in
+        // practice far fewer).
+        if (us_in_check || move.is_capture() || move.is_promotion()) {
             candidates.push_back(move);
         } else if (include_checks && gives_check(pos, move)) {
             candidates.push_back(move);

@@ -39,6 +39,29 @@ constexpr int kCaptureBase = 1'000'000;
 /// (320..900 given current material values).
 constexpr int kPromotionBase = 900'000;
 
+/// Castling: its own fixed band, above both killer slots but below
+/// promotions/captures/the TT move (this file's header comment,
+/// priority 4). Before this constant existed, `O-O`/`O-O-O` had no
+/// dedicated score at all -- `score_move()` fell through every earlier
+/// branch (not a capture, not a promotion) and landed on the same
+/// plain-history-plus-continuation-history path as any other untried
+/// quiet move, which starts at 0 with zero accumulated history early in
+/// a game. Combined with `search.cpp`'s `move_is_quiet`/`eligible_for_lmr`
+/// checks not exempting castling either (both fixed alongside this
+/// constant -- see docs/DECISIONS.md), a legal, frequently strong
+/// castling move could land late in the ordered move list and then be
+/// late-move-reduced or pruned outright before its king-safety/rook-
+/// activation value was ever revealed to search. Comfortably clear of
+/// both neighboring bands with the exact same generous-headroom
+/// reasoning as every other constant here: `kKiller1Score` (800,000) is
+/// its own fixed value with no variable component, and `kPromotionBase`
+/// (900,000) is the nearest value below it that a promotion's own score
+/// could reach downward (a promotion's own added material-value term is
+/// always positive, so 900,000 is promotion's own achievable floor) --
+/// 850,000 sits exactly at the midpoint of that 100,000-point gap, with
+/// no variable term of its own to ever drift out of it.
+constexpr int kCastleScore = 850'000;
+
 constexpr int kKiller1Score = 800'000;
 constexpr int kKiller2Score = 799'000;
 
@@ -89,6 +112,16 @@ namespace {
     }
     if (move.is_promotion()) {
         return kPromotionBase + eval::material_value(move.promotion_piece_type()).mg;
+    }
+    if (move.is_castle()) {
+        // See kCastleScore's own comment above for the bug this fixes
+        // and why this exact value/band was chosen. A flat score, not a
+        // formula -- unlike captures/promotions there's no natural
+        // per-move variable to scale it by (both kingside and queenside
+        // castling get the same king-safety/rook-activation value in
+        // this scheme), matching how killers below are also flat,
+        // fixed-per-slot scores rather than formula-derived ones.
+        return kCastleScore;
     }
     if (move == killers.get(ply, 0)) {
         return kKiller1Score;

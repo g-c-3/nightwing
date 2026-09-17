@@ -2032,7 +2032,19 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     int capture_searched_count = 0;
     for (int i = 0; i < moves.size(); ++i) {
         const Move move = moves[i];
-        const bool move_is_quiet = !move.is_capture() && !move.is_promotion();
+        // Castling excluded alongside captures/promotions (docs/
+        // DECISIONS.md has the full bug account): before this exclusion
+        // existed, castling was treated as an ordinary quiet move by
+        // every check below that gates on `move_is_quiet` (futility
+        // pruning, late move pruning, history pruning), each of which
+        // can skip a move outright at zero search cost specifically
+        // BECAUSE quiet moves are assumed to be the safest category to
+        // prune -- a castling move's real value (king safety, rook
+        // activation) isn't reflected in a shallow static margin or a
+        // move-count/history heuristic tuned for ordinary quiet moves,
+        // so it doesn't belong in this exemption-free category any more
+        // than a capture or promotion does.
+        const bool move_is_quiet = !move.is_capture() && !move.is_promotion() && !move.is_castle();
         // The piece making this move, read BEFORE make_move() below
         // vacates its from-square -- threaded into every recursive
         // negamax() call as that child's own `prev_piece`/`prev_to` (see
@@ -2314,7 +2326,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // above for the exact thresholds.
             const bool eligible_for_lmr = !us_in_check && depth >= kLMRMinDepth &&
                                            i >= kLMRMinMoveIndex && !move.is_capture() &&
-                                           !move.is_promotion() && !move_gives_check;
+                                           !move.is_promotion() && !move.is_castle() &&
+                                           !move_gives_check;
             // lmr_reduction()'s own continuous-formula result gets an
             // "improving" adjustment -- SUBTRACTED (never added) when
             // improving, clamped to never go below 0, leaving the
@@ -2452,8 +2465,16 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // this as an open item, since promotions are already rare
             // enough, and already well-ordered enough by promoted-piece
             // value alone, that CPW itself has no dedicated "promotion
-            // history" article to draw from.
-            if (!move.is_capture() && !move.is_promotion()) {
+            // history" article to draw from. Castling is excluded here
+            // for the same reason: `score_move()` (search/ordering.cpp)
+            // gives it a flat, dedicated `kCastleScore` band that never
+            // consults `killers`/`history`/`cont_history` at all, so
+            // recording a bonus into those tables for a cutoff-causing
+            // castle move would be dead data, never read back by
+            // anything -- matching `move_is_quiet`'s own exclusion of
+            // castling above (this function's own comment there has the
+            // full account).
+            if (!move.is_capture() && !move.is_promotion() && !move.is_castle()) {
                 killers.update(ply, move);
                 history.update(us, move, depth);
                 // No-op if prev_piece is board::PieceType::None (no real
