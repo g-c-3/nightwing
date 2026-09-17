@@ -32,6 +32,7 @@ add_library(nightwing_lib STATIC
     eval/fortress.cpp
     eval/basic_mates.cpp
     eval/eval_cache.cpp
+    eval/incremental.cpp
     eval/eval.cpp
     search/ordering.cpp
     search/quiescence.cpp
