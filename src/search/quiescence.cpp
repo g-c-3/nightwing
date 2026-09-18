@@ -177,7 +177,33 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
     const bool us_in_check = in_check(pos);
 
     MoveList legal_moves;
-    board::generate_legal_moves(pos, legal_moves);
+    if (us_in_check || include_checks) {
+        // Full generation needed here: in check, EVERY legal move (not
+        // just captures) is a candidate evasion below, not only
+        // captures/promotions; `include_checks` additionally needs
+        // quiets on hand to scan for checking moves in the candidates
+        // loop below -- see this function's own header comment on
+        // `include_checks`'s scope (only ever true at the very first
+        // quiescence ply).
+        board::generate_legal_moves(pos, legal_moves, board::GenType::All);
+    } else {
+        // Lazy generation (ROADMAP.md's "Staged / lazy move generation,"
+        // Step 2a): with `us_in_check` and `include_checks` both false,
+        // the candidates loop below can only ever admit a capture or a
+        // promotion (its other two conditions can't fire), so quiet
+        // moves are never actually needed -- UNLESS this position turns
+        // out to have no captures/promotions at all, in which case
+        // `legal_moves` alone can't distinguish "genuinely terminal
+        // (stalemate)" from "merely quiet (legal moves exist, just none
+        // of them a capture)," and the two return very different scores
+        // just below (a draw score vs. the stand-pat eval) -- so quiets
+        // are generated, but ONLY as a fallback for that one case, not
+        // on every node the way GenType::All would.
+        board::generate_legal_moves(pos, legal_moves, board::GenType::Captures);
+        if (legal_moves.empty()) {
+            board::generate_legal_moves(pos, legal_moves, board::GenType::Quiets);
+        }
+    }
 
     if (legal_moves.empty()) {
         // Genuinely terminal (checkmate/stalemate), not just "no noisy
