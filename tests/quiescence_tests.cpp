@@ -16,6 +16,8 @@
 #include "board/masks.h"
 #include "board/zobrist.h"
 #include "eval/eval.h"
+#include "eval/incremental.h" // compute_material_psqt() -- lazy-eval test's independently-derived expectation
+#include "eval/score.h" // taper() -- lazy-eval test's independently-derived expectation
 #include "search/quiescence.h"
 #include "search/search.h"
 
@@ -207,4 +209,31 @@ TEST_CASE("quiescence: leaves the position completely unmodified", "[quiescence]
     std::uint64_t nodes = 0;
     (void)quiescence(pos, -1'000'000, 1'000'000, 0, nodes, true);
     REQUIRE(pos.zobrist_hash == hash_before);
+}
+
+TEST_CASE("quiescence: stand-pat's lazy-eval window (ROADMAP.md's NPS/Raw Speed track, \"Lazy "
+          "evaluation / early-exit on cheap terms\" item) correctly fails high using only "
+          "material+PSQT when the position is overwhelmingly good regardless of the remaining, "
+          "unevaluated terms",
+          "[quiescence][lazy_eval]") {
+    init_all();
+    // White is up a full queen on a busy, asymmetric board -- material+
+    // PSQT alone clears a narrow beta well below a queen's own value, by
+    // far more than eval::evaluate()'s own lazy-eval margin (eval.cpp),
+    // regardless of whatever mobility/king safety/pawn structure/etc.
+    // would otherwise contribute.
+    Position pos = parse_fen("r1bqkbnr/pp1ppppp/2n5/2p5/4P3/5N2/PPPPQPPP/RNBQKB1R w KQkq - 2 3");
+    std::uint64_t nodes = 0;
+    const int beta = 100;
+    const int score = quiescence(pos, -1'000'000, beta, 0, nodes, /*include_checks=*/true);
+
+    // Independently derived expectation -- the exact same material+
+    // PSQT-only tapered value eval_tests.cpp's own dedicated lazy-eval
+    // unit tests confirm evaluate()'s early-exit path returns, computed
+    // here from scratch rather than trusted from that other file.
+    const int phase = compute_phase(pos);
+    const int material_psqt_only = taper(compute_material_psqt(pos), phase);
+    REQUIRE(score == material_psqt_only);
+    REQUIRE(score >= beta); // the fail-high the stand-pat check itself relies on
+    REQUIRE(nodes == 1); // stand-pat alone resolved this node -- no further search needed
 }

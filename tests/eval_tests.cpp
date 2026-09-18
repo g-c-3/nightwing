@@ -557,4 +557,82 @@ TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a Psq
     REQUIRE(cached == 12345); // untouched, not overwritten with a fresh value either
 }
 
+TEST_CASE("evaluate: a lazy window wide enough to contain any plausible score never triggers "
+          "the early-exit path -- byte-identical to the non-lazy result",
+          "[eval][lazy_eval]") {
+    init_all();
+    // A busy, non-symmetric middlegame position (mobility/king safety/
+    // pawn structure/threats/space all genuinely nonzero) -- exactly the
+    // kind of position where an early-exit bug would show up as a
+    // silently different result, unlike the bare-kings/simple positions
+    // this file's other tests mostly use.
+    Position pos = parse_fen("r1bqkbnr/pp1ppppp/2n5/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3");
+
+    const int no_lazy = evaluate(pos);
+    const int lazy_alpha_white = -100'000;
+    const int lazy_beta_white = 100'000;
+    const int with_wide_lazy_window =
+        evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, &lazy_alpha_white,
+                 &lazy_beta_white);
+    REQUIRE(with_wide_lazy_window == no_lazy);
+}
+
+TEST_CASE("evaluate: a lazy window the cheap material+PSQT score clears by more than the "
+          "lazy-eval margin returns early, before the expensive terms are ever computed",
+          "[eval][lazy_eval]") {
+    init_all();
+    // White is up a full queen on an otherwise busy, asymmetric board --
+    // material+PSQT alone is already wildly outside a narrow window
+    // centered on 0, by far more than kLazyEvalMargin, regardless of
+    // whatever mobility/king safety/pawn structure/etc. contribute on
+    // top of it.
+    Position pos = parse_fen("r1bqkbnr/pp1ppppp/2n5/2p5/4P3/5N2/PPPPQPPP/RNBQKB1R w KQkq - 2 3");
+
+    const int no_lazy = evaluate(pos);
+    // A hand-computed "material+PSQT only" value, independent of
+    // evaluate()'s own internals, to confirm the early-exit path
+    // genuinely returns exactly that (not merely "some smaller value") --
+    // mirroring how the PsqtWeights/MaterialWeights tests above
+    // independently derive their own expected values rather than
+    // trusting evaluate()'s own computation of them.
+    const int phase = compute_phase(pos);
+    const int material_psqt_only = taper(compute_material_psqt(pos), phase);
+
+    const int lazy_alpha_white = 0;
+    const int lazy_beta_white = 0;
+    const int with_tight_lazy_window =
+        evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, &lazy_alpha_white,
+                 &lazy_beta_white);
+
+    REQUIRE(with_tight_lazy_window == material_psqt_only);
+    // And the whole point of this position: the early-exit value is
+    // genuinely DIFFERENT from the full computation (mobility/king
+    // safety/pawn structure/etc. are not all exactly zero here) --
+    // confirms this test is actually exercising the early-exit path's
+    // real trade-off, not a position where skipping the other terms
+    // happens to be a no-op anyway.
+    REQUIRE(with_tight_lazy_window != no_lazy);
+}
+
+TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a lazy window is "
+          "supplied, even if a real EvalCache pointer is also passed -- the lazy-eval "
+          "counterpart to the MaterialWeights/PsqtWeights staleness tests above",
+          "[eval][eval_cache][lazy_eval]") {
+    init_all();
+    Position pos = start_position();
+
+    EvalCache cache(2048);
+    cache.store(pos.zobrist_hash, 12345); // same poisoning technique as the tests above
+
+    const int lazy_alpha_white = 0;
+    const int lazy_beta_white = 0;
+    const int result = evaluate(pos, nullptr, &cache, nullptr, nullptr, nullptr,
+                                 &lazy_alpha_white, &lazy_beta_white);
+    REQUIRE(result != 12345);
+
+    const auto [hit, cached] = cache.probe(pos.zobrist_hash);
+    REQUIRE(hit);
+    REQUIRE(cached == 12345); // untouched, not overwritten with a fresh value either
+}
+
 
