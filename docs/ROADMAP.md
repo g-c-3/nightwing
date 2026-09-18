@@ -1185,34 +1185,85 @@ engines needs both, not one traded off against the other (docs/DECISIONS.md,
           exactly 37,287 total nodes, unchanged from Step 1 and from
           Session 111. Full suite green (615/615) under both Release and
           Debug/ASan+UBSan.
-    - [ ] Step 2b — a real `MovePicker` iterator type (`search/`, new
-          file) for `search.cpp`'s `negamax()` specifically (`ordering.h`'s
-          existing full-list `order_moves()` stays as-is for now,
-          unlike quiescence.cpp which no longer needs it changed either
-          — Step 2a's fix was the movegen call site, not the ordering
-          call site). Still needs the design pass Step 2's original text
-          flagged: how a TT-move or killer-move probe (either may name a
-          quiet move) is resolved correctly before a quiet-move
-          generation pass has actually run. A workable shape sketched at
-          the end of Session 112: generate `GenType::Captures` first; if
-          `tt_move` is found there, proceed with captures alone until
-          either a cutoff or captures are exhausted; if `tt_move` is
-          non-null but NOT found among captures, generate quiets
-          immediately (can't yet tell a stale/foreign TT entry from a
-          genuine quiet move without checking); if there's no `tt_move`
-          at this node at all, quiets are still needed once captures are
-          exhausted without a cutoff (killers are always plain quiet
-          moves per `search.cpp`'s own `killers.update()` call site,
-          confirmed Session 112 — never need checking against captures).
-          Not yet implemented — this sketch is a starting point for
-          whoever picks Step 2b up, not a final design.
-    - [ ] Step 3 — perft/bench re-verification once Step 2b lands: this
-          IS a real search-behavior change for negamax specifically
-          (node order, not just node count, may shift; a genuine
-          node-count regression would need ARCHITECTURE.md's
-          Benchmarking Discipline justification) — unlike Step 2a above,
-          which was provably behavior-preserving for quiescence and
-          didn't need this.
+    - [x] **Step 2b — lazy captures-first generation in `negamax()`'s
+          own move loop (Session 112 continued):** no separate
+          `MovePicker` class in the end (`ordering.h`'s existing
+          full-list `order_moves()` is reused as-is, called once on
+          whatever `moves` currently holds at each of the points below,
+          rather than replaced) — an in-function `ensure_quiets()`
+          lambda, generating `GenType::Quiets` and appending the result
+          (freshly `order_moves()`-sorted on its own) to the
+          already-`GenType::Captures`-generated `moves` list, fires at
+          exactly 4 points, each one resolving a real correctness need
+          that quiets-only-on-demand introduces, not an arbitrary
+          choice: (1) captures come back empty -- can't yet tell a
+          genuinely terminal position from a merely-quiet one, same
+          shape as Step 2a's quiescence fallback; (2) `tt_move` is
+          non-null but not found among the captures -- might be a
+          genuine quiet best move from a shallower iterative-deepening
+          pass that `order_moves()` needs to place first, might be a
+          stale/foreign TT entry, and there's no way to tell without
+          generating quiets to check; (3) Singular Extensions' own
+          alternative-move scan (`search.cpp`'s existing
+          singular-extension block) needs every legal move, not just
+          captures, whenever it triggers; (4) the main move loop itself
+          runs out of currently-generated moves without a cutoff having
+          fired, meaning the search must legitimately continue further
+          than what's been generated so far.
+    - **Important finding, not a bug (full account in docs/DECISIONS.md,
+          this session's Step 2b entry):** unlike Step 1 and Step 2a,
+          Step 2b is NOT bench-parity-preserving, and this was expected
+          (see this item's own original Step 3 text below) but is worth
+          stating precisely now that it's been observed directly:
+          `history`/`cont_history`/`capture_history` (search/ordering.h)
+          are global, shared across the whole search tree, and get
+          mutated by recursive search of whichever captures were tried
+          BEFORE trigger (4) above ever fires — so quiets generated and
+          scored via `order_moves()` partway through a node's own move
+          loop can land in a genuinely different RELATIVE order among
+          themselves than they would have under the old always-eager
+          `GenType::All` scheme, which scored every move (captures and
+          quiets alike) against the history-table state as it stood at
+          the very start of the node, before anything at that node had
+          been searched yet. This is the same trade-off real engines'
+          own staged `MovePicker` designs (CPW's own "Move Ordering"
+          article) accept as standard, not a defect specific to this
+          implementation — pruning heuristics (LMR/LMP/history pruning)
+          are inherently order-sensitive, so a different-but-still-
+          legitimate ordering can shift the reported score/node count at
+          a FIXED search depth even though the underlying algorithm
+          remains sound. Observed directly on this session's own bench
+          suite: `quiet_middlegame`'s score moved from 173 to 31 (`best_move`
+          unchanged: `d4c5` both times) while `kiwipete`'s node count
+          moved from 16,049 to 16,151 with its score unchanged; bench
+          TOTAL moved from 37,287 to 38,679 nodes (+3.7%). None of this
+          reflects a missed legal move, an illegal move, or a crash —
+          confirmed by the full test suite (619/619, including a battery
+          of "mate-in-3 still found correctly with [technique] active"
+          regression tests spanning every major pruning/extension
+          feature in this file) staying green throughout.
+    - [ ] Step 3a (correctness re-verification, DONE this session) /
+          Step 3b (SPRT-style strength verification, NOT done, flagged
+          as the recommended follow-up before Step 2b is considered
+          fully validated for competitive play): this repo's own
+          `nightwing_sprt` binary (already built by the existing CMake
+          setup, ROADMAP.md/ARCHITECTURE.md's testing section) exists
+          specifically to answer "is version A actually stronger/weaker
+          than version B," which no amount of unit-test-suite-staying-
+          green or bench-node-count-reading can answer on its own — the
+          bench shift documented in Step 2b's own entry above proves the
+          change altered search behavior, not whether that alteration
+          is a net strength improvement (the intended point: fewer
+          wasted quiet-move generations) or a net wash/regression (the
+          risk: occasionally worse move ordering from the history-
+          staleness effect also documented there). Whoever picks this up
+          next should build a baseline binary from before Step 2b (or
+          simply revert `search.cpp`'s `negamax()` move-generation call
+          site back to plain `GenType::All` on a branch/copy) and run an
+          actual SPRT match against this session's version before
+          treating Step 2b as a settled, shippable win rather than
+          merely a behavior-preserving-of-correctness, unverified-for-
+          strength change.
 
 
 Added 2026-08-15. Not part of the sequential phase order above — can be
