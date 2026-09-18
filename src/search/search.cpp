@@ -1916,14 +1916,76 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         }
     }
 
+    // Staged / lazy move generation (ROADMAP.md's NPS/Raw Speed track,
+    // Step 2b; docs/DECISIONS.md has the full design rationale and the
+    // correctness argument summarized here). Only captures/promotions
+    // are generated up front; quiet moves are generated -- via
+    // `ensure_quiets()` below -- ONLY at the specific points that
+    // actually need them: this node turning out to have no captures at
+    // all (next few lines), `tt_move` naming a move that isn't among
+    // the captures just generated (immediately below that), Singular
+    // Extensions' own alternative-move scan (this function's existing
+    // singular-extension block, further down), or the main move loop
+    // itself running out of captures without a cutoff (the loop below).
+    // Every one of those triggers reproduces EXACTLY the move sequence
+    // (same relative order, same eventual cutoff point) that generating
+    // and ordering the full list up front would have -- see
+    // DECISIONS.md for why each trigger point was chosen specifically
+    // to preserve that.
     MoveList moves;
-    board::generate_legal_moves(pos, moves);
+    board::generate_legal_moves(pos, moves, board::GenType::Captures);
+    bool quiets_generated = false;
+    const auto ensure_quiets = [&]() {
+        if (quiets_generated) return;
+        MoveList quiets;
+        board::generate_legal_moves(pos, quiets, board::GenType::Quiets);
+        // Ordered on its own, independently of whatever's already in
+        // `moves` -- `tt_move` only ever scores specially here if it's
+        // actually a member of `quiets` (score_move()'s own membership
+        // check, ordering.cpp), which by construction (see the
+        // `!moves.contains(tt_move)` trigger just below) only happens
+        // when `tt_move` wasn't already resolved against the captures
+        // list, so there's no risk of double-prioritizing it.
+        order_moves(quiets, pos, tt_move, killers, ply, history, cont_history, capture_history,
+                    prev_piece, prev_to, tie_break_variant);
+        for (int k = 0; k < quiets.size(); ++k) {
+            moves.push_back(quiets[k]);
+        }
+        quiets_generated = true;
+    };
+
+    if (moves.empty()) {
+        // No captures at all -- but that alone doesn't mean this
+        // position is terminal (checkmate/stalemate); it might simply
+        // have no captures available while still having legal quiet
+        // moves. Resolve that ambiguity, same reasoning and same shape
+        // as quiescence_impl()'s own Step 2a fallback
+        // (quiescence.cpp), before concluding anything.
+        ensure_quiets();
+    }
 
     if (moves.empty()) {
         // Terminal position: not stored in the TT (see this function's
         // header comment) — movegen already paid the cost of detecting
         // this, and there's no move-loop result left to cache.
         return in_check(pos) ? -(kMateScore - ply) : contempt_draw_score(pos, contempt_white_pov);
+    }
+
+    // `tt_move` naming a move outside the captures list could be a
+    // genuine quiet move (which order_moves() below must place first,
+    // for the same move-ordering value it always has) or a stale/
+    // foreign TT entry (zobrist collision, an entry from a shallower
+    // search of a transposed position, etc.) -- either way, there's no
+    // way to tell which without generating quiets to check, so this is
+    // resolved up front, before order_moves() runs, rather than left
+    // for the main loop's own "ran out of captures" trigger. Skipped
+    // entirely when `tt_move` is null or already found among the
+    // captures just generated (`moves.contains()`'s own doc comment
+    // notes it's a linear scan "not used in the search hot path" --
+    // true only up to now; it's a handful of captures at most, cheap
+    // enough here).
+    if (!tt_move.is_null() && !moves.contains(tt_move)) {
+        ensure_quiets();
     }
 
     order_moves(moves, pos, tt_move, killers, ply, history, cont_history, capture_history, prev_piece,
@@ -2063,7 +2125,23 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     std::array<board::PieceType, board::kMaxMoves> capture_searched_attackers{};
     std::array<board::PieceType, board::kMaxMoves> capture_searched_victims{};
     int capture_searched_count = 0;
-    for (int i = 0; i < moves.size(); ++i) {
+    for (int i = 0;; ++i) {
+        if (i >= moves.size()) {
+            // Every currently-generated move has been visited without a
+            // cutoff (a cutoff `break`s out of this loop entirely, a few
+            // lines below, before ever reaching this check again) --
+            // this is the main loop's own staged-generation fallback
+            // trigger: if quiets haven't been brought in yet, this is
+            // the point they're actually needed (the search must
+            // continue past whatever's been generated so far); if they
+            // already have (via `ensure_quiets()` firing earlier, above
+            // this loop or inside the singular-extension block), or the
+            // position genuinely has no more moves either way, the loop
+            // is really done.
+            if (quiets_generated) break;
+            ensure_quiets();
+            if (i >= moves.size()) break;
+        }
         const Move move = moves[i];
         // Castling excluded alongside captures/promotions (docs/
         // DECISIONS.md has the full bug account): before this exclusion
@@ -2122,6 +2200,18 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         if (i == 0 && probe.hit && move == tt_move && probe.bound == Bound::Lower &&
             depth >= kSingularMinDepth && probe.depth >= depth - kSingularTTDepthMargin &&
             probe.score > -kMateThreshold && probe.score < kMateThreshold) {
+            // The alternative-move scan just below needs every OTHER
+            // legal move at this node, not just captures -- staged
+            // generation's own "ensure_quiets()" lambda, defined above
+            // this function's move loop, is exactly the same fallback
+            // the main loop below uses when it runs out of captures
+            // without a cutoff; triggered here too since this scan can
+            // legitimately need the full list even when the main loop
+            // itself never would have (a cutoff on `move` -- the TT
+            // move, already established to cause one, or this check
+            // wouldn't be reachable -- would otherwise have kept the
+            // main loop from ever exhausting captures).
+            ensure_quiets();
             const int singular_beta = probe.score - kSingularMarginPerPly * depth;
             const int singular_depth = (depth - 1) / kSingularDepthDivisor;
             bool any_alternative_matched = false;
