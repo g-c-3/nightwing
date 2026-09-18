@@ -204,8 +204,24 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         // position is already good enough to beat beta with no more
         // moves played, or better than anything found so far, that's a
         // real, legitimate baseline score, not a placeholder.
-        const int white_relative = eval::evaluate(pos, pawn_tt, eval_cache, material_weights,
-                                                    /*psqt_weights=*/nullptr, mat_psqt);
+        //
+        // Lazy evaluation (ROADMAP.md's NPS/Raw Speed track, "Lazy
+        // evaluation / early-exit on cheap terms" item; eval::evaluate()'s
+        // own doc comment on `lazy_alpha_white`/`lazy_beta_white`, eval.h,
+        // has the full mechanism) -- this is the single highest-frequency
+        // static-eval call site in the whole engine (every non-capture
+        // quiescence node reaches it, and quiescence itself is entered on
+        // every negamax() leaf), and it already has a genuine alpha/beta
+        // window on hand with no extra plumbing needed, unlike a plain
+        // "return the static eval" call that has no such window at all.
+        // Converted to White's perspective exactly as this function's own
+        // eval.h-documented convention requires (mirroring how `best`
+        // itself gets un-converted two lines below).
+        const int lazy_alpha_white = pos.side_to_move == Color::White ? alpha : -beta;
+        const int lazy_beta_white = pos.side_to_move == Color::White ? beta : -alpha;
+        const int white_relative =
+            eval::evaluate(pos, pawn_tt, eval_cache, material_weights,
+                            /*psqt_weights=*/nullptr, mat_psqt, &lazy_alpha_white, &lazy_beta_white);
         best = pos.side_to_move == Color::White ? white_relative : -white_relative;
         if (best >= beta) {
             return best;
