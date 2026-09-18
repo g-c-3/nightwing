@@ -117,12 +117,18 @@ void add_pawn_move(MoveList& moves, Square from, Square to, Bitboard promo_rank,
 void generate_pawn_moves(const Position& pos, Color us, Color them, Bitboard occ, Bitboard enemy,
                           Bitboard target_mask, Bitboard pinned,
                           const std::array<Bitboard, kNumSquares>& pin_allowed, Square king_sq,
-                          MoveList& moves) {
+                          MoveList& moves, GenType gen_type) {
     const bool white = (us == Color::White);
     const int push = white ? 8 : -8;
     const Bitboard promo_rank = rank_mask(white ? 7 : 0);
     const Bitboard start_rank = rank_mask(white ? 1 : 6);
     const Bitboard empty = ~occ;
+    // A promoting push is tactical (GenType::Captures), same as any
+    // capture — see movegen.h's GenType doc comment. A double push can
+    // never land on the promotion rank, so it's unconditionally a
+    // GenType::Quiets move.
+    const bool want_captures = (gen_type != GenType::Quiets);
+    const bool want_quiets = (gen_type != GenType::Captures);
 
     Bitboard pawns = pos.pieces(us, PieceType::Pawn);
     while (pawns) {
@@ -135,16 +141,20 @@ void generate_pawn_moves(const Position& pos, Color us, Color them, Bitboard occ
         // bounds check is needed beyond the empty-square test itself.
         const Square one = static_cast<Square>(from + push);
         if (test_bit(empty, one)) {
-            if (test_bit(target_mask, one) && test_bit(allowed, one)) {
+            const bool one_is_promo = test_bit(promo_rank, one);
+            if ((one_is_promo ? want_captures : want_quiets) && test_bit(target_mask, one) &&
+                test_bit(allowed, one)) {
                 add_pawn_move(moves, from, one, promo_rank, /*capture=*/false);
             }
-            if (test_bit(start_rank, from)) {
+            if (want_quiets && test_bit(start_rank, from)) {
                 const Square two = static_cast<Square>(one + push);
                 if (test_bit(empty, two) && test_bit(target_mask, two) && test_bit(allowed, two)) {
                     moves.push_back(Move(from, two, MoveFlag::DoublePawnPush));
                 }
             }
         }
+
+        if (!want_captures) continue;
 
         // Captures.
         Bitboard cap_targets = pawn_attacks(us, from) & enemy;
@@ -185,6 +195,25 @@ void generate_pawn_moves(const Position& pos, Color us, Color them, Bitboard occ
     }
 }
 
+/// Narrows `target_mask` to the destination squares `gen_type` allows:
+/// enemy-occupied only for Captures, empty-only for Quiets, unchanged for
+/// All. Shared by every non-pawn generator below (pawns handle this
+/// themselves in generate_pawn_moves() above, since a pawn push's
+/// capture/quiet-ness depends on promotion rank, not just the target
+/// square's occupancy).
+[[nodiscard]] Bitboard stage_mask(GenType gen_type, Bitboard target_mask, Bitboard enemy,
+                                   Bitboard empty) noexcept {
+    switch (gen_type) {
+        case GenType::Captures:
+            return target_mask & enemy;
+        case GenType::Quiets:
+            return target_mask & empty;
+        case GenType::All:
+        default:
+            return target_mask;
+    }
+}
+
 /// Generates moves for a non-pawn, non-king piece type using `attack_fn`
 /// (a callable taking (Square, Bitboard occ) and returning its attack
 /// set — knight/king ignore the occupancy argument, sliders use it).
@@ -208,7 +237,8 @@ void generate_piece_moves(const Position& pos, Color us, PieceType pt, Bitboard 
 }
 
 void generate_king_moves(const Position& pos, Color them, Square king_sq, Bitboard occ,
-                          Bitboard own, MoveList& moves) {
+                          Bitboard own, Bitboard enemy, Bitboard empty, GenType gen_type,
+                          MoveList& moves) {
     // The king itself must not count as a blocker for its own destination
     // squares' attacked-check, or it would incorrectly appear safe to
     // step straight backward along a line it's currently being checked
@@ -216,7 +246,11 @@ void generate_king_moves(const Position& pos, Color them, Square king_sq, Bitboa
     // the king used to stand).
     const Bitboard occ_without_king = occ & ~square_bb(king_sq);
 
-    Bitboard attacks = king_attacks(king_sq) & ~own;
+    // King moves ignore the check/pin target_mask (a king in check always
+    // considers every adjacent square, not just checker-blocking ones),
+    // so it's filtered by gen_type directly rather than via stage_mask().
+    Bitboard attacks = king_attacks(king_sq) & ~own &
+                        stage_mask(gen_type, kFullBitboard, enemy, empty);
     while (attacks) {
         const Square to = pop_lsb(attacks);
         if (is_square_attacked(pos, to, them, occ_without_king)) continue;
@@ -259,7 +293,7 @@ bool is_square_attacked(const Position& pos, Square sq, Color by_color, Bitboard
     return attackers_to(pos, sq, by_color, occ) != kEmptyBitboard;
 }
 
-void generate_legal_moves(const Position& pos, MoveList& moves) {
+void generate_legal_moves(const Position& pos, MoveList& moves, GenType gen_type) {
     moves.clear();
 
     const Color us = pos.side_to_move;
@@ -267,6 +301,7 @@ void generate_legal_moves(const Position& pos, MoveList& moves) {
     const Bitboard occ = pos.occupied();
     const Bitboard own = pos.occupancy[static_cast<std::size_t>(us)];
     const Bitboard enemy = pos.occupancy[static_cast<std::size_t>(them)];
+    const Bitboard empty = ~occ;
     const Square king_sq = bitscan_forward(pos.pieces(us, PieceType::King));
 
     const Bitboard checkers = attackers_to(pos, king_sq, them, occ);
@@ -281,25 +316,28 @@ void generate_legal_moves(const Position& pos, MoveList& moves) {
     } else {
         target_mask = kEmptyBitboard; // double check: only king moves are legal
     }
+    const Bitboard staged_target_mask = stage_mask(gen_type, target_mask, enemy, empty);
 
     Bitboard pinned = kEmptyBitboard;
     std::array<Bitboard, kNumSquares> pin_allowed{};
     compute_pins(pos, us, them, king_sq, occ, pinned, pin_allowed);
 
-    generate_king_moves(pos, them, king_sq, occ, own, moves);
+    generate_king_moves(pos, them, king_sq, occ, own, enemy, empty, gen_type, moves);
 
     if (num_checkers < 2) {
-        if (num_checkers == 0) {
+        if (num_checkers == 0 && gen_type != GenType::Captures) {
             generate_castling_moves(pos, us, them, king_sq, occ, moves);
         }
-        generate_pawn_moves(pos, us, them, occ, enemy, target_mask, pinned, pin_allowed, king_sq, moves);
-        generate_piece_moves(pos, us, PieceType::Knight, occ, own, target_mask, pinned, pin_allowed,
-                              moves, [](Square sq, Bitboard) { return knight_attacks(sq); });
-        generate_piece_moves(pos, us, PieceType::Bishop, occ, own, target_mask, pinned, pin_allowed,
-                              moves, [](Square sq, Bitboard o) { return bishop_attacks(sq, o); });
-        generate_piece_moves(pos, us, PieceType::Rook, occ, own, target_mask, pinned, pin_allowed,
+        generate_pawn_moves(pos, us, them, occ, enemy, target_mask, pinned, pin_allowed, king_sq, moves,
+                             gen_type);
+        generate_piece_moves(pos, us, PieceType::Knight, occ, own, staged_target_mask, pinned,
+                              pin_allowed, moves, [](Square sq, Bitboard) { return knight_attacks(sq); });
+        generate_piece_moves(pos, us, PieceType::Bishop, occ, own, staged_target_mask, pinned,
+                              pin_allowed, moves,
+                              [](Square sq, Bitboard o) { return bishop_attacks(sq, o); });
+        generate_piece_moves(pos, us, PieceType::Rook, occ, own, staged_target_mask, pinned, pin_allowed,
                               moves, [](Square sq, Bitboard o) { return rook_attacks(sq, o); });
-        generate_piece_moves(pos, us, PieceType::Queen, occ, own, target_mask, pinned, pin_allowed,
+        generate_piece_moves(pos, us, PieceType::Queen, occ, own, staged_target_mask, pinned, pin_allowed,
                               moves, [](Square sq, Bitboard o) { return queen_attacks(sq, o); });
     }
 }

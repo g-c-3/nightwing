@@ -37,11 +37,54 @@
 
 namespace nightwing::board {
 
-/// Generates every fully legal move for `pos.side_to_move` into `moves`
-/// (which is cleared first). Preconditions: init_masks() and
-/// init_magic_bitboards() have both been called (movegen uses knight/
-/// king/pawn attack tables and sliding-piece attacks throughout).
-void generate_legal_moves(const Position& pos, MoveList& moves);
+/// Selects which subset of the fully legal move set generate_legal_moves()
+/// produces — the staged-generation split ROADMAP.md's "Staged / lazy
+/// move generation" item asks for (CPW "Move Generation" /
+/// "MoveGenerator"'s conventional "noisy moves first" split), so a
+/// caller (search's future MovePicker) can generate captures, decide
+/// whether the search even needs to look at quiets at this node, and
+/// only then pay for the quiet-move generation pass.
+///
+/// The split follows the SAME "forcing/tactical vs. everything else"
+/// line search/ordering.h's own move-ordering bands already draw
+/// between captures+promotions and killers/quiets (see that file's
+/// header comment, bands 2-3 vs. 5-7) — not a plain "MoveFlag::Capture
+/// bit set or not" split. A quiet (non-capturing) promotion is
+/// tactically forcing in exactly the way a capture is (it changes
+/// material outright), so it belongs with `Captures`, not `Quiets`;
+/// splitting any other way would let a search that stops after the
+/// `Captures` stage (e.g. a capture-only quiescence search) silently
+/// miss a legal quiet promotion.
+enum class GenType {
+    Captures,  ///< Every capture (incl. en passant, capture-promotions)
+               ///< AND every promotion, capturing or not. No castling,
+               ///< no ordinary quiet move.
+    Quiets,    ///< Every remaining legal move: ordinary (non-promoting)
+               ///< quiet moves, double pawn pushes, and castling. No
+               ///< capture, no promotion of any kind.
+    All,       ///< Every legal move — Captures and Quiets combined.
+               ///< Identical output to calling both and concatenating,
+               ///< just in one pass (this is generate_legal_moves()'s
+               ///< pre-existing, unchanged behavior).
+};
+
+/// Generates the `gen_type` subset (default: every) fully legal move for
+/// `pos.side_to_move` into `moves` (which is cleared first).
+/// Preconditions: init_masks() and init_magic_bitboards() have both been
+/// called (movegen uses knight/king/pawn attack tables and sliding-piece
+/// attacks throughout).
+///
+/// `generate_legal_moves(pos, captures, GenType::Captures)` followed by
+/// `generate_legal_moves(pos, quiets, GenType::Quiets)` produces exactly
+/// the same set of moves, with no omissions and no duplicates, as one
+/// `generate_legal_moves(pos, moves)` call (GenType::All) — verified by
+/// tests/movegen_tests.cpp's staged-generation parity suite, which
+/// recursively cross-checks this across every standard perft reference
+/// position. All pin/check/legality machinery (compute_pins(),
+/// attackers_to(), the single/double-check target mask) runs identically
+/// regardless of `gen_type`; only which destination squares are kept for
+/// each already-legal move differs.
+void generate_legal_moves(const Position& pos, MoveList& moves, GenType gen_type = GenType::All);
 
 /// Returns true if `sq` is attacked by any piece of `by_color`, given
 /// board occupancy `occ`. Exposed (not just an internal helper) because
