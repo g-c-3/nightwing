@@ -237,3 +237,66 @@ TEST_CASE("quiescence: stand-pat's lazy-eval window (ROADMAP.md's NPS/Raw Speed 
     REQUIRE(score >= beta); // the fail-high the stand-pat check itself relies on
     REQUIRE(nodes == 1); // stand-pat alone resolved this node -- no further search needed
 }
+
+// ---------------------------------------------------------------------
+// Staged / lazy move generation, Step 2a (docs/ROADMAP.md, docs/
+// DECISIONS.md 2026-09-18 (4)): quiescence_impl()'s `!us_in_check &&
+// !include_checks` path now generates `GenType::Captures` only,
+// falling back to `GenType::Quiets` solely to tell a genuinely
+// terminal (stalemate) position apart from a merely-quiet one -- the
+// one case the correctness argument in DECISIONS.md depends on but
+// none of this file's existing tests actually exercised (the existing
+// "quiet position"/"detects stalemate" tests above both pass
+// include_checks=true, which always takes the GenType::All path and
+// never touches the new fallback at all; the SEE/delta-pruning tests
+// above pass include_checks=false but every one of their positions has
+// at least one capture available, so GenType::Captures alone is always
+// non-empty there and the Quiets fallback never triggers either). The
+// two tests below are the first in this file to actually drive that
+// fallback, on both sides of the ambiguity it exists to resolve.
+// ---------------------------------------------------------------------
+
+TEST_CASE("quiescence: a capture-free but non-terminal position (Quiets fallback finds legal "
+          "moves) returns the real stand-pat eval, not a draw score",
+          "[quiescence][staged]") {
+    init_all();
+    // White king e1, White rook a1, Black king e8, include_checks=false,
+    // Black to move (well) -- actually White to move, deliberately: no
+    // Black piece exists for White to capture, so GenType::Captures at
+    // this node returns empty and the new Quiets fallback must fire.
+    // The position is materially lopsided (White up a whole rook) and
+    // very much NOT stalemate (both the king and the rook have plenty
+    // of quiet moves) -- before Step 2a's fallback existed, this exact
+    // shape (GenType::Captures empty, real legal moves elsewhere) is
+    // precisely what could have been missed by a naive "captures empty
+    // implies terminal" shortcut; this test exists to pin that down.
+    Position pos = parse_fen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
+    std::uint64_t nodes = 0;
+    const int score = quiescence(pos, -1'000'000, 1'000'000, 0, nodes, /*include_checks=*/false);
+
+    const int white_relative = evaluate(pos);
+    const int expected = pos.side_to_move == Color::White ? white_relative : -white_relative;
+    REQUIRE(score == expected); // the real stand-pat eval...
+    REQUIRE(score != kDrawScore); // ...specifically NOT the stalemate draw score
+    REQUIRE(nodes == 1); // stand-pat alone resolved this node -- no candidates to search
+}
+
+TEST_CASE("quiescence: detects stalemate as a draw with include_checks=false too (Quiets "
+          "fallback correctly confirms zero legal moves, not just zero captures)",
+          "[quiescence][staged]") {
+    init_all();
+    // Same verified-stalemate position as the existing "detects
+    // stalemate as a draw" test above (black king h8, white queen g6,
+    // white king a1 -- 0 legal moves, not in check), but called with
+    // include_checks=false this time specifically to exercise the new
+    // GenType::Captures-then-Quiets-fallback path rather than the
+    // GenType::All path the existing test above already covers. Both
+    // stages must come back empty for this to correctly reach the
+    // terminal branch rather than wrongly falling through to a stand-pat
+    // return.
+    Position pos = parse_fen("7k/8/6Q1/8/8/8/8/K7 b - - 0 1");
+    std::uint64_t nodes = 0;
+    const int score = quiescence(pos, -1'000'000, 1'000'000, 0, nodes, /*include_checks=*/false);
+    REQUIRE(score == kDrawScore);
+    REQUIRE(nodes == 1);
+}
