@@ -1074,12 +1074,56 @@ engines needs both, not one traded off against the other (docs/DECISIONS.md,
       real bug was caught and fixed during this session's own
       verification pass — see docs/SESSIONS.md, this entry, "bugs
       fixed.
-- [ ] Lazy evaluation / early-exit on cheap terms: compute material +
+- [x] Lazy evaluation / early-exit on cheap terms: compute material +
       PSQT first inside `eval::evaluate()`; if that alone already clears
       alpha/beta by a comfortable margin, skip the remaining expensive
       terms (mobility, king safety, threats, space, pawn structure) and
       return early, rather than always computing every term regardless
-      of whether the cheap ones already settled the question.
+      of whether the cheap ones already settled the question. DONE,
+      2026-09-18 (2): `eval::evaluate()` (`eval.h`/`.cpp`) gained two new
+      optional trailing parameters, `lazy_alpha_white`/`lazy_beta_white`
+      — an alpha-beta window in WHITE'S PERSPECTIVE (CPW "Lazy
+      Evaluation"). When set, material+PSQT (`score`) is tapered on its
+      own, compared against the window widened by a new
+      `kLazyEvalMargin` (650, a conservative, untuned hand-survey of
+      every other term's combined plausible swing) in each direction,
+      and returned immediately — skipping pawn structure, mobility, king
+      safety, and every other term — whenever it already clears the
+      window by more than that margin. `compute_phase(pos)` was hoisted
+      to be computed once, up front (reused by both the lazy check and
+      the final `taper()` call), rather than only at the end as before —
+      a strict no-op on the non-lazy path (still exactly one call), not
+      a new cost. `eval_cache` is deliberately never consulted whenever
+      this window is set, same staleness reasoning as `material_weights`/
+      `psqt_weights` already established. Wired into exactly ONE call
+      site this session — `quiescence.cpp`'s own stand-pat computation
+      (the single highest-frequency static-eval call in the engine, and
+      the cleanest fit: a genuine alpha-beta window is already on hand
+      there with no extra plumbing) — converting quiescence's own
+      side-to-move-relative `alpha`/`beta` to White's perspective the
+      same way its return value already gets un-converted
+      (`lazy_alpha_white = us==White ? alpha : -beta`, `lazy_beta_white
+      = us==White ? beta : -alpha`, mirroring negamax()'s own child-call
+      negate-and-swap convention). `negamax()`'s own RFP/razoring/
+      futility static-eval call sites, and `order_moves()`'s eval calls,
+      were deliberately NOT wired this session — a documented scope cut,
+      not an oversight (see docs/DECISIONS.md) — revisit in a future
+      session if profiling shows it's worth the additional diff surface.
+      Verified against the real project toolchain: full Release and
+      Debug/ASan+UBSan builds, 608/608 tests green (604 pre-existing + 4
+      new: 3 in `tests/eval_tests.cpp` exercising `evaluate()`'s own
+      early-exit mechanism directly — a wide window never triggers it, a
+      tight window against an overwhelming material edge triggers it and
+      returns exactly the material+PSQT-only tapered value, and
+      `eval_cache` staleness under a lazy window — plus 1 in
+      `tests/quiescence_tests.cpp` confirming the stand-pat site's own
+      real end-to-end behavior: fails high correctly using only
+      material+PSQT, `nodes == 1`). `bench` moved from 40,656 to 37,287
+      total nodes (a genuine, expected node-count DECREASE — different,
+      earlier stand-pat cutoffs in quiescence from the same underlying
+      technique that makes this optimization useful in the first place,
+      not a regression; ARCHITECTURE.md's own Benchmarking Discipline
+      section is satisfied by this entry's own account).
 - [ ] Staged / lazy move generation: a `MovePicker`-style iterator that
       generates captures first and only generates quiet moves if the
       search gets past the captures without a cutoff, instead of always
