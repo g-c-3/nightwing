@@ -24,6 +24,27 @@
 
 namespace nightwing::eval {
 
+/// Lazy evaluation margin (ROADMAP.md's NPS/Raw Speed track, "Lazy
+/// evaluation / early-exit on cheap terms" item; eval.h's own doc
+/// comment on evaluate()'s `lazy_alpha_white`/`lazy_beta_white`
+/// parameters has the full mechanism). A conservative, hand-surveyed
+/// upper bound on how far every term BESIDES material+PSQT (pawn
+/// structure, mobility, king safety, the bishop-pair/rook-file/7th-rank
+/// bonuses, knight outposts, space, threats, king tropism, trapped
+/// pieces, tempo, material imbalance, and the four Phase 6 endgame
+/// terms, combined) could plausibly move the final tapered score in
+/// EITHER direction, surveyed from those terms' own constant tables
+/// across eval/*.h — no single realistic position stacks every term's
+/// own maximum simultaneously, so this is deliberately generous rather
+/// than a tight sum of literal per-term maxima. Like every other
+/// pruning-margin constant in this codebase (kFutilityMargins,
+/// kRazorMargins, kReverseFutilityMargins — search/search.cpp), this is
+/// an untuned starting value, not yet SPRT-validated against an
+/// alternative; a real Texel/SPSA-style pass over search margins
+/// (rather than just eval weights) would need to sweep this too, same
+/// caveat as every sibling margin.
+constexpr int kLazyEvalMargin = 650;
+
 /// Computes the current game phase in [0, kMaxPhase] from remaining
 /// non-pawn material on the board — the standard CPW "Tapered Eval"
 /// technique (see score.h's header comment for the citation); this is
@@ -62,7 +83,8 @@ namespace nightwing::eval {
 
 int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval_cache,
              const MaterialWeights* material_weights, const PsqtWeights* psqt_weights,
-             const Score* incremental_material_psqt) noexcept {
+             const Score* incremental_material_psqt, const int* lazy_alpha_white,
+             const int* lazy_beta_white) noexcept {
     // Eval cache (eval/eval_cache.h): probed first, keyed on the FULL
     // position (pos.zobrist_hash, already incrementally maintained --
     // no extra hash computation needed, unlike pawn_tt's own
@@ -80,9 +102,15 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     // key says nothing about which weight vector(s) produced a cached
     // result, so honoring it under a different-than-default weight
     // vector could silently return a stale result from a different
-    // vector entirely.
-    const bool eval_cache_usable =
-        (eval_cache != nullptr) && (material_weights == nullptr) && (psqt_weights == nullptr);
+    // vector entirely. ALSO deliberately skipped whenever a lazy window
+    // (`lazy_alpha_white`/`lazy_beta_white`, this function's own doc
+    // comment) is set -- a lazily-approximated early return omits every
+    // term besides material+PSQT, and caching it under this position's
+    // plain zobrist key would silently hand that approximation to a
+    // LATER, non-lazy caller wanting the real, full result.
+    const bool lazy_eval_requested = (lazy_alpha_white != nullptr) && (lazy_beta_white != nullptr);
+    const bool eval_cache_usable = (eval_cache != nullptr) && (material_weights == nullptr) &&
+                                    (psqt_weights == nullptr) && !lazy_eval_requested;
     if (eval_cache_usable) {
         const auto [hit, cached] = eval_cache->probe(pos.zobrist_hash);
         if (hit) {
@@ -102,6 +130,32 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     const Score score = incremental_usable
                              ? *incremental_material_psqt
                              : compute_material_psqt(pos, material_weights, psqt_weights);
+
+    // Phase (CPW "Tapered Eval") is computed once here, up front, and
+    // reused both by the lazy-window check immediately below and by
+    // this function's own final taper() call at the bottom -- a single
+    // compute_phase() call either way (this function called it only
+    // once before this change too, just at the end instead of here),
+    // not a new redundant computation on the non-lazy path.
+    const int phase = compute_phase(pos);
+
+    // Lazy evaluation / early-exit on cheap terms (ROADMAP.md's NPS/Raw
+    // Speed track; this function's own doc comment on
+    // `lazy_alpha_white`/`lazy_beta_white`, eval.h, has the full
+    // mechanism and citation). `score` (material+PSQT only, computed
+    // above) is tapered on its own and compared against the caller's
+    // window widened by kLazyEvalMargin in each direction -- if it
+    // already clears the window by more than every remaining term could
+    // plausibly swing it, every term below (pawn structure, mobility,
+    // king safety, threats, space, ...) is skipped entirely and this
+    // partial, approximate value is returned directly.
+    if (lazy_eval_requested) {
+        const int lazy_score = taper(score, phase);
+        if (lazy_score - kLazyEvalMargin > *lazy_beta_white ||
+            lazy_score + kLazyEvalMargin < *lazy_alpha_white) {
+            return lazy_score;
+        }
+    }
 
     Score pawn_score;
     if (pawn_tt == nullptr) {
@@ -166,7 +220,7 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
                                   material_imbalance_value(pos) + king_pawn_endgame_value(pos) +
                                   rook_endgame_value(pos) + minor_piece_endgame_value(pos) +
                                   fortress_value(pos) + basic_mate_value(pos),
-                              compute_phase(pos));
+                              phase);
 
     if (eval_cache_usable) {
         eval_cache->store(pos.zobrist_hash, result);

@@ -182,6 +182,55 @@ namespace nightwing::eval {
 /// the 64-square scan" — every existing caller (every test, the tuner,
 /// any UCI debug tooling) is entirely unaffected.
 ///
+/// `lazy_alpha_white`/`lazy_beta_white` (ROADMAP.md's NPS/Raw Speed
+/// track, "Lazy evaluation / early-exit on cheap terms" item): an
+/// optional alpha-beta window, in WHITE'S PERSPECTIVE, that this call's
+/// result will only ever be compared against for a fail-high/fail-low
+/// decision — never trusted as an exact score. Either both must be
+/// non-null or both must be left at their nullptr default; passing only
+/// one is a caller bug (there is no meaningful "half a window").
+/// When set, material+PSQT (`score`, above) is tapered on its own,
+/// BEFORE pawn structure or any of the "expensive" terms below are
+/// computed at all, and compared against the window widened by
+/// `kLazyEvalMargin` (eval.cpp) in each direction: if that cheap,
+/// partial value already clears `*lazy_beta_white` (or falls short of
+/// `*lazy_alpha_white`) by more than every remaining term could
+/// plausibly swing the result, this function returns that cheap,
+/// partial tapered value immediately — mobility, king safety, pawn
+/// structure, threats, space, and every other still-unevaluated term
+/// are never computed at all for this call. This is the classical
+/// technique CPW calls "Lazy Evaluation" (https://www.chessprogramming.
+/// org/Lazy_Evaluation) — a from-scratch implementation of that public,
+/// well-documented idea, not copied code. The early-return value is a
+/// deliberately approximate score (it omits every term besides
+/// material+PSQT) — safe to use ONLY because the margin guarantees it's
+/// still on the correct side of the caller's own window, exactly the
+/// same accepted trade-off RFP/razoring/futility already make when they
+/// prune based on a shallow, unverified static eval rather than a full
+/// search. Because White's perspective is fixed regardless of who's
+/// actually to move, a caller with a side-to-move-relative window
+/// (search.cpp's/quiescence.cpp's negamax-style `alpha`/`beta`, always
+/// true in this codebase today) must convert it exactly the way this
+/// function's own callers already convert its RETURN value:
+/// `lazy_alpha_white = (side_to_move == White) ? alpha : -beta;`
+/// `lazy_beta_white  = (side_to_move == White) ? beta  : -alpha;`
+/// — mirroring how negamax()'s own recursive calls already negate and
+/// swap alpha/beta for the same reason. `eval_cache` is DELIBERATELY
+/// NEVER consulted (probed or stored) whenever this window is set, for
+/// the identical staleness reason `material_weights`/`psqt_weights`
+/// already disable it above: a lazily-approximated result cached under
+/// this position's plain zobrist key would be silently, wrongly
+/// returned to a LATER, non-lazy caller wanting the exact full value.
+/// `incremental_material_psqt` (below) is fully compatible and
+/// orthogonal — it only changes how the cheap `score` this window is
+/// checked against gets computed (a fresh scan vs. an already-known
+/// value), not whether the window check itself applies. Defaults to
+/// nullptr/nullptr, meaning "no lazy window — always compute every
+/// term" — every existing caller (every test, the tuner, bench, and
+/// every eval::evaluate() call site in search.cpp/quiescence.cpp except
+/// quiescence.cpp's own stand-pat call, ROADMAP.md's own item scope for
+/// this session) is entirely unaffected.
+///
 /// Precondition: board::init_masks() AND board::init_magic_bitboards()
 /// have both been called. Before eval/mobility.h's mobility_value() term
 /// existed, evaluate() only needed init_masks() (material/PSQT/pawn
@@ -195,6 +244,8 @@ namespace nightwing::eval {
                             EvalCache* eval_cache = nullptr,
                             const MaterialWeights* material_weights = nullptr,
                             const PsqtWeights* psqt_weights = nullptr,
-                            const Score* incremental_material_psqt = nullptr) noexcept;
+                            const Score* incremental_material_psqt = nullptr,
+                            const int* lazy_alpha_white = nullptr,
+                            const int* lazy_beta_white = nullptr) noexcept;
 
 } // namespace nightwing::eval
