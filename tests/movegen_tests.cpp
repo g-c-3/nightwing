@@ -13,6 +13,7 @@
 
 #include "board/attacks.h"
 #include "board/board.h"
+#include "board/fen.h"
 #include "board/masks.h"
 #include "board/movegen.h"
 
@@ -243,4 +244,138 @@ TEST_CASE("double check allows only king moves", "[movegen]") {
         REQUIRE(m.from() == make_square(4, 0));
     }
     REQUIRE(moves.size() > 0);
+}
+
+// ---------------------------------------------------------------------
+// Staged-generation parity suite (ROADMAP.md "Staged / lazy move
+// generation", Step 1: GenType::Captures/Quiets/All in movegen.h/.cpp).
+//
+// Rather than spot-checking a handful of hand-picked positions, this
+// recursively walks the same six standard CPW perft reference positions
+// (tests/perft_tests.cpp) to a modest depth, and at EVERY node along the
+// way confirms that generate_legal_moves(Captures) plus
+// generate_legal_moves(Quiets) is exactly generate_legal_moves(All) — no
+// move omitted, no move duplicated between the two stages, and each
+// move lands in the stage its own is_capture()/is_promotion() flags say
+// it belongs in. This is deliberately shaped like perft (a full-tree
+// walk, not a single-ply check) since the staged split's riskiest bugs
+// -- a promotion inside a pin, an en passant capture that resolves a
+// check, a quiet king move available only in a specific check/pin
+// combination -- are exactly the positions perft's own reference suite
+// was built to stress in the first place, several plies deep, not just
+// at the root.
+// ---------------------------------------------------------------------
+
+namespace {
+
+/// Returns true if every move in `list` is present (by raw() equality)
+/// in `other`, and vice versa is checked separately by the caller via
+/// combined_matches_all() below — this is a one-directional subset
+/// check, kept small and reused both ways.
+bool is_subset(const MoveList& list, const MoveList& other) {
+    for (const Move& m : list) {
+        if (!other.contains(m)) return false;
+    }
+    return true;
+}
+
+/// Recursively verifies staged-generation parity at `pos` and every
+/// position reachable within `depth` plies. Fails the current Catch2
+/// test (via REQUIRE) at the first divergence found, same as perft
+/// would fail at the first wrong node count, rather than continuing to
+/// accumulate more failures past the first real bug.
+void verify_staged_parity(const Position& pos, int depth) {
+    MoveList all_moves;
+    MoveList captures;
+    MoveList quiets;
+    generate_legal_moves(pos, all_moves, GenType::All);
+    generate_legal_moves(pos, captures, GenType::Captures);
+    generate_legal_moves(pos, quiets, GenType::Quiets);
+
+    // Every Captures move is a real capture or a promotion (of any
+    // kind); every Quiets move is neither -- exactly the split
+    // movegen.h's GenType doc comment specifies.
+    for (const Move& m : captures) {
+        REQUIRE((m.is_capture() || m.is_promotion()));
+    }
+    for (const Move& m : quiets) {
+        REQUIRE_FALSE(m.is_capture());
+        REQUIRE_FALSE(m.is_promotion());
+    }
+
+    // No move counted twice, none dropped: sizes must add up, and each
+    // stage's list must be a subset of the combined All list (which,
+    // combined with the size check, proves the two stages partition All
+    // exactly -- same logic perft's own bulk-vs-plain cross-check uses).
+    REQUIRE(captures.size() + quiets.size() == all_moves.size());
+    REQUIRE(is_subset(captures, all_moves));
+    REQUIRE(is_subset(quiets, all_moves));
+
+    if (depth <= 1) return;
+
+    for (const Move& m : all_moves) {
+        Position child = pos;
+        UndoInfo undo;
+        make_move(child, m, undo);
+        verify_staged_parity(child, depth - 1);
+    }
+}
+
+} // namespace
+
+TEST_CASE("staged generation parity: startpos", "[movegen][staged]") {
+    init_masks();
+    init_magic_bitboards();
+    Position pos = parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    verify_staged_parity(pos, 3);
+}
+
+TEST_CASE("staged generation parity: Kiwipete (captures/checks/castling/promotions)",
+          "[movegen][staged]") {
+    init_masks();
+    init_magic_bitboards();
+    Position pos = parse_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
+    verify_staged_parity(pos, 3);
+}
+
+TEST_CASE("staged generation parity: position 3 (en passant/pins-heavy endgame)",
+          "[movegen][staged]") {
+    init_masks();
+    init_magic_bitboards();
+    Position pos = parse_fen("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1");
+    verify_staged_parity(pos, 4);
+}
+
+TEST_CASE("staged generation parity: position 4 (asymmetric castling/promotion stress)",
+          "[movegen][staged]") {
+    init_masks();
+    init_magic_bitboards();
+    Position pos = parse_fen("r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1");
+    verify_staged_parity(pos, 3);
+}
+
+TEST_CASE("staged generation parity: position 5 (sharp middlegame)", "[movegen][staged]") {
+    init_masks();
+    init_magic_bitboards();
+    Position pos = parse_fen("rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8");
+    verify_staged_parity(pos, 3);
+}
+
+TEST_CASE("staged generation parity: position 6 (complex late-middlegame)", "[movegen][staged]") {
+    init_masks();
+    init_magic_bitboards();
+    Position pos = parse_fen("r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10");
+    verify_staged_parity(pos, 3);
+}
+
+TEST_CASE("staged generation parity: double check position (king-only legal moves)",
+          "[movegen][staged]") {
+    init_masks();
+    init_magic_bitboards();
+    Position pos = empty_position(Color::White);
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);   // e1
+    pos.place_piece(make_square(4, 7), Piece::BlackRook);   // e8
+    pos.place_piece(make_square(1, 3), Piece::BlackBishop); // b4
+    pos.place_piece(make_square(0, 7), Piece::BlackKing);   // a8
+    verify_staged_parity(pos, 2);
 }
