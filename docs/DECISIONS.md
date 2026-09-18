@@ -4,6 +4,22 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-09-18 (4) — Staged move generation Step 2a: quiescence's captures-only path skips quiets, with a Quiets fallback for terminal-detection correctness
+
+**Decision:** `quiescence_impl()`'s `!us_in_check && !include_checks` path (the large majority of quiescence nodes) now generates `GenType::Captures` only, falling back to `GenType::Quiets` solely when the captures result is empty.
+
+**Rationale:** The candidates loop just below only ever admits a move when `us_in_check || move.is_capture() || move.is_promotion()`, or (`include_checks` only, only at `qs_ply == 0`) a quiet move that gives check. With both `us_in_check` and `include_checks` false, the first and third of those conditions can never fire, so no quiet move generated on this path could ever have become a candidate anyway — generating them was pure waste on this path prior to this change. The one place this can't simply be skipped outright: `legal_moves.empty()` is also how the function tells a genuinely terminal (stalemate) position apart from a merely-quiet one a few lines above the candidates loop, and the two cases return different scores (a draw score vs. the stand-pat eval) — `GenType::Captures` alone can't distinguish "no legal moves at all" from "no captures, but quiet moves exist," so the `GenType::Quiets` fallback exists specifically to resolve that one ambiguity, not to feed the candidates loop.
+
+**Correctness argument (not just tested, reasoned through):** `GenType::Captures` is implemented (Step 1, Session 112 earlier) by omitting quiet-move generation, not by generating everything and filtering afterward — so for a position with at least one capture/promotion, the resulting list is exactly the same sublist, in exactly the same order, that a `GenType::All` call would have produced with every quiet move removed. Since the old code fed that same `GenType::All` result through an identical `us_in_check || is_capture || is_promotion` filter (which is trivially true for every element of a `GenType::Captures` result already), the two code paths necessarily produce byte-identical `candidates` lists whenever captures are non-empty. This is why `bench` was checked, not just assumed, to confirm — see Verification below.
+
+**Verification:** full suite green (615/615) under Release and Debug/ASan+UBSan. `bench` unchanged at 37,287 total nodes across all 4 fixed positions — proves the change altered zero search behavior (a pure movegen-cost optimization), consistent with the correctness argument above rather than merely not contradicting it.
+
+**Alternatives considered:**
+- Apply the same technique to `search.cpp`'s `negamax()` in the same session — deferred as Step 2b (this session's ROADMAP.md update has the design sketch); negamax's TT-move and killer-move interaction with a not-yet-generated quiet list is a genuinely open design question (unlike quiescence, which doesn't probe the TT at all), and mixing that harder, real-behavior-changing problem into the same session as this simpler, behavior-preserving one risked conflating two very different risk profiles in one diff.
+- Skip the `GenType::Quiets` fallback and treat an empty `GenType::Captures` result as terminal outright — rejected outright as a correctness bug: a queenless, capture-free middlegame-ish position with plenty of legal quiet moves is extremely common and is not remotely a stalemate; returning a draw score there would be actively wrong, not just imprecise.
+
+---
+
 ### 2026-09-18 (3) — Staged move generation Step 1: `GenType` split follows move-ordering's own forcing/quiet boundary, not the `is_capture()` bit
 
 **Decision:** `board::generate_legal_moves()` gained a `GenType` parameter (`Captures`, `Quiets`, `All`, default `All`). `GenType::Captures` was defined to include every capture (incl. en passant, capture-promotions) AND every promotion, capturing or not — not merely every move with `Move::is_capture() == true`. `GenType::Quiets` is everything else: ordinary (non-promoting) quiet moves, double pawn pushes, and castling.

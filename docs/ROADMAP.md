@@ -1163,18 +1163,56 @@ engines needs both, not one traded off against the other (docs/DECISIONS.md,
           Building the actual `MovePicker` iterator that consumes
           `Captures`/`Quiets` staging and wiring it into
           `negamax()`/`quiescence()` is Step 2, not yet started.
-    - [ ] Step 2 — a real `MovePicker` iterator type (`search/`, new
-          file) consuming `GenType::Captures`/`GenType::Quiets` to
-          actually defer quiet-move generation, replacing `search.cpp`'s
-          and `quiescence.cpp`'s current "generate all, then
-          `order_moves()` the whole list" call sites. Needs a design
-          pass on how TT-move/killer moves (which may be a quiet move
-          not yet generated at the point they're tried) interact with a
-          not-yet-materialized quiet list — not yet designed.
-    - [ ] Step 3 — perft/bench re-verification once Step 2 lands: this
-          is a real search-behavior change (node order, not just node
-          count, may shift; a genuine node-count regression would need
-          ARCHITECTURE.md's Benchmarking Discipline justification).
+    - [x] **Step 2a — lazy captures-only generation in `quiescence.cpp`
+          (Session 112 continued):** no `MovePicker` class needed for
+          this half of Step 2 — `quiescence_impl()`'s own candidates
+          loop already only ever admits a capture, a promotion, or (only
+          when `include_checks`, only at `qs_ply == 0`) a checking quiet
+          move, so quiets were provably never needed on the far more
+          common `!us_in_check && !include_checks` path. That path now
+          calls `generate_legal_moves(pos, legal_moves,
+          GenType::Captures)` directly, falling back to a
+          `GenType::Quiets` generation ONLY when the captures result is
+          empty — needed there just to tell a genuinely terminal
+          (stalemate) position apart from a merely-quiet one (legal
+          moves exist, just none of them a capture), since those two
+          cases return different scores (a draw score vs. the stand-pat
+          eval) a few lines below. Because `GenType::Captures` omits
+          quiet moves rather than reordering anything, the resulting
+          `candidates` list is byte-identical, in the same order, to
+          what the old always-`GenType::All` call produced feeding the
+          same downstream filter — confirmed by `bench` staying at
+          exactly 37,287 total nodes, unchanged from Step 1 and from
+          Session 111. Full suite green (615/615) under both Release and
+          Debug/ASan+UBSan.
+    - [ ] Step 2b — a real `MovePicker` iterator type (`search/`, new
+          file) for `search.cpp`'s `negamax()` specifically (`ordering.h`'s
+          existing full-list `order_moves()` stays as-is for now,
+          unlike quiescence.cpp which no longer needs it changed either
+          — Step 2a's fix was the movegen call site, not the ordering
+          call site). Still needs the design pass Step 2's original text
+          flagged: how a TT-move or killer-move probe (either may name a
+          quiet move) is resolved correctly before a quiet-move
+          generation pass has actually run. A workable shape sketched at
+          the end of Session 112: generate `GenType::Captures` first; if
+          `tt_move` is found there, proceed with captures alone until
+          either a cutoff or captures are exhausted; if `tt_move` is
+          non-null but NOT found among captures, generate quiets
+          immediately (can't yet tell a stale/foreign TT entry from a
+          genuine quiet move without checking); if there's no `tt_move`
+          at this node at all, quiets are still needed once captures are
+          exhausted without a cutoff (killers are always plain quiet
+          moves per `search.cpp`'s own `killers.update()` call site,
+          confirmed Session 112 — never need checking against captures).
+          Not yet implemented — this sketch is a starting point for
+          whoever picks Step 2b up, not a final design.
+    - [ ] Step 3 — perft/bench re-verification once Step 2b lands: this
+          IS a real search-behavior change for negamax specifically
+          (node order, not just node count, may shift; a genuine
+          node-count regression would need ARCHITECTURE.md's
+          Benchmarking Discipline justification) — unlike Step 2a above,
+          which was provably behavior-preserving for quiescence and
+          didn't need this.
 
 
 Added 2026-08-15. Not part of the sequential phase order above — can be
