@@ -4,6 +4,31 @@ Newest entry at top.
 
 ---
 
+### Session 112 — 2026-09-18 (3) — Staged move generation, Step 1: `GenType`-staged `generate_legal_moves()` (NPS/Raw Speed track, last remaining item — a multi-step effort, this session covers Step 1 of 3)
+
+Picked up exactly where Session 111's handoff pointed: ROADMAP.md's NPS/Raw Speed track's last remaining item, "Staged / lazy move generation" — flagged there as "a structural change ... scope accordingly when picked up," so this session treats it as its own multi-step effort (matching the Tier 0 tuner item's own convention) rather than a single sitting.
+
+**What was built:**
+- `src/board/movegen.h`: new `GenType` enum (`Captures`, `Quiets`, `All`) and a third, defaulted (`= GenType::All`) parameter on `generate_legal_moves()`. `Captures` = every capture (incl. en passant, capture-promotions) plus every promotion, capturing or not; `Quiets` = everything else (ordinary quiet moves, double pawn pushes, castling) — the split deliberately mirrors `search/ordering.h`'s own existing forcing/quiet move-ordering boundary, not the raw `Move::is_capture()` bit. Full rationale, including why the raw-bit split was rejected, in docs/DECISIONS.md, this session's entry.
+- `src/board/movegen.cpp`: `generate_pawn_moves()` gained inline `want_captures`/`want_quiets` filtering (promotion-rank-aware, since a pawn push's capture/quiet-ness isn't determined by target-square occupancy alone); a new internal `stage_mask()` helper narrows `target_mask` to enemy-occupied (`Captures`) or empty (`Quiets`) for the piece/king generators, which needed no other change; `generate_castling_moves()` is skipped entirely under `GenType::Captures` (castling is never tactical). All pin/check/legality computation (`compute_pins()`, `attackers_to()`, the single/double-checker target mask) is completely unchanged and shared across all three `gen_type` values.
+- `tests/movegen_tests.cpp`: a new staged-generation parity suite (`[movegen][staged]`, 7 new test cases) — a recursive, perft-shaped tree walk (not just a root-level check) across all six standard CPW reference positions plus the existing double-check hand-built position, confirming at every node that `Captures` ∪ `Quiets` == `All` exactly (matching total size, no move in both stages, each move's `is_capture()`/`is_promotion()` flags matching the stage it landed in).
+
+**Scope, stated explicitly:** this step adds the `GenType` capability only. No production call site — `search.cpp`'s `negamax()`, `quiescence.cpp`, `ordering.h`'s `order_moves()`, `book.cpp`, `uci.cpp`, the tuner's `match.cpp`/`selfplay.cpp` — was touched; every one of them still calls `generate_legal_moves()` at its default `GenType::All`, so real search behavior is provably unchanged this session (see Verification below). The actual `MovePicker` iterator that would consume this staging to skip quiet-move generation when a search node cuts off during captures is Step 2, not started this session — ROADMAP.md flags it as needing its own design pass (in particular, how a TT/killer move that turns out to be a quiet one interacts with a quiet list that may not exist yet at the point it's tried).
+
+**Bugs fixed:** none — new-capability work, not a bugfix session.
+
+**Decisions made:** the `GenType::Captures`-includes-all-promotions split (and why splitting on `is_capture()` alone was rejected), the pawns-filter-inline-vs-`stage_mask()` implementation shape, and the Step 1/2/3 scope cut — all logged in docs/DECISIONS.md, this session's entry.
+
+**Tests added:** 7 new test cases (608 -> 615 total), all in `tests/movegen_tests.cpp`, `[movegen][staged]` tag — one per standard perft reference position (startpos, Kiwipete, positions 3-6) plus the existing hand-built double-check position, each recursively walking 2-4 plies deep. 629,697 total assertions across the full `[movegen]` tag (18 test cases).
+
+**Verification performed:** the real project toolchain — `cmake`/`ctest` after installing `cmake`/`g++` into this sandbox (not previously present). Full Release build: 615/615 tests green, zero new compiler warnings. Full Debug/ASan+UBSan build: same 615/615 green in one run (no per-command time-limit split needed this session), zero sanitizer findings from any new or touched code (pre-existing, unrelated `eval/score.h` signed-overflow UBSan warnings appear in this build, as they evidently already do independent of this session's changes — not investigated further here, out of scope for a movegen-only session; flagged for whoever next touches `eval/score.h`). `bench` unchanged at 37,287 total nodes across the 4 fixed bench positions, byte-for-byte identical to Session 111's own value — the expected result, since no production call site's behavior changed this session. Every pre-existing 2-argument `generate_legal_moves()` call site (14 files across `src/` and `tests/`) confirmed to still compile unchanged, via the new parameter's default argument.
+
+**Files changed:** `src/board/movegen.h`, `src/board/movegen.cpp`, `tests/movegen_tests.cpp`.
+
+**Next session starts:** Step 2 of the staged move generation effort — design and implement the actual `MovePicker` iterator (new file under `search/`) consuming `GenType::Captures`/`GenType::Quiets`, then wire it into `search.cpp`'s `negamax()` and `quiescence.cpp`, replacing their current "generate the full list, then `order_moves()` it" call sites. Start by resolving the open design question ROADMAP.md's Step 2 bullet flags: how a TT-move or killer-move probe (which may name a quiet move) is honored correctly before the quiet-move generation pass has actually run. Step 3 (perft/bench re-verification once Step 2 lands, since Step 2 is a real search-behavior change unlike this session's Step 1) follows once Step 2 is in place.
+
+---
+
 ### Session 111 — 2026-09-18 (2) — Lazy evaluation / early-exit on cheap terms (NPS/Raw Speed track) implemented in `eval::evaluate()`, wired into quiescence's stand-pat call
 
 Picked up exactly where Session 110's handoff pointed: ROADMAP.md's NPS/Raw Speed track, "Lazy evaluation / early-exit on cheap terms" item, the next incomplete item after Incremental evaluation.

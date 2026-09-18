@@ -1124,12 +1124,57 @@ engines needs both, not one traded off against the other (docs/DECISIONS.md,
       technique that makes this optimization useful in the first place,
       not a regression; ARCHITECTURE.md's own Benchmarking Discipline
       section is satisfied by this entry's own account).
-- [ ] Staged / lazy move generation: a `MovePicker`-style iterator that
+- [ ] **Staged / lazy move generation: a `MovePicker`-style iterator that
       generates captures first and only generates quiet moves if the
       search gets past the captures without a cutoff, instead of always
-      generating the entire legal move list upfront. A structural change
-      (a real iterator type, not just a flat generate-then-sort list),
-      not a small patch — scope accordingly when picked up.
+      generating the entire legal move list upfront.** A structural
+      change (a real iterator type, not just a flat generate-then-sort
+      list), not a small patch — treated as its own sub-tracked effort
+      (Session 112), the same "own step-by-step order" convention the
+      Tier 0 tuner item above uses, not a single checkbox.
+    - [x] **Step 1 — `GenType`-staged move generation in
+          `board::generate_legal_moves()` (Session 112):** `movegen.h`
+          gained a `GenType` enum (`Captures`, `Quiets`, `All`) and
+          `generate_legal_moves()` a matching third parameter, default
+          `All` (source-compatible with every pre-existing 2-argument
+          call site — none needed changing). The split follows
+          `search/ordering.h`'s own existing move-ordering band
+          boundary, not a plain "has the Capture flag" test: `Captures`
+          yields every capture (incl. en passant, capture-promotions)
+          AND every promotion, capturing or not (a quiet promotion is
+          exactly as forcing/material-changing as a capture); `Quiets`
+          yields everything else (ordinary quiet moves, double pawn
+          pushes, castling). All pin/check/legality machinery
+          (`compute_pins()`, `attackers_to()`, the single/double-check
+          target mask) is unchanged and runs identically regardless of
+          `gen_type` — only which destination squares survive for each
+          already-legal move differs, via a new internal `stage_mask()`
+          helper (pieces/king) and inline capture/promotion-rank checks
+          (pawns, whose capture-vs-quiet-ness depends on promotion rank,
+          not just target-square occupancy, so they filter themselves
+          rather than going through `stage_mask()`). NOT YET consumed by
+          search or quiescence — this step only adds the capability;
+          `src/search/search.cpp`, `src/search/quiescence.cpp`, and
+          `search/ordering.h`'s existing full-list `order_moves()` are
+          all UNCHANGED and still call `generate_legal_moves()` at its
+          default `GenType::All`, so this step has zero effect on real
+          search behavior (confirmed: `bench` unchanged at 37,287 total
+          nodes, byte-for-byte identical to Session 111's own value).
+          Building the actual `MovePicker` iterator that consumes
+          `Captures`/`Quiets` staging and wiring it into
+          `negamax()`/`quiescence()` is Step 2, not yet started.
+    - [ ] Step 2 — a real `MovePicker` iterator type (`search/`, new
+          file) consuming `GenType::Captures`/`GenType::Quiets` to
+          actually defer quiet-move generation, replacing `search.cpp`'s
+          and `quiescence.cpp`'s current "generate all, then
+          `order_moves()` the whole list" call sites. Needs a design
+          pass on how TT-move/killer moves (which may be a quiet move
+          not yet generated at the point they're tried) interact with a
+          not-yet-materialized quiet list — not yet designed.
+    - [ ] Step 3 — perft/bench re-verification once Step 2 lands: this
+          is a real search-behavior change (node order, not just node
+          count, may shift; a genuine node-count regression would need
+          ARCHITECTURE.md's Benchmarking Discipline justification).
 
 
 Added 2026-08-15. Not part of the sequential phase order above — can be
