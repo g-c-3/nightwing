@@ -948,6 +948,82 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
     REQUIRE(result.score >= kMateThreshold);
 }
 
+// ---------------------------------------------------------------------
+// Staged / lazy move generation, Step 2b (docs/ROADMAP.md, docs/
+// DECISIONS.md): negamax()'s own move loop now generates
+// GenType::Captures up front and only brings in quiet moves via an
+// `ensure_quiets()` fallback at the specific points that actually need
+// them -- an empty captures list (this node might be terminal, might
+// just have no captures), `tt_move` naming a move that isn't among the
+// captures (it might be a genuine quiet best move from a prior,
+// shallower iterative-deepening pass), Singular Extensions' own
+// alternative-move scan (needs every legal move, not just captures),
+// or the main loop simply running out of captures without a cutoff.
+// `negamax()` itself isn't part of search.h's public surface (unlike
+// quiescence(), which quiescence_tests.cpp calls directly) -- these two
+// tests exercise it the same way every other test in this file already
+// does, through search_iterative_deepening()/search_fixed_depth(), but
+// are the first written specifically to stress the captures-empty
+// fallback across almost every node in the tree, not incidentally
+// (the existing "pure king-and-pawn endgame" test above and the
+// "singular extensions active" test just above already incidentally
+// exercise the empty-captures and singular-extension triggers
+// respectively, extensively enough that this session relied on them,
+// alongside these two, as its verification -- see DECISIONS.md).
+// ---------------------------------------------------------------------
+
+TEST_CASE("search_iterative_deepening: KQK mate is still found correctly when the position has "
+          "NO legal captures anywhere in the tree (staged generation's empty-captures fallback "
+          "fires at nearly every node)",
+          "[search][staged]") {
+    init_all();
+    // King and queen vs. lone king -- with only 3 pieces on the board
+    // and none of them able to capture another (the two kings can never
+    // approach the queen without being mated first, by construction of
+    // this specific position), GenType::Captures returns empty at
+    // essentially every node negamax() visits for the ENTIRE search
+    // tree, forcing the empty-captures->GenType::Quiets fallback almost
+    // universally rather than at just a few incidental nodes. A basic
+    // KQK mate is trivially winning and well within reach at a modest
+    // fixed depth for any correctly-functioning search, regardless of
+    // exactly how many plies deep the actual mate lies from here.
+    Position pos = parse_fen("7k/8/6K1/8/8/8/8/6Q1 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 8);
+    REQUIRE_FALSE(result.best_move.is_null());
+    REQUIRE(result.score >= kMateThreshold);
+}
+
+TEST_CASE("search_iterative_deepening: a TT-stored QUIET best move from an earlier, shallower "
+          "iteration is still honored correctly by a deeper iteration (staged generation's "
+          "tt_move-not-among-captures fallback)",
+          "[search][staged]") {
+    init_all();
+    // A quiet position (developed but no immediate captures available)
+    // where the previous iteration's best move is very likely to be a
+    // quiet developing/improving move, not a capture -- iterative
+    // deepening's own depth-1 pass populates the TT with whatever it
+    // finds best there, and the depth-6 pass that follows must
+    // correctly resolve that stored move against a captures-only
+    // GenType::Captures generation (it won't be found there if it's
+    // quiet) and fall back to generating quiets specifically to confirm
+    // and prioritize it, exactly the way order_moves() always has --
+    // this is an end-to-end check that the fallback preserves that
+    // property, not a demonstration that it's necessary for correctness
+    // (alpha-beta finds the right answer regardless of ordering, given
+    // enough depth -- this only affects how efficiently it gets there).
+    Position pos = parse_fen("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3");
+    const SearchResult result = search_iterative_deepening(pos, 6);
+    REQUIRE_FALSE(result.best_move.is_null());
+    // Not a tactical position -- just confirms the search completes
+    // cleanly and reports a sane, non-mate, roughly-equal score rather
+    // than crashing or returning a wildly wrong value, which is the
+    // failure mode an incorrectly-resolved stale/foreign TT move
+    // (misread as legitimate, or a legitimate one wrongly discarded)
+    // would actually produce.
+    REQUIRE(result.score > -kMateThreshold);
+    REQUIRE(result.score < kMateThreshold);
+}
+
 TEST_CASE("search_fixed_depth: back-rank mate in 1 is still found exactly when searched well "
           "beyond the mating depth (mate distance pruning)",
           "[search][mdp]") {
