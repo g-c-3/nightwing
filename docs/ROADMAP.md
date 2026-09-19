@@ -939,6 +939,77 @@ Priority Fixes section above).
           actual observed divergence against a real `tune()` call, not
           just the closed-form formula in isolation. See docs/
           DECISIONS.md, this session's entry, for the full account.
+    - [x] **Step 7 — mobility, the first "beyond PSQT" term (Session
+          114):** `eval/mobility.h` gained `MobilityWeights` (8 plain
+          `double` fields — knight/bishop/rook/queen x mg/eg, no array
+          indexing needed, unlike `PsqtWeights` — mobility has no
+          per-square dimension of its own) and `default_mobility_weights()`,
+          both `constexpr`-constructible directly from
+          `kKnightMobilityBonus`/etc. the same way `MaterialWeights`
+          already is (those constants are header-visible, unlike
+          `PsqtWeights`' hidden-in-`psqt.cpp` tables, so `PsqtWeights`'
+          own out-of-line, all-zero-default pattern wasn't needed here).
+          `mobility_value()` gained the same nullable-override parameter
+          `material_value()`/`psqt_value()` already have.
+          `eval::evaluate()` gained a matching `mobility_weights`
+          parameter (inserted between `psqt_weights` and
+          `incremental_material_psqt`), added to the same
+          `eval_cache`-staleness condition `material_weights`/
+          `psqt_weights` already trigger. `tuner/tune.h` gained
+          `MobilityParameterRef`/`kMobilityParameters` (8 entries, ALL
+          `anchored = false` — mobility is additive, like PSQT, so it
+          doesn't share material's multiplicative flat-scaling
+          degeneracy that pawn_mg/pawn_eg's anchoring exists to fix —
+          same reasoning `kPsqtParameters`' own comment already gives)
+          and `compute_loss()` gained a matching optional
+          `mobility_weights` parameter, forwarded to `evaluate()` the
+          same way `psqt_weights` already is. NOT YET CONSUMED by
+          `tune()` itself, same "table exists and is independently
+          tested ahead of that wiring" status `kPsqtParameters` had after
+          Step 3, before Step 4 wired `PsqtWeights` through
+          `compute_loss()`/`tune()` — a `tune()` call that actually
+          drives `kMobilityParameters` is a later step, not this one.
+          Inserting `mobility_weights` BETWEEN two existing parameters
+          (rather than appending at the end) broke every call site that
+          passed arguments positionally past `psqt_weights` — caught
+          entirely by the compiler as type mismatches (a `Score*`/`int*`
+          landing in the new `MobilityWeights*` slot), not silently:
+          `search.cpp` (4 sites), `quiescence.cpp` (2 sites),
+          `incremental_eval_tests.cpp` (3 sites), `eval_tests.cpp` (3
+          sites) all fixed by inserting an explicit `nullptr` in the new
+          slot. 628/628 tests green (608 carried over + 20 new: 7 in
+          `mobility_tests.cpp`, 3 in `eval_tests.cpp`, 10 in
+          `tune_tests.cpp` counting the pre-existing suite's own growth)
+          under both Release and Debug/ASan+UBSan; `bench` unchanged at
+          38,679 nodes (identical to Session 113's own value — every
+          production call site's `mobility_weights` argument still
+          defaults to `nullptr`, so this step adds capability only, same
+          "zero effect on real search/eval behavior" pattern
+          `kPsqtParameters`' own introduction (Step 3) followed).
+    - [ ] Step 8 — king safety (`eval/king_safety.h`), pawn structure
+          (`eval/pawns.h`), and space (`eval/space.h`)/threats
+          (`eval/threats.h`) still need the same `Weights` struct +
+          `ParameterRef` group + `evaluate()`/`compute_loss()` wiring
+          treatment mobility (Step 7) just got — likely one sub-step per
+          term given how differently-shaped each one's own existing
+          constants are (`king_safety.h`/`pawns.h` in particular look
+          substantially more involved than mobility's 8 plain scalars,
+          going by those files' own line counts), not a single combined
+          step. Whichever is picked up next should re-read that file's
+          own header comment first to gauge shape/scope before assuming
+          it will mirror mobility's own straightforward case.
+    - [ ] "A materially larger self-play corpus" and "mandatory
+          SPRT-gating before any tuned values are committed" (this
+          item's own original intro text, docs/DECISIONS.md, 2026-09-08
+          (2)) — still entirely unaddressed, and, per Session 113's own
+          correction entry, "mandatory SPRT-gating" specifically CAN
+          actually be done with this repo's existing `nightwing_sprt`/
+          `play_match()` tooling (unlike the search-code-comparison gap
+          that correction entry identified) — `play_match()` comparing
+          two `eval::MaterialWeights`-or-generalized-`Weights` vectors is
+          exactly the eval-weight comparison that tool was always built
+          for, so no new infrastructure is needed for THIS specific
+          follow-up, only for the separate search-code-comparison gap.
 
 ## Priority Fixes (external code review, 2026-09-17)
 
@@ -1124,14 +1195,20 @@ engines needs both, not one traded off against the other (docs/DECISIONS.md,
       technique that makes this optimization useful in the first place,
       not a regression; ARCHITECTURE.md's own Benchmarking Discipline
       section is satisfied by this entry's own account).
-- [ ] **Staged / lazy move generation: a `MovePicker`-style iterator that
+- [x] **Staged / lazy move generation: a `MovePicker`-style iterator that
       generates captures first and only generates quiet moves if the
       search gets past the captures without a cutoff, instead of always
       generating the entire legal move list upfront.** A structural
       change (a real iterator type, not just a flat generate-then-sort
       list), not a small patch — treated as its own sub-tracked effort
-      (Session 112), the same "own step-by-step order" convention the
-      Tier 0 tuner item above uses, not a single checkbox.
+      (Sessions 112-113), the same "own step-by-step order" convention
+      the Tier 0 tuner item above uses, not a single checkbox. CLOSED
+      OUT (Session 113) on Step 3a's correctness evidence; Step 3b (a
+      real strength comparison) couldn't be done with this repo's
+      existing tooling and was re-scoped as its own separate new item
+      (below, "Engine-vs-engine match infrastructure") rather than left
+      blocking this one indefinitely — see that item and docs/
+      DECISIONS.md's correction entry.
     - [x] **Step 1 — `GenType`-staged move generation in
           `board::generate_legal_moves()` (Session 112):** `movegen.h`
           gained a `GenType` enum (`Captures`, `Quiets`, `All`) and
