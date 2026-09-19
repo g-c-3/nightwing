@@ -1242,28 +1242,47 @@ engines needs both, not one traded off against the other (docs/DECISIONS.md,
           of "mate-in-3 still found correctly with [technique] active"
           regression tests spanning every major pruning/extension
           feature in this file) staying green throughout.
-    - [ ] Step 3a (correctness re-verification, DONE this session) /
-          Step 3b (SPRT-style strength verification, NOT done, flagged
-          as the recommended follow-up before Step 2b is considered
-          fully validated for competitive play): this repo's own
-          `nightwing_sprt` binary (already built by the existing CMake
-          setup, ROADMAP.md/ARCHITECTURE.md's testing section) exists
-          specifically to answer "is version A actually stronger/weaker
-          than version B," which no amount of unit-test-suite-staying-
-          green or bench-node-count-reading can answer on its own — the
-          bench shift documented in Step 2b's own entry above proves the
-          change altered search behavior, not whether that alteration
-          is a net strength improvement (the intended point: fewer
-          wasted quiet-move generations) or a net wash/regression (the
-          risk: occasionally worse move ordering from the history-
-          staleness effect also documented there). Whoever picks this up
-          next should build a baseline binary from before Step 2b (or
-          simply revert `search.cpp`'s `negamax()` move-generation call
-          site back to plain `GenType::All` on a branch/copy) and run an
-          actual SPRT match against this session's version before
-          treating Step 2b as a settled, shippable win rather than
-          merely a behavior-preserving-of-correctness, unverified-for-
-          strength change.
+    - [x] **Step 3a — correctness re-verification (DONE, this session):**
+          the full suite (619/619) staying green under Release and
+          Debug/ASan+UBSan, including every existing mate-finding/
+          pruning-technique regression test, is what "correctness
+          re-verification" actually means for Step 2b's kind of change
+          (no missed/illegal moves, no crash) — already covered by Step
+          2b's own entry above, checked off here for the record as its
+          own distinct thing from Step 3b below, not because there's
+          separate new work under this label.
+    - [ ] **Step 3b — a real strength comparison, genuinely NOT possible
+          with this repo's existing tooling as it stands today
+          (corrects a mistake in this item's own text from earlier in
+          this session — see docs/DECISIONS.md's correction entry for
+          the full account of how this was actually checked, not just
+          reconsidered):** `nightwing_sprt`/`tuner::play_match()`
+          (`src/tuner/match.h`) compare two `eval::MaterialWeights`
+          vectors played against EACH OTHER USING THE SAME COMPILED
+          SEARCH CODE — they cannot compare two different SEARCH-CODE
+          versions (like pre- vs. post-Step-2b `negamax()`) at all, with
+          or without building a second binary; there is no facility in
+          this repo for spawning two different binaries and playing them
+          against each other over UCI either. Actually running a
+          strength comparison for a search-code change (as opposed to an
+          eval-weight change, which this repo's tooling already handles
+          well) needs new infrastructure that doesn't exist yet — either
+          a genuine two-process UCI-vs-UCI match runner, or (the smaller
+          lift, following the exact precedent `MatchConfig`'s own
+          `threads_a`/`threads_b` fields already set for "repurpose this
+          same single-process module for a different per-side knob,
+          holding weights equal" — that struct's own doc comment) a new
+          per-side movegen-strategy toggle threaded through
+          `search_fixed_depth()`/`negamax()` the same way thread count
+          already is. Tracked as its own new, clearly separate ROADMAP
+          item below ("Engine-vs-engine match infrastructure for
+          search-code changes") rather than a blocking requirement on
+          this item — closing THIS item (staged move generation) on the
+          correctness evidence Step 3a already provides, consistent with
+          this project's own stated bench-tests.cpp philosophy ("prints
+          node counts for a human ... to record ... whether nodes went
+          up or down ... as a concrete signal," not "requires a full
+          match before any node-count-affecting change can land").
 
 
 Added 2026-08-15. Not part of the sequential phase order above — can be
@@ -1278,6 +1297,25 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
 - [ ] Standalone `nightwing.min.js`: single self-contained minified bundle (wasm binary inlined as base64, not a separate `.wasm` file to host/serve) for drop-in use without asset-path configuration
 - [ ] Both wasm artifacts (`nightwing.wasm`+`nightwing.js`, and `nightwing.min.js`) published as release assets alongside the 3 native binaries on the same rolling `latest` release
 - [ ] Verify the wasm build against the existing UCI test suite (or an equivalent subset runnable under Node) before it's trusted as a real release asset, not just "compiles"
+
+Added 2026-09-18 (Session 112/113). Not part of the sequential phase
+order above — can be picked up in any session without waiting for
+Phase 8/9. Rationale: discovered a real gap while trying to strength-
+verify the "Staged / lazy move generation" item's Step 3b (that item's
+own entry above, and DECISIONS.md's correction entry, have the full
+account) — `tuner::play_match()`/`nightwing_sprt` can only ever compare
+two `eval::MaterialWeights` vectors played against each other using the
+SAME compiled search code; there is currently no way, anywhere in this
+repo, to get a real strength (Elo/match-score) signal for a SEARCH-CODE
+change (a new pruning technique, a search refactor like Step 2b) the
+way there already is for an eval-weight change. This gap will recur
+every time a future search-code change's effect on strength (as
+opposed to just correctness and node-count) is worth knowing before
+shipping it, not just this one time.
+
+- [ ] Engine-vs-engine match infrastructure for search-code changes (not just eval weights): the smaller-lift option, following `MatchConfig`'s own existing `threads_a`/`threads_b` precedent (`src/tuner/match.h` — added specifically to repurpose that same single-process module for a different per-side knob, holding weights equal) — add an analogous per-side movegen-strategy (or, more generally, a per-side function-pointer/`std::function`-based search-variant) toggle threaded through `search_fixed_depth()`/`negamax()`, so `play_match()` can compare two search-CODE configurations within the same process/binary the same way it already compares two weight vectors
+- [ ] Alternative, larger-lift option: a genuine two-process UCI-vs-UCI match runner (spawn two separate `nightwing` binaries — e.g. a just-built one plus a checked-out-and-built-separately baseline — and referee games between them over stdin/stdout UCI), closer to how real engine testing frameworks (cutechess-cli, fastchess, OpenBench) work, and the only option that can compare two commits/binaries without adding any new in-process toggle to `negamax()` itself
+- [ ] Whichever option is built, retroactively apply it to the "Staged / lazy move generation" item's still-open Step 3b (pre- vs. post-Step-2b `negamax()`) as this new tool's first real use case, rather than leaving that comparison undone indefinitely
 
 ## Phase 9 — Advanced / Stretch Goals (beyond great-engine baseline)
 - [ ] NUMA-aware thread/memory allocation (large multi-socket hardware only)
