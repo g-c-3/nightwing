@@ -1747,7 +1747,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     int node_static_eval = kNoStaticEval;
     if (!in_check(pos)) {
         const int white_relative =
-            eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights, /*psqt_weights=*/nullptr, mat_psqt);
+            eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights,
+                          /*psqt_weights=*/nullptr, /*mobility_weights=*/nullptr, mat_psqt);
         node_static_eval = (us == Color::White ? white_relative : -white_relative) +
                             correction_history.correction(us, pawn_key);
         if (ply < kMaxPly) {
@@ -1777,7 +1778,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // meaningless, same reasoning as NMP's own beta guard just below).
     if (!in_check(pos) && depth <= kReverseFutilityMaxDepth && beta < kMateThreshold) {
         const int white_relative =
-            eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights, /*psqt_weights=*/nullptr, mat_psqt);
+            eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights,
+                          /*psqt_weights=*/nullptr, /*mobility_weights=*/nullptr, mat_psqt);
         // Correction history folded in here too (ROADMAP.md's
         // "Correction history" item) -- this site's own static eval is
         // computed independently of node_static_eval above (this file's
@@ -1896,7 +1898,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // independently confirms the same conclusion.
     if (!in_check(pos) && depth <= kRazorMaxDepth && alpha < kMateThreshold) {
         const int white_relative =
-            eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights, /*psqt_weights=*/nullptr, mat_psqt);
+            eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights,
+                          /*psqt_weights=*/nullptr, /*mobility_weights=*/nullptr, mat_psqt);
         // Correction history folded in here too (ROADMAP.md's
         // "Correction history" item) -- same independent-computation
         // rationale as RFP's own site above.
@@ -2060,7 +2063,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     int static_eval = 0;
     if (futility_may_apply) {
         const int white_relative =
-            eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights, /*psqt_weights=*/nullptr, mat_psqt);
+            eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights,
+                          /*psqt_weights=*/nullptr, /*mobility_weights=*/nullptr, mat_psqt);
         // Correction history folded in here too (ROADMAP.md's
         // "Correction history" item) -- same independent-computation
         // rationale as RFP's/razoring's own sites above.
