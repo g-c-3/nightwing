@@ -220,7 +220,8 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         // normal play).
         const int white_relative = eval::evaluate(pos, pawn_tt, eval_cache, material_weights,
                                                     /*psqt_weights=*/nullptr,
-                                                    /*mobility_weights=*/nullptr, mat_psqt);
+                                                    /*mobility_weights=*/nullptr,
+                                                    /*space_weights=*/nullptr, mat_psqt);
         return pos.side_to_move == Color::White ? white_relative : -white_relative;
     }
 
@@ -248,8 +249,9 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         const int lazy_beta_white = pos.side_to_move == Color::White ? beta : -alpha;
         const int white_relative =
             eval::evaluate(pos, pawn_tt, eval_cache, material_weights,
-                            /*psqt_weights=*/nullptr, /*mobility_weights=*/nullptr, mat_psqt,
-                            &lazy_alpha_white, &lazy_beta_white);
+                            /*psqt_weights=*/nullptr, /*mobility_weights=*/nullptr,
+                            /*space_weights=*/nullptr, mat_psqt, &lazy_alpha_white,
+                            &lazy_beta_white);
         best = pos.side_to_move == Color::White ? white_relative : -white_relative;
         if (best >= beta) {
             return best;
