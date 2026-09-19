@@ -610,6 +610,62 @@ TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a Mob
     REQUIRE(cached == 12345); // untouched, not overwritten with a fresh value either
 }
 
+TEST_CASE("evaluate: a SpaceWeights override changes evaluate()'s result exactly as expected -- "
+          "the space counterpart to the MaterialWeights/PsqtWeights/MobilityWeights tests above",
+          "[eval][space][tuner]") {
+    init_all();
+    // Bare kings plus one Black pawn on d6 -- inside Black's own space
+    // zone (eval/space.h's header comment: c/d/e/f files, the three
+    // ranks just ahead of that side's own back rank), disqualifying
+    // exactly one square from Black's own count via own-pawn occupancy
+    // (the same mechanism tests/space_tests.cpp's own "a pawn occupying
+    // a space-zone square" test exercises, just on the opposite side,
+    // so the diff favors White instead of Black -- a clean, one-square,
+    // exactly-attributable advantage with nothing else on the board to
+    // confound it).
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing); // e1
+    pos.place_piece(make_square(4, 7), Piece::BlackKing); // e8
+    pos.place_piece(make_square(3, 5), Piece::BlackPawn); // d6 -- inside Black's own zone
+
+    const int default_eval = evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr);
+
+    SpaceWeights boosted = default_space_weights();
+    boosted.square_mg = kSpaceSquareBonus.mg + 10.0;
+    boosted.square_eg = kSpaceSquareBonus.eg + 10.0;
+    const int boosted_eval =
+        evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, &boosted);
+
+    // White has 12 safe zone squares, Black has 11 (d6 disqualified by
+    // its own pawn) -- a 1-square White-favoring diff. Boosting the
+    // per-square bonus by 10 should raise White's evaluated advantage
+    // by roughly 1 * 10 = 10 (exactly, at the middlegame phase this
+    // bare-material position tapers to, modulo integer rounding from
+    // taper()'s own mg/eg blend).
+    REQUIRE(boosted_eval > default_eval);
+    REQUIRE(boosted_eval - default_eval >= 10 - 5); // generous slack for taper rounding
+}
+
+TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a SpaceWeights "
+          "override is supplied, even if a real EvalCache pointer is also passed -- the space "
+          "counterpart to the MaterialWeights/PsqtWeights/MobilityWeights eval_cache tests above",
+          "[eval][eval_cache][space][tuner]") {
+    init_all();
+    Position pos = start_position();
+
+    EvalCache cache(2048);
+    cache.store(pos.zobrist_hash, 12345); // same poisoning technique as the tests above
+
+    const SpaceWeights weights = default_space_weights();
+    const int result = evaluate(pos, nullptr, &cache, nullptr, nullptr, nullptr, &weights);
+    REQUIRE(result != 12345);
+    REQUIRE(result == evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, &weights));
+
+    const auto [hit, cached] = cache.probe(pos.zobrist_hash);
+    REQUIRE(hit);
+    REQUIRE(cached == 12345); // untouched, not overwritten with a fresh value either
+}
+
 TEST_CASE("evaluate: a lazy window wide enough to contain any plausible score never triggers "
           "the early-exit path -- byte-identical to the non-lazy result",
           "[eval][lazy_eval]") {
@@ -625,8 +681,8 @@ TEST_CASE("evaluate: a lazy window wide enough to contain any plausible score ne
     const int lazy_alpha_white = -100'000;
     const int lazy_beta_white = 100'000;
     const int with_wide_lazy_window =
-        evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &lazy_alpha_white,
-                 &lazy_beta_white);
+        evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                 &lazy_alpha_white, &lazy_beta_white);
     REQUIRE(with_wide_lazy_window == no_lazy);
 }
 
@@ -654,8 +710,8 @@ TEST_CASE("evaluate: a lazy window the cheap material+PSQT score clears by more 
     const int lazy_alpha_white = 0;
     const int lazy_beta_white = 0;
     const int with_tight_lazy_window =
-        evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &lazy_alpha_white,
-                 &lazy_beta_white);
+        evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                 &lazy_alpha_white, &lazy_beta_white);
 
     REQUIRE(with_tight_lazy_window == material_psqt_only);
     // And the whole point of this position: the early-exit value is
@@ -680,7 +736,7 @@ TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a laz
     const int lazy_alpha_white = 0;
     const int lazy_beta_white = 0;
     const int result = evaluate(pos, nullptr, &cache, nullptr, nullptr, nullptr, nullptr,
-                                 &lazy_alpha_white, &lazy_beta_white);
+                                 nullptr, &lazy_alpha_white, &lazy_beta_white);
     REQUIRE(result != 12345);
 
     const auto [hit, cached] = cache.probe(pos.zobrist_hash);

@@ -115,3 +115,66 @@ TEST_CASE("space_value: an own-pawn-occupied square and an enemy-attacked square
 
     REQUIRE(space_value(pos) == Score{-4, 0});
 }
+
+// ---------------------------------------------------------------------
+// ROADMAP.md Tier 0 "PSQT and beyond" -- Step 8, space (the second
+// "beyond" term, after mobility): SpaceWeights /
+// default_space_weights() / space_value()'s new nullable-override
+// parameter.
+// ---------------------------------------------------------------------
+
+TEST_CASE("default_space_weights: matches kSpaceSquareBonus exactly", "[eval][space][tuner]") {
+    const SpaceWeights defaults = default_space_weights();
+    REQUIRE(defaults.square_mg == kSpaceSquareBonus.mg);
+    REQUIRE(defaults.square_eg == kSpaceSquareBonus.eg);
+}
+
+TEST_CASE("space_value: passing default_space_weights() as an explicit override reproduces "
+          "the no-override result exactly",
+          "[eval][space][tuner]") {
+    init_all();
+    // Deliberately asymmetric (unlike a mirrored starting setup, where
+    // a bug that silently zeroed out the weight could still pass this
+    // test by symmetry) -- White has a pawn removed from its own zone
+    // via a genuine own-pawn occupancy, Black does not, giving a
+    // nonzero, one-sided baseline.
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing); // e1
+    pos.place_piece(make_square(4, 7), Piece::BlackKing); // e8
+    pos.place_piece(make_square(3, 2), Piece::WhitePawn); // d3 -- inside White's own zone
+
+    const SpaceWeights defaults = default_space_weights();
+    REQUIRE(space_value(pos, &defaults).mg == space_value(pos).mg);
+    REQUIRE(space_value(pos, &defaults).eg == space_value(pos).eg);
+    // And this position's own space score is genuinely nonzero --
+    // confirms the equality above isn't a vacuous 0 == 0.
+    REQUIRE(space_value(pos).mg != 0);
+}
+
+TEST_CASE("space_value: a modified SpaceWeights scales the existing per-square diff "
+          "proportionally",
+          "[eval][space][tuner]") {
+    init_all();
+    // Same one-square-disqualified-by-own-pawn setup as this file's own
+    // "a pawn occupying a space-zone square" test above (Score{-2, 0}
+    // at the compiled-in kSpaceSquareBonus) -- boosting the weight
+    // should scale that same one-square diff proportionally, not
+    // introduce some unrelated new effect.
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing); // e1
+    pos.place_piece(make_square(4, 7), Piece::BlackKing); // e8
+    pos.place_piece(make_square(3, 2), Piece::WhitePawn); // d3 -- inside White's own zone
+    const Score baseline = space_value(pos);
+    REQUIRE(baseline == Score{-2, 0});
+
+    SpaceWeights weights = default_space_weights();
+    weights.square_mg += 100.0;
+    weights.square_eg += 50.0;
+    const Score boosted = space_value(pos, &weights);
+
+    // The one-square White-side deficit is now scored against the
+    // boosted per-square bonus instead -- exactly one unit worse for
+    // White in each of mg/eg, not a partial or doubled effect.
+    REQUIRE(boosted.mg == baseline.mg - 100);
+    REQUIRE(boosted.eg == baseline.eg - 50);
+}

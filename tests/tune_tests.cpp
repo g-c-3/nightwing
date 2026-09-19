@@ -495,6 +495,109 @@ TEST_CASE("compute_loss: an optional mobility_weights argument is forwarded to e
     REQUIRE(loss_with_override == expected_error * expected_error);
 }
 
+// --- ROADMAP.md Tier 0 "PSQT and beyond" -- Step 8, space (the second "beyond" term) ---
+
+TEST_CASE("kSpaceParameters: covers exactly the 2 SpaceWeights fields, each a plain scalar "
+          "entry (member set, array_member null), none anchored",
+          "[tuner][tune]") {
+    // Same structural shape as kMaterialParameters/kMobilityParameters
+    // (plain scalar entries), not kPsqtParameters (indexed-array
+    // entries) -- space has no per-piece-type or per-square dimension,
+    // just one mg/eg pair total, the smallest of the four tables so
+    // far.
+    REQUIRE(kSpaceParameters.size() == 2);
+    for (const SpaceParameterRef& param : kSpaceParameters) {
+        REQUIRE(param.member != nullptr);
+        REQUIRE(param.array_member == nullptr);
+        // Every space parameter is `anchored = false` -- see
+        // kSpaceParameters' own doc comment (tune.h) for why: an
+        // additive per-square bonus, like PSQT's/mobility's, doesn't
+        // share material's multiplicative flat-scaling degeneracy.
+        REQUIRE(param.anchored == false);
+    }
+}
+
+TEST_CASE("kSpaceParameters: every member pointer reaches exactly the field its name claims, "
+          "and only that field",
+          "[tuner][tune]") {
+    // Same technique as kMaterialParameters'/kMobilityParameters' own
+    // equivalent tests above: set each field to a distinct sentinel
+    // through the table and confirm exactly one field changed.
+    for (std::size_t i = 0; i < kSpaceParameters.size(); ++i) {
+        SpaceWeights probe = default_space_weights();
+        probe.*(kSpaceParameters[i].member) = -1.0;
+        int changed_count = 0;
+        for (std::size_t j = 0; j < kSpaceParameters.size(); ++j) {
+            if (probe.*(kSpaceParameters[j].member) == -1.0) {
+                ++changed_count;
+            }
+        }
+        REQUIRE(changed_count == 1);
+    }
+}
+
+TEST_CASE("kSpaceParameters: get()/set() agree with default_space_weights() and each other's "
+          "inverse, for every entry",
+          "[tuner][tune]") {
+    const SpaceWeights defaults = default_space_weights();
+    const double expected[2] = {defaults.square_mg, defaults.square_eg};
+    for (std::size_t i = 0; i < kSpaceParameters.size(); ++i) {
+        REQUIRE(kSpaceParameters[i].get(defaults) == expected[i]);
+        SpaceWeights w = defaults;
+        kSpaceParameters[i].set(w, 12.5);
+        REQUIRE(kSpaceParameters[i].get(w) == 12.5);
+    }
+}
+
+TEST_CASE("compute_loss: an optional space_weights argument is forwarded to evaluate() exactly "
+          "the same way psqt_weights/mobility_weights already are",
+          "[tuner][tune]") {
+    init_all();
+    // A position where space genuinely differs between the two sides --
+    // bare kings plus one Black pawn disqualifying one of Black's own
+    // zone squares (the same one-square mechanism eval_tests.cpp's own
+    // SpaceWeights override test uses), so space_value()'s own term is
+    // the only thing distinguishing this position from dead equal, and
+    // perturbing kSpaceSquareBonus is guaranteed to move the eval.
+    const std::string fen = "4k3/3p4/8/8/8/8/8/4K3 w - - 0 1"; // d7 pawn, inside Black's own zone
+    const Position pos = parse_fen(fen);
+    const MaterialWeights weights = default_material_weights();
+    const double sigmoid_scale = 400.0;
+
+    const int default_eval = evaluate(pos, nullptr, nullptr, &weights);
+    const double default_label = sigmoid(static_cast<double>(default_eval) / sigmoid_scale);
+    SelfPlayPosition position{fen, default_label};
+    REQUIRE(compute_loss({position}, weights, sigmoid_scale) < 1e-12);
+
+    SpaceWeights perturbed = default_space_weights();
+    // Both mg AND eg perturbed (unlike kMaterialParameters'/
+    // kMobilityParameters' own equivalent tests, which only touch one
+    // side of the mg/eg pair): this FEN is a bare-kings-plus-one-pawn
+    // position with zero non-pawn material, so compute_phase() returns
+    // 0 and taper() selects the eg term ENTIRELY -- perturbing square_mg
+    // alone would be silently invisible here, not a genuine forwarding
+    // failure. Perturbing both sidesteps that phase-dependence rather
+    // than requiring a differently-shaped position just for this test.
+    perturbed.square_mg += 500.0;
+    perturbed.square_eg += 500.0;
+    const double loss_with_override =
+        compute_loss({position}, weights, sigmoid_scale, /*psqt_weights=*/nullptr,
+                      /*mobility_weights=*/nullptr, &perturbed);
+    REQUIRE(loss_with_override > 1e-6);
+
+    // Matches computing evaluate() directly with the same override and
+    // re-deriving the loss by hand -- compute_loss() isn't doing
+    // anything to space_weights beyond forwarding it straight through
+    // to evaluate().
+    const int perturbed_eval = evaluate(pos, nullptr, nullptr, &weights,
+                                         /*psqt_weights=*/nullptr,
+                                         /*mobility_weights=*/nullptr, &perturbed);
+    const double perturbed_predicted =
+        sigmoid(static_cast<double>(perturbed_eval) / sigmoid_scale);
+    const double expected_error = perturbed_predicted - default_label;
+    REQUIRE(loss_with_override == expected_error * expected_error);
+}
+
 // --- ROADMAP.md Tier 0 Step 5 -- L2 regularization (TuneConfig::l2_lambda) ---
 
 TEST_CASE("tune: l2_lambda == 0.0 (the default) leaves TuneResult::initial_loss identical to "
