@@ -39,6 +39,7 @@
 // every other eval term added this phase already carries.
 
 #include "board/board.h"
+#include "eval/psqt.h" // round_to_int()
 #include "eval/score.h"
 
 namespace nightwing::eval {
@@ -59,9 +60,63 @@ namespace nightwing::eval {
 /// the simpler equivalent for a first cut.
 inline constexpr Score kSpaceSquareBonus = {2, 0};
 
+/// Runtime-mutable counterpart to kSpaceSquareBonus above -- the
+/// space-term entry in the same "runtime-mutable parameter-vector
+/// abstraction over eval's currently-constexpr named constants" family
+/// as eval::MaterialWeights/PsqtWeights (psqt.h) and
+/// eval::MobilityWeights (mobility.h) already establish (ROADMAP.md's
+/// Tier 0 tuner item, "PSQT and beyond" -- Step 8, the second "beyond"
+/// term after mobility). Space has only ONE constant in the first
+/// place (unlike mobility's 4 piece-type-scoped ones), so this struct
+/// is the smallest of the four so far -- a single mg/eg pair, no
+/// per-piece-type or per-square dimension at all.
+///
+/// `constexpr`-constructible via default-member-initializers naming
+/// kSpaceSquareBonus directly, the same MaterialWeights/MobilityWeights
+/// pattern (not PsqtWeights' out-of-line one) -- mechanical, not a
+/// judgment call, since kSpaceSquareBonus is an `inline constexpr`
+/// value declared right here in this header, not hidden in space.cpp's
+/// own anonymous namespace the way psqt.cpp's per-square tables are
+/// (see docs/DECISIONS.md, mobility's own introducing entry, for the
+/// identical reasoning applied there).
+struct SpaceWeights {
+    double square_mg = kSpaceSquareBonus.mg;
+    double square_eg = kSpaceSquareBonus.eg;
+};
+
+/// Returns a SpaceWeights matching kSpaceSquareBonus exactly -- the
+/// natural starting point for a space-aware tuning run
+/// (tuner::tune()-style, src/tuner/tune.h), and the value
+/// SpaceWeights{}'s own default-member-initializer is already,
+/// redundantly initialized to (kept in sync by hand, matching
+/// default_material_weights()'s/default_mobility_weights()'s own doc
+/// comment rationale for why: SpaceWeights{}'s defaults stay
+/// self-contained and don't require calling a function just to
+/// default-construct one -- this function exists for callers that want
+/// that mapping made explicit/named, and for tests confirming the two
+/// really do agree).
+[[nodiscard]] constexpr SpaceWeights default_space_weights() noexcept {
+    return SpaceWeights{
+        /*square_mg=*/kSpaceSquareBonus.mg,
+        /*square_eg=*/kSpaceSquareBonus.eg,
+    };
+}
+
 /// Evaluates the space term for BOTH sides and returns a single
 /// White-relative Score (positive favors White, matching every other
 /// eval/*.h term's sign convention in eval.cpp).
+///
+/// `weights`, if non-null, is used INSTEAD OF kSpaceSquareBonus for
+/// this call only -- the same nullable-override convention
+/// material_value()/psqt_value()/mobility_value() already establish,
+/// threaded here for eval::evaluate()'s own `space_weights` parameter
+/// (eval.h) so a future space-aware tuning run can probe candidate
+/// space weight vectors the same uniform way it already can for
+/// material, PSQT, and mobility. `weights->square_mg`/`square_eg` are
+/// `double` (SpaceWeights' own field type); Score's own fields are
+/// `int` (score.h), so the override is rounded via the same
+/// round_to_int() helper psqt_value()/mobility_value() already use,
+/// reused here rather than duplicated.
 ///
 /// Precondition: board::init_masks() has been called (this function
 /// uses board::pawn_attacks(), a masks.h function). Like eval/
@@ -70,6 +125,7 @@ inline constexpr Score kSpaceSquareBonus = {2, 0};
 /// /eval/king_safety.h's king_safety_value(), this function does NOT
 /// need board::init_magic_bitboards() -- it never calls a
 /// sliding-piece attack function.
-[[nodiscard]] Score space_value(const board::Position& pos) noexcept;
+[[nodiscard]] Score space_value(const board::Position& pos,
+                                 const SpaceWeights* weights = nullptr) noexcept;
 
 } // namespace nightwing::eval

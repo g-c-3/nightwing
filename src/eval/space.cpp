@@ -55,8 +55,11 @@ constexpr int kSpaceZoneMaxRelativeRank = 3;
 
 } // namespace
 
-Score space_value(const Position& pos) noexcept {
+Score space_value(const Position& pos, const SpaceWeights* weights) noexcept {
     Score score;
+    const Score square_bonus = weights == nullptr
+                                    ? kSpaceSquareBonus
+                                    : Score{round_to_int(weights->square_mg), round_to_int(weights->square_eg)};
 
     for (const Color c : {Color::White, Color::Black}) {
         const Color enemy = board::opposite(c);
@@ -84,7 +87,7 @@ Score space_value(const Position& pos) noexcept {
             ++safe_squares;
         }
 
-        const Score side_score = kSpaceSquareBonus * safe_squares;
+        const Score side_score = square_bonus * safe_squares;
 
         if (c == Color::White) {
             score += side_score;

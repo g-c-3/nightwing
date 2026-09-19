@@ -67,6 +67,7 @@
 #include "eval/mobility.h"
 #include "eval/pawn_tt.h"
 #include "eval/psqt.h"
+#include "eval/space.h"
 
 namespace nightwing::eval {
 
@@ -179,6 +180,22 @@ namespace nightwing::eval {
 /// meaning "use the compiled-in constants" — every existing caller is
 /// entirely unaffected.
 ///
+/// `space_weights`, if non-null, is forwarded to the internal
+/// space_value() call INSTEAD OF its own kSpaceSquareBonus constant
+/// (eval/space.h's SpaceWeights, and space_value()'s own doc comment on
+/// this parameter) — the space-term counterpart to `material_weights`/
+/// `psqt_weights`/`mobility_weights` above (ROADMAP.md's Tier 0 tuner
+/// item, "PSQT and beyond" — the second "beyond" term, after
+/// mobility), so a future space-aware tuning run can call evaluate() at
+/// a candidate space weight vector the same uniform way the other
+/// three already allow. Independent of `material_weights`/
+/// `psqt_weights`/`mobility_weights` — any subset of the four may be
+/// non-null on a given call. `eval_cache` is DELIBERATELY NEVER
+/// consulted whenever `space_weights != nullptr` either, for the
+/// identical staleness reason the other three already disable it.
+/// Defaults to nullptr, meaning "use the compiled-in constant" — every
+/// existing caller is entirely unaffected.
+///
 /// `incremental_material_psqt`, if non-null, is used INSTEAD OF running
 /// compute_material_psqt()'s own 64-square scan (eval/incremental.h) —
 /// the caller is asserting that `*incremental_material_psqt` already
@@ -262,6 +279,7 @@ namespace nightwing::eval {
                             const MaterialWeights* material_weights = nullptr,
                             const PsqtWeights* psqt_weights = nullptr,
                             const MobilityWeights* mobility_weights = nullptr,
+                            const SpaceWeights* space_weights = nullptr,
                             const Score* incremental_material_psqt = nullptr,
                             const int* lazy_alpha_white = nullptr,
                             const int* lazy_beta_white = nullptr) noexcept;
