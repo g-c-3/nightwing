@@ -986,18 +986,71 @@ Priority Fixes section above).
           defaults to `nullptr`, so this step adds capability only, same
           "zero effect on real search/eval behavior" pattern
           `kPsqtParameters`' own introduction (Step 3) followed).
-    - [ ] Step 8 — king safety (`eval/king_safety.h`), pawn structure
-          (`eval/pawns.h`), and space (`eval/space.h`)/threats
-          (`eval/threats.h`) still need the same `Weights` struct +
-          `ParameterRef` group + `evaluate()`/`compute_loss()` wiring
-          treatment mobility (Step 7) just got — likely one sub-step per
-          term given how differently-shaped each one's own existing
+    - [x] Step 8a — space (`eval/space.h`), the second "beyond PSQT" \
+          term (Session 115): `SpaceWeights` (2 plain `double` fields,
+          `square_mg`/`square_eg` — the smallest of the four weight
+          structs so far, since space has only ONE constant,
+          `kSpaceSquareBonus`, with no per-piece-type or per-square
+          dimension at all) and `default_space_weights()`, both
+          `constexpr`-constructible directly from `kSpaceSquareBonus`
+          the same `MaterialWeights`/`MobilityWeights` pattern
+          (mechanical, not `PsqtWeights`' out-of-line one — identical
+          reasoning to Session 114's own mobility choice).
+          `space_value()` gained the same nullable-override parameter
+          `mobility_value()` already has. `eval::evaluate()` gained a
+          matching `space_weights` parameter (inserted between
+          `mobility_weights` and `incremental_material_psqt`, grouping
+          all four weight-override parameters together), added to the
+          same `eval_cache`-staleness condition the other three already
+          trigger. `tuner/tune.h` gained `SpaceParameterRef`/
+          `kSpaceParameters` (2 entries, `anchored = false` — additive
+          term, same reasoning `kPsqtParameters`/`kMobilityParameters`
+          already established) and `compute_loss()` gained a matching
+          optional `space_weights` parameter, forwarded to `evaluate()`
+          the same way `mobility_weights` already is. NOT YET CONSUMED
+          by `tune()` itself, same "table exists and is independently
+          tested ahead of that wiring" status `kMobilityParameters` had
+          after Step 7. Inserting `space_weights` mid-signature (again,
+          for readability) broke the same 6 production call sites
+          Session 114's mobility insertion did (`search.cpp` x4,
+          `quiescence.cpp` x2), each fixed with an explicit
+          `/*space_weights=*/nullptr`, plus 6 test-file positional call
+          sites (`eval_tests.cpp` x3, `incremental_eval_tests.cpp` x3)
+          needing an extra `nullptr` inserted — all caught by the
+          compiler as type mismatches, none silently. One test bug
+          caught and fixed in this session's own new test code (not
+          production code): the first draft of `compute_loss`'s
+          space-forwarding test used a bare-kings-plus-one-pawn FEN
+          with zero non-pawn material (`compute_phase() == 0`), and
+          only perturbed `square_mg` — since `taper()` selects the EG
+          term entirely at phase 0, the mg-only perturbation was
+          silently invisible, not a real forwarding failure (caught
+          immediately as a `FAILED` assertion, `loss_with_override`
+          exactly 0.0 instead of the expected nonzero, not a false
+          pass — fixed by perturbing both `square_mg` and `square_eg`).
+          637/637 tests green (628 carried over + 9 new: 3 in
+          `tests/space_tests.cpp`, 2 in `tests/eval_tests.cpp`, 4 in
+          `tests/tune_tests.cpp`) under both Release and
+          Debug/ASan+UBSan, zero new sanitizer findings; `bench`
+          unchanged at 38,679 total nodes — every production call site's
+          `space_weights` argument still defaults to `nullptr`, the
+          same "zero behavior change" pattern every prior Tier 0 step
+          has followed.
+    - [ ] Step 8b — king safety (`eval/king_safety.h`), pawn structure
+          (`eval/pawns.h`), and threats (`eval/threats.h`) still need
+          the same `Weights` struct + `ParameterRef` group +
+          `evaluate()`/`compute_loss()` wiring treatment mobility
+          (Step 7) and space (Step 8a) just got — likely one sub-step
+          per term given how differently-shaped each one's own existing
           constants are (`king_safety.h`/`pawns.h` in particular look
-          substantially more involved than mobility's 8 plain scalars,
-          going by those files' own line counts), not a single combined
-          step. Whichever is picked up next should re-read that file's
-          own header comment first to gauge shape/scope before assuming
-          it will mirror mobility's own straightforward case.
+          substantially more involved than mobility's 8 or space's 2
+          plain scalars, going by those files' own line counts;
+          `threats.h` has 12 scalars across 3 penalty categories x 4
+          piece types — bigger than space but still plain-scalar-shaped,
+          no array indexing needed), not a single combined step.
+          Whichever is picked up next should re-read that file's own
+          header comment first to gauge shape/scope before assuming it
+          will mirror mobility's/space's own straightforward cases.
     - [ ] "A materially larger self-play corpus" and "mandatory
           SPRT-gating before any tuned values are committed" (this
           item's own original intro text, docs/DECISIONS.md, 2026-09-08
