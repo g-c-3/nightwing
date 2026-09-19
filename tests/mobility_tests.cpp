@@ -140,3 +140,77 @@ TEST_CASE("mobility_value: pseudo-mobility counts an attacked enemy-occupied squ
 
     REQUIRE(mobility_value(with_target) == mobility_value(no_target));
 }
+
+// ---------------------------------------------------------------------
+// ROADMAP.md Tier 0 "PSQT and beyond" -- Step 7, mobility (the first
+// "beyond" term): MobilityWeights / default_mobility_weights() /
+// mobility_value()'s new nullable-override parameter.
+// ---------------------------------------------------------------------
+
+TEST_CASE("default_mobility_weights: matches kKnightMobilityBonus/.../kQueenMobilityBonus "
+          "exactly",
+          "[eval][mobility][tuner]") {
+    const MobilityWeights defaults = default_mobility_weights();
+    REQUIRE(defaults.knight_mg == kKnightMobilityBonus.mg);
+    REQUIRE(defaults.knight_eg == kKnightMobilityBonus.eg);
+    REQUIRE(defaults.bishop_mg == kBishopMobilityBonus.mg);
+    REQUIRE(defaults.bishop_eg == kBishopMobilityBonus.eg);
+    REQUIRE(defaults.rook_mg == kRookMobilityBonus.mg);
+    REQUIRE(defaults.rook_eg == kRookMobilityBonus.eg);
+    REQUIRE(defaults.queen_mg == kQueenMobilityBonus.mg);
+    REQUIRE(defaults.queen_eg == kQueenMobilityBonus.eg);
+}
+
+TEST_CASE("mobility_value: passing default_mobility_weights() as an explicit override "
+          "reproduces the no-override result exactly",
+          "[eval][mobility][tuner]") {
+    init_all();
+    // Deliberately asymmetric (unlike a mirrored starting setup, where
+    // a bug that silently zeroed out every weight could still pass this
+    // test by symmetry) -- White has an extra, freely-mobile knight.
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(4, 7), Piece::BlackKing);
+    pos.place_piece(make_square(3, 3), Piece::WhiteKnight); // d4
+    pos.place_piece(make_square(2, 3), Piece::WhiteBishop); // d3
+    pos.place_piece(make_square(5, 3), Piece::BlackKnight); // f4
+
+    const MobilityWeights defaults = default_mobility_weights();
+    REQUIRE(mobility_value(pos, &defaults).mg == mobility_value(pos).mg);
+    REQUIRE(mobility_value(pos, &defaults).eg == mobility_value(pos).eg);
+    // And this position's own mobility score is genuinely nonzero --
+    // confirms the equality above isn't a vacuous 0 == 0.
+    REQUIRE(mobility_value(pos).mg != 0);
+}
+
+TEST_CASE("mobility_value: a modified MobilityWeights changes only that piece type's "
+          "contribution, not the others",
+          "[eval][mobility][tuner]") {
+    init_all();
+    // A single White knight with room to move, kings only otherwise --
+    // deliberately asymmetric (unlike this file's other tests' shared
+    // starting FEN, which is a mirrored setup where boosting one side's
+    // knight bonus boosts the other's identically and cancels out in
+    // the White-relative difference this test needs to observe).
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(4, 7), Piece::BlackKing);
+    pos.place_piece(make_square(3, 3), Piece::WhiteKnight); // d4
+    const Score baseline = mobility_value(pos);
+
+    MobilityWeights weights = default_mobility_weights();
+    weights.knight_mg += 100.0;
+    weights.knight_eg += 50.0;
+    const Score with_knight_boost = mobility_value(pos, &weights);
+
+    REQUIRE(with_knight_boost.mg > baseline.mg);
+    REQUIRE(with_knight_boost.eg > baseline.eg);
+
+    // Isolate the effect further: a weights override that changes ONLY
+    // bishop bonuses must leave this same (bishop-free) position
+    // completely unaffected.
+    MobilityWeights bishop_only = default_mobility_weights();
+    bishop_only.bishop_mg += 1000.0;
+    bishop_only.bishop_eg += 1000.0;
+    REQUIRE(mobility_value(pos, &bishop_only) == baseline);
+}

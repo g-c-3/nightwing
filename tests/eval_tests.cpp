@@ -557,6 +557,59 @@ TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a Psq
     REQUIRE(cached == 12345); // untouched, not overwritten with a fresh value either
 }
 
+TEST_CASE("evaluate: a MobilityWeights override changes evaluate()'s result exactly as "
+          "expected -- the mobility counterpart to the MaterialWeights/PsqtWeights tests above",
+          "[eval][mobility][tuner]") {
+    init_all();
+    // A single White knight with several legal moves, kings only
+    // otherwise -- mobility_value()'s knight term is the only nonzero
+    // contributor here (mobility.h's own header comment: pawns/king are
+    // excluded from this term entirely, and there are no other pieces
+    // on the board to contribute either), so an override's effect is
+    // exactly attributable and easy to hand-verify.
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(4, 7), Piece::BlackKing);
+    pos.place_piece(make_square(3, 3), Piece::WhiteKnight); // d4 -- 8 legal knight moves
+
+    const int default_eval = evaluate(pos, nullptr, nullptr, nullptr, nullptr);
+
+    MobilityWeights boosted_knight = default_mobility_weights();
+    boosted_knight.knight_mg = kKnightMobilityBonus.mg + 10.0;
+    boosted_knight.knight_eg = kKnightMobilityBonus.eg + 10.0;
+    const int boosted_eval =
+        evaluate(pos, nullptr, nullptr, nullptr, nullptr, &boosted_knight);
+
+    // The knight on d4 attacks 8 squares, all empty (own-occupied
+    // squares are excluded, per mobility.h's own definition) -- boosting
+    // the per-square bonus by 10 should raise White's evaluated
+    // advantage by roughly 8 * 10 = 80 (exactly, at the middlegame
+    // phase this bare-material position tapers to, modulo integer
+    // rounding from taper()'s own mg/eg blend).
+    REQUIRE(boosted_eval > default_eval);
+    REQUIRE(boosted_eval - default_eval >= 8 * 10 - 5); // generous slack for taper rounding
+}
+
+TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a MobilityWeights "
+          "override is supplied, even if a real EvalCache pointer is also passed -- the "
+          "mobility counterpart to the MaterialWeights/PsqtWeights eval_cache tests above",
+          "[eval][eval_cache][mobility][tuner]") {
+    init_all();
+    Position pos = start_position();
+
+    EvalCache cache(2048);
+    cache.store(pos.zobrist_hash, 12345); // same poisoning technique as the tests above
+
+    const MobilityWeights weights = default_mobility_weights();
+    const int result = evaluate(pos, nullptr, &cache, nullptr, nullptr, &weights);
+    REQUIRE(result != 12345);
+    REQUIRE(result == evaluate(pos, nullptr, nullptr, nullptr, nullptr, &weights));
+
+    const auto [hit, cached] = cache.probe(pos.zobrist_hash);
+    REQUIRE(hit);
+    REQUIRE(cached == 12345); // untouched, not overwritten with a fresh value either
+}
+
 TEST_CASE("evaluate: a lazy window wide enough to contain any plausible score never triggers "
           "the early-exit path -- byte-identical to the non-lazy result",
           "[eval][lazy_eval]") {
@@ -572,7 +625,7 @@ TEST_CASE("evaluate: a lazy window wide enough to contain any plausible score ne
     const int lazy_alpha_white = -100'000;
     const int lazy_beta_white = 100'000;
     const int with_wide_lazy_window =
-        evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, &lazy_alpha_white,
+        evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &lazy_alpha_white,
                  &lazy_beta_white);
     REQUIRE(with_wide_lazy_window == no_lazy);
 }
@@ -601,7 +654,7 @@ TEST_CASE("evaluate: a lazy window the cheap material+PSQT score clears by more 
     const int lazy_alpha_white = 0;
     const int lazy_beta_white = 0;
     const int with_tight_lazy_window =
-        evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, &lazy_alpha_white,
+        evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &lazy_alpha_white,
                  &lazy_beta_white);
 
     REQUIRE(with_tight_lazy_window == material_psqt_only);
@@ -626,7 +679,7 @@ TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a laz
 
     const int lazy_alpha_white = 0;
     const int lazy_beta_white = 0;
-    const int result = evaluate(pos, nullptr, &cache, nullptr, nullptr, nullptr,
+    const int result = evaluate(pos, nullptr, &cache, nullptr, nullptr, nullptr, nullptr,
                                  &lazy_alpha_white, &lazy_beta_white);
     REQUIRE(result != 12345);
 
