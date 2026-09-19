@@ -92,6 +92,7 @@
 #include <utility>
 #include <vector>
 
+#include "eval/mobility.h"
 #include "eval/psqt.h"
 #include "tuner/selfplay.h"
 
@@ -367,6 +368,37 @@ inline constexpr std::array<std::pair<const char*, PsqtArrayMemberPtr>, 12> kPsq
 /// gone wrong for a different parameter.
 inline constexpr std::array<PsqtParameterRef, 768> kPsqtParameters = detail::make_psqt_parameters();
 
+/// `ParameterRef<eval::MobilityWeights>` — the mobility-side counterpart
+/// to MaterialParameterRef/PsqtParameterRef above, introduced this
+/// session (ROADMAP.md Tier 0's "PSQT and beyond" item, the first
+/// "beyond" term) alongside kMobilityParameters below.
+using MobilityParameterRef = ParameterRef<eval::MobilityWeights>;
+
+/// Every MobilityWeights field, in declaration order — see
+/// MobilityParameterRef's own comment above. All 8 are `anchored =
+/// false` (the field's own default), the same call kPsqtParameters made
+/// for the identical reason (that struct's own comment above): mobility
+/// is an ADDITIVE per-square-attacked bonus, exactly like PSQT's
+/// additive per-square bonus, so it doesn't share material's specific
+/// MULTIPLICATIVE flat-scaling degeneracy (kMaterialParameters' own
+/// comment above has the full account of that degeneracy and why pawn_mg/
+/// pawn_eg are anchored against it) — there is no known equivalent
+/// degenerate direction here to anchor against yet either, same caveat
+/// kPsqtParameters' own comment states: a real production tuning run
+/// including this table may surface a different, mobility-specific
+/// degeneracy worth anchoring against later, revisited then against
+/// real data rather than guessed now.
+inline constexpr std::array<MobilityParameterRef, 8> kMobilityParameters = {{
+    {"knight_mg", &eval::MobilityWeights::knight_mg},
+    {"knight_eg", &eval::MobilityWeights::knight_eg},
+    {"bishop_mg", &eval::MobilityWeights::bishop_mg},
+    {"bishop_eg", &eval::MobilityWeights::bishop_eg},
+    {"rook_mg", &eval::MobilityWeights::rook_mg},
+    {"rook_eg", &eval::MobilityWeights::rook_eg},
+    {"queen_mg", &eval::MobilityWeights::queen_mg},
+    {"queen_eg", &eval::MobilityWeights::queen_eg},
+}};
+
 /// Tunable knobs for the tuning run itself (distinct from
 /// eval::MaterialWeights, the values BEING tuned).
 struct TuneConfig {
@@ -552,13 +584,22 @@ struct TuneResult {
 /// a separate, later step from this one.
 ///
 /// Precondition: same as eval::evaluate()'s own — init_masks()/
+/// `mobility_weights` -- the mobility-term counterpart to `psqt_weights`
+/// above, forwarded to eval::evaluate() the exact same way (see that
+/// parameter's own doc comment, eval.h) -- lets a future mobility-aware
+/// tuning run compute the loss at a candidate mobility weight vector.
+/// Defaults to nullptr (compiled-in mobility constants), independent of
+/// `psqt_weights` -- either, both, or neither may be non-null.
+///
+/// Precondition: board::init_masks() AND board::
 /// init_magic_bitboards() have been called (this function parses each
 /// position's FEN and evaluates it, both of which are transitively
 /// movegen-adjacent — board::parse_fen() itself has no such
 /// precondition, but eval::evaluate() does).
 [[nodiscard]] double compute_loss(const std::vector<SelfPlayPosition>& positions,
                                    const eval::MaterialWeights& weights, double sigmoid_scale,
-                                   const eval::PsqtWeights* psqt_weights = nullptr) noexcept;
+                                   const eval::PsqtWeights* psqt_weights = nullptr,
+                                   const eval::MobilityWeights* mobility_weights = nullptr) noexcept;
 
 /// Runs `config.iterations` steps of finite-difference gradient descent
 /// (this file's own header comment for the full algorithm) starting
