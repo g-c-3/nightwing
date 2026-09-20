@@ -67,6 +67,7 @@
 #include "eval/king_safety.h"
 #include "eval/mobility.h"
 #include "eval/pawn_tt.h"
+#include "eval/pawns.h"
 #include "eval/psqt.h"
 #include "eval/space.h"
 #include "eval/threats.h"
@@ -231,6 +232,29 @@ namespace nightwing::eval {
 /// nullptr, meaning "use the compiled-in constants" — every existing
 /// caller is entirely unaffected.
 ///
+/// `pawns_weights`, if non-null, is forwarded to the internal
+/// pawn_structure_value() call INSTEAD OF its own compiled-in constants
+/// (eval/pawns.h's PawnsWeights, and pawn_structure_value()'s own doc
+/// comment on this parameter) — the pawn-structure-term counterpart to
+/// `material_weights`/`psqt_weights`/`mobility_weights`/`space_weights`/
+/// `threats_weights`/`king_safety_weights` above (ROADMAP.md's Tier 0
+/// tuner item, "PSQT and beyond" — the fifth and final "beyond" term),
+/// so a future pawn-structure-aware tuning run can call evaluate() at a
+/// candidate pawn-structure weight vector the same uniform way the
+/// other six already allow. Independent of the other six — any subset
+/// of the seven may be non-null on a given call. `eval_cache` is
+/// DELIBERATELY NEVER consulted whenever `pawns_weights != nullptr`
+/// either, for the identical staleness reason the other six already
+/// disable it. Defaults to nullptr, meaning "use the compiled-in
+/// constants" — every existing caller is entirely unaffected. NOTE:
+/// `pawn_tt` (this function's own separate pawn-hash-table parameter,
+/// above) is a DIFFERENT mechanism entirely — a cache keyed on pawn
+/// structure, not a weight override — and is unaffected by
+/// `pawns_weights` except that, like `eval_cache`, it too must never be
+/// consulted while `pawns_weights != nullptr` is in play (see
+/// evaluate()'s own implementation, eval.cpp, for where this is
+/// enforced).
+///
 /// `incremental_material_psqt`, if non-null, is used INSTEAD OF running
 /// compute_material_psqt()'s own 64-square scan (eval/incremental.h) —
 /// the caller is asserting that `*incremental_material_psqt` already
@@ -317,6 +341,7 @@ namespace nightwing::eval {
                             const SpaceWeights* space_weights = nullptr,
                             const ThreatsWeights* threats_weights = nullptr,
                             const KingSafetyWeights* king_safety_weights = nullptr,
+                            const PawnsWeights* pawns_weights = nullptr,
                             const Score* incremental_material_psqt = nullptr,
                             const int* lazy_alpha_white = nullptr,
                             const int* lazy_beta_white = nullptr) noexcept;

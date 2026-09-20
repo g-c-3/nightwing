@@ -86,9 +86,18 @@ using board::Square;
 /// comment on pawn_structure_value() for the full test. `other_pawns`
 /// must be every pawn currently on the board, EITHER color, with `sq`
 /// itself already excluded. Only meaningful (and only ever called) for
-/// a pawn that IS already passed.
-[[nodiscard]] bool is_outside_passed_pawn(Square sq, Bitboard other_pawns) noexcept {
+/// a pawn that IS already passed. `weights`, if non-null, supplies the
+/// minimum file-gap threshold instead of kOutsidePassedPawnMinFileGap --
+/// see pawn_structure_value()'s own doc comment (pawns.h) on its
+/// `weights` parameter for the full nullable-override rationale, and
+/// PawnsWeights' own doc comment for why this particular threshold is
+/// a plain `double` field like every other, rounded here the same way.
+[[nodiscard]] bool is_outside_passed_pawn(Square sq, Bitboard other_pawns,
+                                           const PawnsWeights* weights) noexcept {
     const int file = board::file_of(sq);
+    const int min_file_gap = weights == nullptr
+                                  ? kOutsidePassedPawnMinFileGap
+                                  : round_to_int(weights->outside_min_file_gap);
 
     // board::kNumFiles (8) is used as a sentinel here specifically
     // because it's strictly larger than any real file-distance on an
@@ -111,13 +120,170 @@ using board::Square;
         return false;
     }
 
-    return min_file_distance >= kOutsidePassedPawnMinFileGap;
+    return min_file_distance >= min_file_gap;
+}
+
+/// Returns the passed-pawn bonus for a pawn at `relative_rank` (always
+/// in [1, 6] at every real call site -- see this file's own
+/// relative_rank()'s doc comment). `weights`, if non-null, is used
+/// instead of the compiled-in kPassedPawnBonus array -- see
+/// pawn_structure_value()'s own doc comment (pawns.h) on its `weights`
+/// parameter for the full nullable-override rationale, and
+/// PawnsWeights' own doc comment for why these 6 entries are
+/// individually named fields rather than an indexed array.
+[[nodiscard]] Score passed_pawn_bonus(int relative_rank, const PawnsWeights* weights) noexcept {
+    if (weights == nullptr) {
+        return kPassedPawnBonus[static_cast<std::size_t>(relative_rank)];
+    }
+    switch (relative_rank) {
+        case 1:
+            return {round_to_int(weights->passed_rank1_mg), round_to_int(weights->passed_rank1_eg)};
+        case 2:
+            return {round_to_int(weights->passed_rank2_mg), round_to_int(weights->passed_rank2_eg)};
+        case 3:
+            return {round_to_int(weights->passed_rank3_mg), round_to_int(weights->passed_rank3_eg)};
+        case 4:
+            return {round_to_int(weights->passed_rank4_mg), round_to_int(weights->passed_rank4_eg)};
+        case 5:
+            return {round_to_int(weights->passed_rank5_mg), round_to_int(weights->passed_rank5_eg)};
+        case 6:
+            return {round_to_int(weights->passed_rank6_mg), round_to_int(weights->passed_rank6_eg)};
+        default:
+            // Unreachable at every real call site -- defensive fallback
+            // only, same spirit as king_safety.cpp's own
+            // pawn_storm_penalty() default case.
+            return {0, 0};
+    }
+}
+
+/// Returns the connected-passed-pawn bonus for a pawn at
+/// `relative_rank` (always in [1, 6] at every real call site).
+/// `weights`, if non-null, is used instead of the compiled-in
+/// kConnectedPassedPawnBonus array -- same nullable-override rationale
+/// as passed_pawn_bonus() above.
+[[nodiscard]] Score connected_passed_pawn_bonus(int relative_rank,
+                                                 const PawnsWeights* weights) noexcept {
+    if (weights == nullptr) {
+        return kConnectedPassedPawnBonus[static_cast<std::size_t>(relative_rank)];
+    }
+    switch (relative_rank) {
+        case 1:
+            return {round_to_int(weights->connected_passed_rank1_mg),
+                    round_to_int(weights->connected_passed_rank1_eg)};
+        case 2:
+            return {round_to_int(weights->connected_passed_rank2_mg),
+                    round_to_int(weights->connected_passed_rank2_eg)};
+        case 3:
+            return {round_to_int(weights->connected_passed_rank3_mg),
+                    round_to_int(weights->connected_passed_rank3_eg)};
+        case 4:
+            return {round_to_int(weights->connected_passed_rank4_mg),
+                    round_to_int(weights->connected_passed_rank4_eg)};
+        case 5:
+            return {round_to_int(weights->connected_passed_rank5_mg),
+                    round_to_int(weights->connected_passed_rank5_eg)};
+        case 6:
+            return {round_to_int(weights->connected_passed_rank6_mg),
+                    round_to_int(weights->connected_passed_rank6_eg)};
+        default:
+            return {0, 0};
+    }
+}
+
+/// Returns the outside-passed-pawn bonus for a pawn at `relative_rank`
+/// (always in [1, 6] at every real call site). `weights`, if non-null,
+/// is used instead of the compiled-in kOutsidePassedPawnBonus array --
+/// same nullable-override rationale as passed_pawn_bonus()/
+/// connected_passed_pawn_bonus() above.
+[[nodiscard]] Score outside_passed_pawn_bonus(int relative_rank,
+                                               const PawnsWeights* weights) noexcept {
+    if (weights == nullptr) {
+        return kOutsidePassedPawnBonus[static_cast<std::size_t>(relative_rank)];
+    }
+    switch (relative_rank) {
+        case 1:
+            return {round_to_int(weights->outside_passed_rank1_mg),
+                    round_to_int(weights->outside_passed_rank1_eg)};
+        case 2:
+            return {round_to_int(weights->outside_passed_rank2_mg),
+                    round_to_int(weights->outside_passed_rank2_eg)};
+        case 3:
+            return {round_to_int(weights->outside_passed_rank3_mg),
+                    round_to_int(weights->outside_passed_rank3_eg)};
+        case 4:
+            return {round_to_int(weights->outside_passed_rank4_mg),
+                    round_to_int(weights->outside_passed_rank4_eg)};
+        case 5:
+            return {round_to_int(weights->outside_passed_rank5_mg),
+                    round_to_int(weights->outside_passed_rank5_eg)};
+        case 6:
+            return {round_to_int(weights->outside_passed_rank6_mg),
+                    round_to_int(weights->outside_passed_rank6_eg)};
+        default:
+            return {0, 0};
+    }
+}
+
+/// Returns the candidate-passed-pawn bonus for a pawn at
+/// `relative_rank` (always in [1, 6] at every real call site).
+/// `weights`, if non-null, is used instead of the compiled-in
+/// kCandidatePassedPawnBonus array -- same nullable-override rationale
+/// as passed_pawn_bonus()/connected_passed_pawn_bonus()/
+/// outside_passed_pawn_bonus() above.
+[[nodiscard]] Score candidate_passed_pawn_bonus(int relative_rank,
+                                                 const PawnsWeights* weights) noexcept {
+    if (weights == nullptr) {
+        return kCandidatePassedPawnBonus[static_cast<std::size_t>(relative_rank)];
+    }
+    switch (relative_rank) {
+        case 1:
+            return {round_to_int(weights->candidate_passed_rank1_mg),
+                    round_to_int(weights->candidate_passed_rank1_eg)};
+        case 2:
+            return {round_to_int(weights->candidate_passed_rank2_mg),
+                    round_to_int(weights->candidate_passed_rank2_eg)};
+        case 3:
+            return {round_to_int(weights->candidate_passed_rank3_mg),
+                    round_to_int(weights->candidate_passed_rank3_eg)};
+        case 4:
+            return {round_to_int(weights->candidate_passed_rank4_mg),
+                    round_to_int(weights->candidate_passed_rank4_eg)};
+        case 5:
+            return {round_to_int(weights->candidate_passed_rank5_mg),
+                    round_to_int(weights->candidate_passed_rank5_eg)};
+        case 6:
+            return {round_to_int(weights->candidate_passed_rank6_mg),
+                    round_to_int(weights->candidate_passed_rank6_eg)};
+        default:
+            return {0, 0};
+    }
 }
 
 } // namespace
 
-Score pawn_structure_value(const Position& pos) noexcept {
+Score pawn_structure_value(const Position& pos, const PawnsWeights* weights) noexcept {
     Score score;
+
+    const Score isolated_penalty = weights == nullptr
+                                        ? kIsolatedPawnPenalty
+                                        : Score{round_to_int(weights->isolated_mg),
+                                                round_to_int(weights->isolated_eg)};
+    const Score doubled_penalty = weights == nullptr
+                                       ? kDoubledPawnPenalty
+                                       : Score{round_to_int(weights->doubled_mg),
+                                               round_to_int(weights->doubled_eg)};
+    const Score backward_penalty = weights == nullptr
+                                        ? kBackwardPawnPenalty
+                                        : Score{round_to_int(weights->backward_mg),
+                                                round_to_int(weights->backward_eg)};
+    const Score connected_bonus = weights == nullptr
+                                       ? kConnectedPawnBonus
+                                       : Score{round_to_int(weights->connected_mg),
+                                               round_to_int(weights->connected_eg)};
+    const Score island_penalty = weights == nullptr
+                                      ? kPawnIslandPenalty
+                                      : Score{round_to_int(weights->island_mg),
+                                              round_to_int(weights->island_eg)};
 
     for (const Color c : {Color::White, Color::Black}) {
         const Color them = c == Color::White ? Color::Black : Color::White;
@@ -170,16 +336,16 @@ Score pawn_structure_value(const Position& pos) noexcept {
 
             const bool isolated = (own_pawns & board::adjacent_files_mask(file)) == 0;
             if (isolated) {
-                side_score += kIsolatedPawnPenalty;
+                side_score += isolated_penalty;
             }
 
             if (file_counts[static_cast<std::size_t>(file)] >= 2) {
-                side_score += kDoubledPawnPenalty;
+                side_score += doubled_penalty;
             }
 
             const bool passed = (enemy_pawns & board::passed_pawn_mask(c, sq)) == 0;
             if (passed) {
-                side_score += kPassedPawnBonus[static_cast<std::size_t>(relative_rank(c, sq))];
+                side_score += passed_pawn_bonus(relative_rank(c, sq), weights);
 
                 // Outside passed pawn (kOutsidePassedPawnBonus's own doc
                 // comment, pawns.h, has the full rationale) -- an
@@ -188,9 +354,8 @@ Score pawn_structure_value(const Position& pos) noexcept {
                 // separated from every other pawn on the board.
                 Bitboard other_pawns = total_pawns;
                 board::clear_bit(other_pawns, sq);
-                if (is_outside_passed_pawn(sq, other_pawns)) {
-                    side_score += kOutsidePassedPawnBonus[static_cast<std::size_t>(
-                        relative_rank(c, sq))];
+                if (is_outside_passed_pawn(sq, other_pawns, weights)) {
+                    side_score += outside_passed_pawn_bonus(relative_rank(c, sq), weights);
                 }
             }
 
@@ -214,7 +379,7 @@ Score pawn_structure_value(const Position& pos) noexcept {
                 board::adjacent_files_mask(file) & board::rank_mask(board::rank_of(sq));
             const Bitboard phalanx_partners = own_pawns & phalanx_mask;
             if (defenders != 0 || phalanx_partners != 0) {
-                side_score += kConnectedPawnBonus;
+                side_score += connected_bonus;
 
                 // Connected PASSED pawns (kConnectedPassedPawnBonus's own
                 // doc comment, pawns.h, has the full rationale): on top
@@ -229,8 +394,7 @@ Score pawn_structure_value(const Position& pos) noexcept {
                 // facts about the same pawn.
                 if (passed &&
                     ((defenders & passed_pawns_bb) != 0 || (phalanx_partners & passed_pawns_bb) != 0)) {
-                    side_score +=
-                        kConnectedPassedPawnBonus[static_cast<std::size_t>(relative_rank(c, sq))];
+                    side_score += connected_passed_pawn_bonus(relative_rank(c, sq), weights);
                 }
             }
 
@@ -256,7 +420,7 @@ Score pawn_structure_value(const Position& pos) noexcept {
                         const bool push_attacked =
                             (board::pawn_attacks(c, push_sq) & enemy_pawns) != 0;
                         if (push_attacked) {
-                            side_score += kBackwardPawnPenalty;
+                            side_score += backward_penalty;
                         }
                     }
                 }
@@ -269,8 +433,7 @@ Score pawn_structure_value(const Position& pos) noexcept {
                 // unsupported right now still counts its own future
                 // adjacent-file trade prospects).
                 if (is_candidate_passed_pawn(c, sq, own_pawns, enemy_pawns)) {
-                    side_score += kCandidatePassedPawnBonus[static_cast<std::size_t>(
-                        relative_rank(c, sq))];
+                    side_score += candidate_passed_pawn_bonus(relative_rank(c, sq), weights);
                 }
             }
         }
@@ -294,7 +457,7 @@ Score pawn_structure_value(const Position& pos) noexcept {
                 prev_file_occupied = file_occupied;
             }
             if (islands >= 2) {
-                side_score += kPawnIslandPenalty * (islands - 1);
+                side_score += island_penalty * (islands - 1);
             }
         }
 

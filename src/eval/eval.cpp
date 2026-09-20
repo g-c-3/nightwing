@@ -85,7 +85,7 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
              const MaterialWeights* material_weights, const PsqtWeights* psqt_weights,
              const MobilityWeights* mobility_weights, const SpaceWeights* space_weights,
              const ThreatsWeights* threats_weights,
-             const KingSafetyWeights* king_safety_weights,
+             const KingSafetyWeights* king_safety_weights, const PawnsWeights* pawns_weights,
              const Score* incremental_material_psqt, const int* lazy_alpha_white,
              const int* lazy_beta_white) noexcept {
     // Eval cache (eval/eval_cache.h): probed first, keyed on the FULL
@@ -100,11 +100,11 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     // negamax() call -- search.cpp's razoring/futility pruning).
     //
     // DELIBERATELY SKIPPED WHENEVER material_weights, psqt_weights,
-    // mobility_weights, space_weights, threats_weights, OR
-    // king_safety_weights IS SET (this function's own doc comment on
-    // all six parameters has the full rationale, repeated for each):
-    // eval_cache's key says nothing about which weight vector(s)
-    // produced a cached result, so honoring it under a
+    // mobility_weights, space_weights, threats_weights,
+    // king_safety_weights, OR pawns_weights IS SET (this function's own
+    // doc comment on all seven parameters has the full rationale,
+    // repeated for each): eval_cache's key says nothing about which
+    // weight vector(s) produced a cached result, so honoring it under a
     // different-than-default weight vector could silently return a
     // stale result from a different vector entirely. ALSO deliberately
     // skipped whenever a lazy window
@@ -117,7 +117,8 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     const bool eval_cache_usable = (eval_cache != nullptr) && (material_weights == nullptr) &&
                                     (psqt_weights == nullptr) && (mobility_weights == nullptr) &&
                                     (space_weights == nullptr) && (threats_weights == nullptr) &&
-                                    (king_safety_weights == nullptr) && !lazy_eval_requested;
+                                    (king_safety_weights == nullptr) &&
+                                    (pawns_weights == nullptr) && !lazy_eval_requested;
     if (eval_cache_usable) {
         const auto [hit, cached] = eval_cache->probe(pos.zobrist_hash);
         if (hit) {
@@ -164,9 +165,18 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
         }
     }
 
+    // Same eval_cache-style staleness rule as `eval_cache_usable` above,
+    // applied here to `pawn_tt` specifically: pawn_tt's own key
+    // (compute_pawn_hash()) reflects pawn PLACEMENT only, saying
+    // nothing about which pawns_weights vector produced a given cached
+    // Score, so honoring a hit under a non-default pawns_weights could
+    // silently return a stale result computed under a DIFFERENT weight
+    // vector entirely -- and, symmetrically, a value computed under a
+    // non-default pawns_weights must never be stored back into pawn_tt
+    // for some LATER, default-weights caller to pick up by mistake.
     Score pawn_score;
-    if (pawn_tt == nullptr) {
-        pawn_score = pawn_structure_value(pos);
+    if (pawn_tt == nullptr || pawns_weights != nullptr) {
+        pawn_score = pawn_structure_value(pos, pawns_weights);
     } else {
         const std::uint64_t pawn_key = board::compute_pawn_hash(pos);
         const auto [hit, cached] = pawn_tt->probe(pawn_key);
