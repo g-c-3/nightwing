@@ -1036,21 +1036,19 @@ Priority Fixes section above).
           `space_weights` argument still defaults to `nullptr`, the
           same "zero behavior change" pattern every prior Tier 0 step
           has followed.
-    - [ ] Step 8b — king safety (`eval/king_safety.h`), pawn structure
-          (`eval/pawns.h`), and threats (`eval/threats.h`) still need
+    - [x] Step 8b — king safety (`eval/king_safety.h`), pawn structure
+          (`eval/pawns.h`), and threats (`eval/threats.h`) all now have
           the same `Weights` struct + `ParameterRef` group +
           `evaluate()`/`compute_loss()` wiring treatment mobility
-          (Step 7) and space (Step 8a) just got — likely one sub-step
-          per term given how differently-shaped each one's own existing
-          constants are (`king_safety.h`/`pawns.h` in particular look
-          substantially more involved than mobility's 8 or space's 2
-          plain scalars, going by those files' own line counts;
-          `threats.h` has 12 scalars across 3 penalty categories x 4
-          piece types — bigger than space but still plain-scalar-shaped,
-          no array indexing needed), not a single combined step.
-          Whichever is picked up next should re-read that file's own
-          header comment first to gauge shape/scope before assuming it
-          will mirror mobility's/space's own straightforward cases.
+          (Step 7) and space (Step 8a) got, done as three separate
+          sub-steps in the order threats -> king safety -> pawn
+          structure (all three in Session 116, across a `Continue` and
+          two `Next` advances within that one session) — see each
+          sub-step's own entry below for what shape decisions each one
+          needed. This closes out Step 8, and with it ROADMAP.md's
+          entire "PSQT and beyond" tuner item (Steps 1-8): every eval
+          term now has its own `Weights` struct and `ParameterRef`
+          table, none yet consumed by `tune()` itself.
         - [x] threats (`eval/threats.h`), Step 8b's first sub-step
               (Session 116): `ThreatsWeights` (24 plain `double` fields
               — 12 `kXxxYyyPenalty` constants x mg/eg each, the same
@@ -1157,25 +1155,94 @@ Priority Fixes section above).
               under both Release and Debug/ASan+UBSan, zero new
               sanitizer findings; `bench` unchanged at 38,679 total
               nodes.
-        - [ ] pawn structure (`eval/pawns.h`) — the most involved of the
-              three: FOUR separate 8-entry indexed arrays
-              (`kPassedPawnBonus`, `kConnectedPassedPawnBonus`,
-              `kCandidatePassedPawnBonus`, `kOutsidePassedPawnBonus`,
-              all sharing the same relative-rank convention) plus 5
-              plain Score constants PLUS one plain `int` constant
-              (`kOutsidePassedPawnMinFileGap`, a file-distance
-              threshold, not a centipawn value) that doesn't fit the
-              `double`-field `Weights`-struct pattern at all as-is —
-              needs its own design decision before implementation
-              starts, not just a mechanical application of the
-              mobility/space/threats/king-safety template. King
-              safety's own "flatten the small array into named scalars"
-              resolution (this session, above) may or may not transfer
-              cleanly here — FOUR separate arrays is a meaningfully
-              bigger flattening (24 more named fields, 4 x 6 meaningful
-              indices each) than king safety's single one, and the
-              stray `int` constant has no precedent to follow at all
-              yet.
+        - [x] pawn structure (`eval/pawns.h`), Step 8b's third and
+              final sub-step (Session 116, `Next`-continued): `PawnsWeights`
+              (59 plain `double` fields — 4 plain `Score` constants x
+              mg/eg (8 fields: isolated, doubled, backward, connected)
+              plus FOUR separate 8-entry arrays (`kPassedPawnBonus`,
+              `kConnectedPassedPawnBonus`, `kOutsidePassedPawnBonus`,
+              `kCandidatePassedPawnBonus`) each FLATTENED into 6
+              individually-named scalar field pairs, indices 1-6 only
+              (48 fields total across all four), plus
+              `kOutsidePassedPawnMinFileGap` (a plain `int` file-
+              distance threshold) represented as a single plain
+              `double` field, `outside_min_file_gap` (1 field), plus 1
+              plain `Score` constant x mg/eg (2 fields: island) — see
+              this struct's own doc comment, pawns.h, for the full
+              account) and `default_pawns_weights()`, both `constexpr`-
+              constructible directly from the underlying constants.
+              BOTH open design questions flagged after king safety
+              (Session 116, above) were resolved here: (1) king
+              safety's array-flattening resolution DID transfer
+              cleanly, applied four times over rather than once, with
+              no new wrinkle; (2) `kOutsidePassedPawnMinFileGap` is
+              represented the same uniform way every other field is (a
+              plain `double`, rounded via `round_to_int()` at the point
+              of use), with a documented caveat that its true effect on
+              the score is a discrete step function, not a smooth
+              linear one, so gradient-based tuning may treat it
+              differently from the other 58 fields — flagged, not
+              resolved, for whichever session builds the actual
+              gradient/tuning consumer. `pawn_structure_value()` gained
+              4 new internal helper functions
+              (`passed_pawn_bonus()`/`connected_passed_pawn_bonus()`/
+              `outside_passed_pawn_bonus()`/`candidate_passed_pawn_bonus()`,
+              each switching on relative rank) plus an updated
+              `is_outside_passed_pawn()` (now taking the min-file-gap
+              threshold as a parameter instead of reading the constant
+              directly), all threaded through `pawn_structure_value()`'s
+              own new nullable-override parameter. `eval::evaluate()`
+              gained a matching `pawns_weights` parameter (inserted
+              between `king_safety_weights` and
+              `incremental_material_psqt`, keeping all seven weight-
+              override parameters grouped together) — and, uniquely
+              among all six "beyond PSQT" terms so far, this insertion
+              ALSO required updating `pawn_tt`'s own existing
+              staleness-guard logic (evaluate()'s dedicated pawn-hash-
+              table caching, separate from `eval_cache`): the same
+              `pawns_weights != nullptr` condition that disables
+              `eval_cache` now also disables consulting/storing into
+              `pawn_tt`, for the identical staleness reason, closing a
+              real gap that would otherwise have let a pawn-structure-
+              override call silently read or poison the shared pawn
+              hash table. `tuner/tune.h` gained
+              `PawnsParameterRef`/`kPawnsParameters` (59 entries,
+              `anchored = false`) and `compute_loss()` gained a
+              matching optional `pawns_weights` parameter, forwarded to
+              `evaluate()` the same way `king_safety_weights` already
+              is. NOT YET CONSUMED by `tune()` itself, same status
+              every sibling table has after its own introducing
+              session. Inserting `pawns_weights` mid-signature broke
+              the same 6 production call sites and 6 test-file
+              positional call sites every prior "beyond PSQT" insertion
+              has, each fixed with one more explicit `nullptr`. One
+              bug caught and fixed mid-implementation, before any test
+              even ran: the first draft of `PawnsWeights` entirely
+              omitted `kCandidatePassedPawnBonus` (a fourth 8-entry
+              array easy to miss alongside the other three, since
+              `pawn_structure_value()`'s own candidate-passed-pawn
+              check sits in a different part of the function than the
+              already-passed checks for the other three arrays) —
+              caught by re-reading the function body being wired up
+              against the struct just written, before compiling or
+              testing either, and fixed by adding the missing 12 fields
+              (`candidate_passed_rank1_mg`/`_eg` through `_rank6_*`)
+              and its own helper function. 666/666 tests green (655
+              carried over + 11 new: 4 in `tests/pawns_tests.cpp`, 2 in
+              `tests/eval_tests.cpp`, 4 in `tests/tune_tests.cpp`, 1 new
+              in `tests/pawn_tt_tests.cpp` confirming `pawn_tt`'s own
+              new bypass behaves identically to `eval_cache`'s) under
+              both Release and Debug/ASan+UBSan, zero new sanitizer
+              findings; `bench` unchanged at 38,679 total nodes. This
+              closes out Step 8b, and with it ROADMAP.md's entire "PSQT
+              and beyond" tuner item (Steps 1 through 8) — every eval
+              term now has its own `Weights` struct and `ParameterRef`
+              table, though none is yet actually consumed by `tune()`
+              itself (see the very next unchecked item below —
+              "A materially larger self-play corpus" and mandatory
+              SPRT-gating — for what standing between here and an
+              actual tuning run still looks like; that item, not a new
+              Step 9, is next in top-to-bottom order).
     - [ ] "A materially larger self-play corpus" and "mandatory
           SPRT-gating before any tuned values are committed" (this
           item's own original intro text, docs/DECISIONS.md, 2026-09-08
