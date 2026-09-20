@@ -4,6 +4,8 @@
 
 #include "eval/king_safety.h"
 
+#include <cstddef>
+
 #include "board/attacks.h"
 #include "board/bitboard.h"
 #include "board/masks.h"
@@ -121,9 +123,50 @@ constexpr int kQueenAttackUnits = 4;
     return units;
 }
 
+/// Returns the pawn-storm penalty for a storming pawn at `relative_rank`
+/// (always in [1, 6] at every real call site -- see this file's own
+/// relative_rank()'s doc comment and king_safety_value()'s own call
+/// site below). `weights`, if non-null, is used instead of the
+/// compiled-in kPawnStormPenalty constant -- see king_safety_value()'s
+/// own doc comment (king_safety.h) on its `weights` parameter for the
+/// full nullable-override rationale, and KingSafetyWeights' own doc
+/// comment for why these 6 entries are individually named fields rather
+/// than an indexed array.
+[[nodiscard]] Score pawn_storm_penalty(int relative_rank, const KingSafetyWeights* weights) noexcept {
+    if (weights == nullptr) {
+        return kPawnStormPenalty[static_cast<std::size_t>(relative_rank)];
+    }
+    switch (relative_rank) {
+        case 1:
+            return {round_to_int(weights->pawn_storm_rank1_mg),
+                    round_to_int(weights->pawn_storm_rank1_eg)};
+        case 2:
+            return {round_to_int(weights->pawn_storm_rank2_mg),
+                    round_to_int(weights->pawn_storm_rank2_eg)};
+        case 3:
+            return {round_to_int(weights->pawn_storm_rank3_mg),
+                    round_to_int(weights->pawn_storm_rank3_eg)};
+        case 4:
+            return {round_to_int(weights->pawn_storm_rank4_mg),
+                    round_to_int(weights->pawn_storm_rank4_eg)};
+        case 5:
+            return {round_to_int(weights->pawn_storm_rank5_mg),
+                    round_to_int(weights->pawn_storm_rank5_eg)};
+        case 6:
+            return {round_to_int(weights->pawn_storm_rank6_mg),
+                    round_to_int(weights->pawn_storm_rank6_eg)};
+        default:
+            // Unreachable at every real call site (see this function's
+            // own doc comment above) -- defensive fallback only, same
+            // "never crash, even on an input that can't really occur"
+            // spirit as this file's own king_bb == 0 check further down.
+            return {0, 0};
+    }
+}
+
 } // namespace
 
-Score king_safety_value(const Position& pos) noexcept {
+Score king_safety_value(const Position& pos, const KingSafetyWeights* weights) noexcept {
     Score score;
 
     for (const Color c : {Color::White, Color::Black}) {
@@ -147,12 +190,24 @@ Score king_safety_value(const Position& pos) noexcept {
         Score side_score;
 
         // Pawn shield.
+        const Score shield_bonus = weights == nullptr
+                                        ? kShieldPawnBonus
+                                        : Score{round_to_int(weights->shield_mg),
+                                                round_to_int(weights->shield_eg)};
         const Bitboard shield = shield_zone(c, king_file, king_rank);
         const int shield_pawns = board::popcount(pos.pieces(c, PieceType::Pawn) & shield);
-        side_score += kShieldPawnBonus * shield_pawns;
+        side_score += shield_bonus * shield_pawns;
 
         // Open/semi-open files among the king's own file and its two
         // neighbors.
+        const Score open_file_penalty =
+            weights == nullptr ? kOpenFileNearKingPenalty
+                                : Score{round_to_int(weights->open_file_mg),
+                                        round_to_int(weights->open_file_eg)};
+        const Score semi_open_file_penalty =
+            weights == nullptr ? kSemiOpenFileNearKingPenalty
+                                : Score{round_to_int(weights->semi_open_file_mg),
+                                        round_to_int(weights->semi_open_file_eg)};
         const Bitboard own_pawns = pos.pieces(c, PieceType::Pawn);
         const Bitboard enemy_pawns = pos.pieces(enemy, PieceType::Pawn);
         for (int df = -1; df <= 1; ++df) {
@@ -165,9 +220,9 @@ Score king_safety_value(const Position& pos) noexcept {
                 continue; // Own pawn still on this file -- not open.
             }
             if ((enemy_pawns & file_bb) == 0) {
-                side_score += kOpenFileNearKingPenalty;
+                side_score += open_file_penalty;
             } else {
-                side_score += kSemiOpenFileNearKingPenalty;
+                side_score += semi_open_file_penalty;
             }
         }
 
@@ -203,13 +258,17 @@ Score king_safety_value(const Position& pos) noexcept {
                     most_advanced_rank = r;
                 }
             }
-            side_score += kPawnStormPenalty[static_cast<std::size_t>(most_advanced_rank)];
+            side_score += pawn_storm_penalty(most_advanced_rank, weights);
         }
 
         // Attacker weighting.
+        const Score attack_unit_penalty =
+            weights == nullptr ? kAttackUnitPenalty
+                                : Score{round_to_int(weights->attack_unit_mg),
+                                        round_to_int(weights->attack_unit_eg)};
         const Bitboard king_zone = board::king_attacks(king_sq) | king_bb;
         const int units = attack_units_on(pos, enemy, king_zone);
-        side_score += kAttackUnitPenalty * units;
+        side_score += attack_unit_penalty * units;
 
         // Back-rank weakness (king_safety.h's own header comment, and
         // king_safety_value()'s own doc comment, have the full
@@ -237,7 +296,11 @@ Score king_safety_value(const Position& pos) noexcept {
                 const bool major_piece_threat =
                     pos.pieces(enemy, PieceType::Rook) != 0 || pos.pieces(enemy, PieceType::Queen) != 0;
                 if (major_piece_threat) {
-                    side_score += kBackRankWeaknessPenalty;
+                    const Score back_rank_penalty =
+                        weights == nullptr ? kBackRankWeaknessPenalty
+                                            : Score{round_to_int(weights->back_rank_mg),
+                                                    round_to_int(weights->back_rank_eg)};
+                    side_score += back_rank_penalty;
                 }
             }
         }

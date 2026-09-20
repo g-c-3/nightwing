@@ -66,6 +66,7 @@
 #include <array>
 
 #include "board/board.h"
+#include "eval/psqt.h" // round_to_int()
 #include "eval/score.h"
 
 namespace nightwing::eval {
@@ -149,6 +150,124 @@ inline constexpr std::array<Score, 8> kPawnStormPenalty = {{
 /// file.
 inline constexpr Score kBackRankWeaknessPenalty = {-14, -2};
 
+/// Runtime-mutable counterpart to the 5 plain Score constants
+/// (kShieldPawnBonus, kOpenFileNearKingPenalty,
+/// kSemiOpenFileNearKingPenalty, kAttackUnitPenalty,
+/// kBackRankWeaknessPenalty) and kPawnStormPenalty above -- the king-
+/// safety-term entry in the same "runtime-mutable parameter-vector
+/// abstraction over eval's currently-constexpr named constants" family
+/// as eval::MaterialWeights/PsqtWeights (psqt.h), eval::MobilityWeights
+/// (mobility.h), eval::SpaceWeights (space.h), and eval::ThreatsWeights
+/// (threats.h) already establish (ROADMAP.md's Tier 0 tuner item,
+/// "PSQT and beyond" -- Step 8b, the fourth "beyond" term).
+///
+/// DESIGN DECISION (docs/DECISIONS.md has the full account): unlike
+/// PsqtWeights, which represents its 64-per-piece-type squares via
+/// `tuner::ParameterRef`'s `array_member` mechanism (a
+/// `std::array<double, 64> Weights::*` member pointer,
+/// src/tuner/tune.h), kPawnStormPenalty's 8 entries are flattened here
+/// into 6 individually-named plain scalar field PAIRS instead
+/// (`pawn_storm_rank1_mg`/`_eg` through `pawn_storm_rank6_mg`/`_eg`) --
+/// `tuner::ParameterRef::array_member`'s type is hardcoded to
+/// `std::array<double, 64>` specifically for PSQT's own 64-square case,
+/// not generic over array size, and kPawnStormPenalty has only 8
+/// entries (of which only indices 1-6 can ever actually be read at
+/// runtime -- king_safety.cpp's own `most_advanced_rank` is always
+/// updated to a real pawn's relative rank, always in [1, 6], before
+/// king_safety_value() ever indexes with it; indices 0 and 7 are
+/// unreachable placeholders that exist purely so the array doesn't need
+/// a bounds check, identical to kPassedPawnBonus's own convention,
+/// pawns.h). Flattening to 6 named scalars sidesteps generalizing
+/// `ParameterRef::array_member` to an arbitrary size just for this one,
+/// much-smaller table -- a change that would also touch PsqtWeights'
+/// own already-working, already-tested wiring -- at the cost of 6
+/// slightly more verbose field names instead of one indexed array
+/// member. Indices 0 and 7 are correspondingly NOT represented as
+/// tunable fields here at all (there is nothing for a real position to
+/// ever exercise there), unlike kPassedPawnBonus's own eventual
+/// PsqtWeights-style array_member treatment (pawns.h, not yet
+/// implemented), which will need to expose all 8 slots since
+/// `array_member` has no notion of "some indices are unreachable."
+///
+/// `constexpr`-constructible via default-member-initializers naming
+/// the underlying constants directly (kShieldPawnBonus, kPawnStormPenalty
+/// [1] through [6], etc.), the same MaterialWeights/MobilityWeights/
+/// SpaceWeights/ThreatsWeights pattern (not PsqtWeights' out-of-line
+/// one) -- every constant referenced here is `inline constexpr`,
+/// declared right in this header, exactly like those four siblings'
+/// own underlying constants.
+struct KingSafetyWeights {
+    double shield_mg = kShieldPawnBonus.mg;
+    double shield_eg = kShieldPawnBonus.eg;
+
+    double open_file_mg = kOpenFileNearKingPenalty.mg;
+    double open_file_eg = kOpenFileNearKingPenalty.eg;
+    double semi_open_file_mg = kSemiOpenFileNearKingPenalty.mg;
+    double semi_open_file_eg = kSemiOpenFileNearKingPenalty.eg;
+
+    double attack_unit_mg = kAttackUnitPenalty.mg;
+    double attack_unit_eg = kAttackUnitPenalty.eg;
+
+    // kPawnStormPenalty[1..6] flattened -- see this struct's own doc
+    // comment above for why indices 0/7 aren't represented at all.
+    double pawn_storm_rank1_mg = kPawnStormPenalty[1].mg;
+    double pawn_storm_rank1_eg = kPawnStormPenalty[1].eg;
+    double pawn_storm_rank2_mg = kPawnStormPenalty[2].mg;
+    double pawn_storm_rank2_eg = kPawnStormPenalty[2].eg;
+    double pawn_storm_rank3_mg = kPawnStormPenalty[3].mg;
+    double pawn_storm_rank3_eg = kPawnStormPenalty[3].eg;
+    double pawn_storm_rank4_mg = kPawnStormPenalty[4].mg;
+    double pawn_storm_rank4_eg = kPawnStormPenalty[4].eg;
+    double pawn_storm_rank5_mg = kPawnStormPenalty[5].mg;
+    double pawn_storm_rank5_eg = kPawnStormPenalty[5].eg;
+    double pawn_storm_rank6_mg = kPawnStormPenalty[6].mg;
+    double pawn_storm_rank6_eg = kPawnStormPenalty[6].eg;
+
+    double back_rank_mg = kBackRankWeaknessPenalty.mg;
+    double back_rank_eg = kBackRankWeaknessPenalty.eg;
+};
+
+/// Returns a KingSafetyWeights matching every one of the constants
+/// above exactly -- the natural starting point for a king-safety-aware
+/// tuning run (tuner::tune()-style, src/tuner/tune.h), and the values
+/// every field above is already separately, redundantly initialized to
+/// (kept in sync by hand, matching default_material_weights()'s/
+/// default_mobility_weights()'s/default_space_weights()'s/
+/// default_threats_weights()'s own doc comment rationale for why:
+/// KingSafetyWeights{}'s own default-member-initializers stay
+/// self-contained and don't require calling a function just to
+/// default-construct one).
+[[nodiscard]] constexpr KingSafetyWeights default_king_safety_weights() noexcept {
+    return KingSafetyWeights{
+        /*shield_mg=*/kShieldPawnBonus.mg,
+        /*shield_eg=*/kShieldPawnBonus.eg,
+
+        /*open_file_mg=*/kOpenFileNearKingPenalty.mg,
+        /*open_file_eg=*/kOpenFileNearKingPenalty.eg,
+        /*semi_open_file_mg=*/kSemiOpenFileNearKingPenalty.mg,
+        /*semi_open_file_eg=*/kSemiOpenFileNearKingPenalty.eg,
+
+        /*attack_unit_mg=*/kAttackUnitPenalty.mg,
+        /*attack_unit_eg=*/kAttackUnitPenalty.eg,
+
+        /*pawn_storm_rank1_mg=*/kPawnStormPenalty[1].mg,
+        /*pawn_storm_rank1_eg=*/kPawnStormPenalty[1].eg,
+        /*pawn_storm_rank2_mg=*/kPawnStormPenalty[2].mg,
+        /*pawn_storm_rank2_eg=*/kPawnStormPenalty[2].eg,
+        /*pawn_storm_rank3_mg=*/kPawnStormPenalty[3].mg,
+        /*pawn_storm_rank3_eg=*/kPawnStormPenalty[3].eg,
+        /*pawn_storm_rank4_mg=*/kPawnStormPenalty[4].mg,
+        /*pawn_storm_rank4_eg=*/kPawnStormPenalty[4].eg,
+        /*pawn_storm_rank5_mg=*/kPawnStormPenalty[5].mg,
+        /*pawn_storm_rank5_eg=*/kPawnStormPenalty[5].eg,
+        /*pawn_storm_rank6_mg=*/kPawnStormPenalty[6].mg,
+        /*pawn_storm_rank6_eg=*/kPawnStormPenalty[6].eg,
+
+        /*back_rank_mg=*/kBackRankWeaknessPenalty.mg,
+        /*back_rank_eg=*/kBackRankWeaknessPenalty.eg,
+    };
+}
+
 /// Evaluates king safety for BOTH sides and returns a single
 /// White-relative Score (positive favors White, matching every other
 /// eval/*.h term's sign convention in eval.cpp). See this file's header
@@ -176,6 +295,22 @@ inline constexpr Score kBackRankWeaknessPenalty = {-14, -2};
 /// via the same attacker-weighting logic eval/mobility.h's
 /// mobility_value() already relies on, board::bishop_attacks()/
 /// rook_attacks()/queen_attacks() too).
-[[nodiscard]] Score king_safety_value(const board::Position& pos) noexcept;
+///
+/// `weights`, if non-null, is used INSTEAD OF the constants above for
+/// this call only -- the same nullable-override convention
+/// material_value()/psqt_value()/mobility_value()/space_value()/
+/// threats_value() already establish, threaded here for
+/// eval::evaluate()'s own `king_safety_weights` parameter (eval.h) so a
+/// future king-safety-aware tuning run can probe candidate king-safety
+/// weight vectors the same uniform way it already can for the other
+/// five terms. `weights`' own fields are `double`
+/// (KingSafetyWeights' field type); Score's own fields are `int`
+/// (score.h), so each override is rounded via the same round_to_int()
+/// helper psqt_value()/mobility_value()/space_value()/threats_value()
+/// already use, reused here rather than duplicated. See
+/// KingSafetyWeights' own doc comment (above) for why the 6 pawn-storm
+/// fields are individually named rather than array-indexed.
+[[nodiscard]] Score king_safety_value(const board::Position& pos,
+                                       const KingSafetyWeights* weights = nullptr) noexcept;
 
 } // namespace nightwing::eval

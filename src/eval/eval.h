@@ -64,6 +64,7 @@
 #include "board/board.h"
 #include "eval/eval_cache.h"
 #include "eval/incremental.h"
+#include "eval/king_safety.h"
 #include "eval/mobility.h"
 #include "eval/pawn_tt.h"
 #include "eval/psqt.h"
@@ -213,6 +214,23 @@ namespace nightwing::eval {
 /// Defaults to nullptr, meaning "use the compiled-in constants" — every
 /// existing caller is entirely unaffected.
 ///
+/// `king_safety_weights`, if non-null, is forwarded to the internal
+/// king_safety_value() call INSTEAD OF its own compiled-in constants
+/// (eval/king_safety.h's KingSafetyWeights, and king_safety_value()'s
+/// own doc comment on this parameter) — the king-safety-term
+/// counterpart to `material_weights`/`psqt_weights`/`mobility_weights`/
+/// `space_weights`/`threats_weights` above (ROADMAP.md's Tier 0 tuner
+/// item, "PSQT and beyond" — the fourth "beyond" term, after mobility,
+/// space, and threats), so a future king-safety-aware tuning run can
+/// call evaluate() at a candidate king-safety weight vector the same
+/// uniform way the other five already allow. Independent of the other
+/// five — any subset of the six may be non-null on a given call.
+/// `eval_cache` is DELIBERATELY NEVER consulted whenever
+/// `king_safety_weights != nullptr` either, for the identical
+/// staleness reason the other five already disable it. Defaults to
+/// nullptr, meaning "use the compiled-in constants" — every existing
+/// caller is entirely unaffected.
+///
 /// `incremental_material_psqt`, if non-null, is used INSTEAD OF running
 /// compute_material_psqt()'s own 64-square scan (eval/incremental.h) —
 /// the caller is asserting that `*incremental_material_psqt` already
@@ -298,6 +316,7 @@ namespace nightwing::eval {
                             const MobilityWeights* mobility_weights = nullptr,
                             const SpaceWeights* space_weights = nullptr,
                             const ThreatsWeights* threats_weights = nullptr,
+                            const KingSafetyWeights* king_safety_weights = nullptr,
                             const Score* incremental_material_psqt = nullptr,
                             const int* lazy_alpha_white = nullptr,
                             const int* lazy_beta_white = nullptr) noexcept;

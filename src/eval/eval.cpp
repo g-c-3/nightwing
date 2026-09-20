@@ -84,8 +84,10 @@ constexpr int kLazyEvalMargin = 650;
 int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval_cache,
              const MaterialWeights* material_weights, const PsqtWeights* psqt_weights,
              const MobilityWeights* mobility_weights, const SpaceWeights* space_weights,
-             const ThreatsWeights* threats_weights, const Score* incremental_material_psqt,
-             const int* lazy_alpha_white, const int* lazy_beta_white) noexcept {
+             const ThreatsWeights* threats_weights,
+             const KingSafetyWeights* king_safety_weights,
+             const Score* incremental_material_psqt, const int* lazy_alpha_white,
+             const int* lazy_beta_white) noexcept {
     // Eval cache (eval/eval_cache.h): probed first, keyed on the FULL
     // position (pos.zobrist_hash, already incrementally maintained --
     // no extra hash computation needed, unlike pawn_tt's own
@@ -98,13 +100,14 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     // negamax() call -- search.cpp's razoring/futility pruning).
     //
     // DELIBERATELY SKIPPED WHENEVER material_weights, psqt_weights,
-    // mobility_weights, space_weights, OR threats_weights IS SET (this
-    // function's own doc comment on all five parameters has the full
-    // rationale, repeated for each): eval_cache's key says nothing
-    // about which weight vector(s) produced a cached result, so
-    // honoring it under a different-than-default weight vector could
-    // silently return a stale result from a different vector entirely.
-    // ALSO deliberately skipped whenever a lazy window
+    // mobility_weights, space_weights, threats_weights, OR
+    // king_safety_weights IS SET (this function's own doc comment on
+    // all six parameters has the full rationale, repeated for each):
+    // eval_cache's key says nothing about which weight vector(s)
+    // produced a cached result, so honoring it under a
+    // different-than-default weight vector could silently return a
+    // stale result from a different vector entirely. ALSO deliberately
+    // skipped whenever a lazy window
     // (`lazy_alpha_white`/`lazy_beta_white`, this function's own doc
     // comment) is set -- a lazily-approximated early return omits every
     // term besides material+PSQT, and caching it under this position's
@@ -114,7 +117,7 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     const bool eval_cache_usable = (eval_cache != nullptr) && (material_weights == nullptr) &&
                                     (psqt_weights == nullptr) && (mobility_weights == nullptr) &&
                                     (space_weights == nullptr) && (threats_weights == nullptr) &&
-                                    !lazy_eval_requested;
+                                    (king_safety_weights == nullptr) && !lazy_eval_requested;
     if (eval_cache_usable) {
         const auto [hit, cached] = eval_cache->probe(pos.zobrist_hash);
         if (hit) {
@@ -218,7 +221,8 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     // -- this becomes more attractive, not less, with each further
     // Phase 6 item that adds its own consumer.
     const int result = taper(score + pawn_score + mobility_value(pos, mobility_weights) +
-                                  king_safety_value(pos) + piece_bonus_value(pos) +
+                                  king_safety_value(pos, king_safety_weights) +
+                                  piece_bonus_value(pos) +
                                   knight_outpost_value(pos) + space_value(pos, space_weights) +
                                   threats_value(pos, threats_weights) +
                                   king_tropism_value(pos) + trapped_piece_value(pos) +
