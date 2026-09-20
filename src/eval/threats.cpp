@@ -72,17 +72,28 @@ using board::Square;
 
 /// Returns the attacked-by-an-enemy-pawn penalty for a piece of `pt`
 /// (only ever called with Knight/Bishop/Rook/Queen -- see threats.cpp's
-/// own call site).
-[[nodiscard]] constexpr Score pawn_threat_penalty(PieceType pt) noexcept {
+/// own call site). `weights`, if non-null, is used instead of the
+/// compiled-in kXxxAttackedByPawnPenalty constants -- see
+/// threats_value()'s own doc comment (threats.h) on its `weights`
+/// parameter for the full nullable-override rationale.
+[[nodiscard]] Score pawn_threat_penalty(PieceType pt, const ThreatsWeights* weights) noexcept {
     switch (pt) {
         case PieceType::Knight:
-            return kKnightAttackedByPawnPenalty;
+            return weights == nullptr ? kKnightAttackedByPawnPenalty
+                                       : Score{round_to_int(weights->knight_pawn_mg),
+                                               round_to_int(weights->knight_pawn_eg)};
         case PieceType::Bishop:
-            return kBishopAttackedByPawnPenalty;
+            return weights == nullptr ? kBishopAttackedByPawnPenalty
+                                       : Score{round_to_int(weights->bishop_pawn_mg),
+                                               round_to_int(weights->bishop_pawn_eg)};
         case PieceType::Rook:
-            return kRookAttackedByPawnPenalty;
+            return weights == nullptr ? kRookAttackedByPawnPenalty
+                                       : Score{round_to_int(weights->rook_pawn_mg),
+                                               round_to_int(weights->rook_pawn_eg)};
         case PieceType::Queen:
-            return kQueenAttackedByPawnPenalty;
+            return weights == nullptr ? kQueenAttackedByPawnPenalty
+                                       : Score{round_to_int(weights->queen_pawn_mg),
+                                               round_to_int(weights->queen_pawn_eg)};
         case PieceType::Pawn:
         case PieceType::King:
         case PieceType::None:
@@ -93,17 +104,31 @@ using board::Square;
 
 /// Returns the hanging-piece penalty for a piece of `pt` (only ever
 /// called with Knight/Bishop/Rook/Queen -- see threats.cpp's own call
-/// site).
-[[nodiscard]] constexpr Score hanging_penalty(PieceType pt) noexcept {
+/// site). `weights`, if non-null, is used instead of the compiled-in
+/// kXxxHangingPenalty constants -- same nullable-override rationale as
+/// pawn_threat_penalty() above.
+[[nodiscard]] Score hanging_penalty(PieceType pt, const ThreatsWeights* weights) noexcept {
     switch (pt) {
         case PieceType::Knight:
-            return kKnightHangingPenalty;
+            return weights == nullptr
+                       ? kKnightHangingPenalty
+                       : Score{round_to_int(weights->knight_hanging_mg),
+                               round_to_int(weights->knight_hanging_eg)};
         case PieceType::Bishop:
-            return kBishopHangingPenalty;
+            return weights == nullptr
+                       ? kBishopHangingPenalty
+                       : Score{round_to_int(weights->bishop_hanging_mg),
+                               round_to_int(weights->bishop_hanging_eg)};
         case PieceType::Rook:
-            return kRookHangingPenalty;
+            return weights == nullptr
+                       ? kRookHangingPenalty
+                       : Score{round_to_int(weights->rook_hanging_mg),
+                               round_to_int(weights->rook_hanging_eg)};
         case PieceType::Queen:
-            return kQueenHangingPenalty;
+            return weights == nullptr
+                       ? kQueenHangingPenalty
+                       : Score{round_to_int(weights->queen_hanging_mg),
+                               round_to_int(weights->queen_hanging_eg)};
         case PieceType::Pawn:
         case PieceType::King:
         case PieceType::None:
@@ -114,17 +139,31 @@ using board::Square;
 
 /// Returns the overloaded-piece penalty for a piece of `pt` (only ever
 /// called with Knight/Bishop/Rook/Queen -- see threats.cpp's own call
-/// site).
-[[nodiscard]] constexpr Score overloaded_penalty(PieceType pt) noexcept {
+/// site). `weights`, if non-null, is used instead of the compiled-in
+/// kXxxOverloadedPenalty constants -- same nullable-override rationale
+/// as pawn_threat_penalty()/hanging_penalty() above.
+[[nodiscard]] Score overloaded_penalty(PieceType pt, const ThreatsWeights* weights) noexcept {
     switch (pt) {
         case PieceType::Knight:
-            return kKnightOverloadedPenalty;
+            return weights == nullptr
+                       ? kKnightOverloadedPenalty
+                       : Score{round_to_int(weights->knight_overloaded_mg),
+                               round_to_int(weights->knight_overloaded_eg)};
         case PieceType::Bishop:
-            return kBishopOverloadedPenalty;
+            return weights == nullptr
+                       ? kBishopOverloadedPenalty
+                       : Score{round_to_int(weights->bishop_overloaded_mg),
+                               round_to_int(weights->bishop_overloaded_eg)};
         case PieceType::Rook:
-            return kRookOverloadedPenalty;
+            return weights == nullptr
+                       ? kRookOverloadedPenalty
+                       : Score{round_to_int(weights->rook_overloaded_mg),
+                               round_to_int(weights->rook_overloaded_eg)};
         case PieceType::Queen:
-            return kQueenOverloadedPenalty;
+            return weights == nullptr
+                       ? kQueenOverloadedPenalty
+                       : Score{round_to_int(weights->queen_overloaded_mg),
+                               round_to_int(weights->queen_overloaded_eg)};
         case PieceType::Pawn:
         case PieceType::King:
         case PieceType::None:
@@ -214,7 +253,7 @@ struct ScopedPiece {
 /// how many targets named it as their one-and-only defender -- 2 or
 /// more means that piece is overloaded.
 void add_overloaded_penalty(const Position& pos, Color c, Bitboard enemy_attacks,
-                             Score& side_score) noexcept {
+                             const ThreatsWeights* weights, Score& side_score) noexcept {
     std::array<ScopedPiece, kMaxOverloadScopedPieces> pieces{};
     const int count = collect_scoped_pieces(pos, c, pieces);
 
@@ -248,14 +287,14 @@ void add_overloaded_penalty(const Position& pos, Color c, Bitboard enemy_attacks
 
     for (int k = 0; k < count; ++k) {
         if (overload_count[static_cast<std::size_t>(k)] >= 2) {
-            side_score += overloaded_penalty(pieces[static_cast<std::size_t>(k)].pt);
+            side_score += overloaded_penalty(pieces[static_cast<std::size_t>(k)].pt, weights);
         }
     }
 }
 
 } // namespace
 
-Score threats_value(const Position& pos) noexcept {
+Score threats_value(const Position& pos, const ThreatsWeights* weights) noexcept {
     Score score;
 
     // Computed once per side, reused for every piece below rather than
@@ -284,18 +323,18 @@ Score threats_value(const Position& pos) noexcept {
                 // intersects the enemy's own pawns.
                 const bool attacked_by_pawn = (board::pawn_attacks(c, sq) & enemy_pawns) != 0;
                 if (attacked_by_pawn) {
-                    side_score += pawn_threat_penalty(pt);
+                    side_score += pawn_threat_penalty(pt, weights);
                 }
 
                 const bool attacked = board::test_bit(enemy_attacks, sq);
                 const bool defended = board::test_bit(own_attacks, sq);
                 if (attacked && !defended) {
-                    side_score += hanging_penalty(pt);
+                    side_score += hanging_penalty(pt, weights);
                 }
             }
         }
 
-        add_overloaded_penalty(pos, c, enemy_attacks, side_score);
+        add_overloaded_penalty(pos, c, enemy_attacks, weights, side_score);
 
         if (c == Color::White) {
             score += side_score;

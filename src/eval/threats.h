@@ -83,6 +83,7 @@
 // other eval term added this phase already carries.
 
 #include "board/board.h"
+#include "eval/psqt.h" // round_to_int()
 #include "eval/score.h"
 
 namespace nightwing::eval {
@@ -142,6 +143,102 @@ inline constexpr Score kBishopOverloadedPenalty = {-18, -8};
 inline constexpr Score kRookOverloadedPenalty = {-24, -10};
 inline constexpr Score kQueenOverloadedPenalty = {-30, -12};
 
+/// Runtime-mutable counterpart to the 12 kXxxYyyPenalty constants above
+/// -- the threats-term entry in the same "runtime-mutable
+/// parameter-vector abstraction over eval's currently-constexpr named
+/// constants" family as eval::MaterialWeights/PsqtWeights (psqt.h),
+/// eval::MobilityWeights (mobility.h), and eval::SpaceWeights (space.h)
+/// already establish (ROADMAP.md's Tier 0 tuner item, "PSQT and
+/// beyond" -- Step 8b, the third "beyond" term, picked ahead of pawn
+/// structure/king safety specifically because it shares mobility's own
+/// plain-scalar shape -- no per-square or other indexed dimension --
+/// despite having more fields than mobility's 8, unlike king_safety.h's
+/// kPawnStormPenalty or pawns.h's several 8-entry passed-pawn-family
+/// tables, both of which need array indexing this struct doesn't).
+///
+/// `constexpr`-constructible via default-member-initializers naming
+/// the 12 kXxxYyyPenalty constants directly, the same MaterialWeights/
+/// MobilityWeights/SpaceWeights pattern (not PsqtWeights' out-of-line
+/// one) -- mechanical, not a judgment call, since every one of those 12
+/// constants is an `inline constexpr` value declared right here in this
+/// header, not hidden in threats.cpp's own anonymous namespace.
+///
+/// Field naming: `<piece>_<category>_<mg|eg>`, where `<category>` is
+/// `pawn` (attacked-by-a-pawn), `hanging`, or `overloaded` -- matching
+/// this file's own header comment's numbered list (1. pawn-attacked,
+/// 2. hanging, 3. overloaded) and threats.cpp's own
+/// pawn_threat_penalty()/hanging_penalty()/overloaded_penalty() helper
+/// names, just spelled out per-piece-type rather than switched on
+/// PieceType the way those helpers are.
+struct ThreatsWeights {
+    double knight_pawn_mg = kKnightAttackedByPawnPenalty.mg;
+    double knight_pawn_eg = kKnightAttackedByPawnPenalty.eg;
+    double bishop_pawn_mg = kBishopAttackedByPawnPenalty.mg;
+    double bishop_pawn_eg = kBishopAttackedByPawnPenalty.eg;
+    double rook_pawn_mg = kRookAttackedByPawnPenalty.mg;
+    double rook_pawn_eg = kRookAttackedByPawnPenalty.eg;
+    double queen_pawn_mg = kQueenAttackedByPawnPenalty.mg;
+    double queen_pawn_eg = kQueenAttackedByPawnPenalty.eg;
+
+    double knight_hanging_mg = kKnightHangingPenalty.mg;
+    double knight_hanging_eg = kKnightHangingPenalty.eg;
+    double bishop_hanging_mg = kBishopHangingPenalty.mg;
+    double bishop_hanging_eg = kBishopHangingPenalty.eg;
+    double rook_hanging_mg = kRookHangingPenalty.mg;
+    double rook_hanging_eg = kRookHangingPenalty.eg;
+    double queen_hanging_mg = kQueenHangingPenalty.mg;
+    double queen_hanging_eg = kQueenHangingPenalty.eg;
+
+    double knight_overloaded_mg = kKnightOverloadedPenalty.mg;
+    double knight_overloaded_eg = kKnightOverloadedPenalty.eg;
+    double bishop_overloaded_mg = kBishopOverloadedPenalty.mg;
+    double bishop_overloaded_eg = kBishopOverloadedPenalty.eg;
+    double rook_overloaded_mg = kRookOverloadedPenalty.mg;
+    double rook_overloaded_eg = kRookOverloadedPenalty.eg;
+    double queen_overloaded_mg = kQueenOverloadedPenalty.mg;
+    double queen_overloaded_eg = kQueenOverloadedPenalty.eg;
+};
+
+/// Returns a ThreatsWeights matching all 12 kXxxYyyPenalty constants
+/// exactly -- the natural starting point for a threats-aware tuning run
+/// (tuner::tune()-style, src/tuner/tune.h), and the values every field
+/// above is already separately, redundantly initialized to (kept in
+/// sync by hand, matching default_material_weights()'s/
+/// default_mobility_weights()'s/default_space_weights()'s own doc
+/// comment rationale for why: ThreatsWeights{}'s own default-member-
+/// initializers stay self-contained and don't require calling a
+/// function just to default-construct one).
+[[nodiscard]] constexpr ThreatsWeights default_threats_weights() noexcept {
+    return ThreatsWeights{
+        /*knight_pawn_mg=*/kKnightAttackedByPawnPenalty.mg,
+        /*knight_pawn_eg=*/kKnightAttackedByPawnPenalty.eg,
+        /*bishop_pawn_mg=*/kBishopAttackedByPawnPenalty.mg,
+        /*bishop_pawn_eg=*/kBishopAttackedByPawnPenalty.eg,
+        /*rook_pawn_mg=*/kRookAttackedByPawnPenalty.mg,
+        /*rook_pawn_eg=*/kRookAttackedByPawnPenalty.eg,
+        /*queen_pawn_mg=*/kQueenAttackedByPawnPenalty.mg,
+        /*queen_pawn_eg=*/kQueenAttackedByPawnPenalty.eg,
+
+        /*knight_hanging_mg=*/kKnightHangingPenalty.mg,
+        /*knight_hanging_eg=*/kKnightHangingPenalty.eg,
+        /*bishop_hanging_mg=*/kBishopHangingPenalty.mg,
+        /*bishop_hanging_eg=*/kBishopHangingPenalty.eg,
+        /*rook_hanging_mg=*/kRookHangingPenalty.mg,
+        /*rook_hanging_eg=*/kRookHangingPenalty.eg,
+        /*queen_hanging_mg=*/kQueenHangingPenalty.mg,
+        /*queen_hanging_eg=*/kQueenHangingPenalty.eg,
+
+        /*knight_overloaded_mg=*/kKnightOverloadedPenalty.mg,
+        /*knight_overloaded_eg=*/kKnightOverloadedPenalty.eg,
+        /*bishop_overloaded_mg=*/kBishopOverloadedPenalty.mg,
+        /*bishop_overloaded_eg=*/kBishopOverloadedPenalty.eg,
+        /*rook_overloaded_mg=*/kRookOverloadedPenalty.mg,
+        /*rook_overloaded_eg=*/kRookOverloadedPenalty.eg,
+        /*queen_overloaded_mg=*/kQueenOverloadedPenalty.mg,
+        /*queen_overloaded_eg=*/kQueenOverloadedPenalty.eg,
+    };
+}
+
 /// Evaluates the threats term for BOTH sides and returns a single
 /// White-relative Score (positive favors White, matching every other
 /// eval/*.h term's sign convention in eval.cpp).
@@ -178,6 +275,20 @@ inline constexpr Score kQueenOverloadedPenalty = {-30, -12};
 /// pieces, to determine which squares are attacked/defended -- the same
 /// precondition eval/mobility.h's mobility_value() and eval/
 /// king_safety.h's king_safety_value() already carry.
-[[nodiscard]] Score threats_value(const board::Position& pos) noexcept;
+///
+/// `weights`, if non-null, is used INSTEAD OF the 12 kXxxYyyPenalty
+/// constants above for this call only -- the same nullable-override
+/// convention material_value()/psqt_value()/mobility_value()/
+/// space_value() already establish, threaded here for
+/// eval::evaluate()'s own `threats_weights` parameter (eval.h) so a
+/// future threats-aware tuning run can probe candidate threats weight
+/// vectors the same uniform way it already can for the other four
+/// terms. `weights`' own fields are `double` (ThreatsWeights' field
+/// type); Score's own fields are `int` (score.h), so each override is
+/// rounded via the same round_to_int() helper psqt_value()/
+/// mobility_value()/space_value() already use, reused here rather than
+/// duplicated.
+[[nodiscard]] Score threats_value(const board::Position& pos,
+                                   const ThreatsWeights* weights = nullptr) noexcept;
 
 } // namespace nightwing::eval
