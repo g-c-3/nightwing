@@ -221,7 +221,8 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         const int white_relative = eval::evaluate(pos, pawn_tt, eval_cache, material_weights,
                                                     /*psqt_weights=*/nullptr,
                                                     /*mobility_weights=*/nullptr,
-                                                    /*space_weights=*/nullptr, mat_psqt);
+                                                    /*space_weights=*/nullptr,
+                                                    /*threats_weights=*/nullptr, mat_psqt);
         return pos.side_to_move == Color::White ? white_relative : -white_relative;
     }
 
@@ -250,8 +251,8 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         const int white_relative =
             eval::evaluate(pos, pawn_tt, eval_cache, material_weights,
                             /*psqt_weights=*/nullptr, /*mobility_weights=*/nullptr,
-                            /*space_weights=*/nullptr, mat_psqt, &lazy_alpha_white,
-                            &lazy_beta_white);
+                            /*space_weights=*/nullptr, /*threats_weights=*/nullptr, mat_psqt,
+                            &lazy_alpha_white, &lazy_beta_white);
         best = pos.side_to_move == Color::White ? white_relative : -white_relative;
         if (best >= beta) {
             return best;
