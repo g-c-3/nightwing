@@ -418,3 +418,134 @@ TEST_CASE("pawn_structure_value: an unsupported pawn facing a controlling enemy 
     REQUIRE(value_b.mg > value_a.mg);
     REQUIRE(value_b.eg > value_a.eg);
 }
+
+// ---------------------------------------------------------------------
+// ROADMAP.md Tier 0 "PSQT and beyond" -- Step 8b, pawn structure (the
+// fifth and final "beyond" term, after mobility, space, threats, and
+// king safety): PawnsWeights / default_pawns_weights() /
+// pawn_structure_value()'s new nullable-override parameter.
+// ---------------------------------------------------------------------
+
+TEST_CASE("default_pawns_weights: matches every underlying constant exactly, including all "
+          "24 flattened relative-rank fields across the 4 passed-pawn-family arrays",
+          "[eval][pawns][tuner]") {
+    const PawnsWeights defaults = default_pawns_weights();
+    REQUIRE(defaults.isolated_mg == kIsolatedPawnPenalty.mg);
+    REQUIRE(defaults.isolated_eg == kIsolatedPawnPenalty.eg);
+    REQUIRE(defaults.doubled_mg == kDoubledPawnPenalty.mg);
+    REQUIRE(defaults.doubled_eg == kDoubledPawnPenalty.eg);
+    REQUIRE(defaults.backward_mg == kBackwardPawnPenalty.mg);
+    REQUIRE(defaults.backward_eg == kBackwardPawnPenalty.eg);
+    REQUIRE(defaults.connected_mg == kConnectedPawnBonus.mg);
+    REQUIRE(defaults.connected_eg == kConnectedPawnBonus.eg);
+    REQUIRE(defaults.island_mg == kPawnIslandPenalty.mg);
+    REQUIRE(defaults.island_eg == kPawnIslandPenalty.eg);
+    REQUIRE(defaults.outside_min_file_gap == static_cast<double>(kOutsidePassedPawnMinFileGap));
+
+    REQUIRE(defaults.passed_rank1_mg == kPassedPawnBonus[1].mg);
+    REQUIRE(defaults.passed_rank1_eg == kPassedPawnBonus[1].eg);
+    REQUIRE(defaults.passed_rank2_mg == kPassedPawnBonus[2].mg);
+    REQUIRE(defaults.passed_rank2_eg == kPassedPawnBonus[2].eg);
+    REQUIRE(defaults.passed_rank3_mg == kPassedPawnBonus[3].mg);
+    REQUIRE(defaults.passed_rank3_eg == kPassedPawnBonus[3].eg);
+    REQUIRE(defaults.passed_rank4_mg == kPassedPawnBonus[4].mg);
+    REQUIRE(defaults.passed_rank4_eg == kPassedPawnBonus[4].eg);
+    REQUIRE(defaults.passed_rank5_mg == kPassedPawnBonus[5].mg);
+    REQUIRE(defaults.passed_rank5_eg == kPassedPawnBonus[5].eg);
+    REQUIRE(defaults.passed_rank6_mg == kPassedPawnBonus[6].mg);
+    REQUIRE(defaults.passed_rank6_eg == kPassedPawnBonus[6].eg);
+
+    REQUIRE(defaults.connected_passed_rank1_mg == kConnectedPassedPawnBonus[1].mg);
+    REQUIRE(defaults.connected_passed_rank1_eg == kConnectedPassedPawnBonus[1].eg);
+    REQUIRE(defaults.connected_passed_rank6_mg == kConnectedPassedPawnBonus[6].mg);
+    REQUIRE(defaults.connected_passed_rank6_eg == kConnectedPassedPawnBonus[6].eg);
+
+    REQUIRE(defaults.outside_passed_rank1_mg == kOutsidePassedPawnBonus[1].mg);
+    REQUIRE(defaults.outside_passed_rank1_eg == kOutsidePassedPawnBonus[1].eg);
+    REQUIRE(defaults.outside_passed_rank6_mg == kOutsidePassedPawnBonus[6].mg);
+    REQUIRE(defaults.outside_passed_rank6_eg == kOutsidePassedPawnBonus[6].eg);
+
+    REQUIRE(defaults.candidate_passed_rank1_mg == kCandidatePassedPawnBonus[1].mg);
+    REQUIRE(defaults.candidate_passed_rank1_eg == kCandidatePassedPawnBonus[1].eg);
+    REQUIRE(defaults.candidate_passed_rank6_mg == kCandidatePassedPawnBonus[6].mg);
+    REQUIRE(defaults.candidate_passed_rank6_eg == kCandidatePassedPawnBonus[6].eg);
+}
+
+TEST_CASE("pawn_structure_value: passing default_pawns_weights() as an explicit override "
+          "reproduces the no-override result exactly, for a position exercising isolated, "
+          "passed, outside-passed, and pawn-island terms all at once",
+          "[eval][pawns][tuner]") {
+    init_masks();
+    const PawnsWeights defaults = default_pawns_weights();
+
+    // Same shape as this file's own "a passed pawn far separated from
+    // every other pawn" test above -- exercises isolated + passed +
+    // outside-passed + pawn-island terms together, a broad cross-
+    // section of this struct's fields in one position.
+    Position pos = empty_position();
+    pos.place_piece(make_square(0, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(0, 7), Piece::BlackKing);
+    pos.place_piece(make_square(0, 4), Piece::WhitePawn); // a5
+    pos.place_piece(make_square(4, 1), Piece::WhitePawn); // e2
+    pos.place_piece(make_square(4, 4), Piece::BlackPawn); // e5
+    REQUIRE(pawn_structure_value(pos, &defaults) == pawn_structure_value(pos));
+    REQUIRE(pawn_structure_value(pos).mg != 0); // not a vacuous 0 == 0
+}
+
+TEST_CASE("pawn_structure_value: a modified passed_rank4 field changes only a rank-4 passer's "
+          "own bonus, leaving an unrelated rank and an unrelated family (connected_passed) "
+          "untouched",
+          "[eval][pawns][tuner]") {
+    init_masks();
+    // Same lone-unopposed-pawn setup as this file's own first test
+    // above -- e4, relative rank 3 from White... use e5 instead (rank
+    // 4) to line up with a perturbed field name that reads cleanly.
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing); // e1
+    pos.place_piece(make_square(4, 7), Piece::BlackKing); // e8
+    pos.place_piece(make_square(4, 4), Piece::WhitePawn); // e5, relative rank 4, isolated+passed
+    const Score baseline = pawn_structure_value(pos);
+    REQUIRE(baseline == kIsolatedPawnPenalty + kPassedPawnBonus[4]);
+
+    PawnsWeights perturbed = default_pawns_weights();
+    perturbed.passed_rank4_mg += 100.0;
+    perturbed.passed_rank4_eg += 50.0;
+    // Deliberately also perturb an unrelated rank (rank 2) and an
+    // entirely unrelated family (connected_passed) to confirm neither
+    // affects a position with no rank-2 passer and no connected-passed
+    // pawn at all.
+    perturbed.passed_rank2_mg += 9999.0;
+    perturbed.connected_passed_rank4_mg += 9999.0;
+
+    const Score boosted = pawn_structure_value(pos, &perturbed);
+    REQUIRE(boosted.mg == baseline.mg + 100);
+    REQUIRE(boosted.eg == baseline.eg + 50);
+}
+
+TEST_CASE("pawn_structure_value: lowering outside_min_file_gap via an override reclassifies a "
+          "borderline (2-file-gap) passed pawn as outside, exercising the one non-Score field "
+          "in PawnsWeights",
+          "[eval][pawns][tuner]") {
+    init_masks();
+    // Same 2-file-gap setup as this file's own "a passed pawn only 2 "
+    // files from its nearest neighbor is NOT outside" test above --
+    // at the default gap (3), neither pawn qualifies; lowering the
+    // override to 2 should flip BOTH to outside, symmetrically.
+    Position pos = empty_position();
+    pos.place_piece(make_square(0, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(0, 7), Piece::BlackKing);
+    pos.place_piece(make_square(3, 4), Piece::WhitePawn); // d5, relative rank 4
+    pos.place_piece(make_square(1, 5), Piece::BlackPawn); // b6, relative rank 2
+
+    const Score baseline = pawn_structure_value(pos);
+    REQUIRE(baseline == kPassedPawnBonus[4] - kPassedPawnBonus[2]);
+
+    PawnsWeights lowered_gap = default_pawns_weights();
+    lowered_gap.outside_min_file_gap = 2.0;
+    const Score with_lowered_gap = pawn_structure_value(pos, &lowered_gap);
+
+    const Score expected = (kPassedPawnBonus[4] + kOutsidePassedPawnBonus[4]) -
+                            (kPassedPawnBonus[2] + kOutsidePassedPawnBonus[2]);
+    REQUIRE(with_lowered_gap == expected);
+    REQUIRE(with_lowered_gap != baseline);
+}

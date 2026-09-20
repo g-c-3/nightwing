@@ -779,6 +779,61 @@ TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a "
     REQUIRE(cached == 12345); // untouched, not overwritten with a fresh value either
 }
 
+TEST_CASE("evaluate: a PawnsWeights override changes evaluate()'s result exactly as expected "
+          "-- the pawn-structure counterpart to the MaterialWeights/PsqtWeights/"
+          "MobilityWeights/SpaceWeights/ThreatsWeights/KingSafetyWeights tests above",
+          "[eval][pawns][tuner]") {
+    init_all();
+    // A lone, isolated, passed White pawn at relative rank 4 (the same
+    // shape tests/pawns_tests.cpp's own weights tests use) --
+    // pawn_structure_value()'s own passed-pawn term is easily isolated
+    // here.
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing); // e1
+    pos.place_piece(make_square(4, 7), Piece::BlackKing); // e8
+    pos.place_piece(make_square(4, 4), Piece::WhitePawn); // e5, relative rank 4
+
+    const int default_eval =
+        evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+
+    PawnsWeights boosted = default_pawns_weights();
+    boosted.passed_rank4_mg += 100.0;
+    boosted.passed_rank4_eg += 100.0;
+    const int boosted_eval = evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                       nullptr, nullptr, &boosted);
+
+    // A single rank-4 passer picks up the full +100/+100 boost --
+    // exact, since both mg and eg were moved identically, sidestepping
+    // any phase-dependence the way this session's earlier SpaceWeights
+    // test also learned to.
+    REQUIRE(boosted_eval > default_eval);
+    REQUIRE(boosted_eval - default_eval == 100);
+}
+
+TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a PawnsWeights "
+          "override is supplied, even if a real EvalCache pointer is also passed -- the "
+          "pawn-structure counterpart to the MaterialWeights/PsqtWeights/MobilityWeights/"
+          "SpaceWeights/ThreatsWeights/KingSafetyWeights eval_cache tests above",
+          "[eval][eval_cache][pawns][tuner]") {
+    init_all();
+    Position pos = start_position();
+
+    EvalCache cache(2048);
+    cache.store(pos.zobrist_hash, 12345); // same poisoning technique as the tests above
+
+    const PawnsWeights weights = default_pawns_weights();
+    const int result = evaluate(pos, nullptr, &cache, nullptr, nullptr, nullptr, nullptr,
+                                 nullptr, nullptr, &weights);
+    REQUIRE(result != 12345);
+    REQUIRE(result == evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                nullptr, nullptr, &weights));
+
+    const auto [hit, cached] = cache.probe(pos.zobrist_hash);
+    REQUIRE(hit);
+    REQUIRE(cached == 12345); // untouched, not overwritten with a fresh value either
+}
+
+
 
 TEST_CASE("evaluate: a lazy window wide enough to contain any plausible score never triggers "
           "the early-exit path -- byte-identical to the non-lazy result",
@@ -796,7 +851,7 @@ TEST_CASE("evaluate: a lazy window wide enough to contain any plausible score ne
     const int lazy_beta_white = 100'000;
     const int with_wide_lazy_window =
         evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-                 nullptr, &lazy_alpha_white, &lazy_beta_white);
+                 nullptr, nullptr, &lazy_alpha_white, &lazy_beta_white);
     REQUIRE(with_wide_lazy_window == no_lazy);
 }
 
@@ -825,7 +880,7 @@ TEST_CASE("evaluate: a lazy window the cheap material+PSQT score clears by more 
     const int lazy_beta_white = 0;
     const int with_tight_lazy_window =
         evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-                 nullptr, &lazy_alpha_white, &lazy_beta_white);
+                 nullptr, nullptr, &lazy_alpha_white, &lazy_beta_white);
 
     REQUIRE(with_tight_lazy_window == material_psqt_only);
     // And the whole point of this position: the early-exit value is
@@ -850,7 +905,8 @@ TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a laz
     const int lazy_alpha_white = 0;
     const int lazy_beta_white = 0;
     const int result = evaluate(pos, nullptr, &cache, nullptr, nullptr, nullptr, nullptr,
-                                 nullptr, nullptr, nullptr, &lazy_alpha_white, &lazy_beta_white);
+                                 nullptr, nullptr, nullptr, nullptr, &lazy_alpha_white,
+                                 &lazy_beta_white);
     REQUIRE(result != 12345);
 
     const auto [hit, cached] = cache.probe(pos.zobrist_hash);

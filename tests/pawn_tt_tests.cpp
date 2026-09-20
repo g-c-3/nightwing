@@ -9,6 +9,7 @@
 #include "board/board.h"
 #include "board/fen.h"
 #include "board/masks.h"
+#include "board/zobrist.h"
 #include "eval/eval.h"
 #include "eval/pawn_tt.h"
 #include "eval/score.h"
@@ -125,4 +126,45 @@ TEST_CASE("evaluate: pawn hash table transparency holds for a position with a re
     PawnHashTable tt(512);
     REQUIRE(evaluate(pos, &tt) == without_tt);
     REQUIRE(evaluate(pos, &tt) == without_tt);
+}
+
+TEST_CASE("evaluate: pawn_tt is never consulted (probed or stored) when a PawnsWeights "
+          "override is supplied, even if a real PawnHashTable pointer is also passed -- the "
+          "pawn_tt counterpart to eval_tests.cpp's own eval_cache-staleness tests for "
+          "MaterialWeights/PsqtWeights/MobilityWeights/SpaceWeights/ThreatsWeights/"
+          "KingSafetyWeights, applied to the OTHER cache evaluate() has (ROADMAP.md Tier 0 "
+          "Step 8b, the fifth and final \"beyond PSQT\" term)",
+          "[eval][pawn_tt][pawns][tuner]") {
+    init_masks();
+    init_magic_bitboards();
+
+    // White has doubled e-pawns, same position as this file's own
+    // "pawn hash table transparency" test above -- a real,
+    // pawn-structure-sensitive position, not the symmetric (and
+    // therefore pawn-structure-blind) starting position.
+    Position pos = parse_fen("4k3/8/8/8/4P3/8/4P3/4K3 w - - 0 1");
+
+    PawnHashTable tt(512);
+    // Poison the table the same way eval_tests.cpp's own eval_cache
+    // tests poison EvalCache: store an obviously-wrong Score under this
+    // position's real pawn-structure key first, so a wrongly-consulted
+    // hit is impossible to miss.
+    const std::uint64_t pawn_key = compute_pawn_hash(pos);
+    tt.store(pawn_key, Score{12345, 12345});
+
+    const PawnsWeights weights = default_pawns_weights();
+    const int result = evaluate(pos, &tt, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                 nullptr, &weights);
+    // If pawn_tt had been wrongly consulted, the doubled-pawn penalty
+    // component of the final score would instead reflect the poisoned
+    // Score{12345, 12345} entry -- evaluate() would return a wildly
+    // different (and, for any real position, essentially impossible)
+    // value. Comparing against the equivalent call with pawn_tt =
+    // nullptr confirms the poisoned entry played no role at all.
+    REQUIRE(result == evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                nullptr, nullptr, &weights));
+
+    const auto [hit, cached] = tt.probe(pawn_key);
+    REQUIRE(hit);
+    REQUIRE(cached == Score{12345, 12345}); // untouched, not overwritten either
 }
