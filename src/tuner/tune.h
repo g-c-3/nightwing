@@ -33,20 +33,21 @@
 // itself to actually run a `kPsqtParameters`-driven tuning job is a
 // separate, later step — see ROADMAP.md Tier 0's remaining steps.
 // Mobility (Tier 0 Step 7, kMobilityParameters below, docs/
-// DECISIONS.md) and space (Tier 0 Step 8's first sub-step,
-// kSpaceParameters below) have since gained the same ParameterRef
-// table treatment PSQT already has, each with a matching optional
-// `compute_loss()` parameter, forwarded straight to `eval::evaluate()`
-// the same uniform way `psqt_weights` already is — but, like PSQT,
-// NEITHER is yet actually enumerated/updated by `tune()` itself, only
-// independently correct and tested ahead of that wiring. Every OTHER
-// eval term (king safety, pawn structure, threats, and the rest of
-// eval/*.h) is still read from its own compiled-in constexpr constant
-// and has no ParameterRef table at all yet — see docs/DECISIONS.md for
-// the full rationale on why material values were this module's first
-// covered term, and eval/psqt.h's own MaterialWeights/PsqtWeights doc
-// comments for the runtime-mutable-parameter-vector design those two
-// terms already have.
+// DECISIONS.md), space (Tier 0 Step 8a, kSpaceParameters below), and
+// threats (Tier 0 Step 8b's first sub-step, kThreatsParameters below)
+// have since gained the same ParameterRef table treatment PSQT already
+// has, each with a matching optional `compute_loss()` parameter,
+// forwarded straight to `eval::evaluate()` the same uniform way
+// `psqt_weights` already is — but, like PSQT, NONE of the three is yet
+// actually enumerated/updated by `tune()` itself, only independently
+// correct and tested ahead of that wiring. Every OTHER eval term (king
+// safety, pawn structure, and the rest of eval/*.h) is still read from
+// its own compiled-in constexpr constant and has no ParameterRef table
+// at all yet — see docs/DECISIONS.md for the full rationale on why
+// material values were this module's first covered term, and eval/
+// psqt.h's own MaterialWeights/PsqtWeights doc comments for the
+// runtime-mutable-parameter-vector design those two terms already
+// have.
 //
 // Tier 0 Step 5 (docs/DECISIONS.md, this file's own dated entry) added
 // TuneConfig::l2_lambda, an optional L2 regularization term (default
@@ -103,6 +104,7 @@
 #include "eval/mobility.h"
 #include "eval/psqt.h"
 #include "eval/space.h"
+#include "eval/threats.h"
 #include "tuner/selfplay.h"
 
 namespace nightwing::tuner {
@@ -438,6 +440,62 @@ inline constexpr std::array<SpaceParameterRef, 2> kSpaceParameters = {{
     {"square_eg", &eval::SpaceWeights::square_eg},
 }};
 
+/// `ParameterRef<eval::ThreatsWeights>` — the threats-side counterpart
+/// to MaterialParameterRef/PsqtParameterRef/MobilityParameterRef/
+/// SpaceParameterRef above, introduced this session (ROADMAP.md Tier
+/// 0's "PSQT and beyond" item, Step 8b, the third "beyond" term)
+/// alongside kThreatsParameters below.
+using ThreatsParameterRef = ParameterRef<eval::ThreatsWeights>;
+
+/// Every ThreatsWeights field, in declaration order — see
+/// ThreatsParameterRef's own comment above. 24 entries (12
+/// kXxxYyyPenalty constants x mg/eg each) — the same plain-scalar shape
+/// kMaterialParameters/kMobilityParameters already have (no per-square
+/// or other indexed dimension), just more fields than either, since
+/// threats.h has 3 penalty categories x 4 piece types rather than
+/// mobility's 1 bonus x 4 piece types or space's single constant. All
+/// 24 `anchored = false` (the field's own default), the same call
+/// kPsqtParameters/kMobilityParameters/kSpaceParameters already made
+/// for the identical reason (those tables' own comments above): every
+/// threats penalty is an ADDITIVE per-piece term, exactly like PSQT's/
+/// mobility's/space's own additive terms, so it doesn't share
+/// material's specific MULTIPLICATIVE flat-scaling degeneracy
+/// (kMaterialParameters' own comment above has the full account) —
+/// there is no known equivalent degenerate direction here to anchor
+/// against yet either, same caveat every sibling table's own comment
+/// states: a real production tuning run including this table may
+/// surface a different, threats-specific degeneracy worth anchoring
+/// against later, revisited then against real data rather than guessed
+/// now.
+inline constexpr std::array<ThreatsParameterRef, 24> kThreatsParameters = {{
+    {"knight_pawn_mg", &eval::ThreatsWeights::knight_pawn_mg},
+    {"knight_pawn_eg", &eval::ThreatsWeights::knight_pawn_eg},
+    {"bishop_pawn_mg", &eval::ThreatsWeights::bishop_pawn_mg},
+    {"bishop_pawn_eg", &eval::ThreatsWeights::bishop_pawn_eg},
+    {"rook_pawn_mg", &eval::ThreatsWeights::rook_pawn_mg},
+    {"rook_pawn_eg", &eval::ThreatsWeights::rook_pawn_eg},
+    {"queen_pawn_mg", &eval::ThreatsWeights::queen_pawn_mg},
+    {"queen_pawn_eg", &eval::ThreatsWeights::queen_pawn_eg},
+
+    {"knight_hanging_mg", &eval::ThreatsWeights::knight_hanging_mg},
+    {"knight_hanging_eg", &eval::ThreatsWeights::knight_hanging_eg},
+    {"bishop_hanging_mg", &eval::ThreatsWeights::bishop_hanging_mg},
+    {"bishop_hanging_eg", &eval::ThreatsWeights::bishop_hanging_eg},
+    {"rook_hanging_mg", &eval::ThreatsWeights::rook_hanging_mg},
+    {"rook_hanging_eg", &eval::ThreatsWeights::rook_hanging_eg},
+    {"queen_hanging_mg", &eval::ThreatsWeights::queen_hanging_mg},
+    {"queen_hanging_eg", &eval::ThreatsWeights::queen_hanging_eg},
+
+    {"knight_overloaded_mg", &eval::ThreatsWeights::knight_overloaded_mg},
+    {"knight_overloaded_eg", &eval::ThreatsWeights::knight_overloaded_eg},
+    {"bishop_overloaded_mg", &eval::ThreatsWeights::bishop_overloaded_mg},
+    {"bishop_overloaded_eg", &eval::ThreatsWeights::bishop_overloaded_eg},
+    {"rook_overloaded_mg", &eval::ThreatsWeights::rook_overloaded_mg},
+    {"rook_overloaded_eg", &eval::ThreatsWeights::rook_overloaded_eg},
+    {"queen_overloaded_mg", &eval::ThreatsWeights::queen_overloaded_mg},
+    {"queen_overloaded_eg", &eval::ThreatsWeights::queen_overloaded_eg},
+}};
+
 /// Tunable knobs for the tuning run itself (distinct from
 /// eval::MaterialWeights, the values BEING tuned).
 struct TuneConfig {
@@ -639,6 +697,16 @@ struct TuneResult {
 /// independent of `psqt_weights`/`mobility_weights` -- any subset of
 /// the three may be non-null.
 ///
+/// `threats_weights` -- the threats-term counterpart to
+/// `space_weights` above (ROADMAP.md Tier 0 Step 8b, the third
+/// "beyond" term), forwarded to eval::evaluate() the exact same way
+/// (see that parameter's own doc comment, eval.h) -- lets a future
+/// threats-aware tuning run compute the loss at a candidate threats
+/// weight vector. Defaults to nullptr (the compiled-in 12
+/// kXxxYyyPenalty constants), independent of `psqt_weights`/
+/// `mobility_weights`/`space_weights` -- any subset of the four may be
+/// non-null.
+///
 /// Precondition: board::init_masks() AND board::
 /// init_magic_bitboards() have been called (this function parses each
 /// position's FEN and evaluates it, both of which are transitively
@@ -648,7 +716,8 @@ struct TuneResult {
                                    const eval::MaterialWeights& weights, double sigmoid_scale,
                                    const eval::PsqtWeights* psqt_weights = nullptr,
                                    const eval::MobilityWeights* mobility_weights = nullptr,
-                                   const eval::SpaceWeights* space_weights = nullptr) noexcept;
+                                   const eval::SpaceWeights* space_weights = nullptr,
+                                   const eval::ThreatsWeights* threats_weights = nullptr) noexcept;
 
 /// Runs `config.iterations` steps of finite-difference gradient descent
 /// (this file's own header comment for the full algorithm) starting

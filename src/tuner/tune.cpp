@@ -45,7 +45,8 @@ double compute_loss(const std::vector<SelfPlayPosition>& positions,
                      const eval::MaterialWeights& weights, double sigmoid_scale,
                      const eval::PsqtWeights* psqt_weights,
                      const eval::MobilityWeights* mobility_weights,
-                     const eval::SpaceWeights* space_weights) noexcept {
+                     const eval::SpaceWeights* space_weights,
+                     const eval::ThreatsWeights* threats_weights) noexcept {
     if (positions.empty()) {
         return 0.0;
     }
@@ -59,9 +60,11 @@ double compute_loss(const std::vector<SelfPlayPosition>& positions,
         // comments), and eval_cache specifically MUST stay uninvolved
         // here regardless -- see evaluate()'s own doc comment on why it
         // never consults eval_cache when a material_weights, psqt_weights,
-        // mobility_weights, OR space_weights override is in play.
-        const int white_relative = eval::evaluate(pos, nullptr, nullptr, &weights, psqt_weights,
-                                                    mobility_weights, space_weights);
+        // mobility_weights, space_weights, OR threats_weights override
+        // is in play.
+        const int white_relative =
+            eval::evaluate(pos, nullptr, nullptr, &weights, psqt_weights, mobility_weights,
+                            space_weights, threats_weights);
         const double predicted = sigmoid(static_cast<double>(white_relative) / sigmoid_scale);
         const double error = predicted - position.result;
         sum_squared_error += error * error;
