@@ -698,6 +698,117 @@ TEST_CASE("compute_loss: an optional threats_weights argument is forwarded to ev
     REQUIRE(loss_with_override == expected_error * expected_error);
 }
 
+// --- ROADMAP.md Tier 0 "PSQT and beyond" -- Step 8b, king safety (the fourth "beyond" term) ---
+
+TEST_CASE("kKingSafetyParameters: covers exactly the 22 KingSafetyWeights fields, each a "
+          "plain scalar entry (member set, array_member null), none anchored",
+          "[tuner][tune]") {
+    // Every entry here sets only `member`, NEVER `array_member` -- see
+    // KingSafetyWeights' own doc comment (eval/king_safety.h) and
+    // kKingSafetyParameters' own doc comment (tune.h) for why
+    // kPawnStormPenalty's 8-entry array is flattened into 6 named
+    // scalar field pairs here rather than represented via this same
+    // array_member mechanism kPsqtParameters uses.
+    REQUIRE(kKingSafetyParameters.size() == 22);
+    for (const KingSafetyParameterRef& param : kKingSafetyParameters) {
+        REQUIRE(param.member != nullptr);
+        REQUIRE(param.array_member == nullptr);
+        // Every king-safety parameter is `anchored = false` -- see
+        // kKingSafetyParameters' own doc comment (tune.h) for why: an
+        // additive per-condition bonus/penalty, like PSQT's/mobility's/
+        // space's/threats', doesn't share material's multiplicative
+        // flat-scaling degeneracy.
+        REQUIRE(param.anchored == false);
+    }
+}
+
+TEST_CASE("kKingSafetyParameters: every member pointer reaches exactly the field its name "
+          "claims, and only that field",
+          "[tuner][tune]") {
+    // Same technique as every sibling table's own equivalent test
+    // above, with one adjustment: the sentinel is -999999.0, not -1.0
+    // (kMaterialParameters'/kMobilityParameters'/kThreatsParameters'
+    // own equivalent tests all use -1.0 safely, since none of THEIR
+    // own default field values happen to equal it) -- KingSafetyWeights
+    // specifically has two DEFAULT field values that are already
+    // exactly -1.0 (kAttackUnitPenalty.eg and kPawnStormPenalty[3].eg,
+    // both {..., -1} in king_safety.h), so -1.0 would silently produce
+    // a false failure here (3 fields reading as "-1.0" instead of the
+    // intended 1) rather than a real bug -- caught on the first test
+    // run as a genuine, informative FAILED assertion (changed_count ==
+    // 3, not 1), not a silent miscount. -999999.0 doesn't collide with
+    // any real KingSafetyWeights default.
+    for (std::size_t i = 0; i < kKingSafetyParameters.size(); ++i) {
+        KingSafetyWeights probe = default_king_safety_weights();
+        probe.*(kKingSafetyParameters[i].member) = -999999.0;
+        int changed_count = 0;
+        for (std::size_t j = 0; j < kKingSafetyParameters.size(); ++j) {
+            if (probe.*(kKingSafetyParameters[j].member) == -999999.0) {
+                ++changed_count;
+            }
+        }
+        REQUIRE(changed_count == 1);
+    }
+}
+
+TEST_CASE("kKingSafetyParameters: get()/set() agree with default_king_safety_weights() and "
+          "each other's inverse, for every entry",
+          "[tuner][tune]") {
+    const KingSafetyWeights defaults = default_king_safety_weights();
+    for (std::size_t i = 0; i < kKingSafetyParameters.size(); ++i) {
+        const double expected = kKingSafetyParameters[i].get(defaults);
+        KingSafetyWeights w = defaults;
+        kKingSafetyParameters[i].set(w, 12.5);
+        REQUIRE(kKingSafetyParameters[i].get(w) == 12.5);
+        w = defaults;
+        REQUIRE(kKingSafetyParameters[i].get(w) == expected);
+    }
+}
+
+TEST_CASE("compute_loss: an optional king_safety_weights argument is forwarded to evaluate() "
+          "exactly the same way psqt_weights/mobility_weights/space_weights/threats_weights "
+          "already are",
+          "[tuner][tune]") {
+    init_all();
+    // A White king with an intact 3-pawn shield vs. a bare Black king
+    // (the same shape tests/king_safety_tests.cpp's own weights tests
+    // and this session's own evaluate()-level KingSafetyWeights test
+    // use) -- king_safety_value()'s own shield term is the only thing
+    // distinguishing this position from dead equal, and perturbing
+    // kShieldPawnBonus is guaranteed to move the eval.
+    const std::string fen = "7k/8/8/8/8/8/3PPP2/4K3 w - - 0 1";
+    const Position pos = parse_fen(fen);
+    const MaterialWeights weights = default_material_weights();
+    const double sigmoid_scale = 400.0;
+
+    const int default_eval = evaluate(pos, nullptr, nullptr, &weights);
+    const double default_label = sigmoid(static_cast<double>(default_eval) / sigmoid_scale);
+    SelfPlayPosition position{fen, default_label};
+    REQUIRE(compute_loss({position}, weights, sigmoid_scale) < 1e-12);
+
+    KingSafetyWeights perturbed = default_king_safety_weights();
+    perturbed.shield_mg += 500.0; // wildly larger per-pawn shield bonus
+    perturbed.shield_eg += 500.0;
+    const double loss_with_override = compute_loss(
+        {position}, weights, sigmoid_scale, /*psqt_weights=*/nullptr,
+        /*mobility_weights=*/nullptr, /*space_weights=*/nullptr,
+        /*threats_weights=*/nullptr, &perturbed);
+    REQUIRE(loss_with_override > 1e-6);
+
+    // Matches computing evaluate() directly with the same override and
+    // re-deriving the loss by hand -- compute_loss() isn't doing
+    // anything to king_safety_weights beyond forwarding it straight
+    // through to evaluate().
+    const int perturbed_eval =
+        evaluate(pos, nullptr, nullptr, &weights, /*psqt_weights=*/nullptr,
+                 /*mobility_weights=*/nullptr, /*space_weights=*/nullptr,
+                 /*threats_weights=*/nullptr, &perturbed);
+    const double perturbed_predicted =
+        sigmoid(static_cast<double>(perturbed_eval) / sigmoid_scale);
+    const double expected_error = perturbed_predicted - default_label;
+    REQUIRE(loss_with_override == expected_error * expected_error);
+}
+
 // --- ROADMAP.md Tier 0 Step 5 -- L2 regularization (TuneConfig::l2_lambda) ---
 
 TEST_CASE("tune: l2_lambda == 0.0 (the default) leaves TuneResult::initial_loss identical to "

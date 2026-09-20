@@ -291,3 +291,106 @@ TEST_CASE("king_safety_value: a king with no legal position (defensive: missing 
     // Black has no king at all in this deliberately-malformed position.
     REQUIRE(king_safety_value(pos).mg != 0); // White's own contribution still applies
 }
+
+// ---------------------------------------------------------------------
+// ROADMAP.md Tier 0 "PSQT and beyond" -- Step 8b, king safety (the
+// fourth "beyond" term, after mobility, space, and threats):
+// KingSafetyWeights / default_king_safety_weights() /
+// king_safety_value()'s new nullable-override parameter.
+// ---------------------------------------------------------------------
+
+TEST_CASE("default_king_safety_weights: matches every underlying constant exactly, including "
+          "all 6 flattened pawn-storm rank fields",
+          "[eval][king_safety][tuner]") {
+    const KingSafetyWeights defaults = default_king_safety_weights();
+    REQUIRE(defaults.shield_mg == kShieldPawnBonus.mg);
+    REQUIRE(defaults.shield_eg == kShieldPawnBonus.eg);
+    REQUIRE(defaults.open_file_mg == kOpenFileNearKingPenalty.mg);
+    REQUIRE(defaults.open_file_eg == kOpenFileNearKingPenalty.eg);
+    REQUIRE(defaults.semi_open_file_mg == kSemiOpenFileNearKingPenalty.mg);
+    REQUIRE(defaults.semi_open_file_eg == kSemiOpenFileNearKingPenalty.eg);
+    REQUIRE(defaults.attack_unit_mg == kAttackUnitPenalty.mg);
+    REQUIRE(defaults.attack_unit_eg == kAttackUnitPenalty.eg);
+    REQUIRE(defaults.back_rank_mg == kBackRankWeaknessPenalty.mg);
+    REQUIRE(defaults.back_rank_eg == kBackRankWeaknessPenalty.eg);
+
+    REQUIRE(defaults.pawn_storm_rank1_mg == kPawnStormPenalty[1].mg);
+    REQUIRE(defaults.pawn_storm_rank1_eg == kPawnStormPenalty[1].eg);
+    REQUIRE(defaults.pawn_storm_rank2_mg == kPawnStormPenalty[2].mg);
+    REQUIRE(defaults.pawn_storm_rank2_eg == kPawnStormPenalty[2].eg);
+    REQUIRE(defaults.pawn_storm_rank3_mg == kPawnStormPenalty[3].mg);
+    REQUIRE(defaults.pawn_storm_rank3_eg == kPawnStormPenalty[3].eg);
+    REQUIRE(defaults.pawn_storm_rank4_mg == kPawnStormPenalty[4].mg);
+    REQUIRE(defaults.pawn_storm_rank4_eg == kPawnStormPenalty[4].eg);
+    REQUIRE(defaults.pawn_storm_rank5_mg == kPawnStormPenalty[5].mg);
+    REQUIRE(defaults.pawn_storm_rank5_eg == kPawnStormPenalty[5].eg);
+    REQUIRE(defaults.pawn_storm_rank6_mg == kPawnStormPenalty[6].mg);
+    REQUIRE(defaults.pawn_storm_rank6_eg == kPawnStormPenalty[6].eg);
+}
+
+TEST_CASE("king_safety_value: passing default_king_safety_weights() as an explicit override "
+          "reproduces the no-override result exactly, for both the plain-scalar terms and the "
+          "flattened pawn-storm terms",
+          "[eval][king_safety][tuner]") {
+    init_all();
+    const KingSafetyWeights defaults = default_king_safety_weights();
+
+    // Plain-scalar case: same shielded-vs-bare asymmetric setup as this
+    // file's own "an intact pawn shield" test above (deliberately
+    // asymmetric, not mirror-symmetric, so a bug that silently zeroed a
+    // weight couldn't still pass by symmetry).
+    Position shielded = empty_position();
+    shielded.place_piece(make_square(4, 0), Piece::WhiteKing);
+    shielded.place_piece(make_square(3, 1), Piece::WhitePawn);
+    shielded.place_piece(make_square(4, 1), Piece::WhitePawn);
+    shielded.place_piece(make_square(5, 1), Piece::WhitePawn);
+    shielded.place_piece(make_square(7, 7), Piece::BlackKing);
+    REQUIRE(king_safety_value(shielded, &defaults) == king_safety_value(shielded));
+    REQUIRE(king_safety_value(shielded).mg != 0);
+
+    // Pawn-storm case: same far-advanced setup as this file's own "a
+    // pawn storm further advanced" test above.
+    Position storm = empty_position();
+    storm.place_piece(make_square(0, 0), Piece::WhiteKing); // a1
+    storm.place_piece(make_square(0, 2), Piece::BlackPawn); // a3 -- relative rank 5
+    storm.place_piece(make_square(7, 7), Piece::BlackKing);
+    REQUIRE(king_safety_value(storm, &defaults) == king_safety_value(storm));
+    REQUIRE(king_safety_value(storm).mg != 0);
+}
+
+TEST_CASE("king_safety_value: a modified pawn_storm_rank5 field changes only a rank-5 storm's "
+          "own penalty, leaving an unrelated rank untouched",
+          "[eval][king_safety][tuner]") {
+    init_all();
+    // Same far-advanced (relative rank 5) setup as this file's own "a
+    // pawn storm further advanced" test and the override-parity test
+    // just above.
+    Position pos = empty_position();
+    pos.place_piece(make_square(0, 0), Piece::WhiteKing); // a1
+    pos.place_piece(make_square(0, 2), Piece::BlackPawn); // a3 -- relative rank 5
+    pos.place_piece(make_square(7, 7), Piece::BlackKing);
+
+    // This position is semi-open on the a-file (an enemy pawn present,
+    // no own pawn) -- isolate the storm term specifically by comparing
+    // deltas rather than raw totals, the same technique this file's own
+    // pawn-storm comparison tests already use.
+    const Score baseline = king_safety_value(pos);
+
+    KingSafetyWeights perturbed = default_king_safety_weights();
+    perturbed.pawn_storm_rank5_mg += 100.0;
+    perturbed.pawn_storm_rank5_eg += 50.0;
+    // Deliberately also perturb an UNRELATED rank (rank 2) to confirm
+    // it has no effect on a position whose only storming pawn is at
+    // rank 5 -- the override genuinely only moves the term(s) actually
+    // in play, not every pawn-storm field indiscriminately.
+    perturbed.pawn_storm_rank2_mg += 9999.0;
+    perturbed.pawn_storm_rank2_eg += 9999.0;
+
+    const Score boosted = king_safety_value(pos, &perturbed);
+    // The storm penalty is charged against White (the king's own side)
+    // -- boosting kPawnStormPenalty[5]'s OWN magnitude by +100/+50 makes
+    // it a smaller penalty (less negative), raising White's score by
+    // exactly that amount.
+    REQUIRE(boosted.mg == baseline.mg + 100);
+    REQUIRE(boosted.eg == baseline.eg + 50);
+}

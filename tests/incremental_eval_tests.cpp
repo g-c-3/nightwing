@@ -104,7 +104,7 @@ void check_delta(const char* fen, const char* uci_move) {
     REQUIRE(predicted.mg == actual.mg);
     REQUIRE(predicted.eg == actual.eg);
 
-    REQUIRE(evaluate(pos) == evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &actual));
+    REQUIRE(evaluate(pos) == evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &actual));
 
     unmake_move(pos, move, undo);
 }
@@ -218,7 +218,7 @@ TEST_CASE("evaluate(): incremental_material_psqt is ignored (falls back to a ful
     weights.queen_eg = 1.0;
     const Score wrong_accumulator{99999, 99999}; // deliberately absurd, to prove it's unused
     const int with_weights_ignoring_bad_accumulator =
-        evaluate(pos, nullptr, nullptr, &weights, nullptr, nullptr, nullptr, nullptr, &wrong_accumulator);
+        evaluate(pos, nullptr, nullptr, &weights, nullptr, nullptr, nullptr, nullptr, nullptr, &wrong_accumulator);
     const int with_weights_no_accumulator = evaluate(pos, nullptr, nullptr, &weights);
     REQUIRE(with_weights_ignoring_bad_accumulator == with_weights_no_accumulator);
 }
@@ -240,5 +240,5 @@ TEST_CASE("evaluate(): a correct incremental_material_psqt produces the exact sa
     make_move(pos, move, undo);
     const Score after = before + material_psqt_delta(mover, moved_type, move, undo);
 
-    REQUIRE(evaluate(pos) == evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &after));
+    REQUIRE(evaluate(pos) == evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &after));
 }
