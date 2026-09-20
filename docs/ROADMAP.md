@@ -1089,14 +1089,74 @@ Priority Fixes section above).
               in `tests/tune_tests.cpp`) under both Release and
               Debug/ASan+UBSan, zero new sanitizer findings; `bench`
               unchanged at 38,679 total nodes.
-        - [ ] king safety (`eval/king_safety.h`) — has one 8-entry
-              indexed array (`kPawnStormPenalty`, relative-rank-indexed
-              like PSQT's own squares but far smaller) alongside 5 plain
-              Score constants, so this one likely needs `PsqtWeights`'
-              out-of-line-constructor pattern (or a hybrid) rather than
-              the plain-scalar `MaterialWeights`/`MobilityWeights`/
-              `SpaceWeights`/`ThreatsWeights` pattern every sub-step so
-              far has used unmodified.
+        - [x] king safety (`eval/king_safety.h`), Step 8b's second
+              sub-step (Session 116, same session as threats):
+              `KingSafetyWeights` (22 plain `double` fields — 5 plain
+              `Score` constants x mg/eg (10 fields: shield, open_file,
+              semi_open_file, attack_unit, back_rank) plus
+              `kPawnStormPenalty`'s 8-entry array FLATTENED into 6
+              individually-named scalar field pairs, indices 1-6 only
+              (12 fields) — see this struct's own doc comment,
+              king_safety.h, for the full account) and
+              `default_king_safety_weights()`, both `constexpr`-
+              constructible directly from the underlying constants,
+              same `MaterialWeights`/`MobilityWeights`/`SpaceWeights`/
+              `ThreatsWeights` pattern for the plain-scalar fields.
+              DESIGN DECISION (docs/DECISIONS.md has the full account):
+              rather than generalizing `tuner::ParameterRef`'s
+              `array_member` mechanism (hardcoded to
+              `std::array<double, 64>` for PSQT's own 64-square case)
+              to an arbitrary size just for this one much-smaller
+              8-entry table, `kPawnStormPenalty` is flattened into 6
+              named scalar fields instead — every `KingSafetyParameterRef`
+              entry sets only `member`, none set `array_member`, unlike
+              `kPsqtParameters`. Indices 0 and 7 (structurally
+              unreachable at runtime — king_safety.cpp's own
+              `most_advanced_rank` is always in [1, 6] whenever it's
+              actually used) are correspondingly NOT represented as
+              tunable fields at all. `king_safety_value()`'s own new
+              helper function `pawn_storm_penalty()` (king_safety.cpp's
+              own anonymous namespace) switches on the storming pawn's
+              relative rank to select the matching flattened field
+              when an override is supplied. `eval::evaluate()` gained a
+              matching `king_safety_weights` parameter (inserted between
+              `threats_weights` and `incremental_material_psqt`, keeping
+              all six weight-override parameters grouped together),
+              added to the same `eval_cache`-staleness condition the
+              other five already trigger. `tuner/tune.h` gained
+              `KingSafetyParameterRef`/`kKingSafetyParameters` (22
+              entries, `anchored = false` — additive term, same
+              reasoning every sibling table already established) and
+              `compute_loss()` gained a matching optional
+              `king_safety_weights` parameter, forwarded to
+              `evaluate()` the same way `threats_weights` already is.
+              NOT YET CONSUMED by `tune()` itself, same status every
+              sibling table has after its own introducing session.
+              Inserting `king_safety_weights` mid-signature broke the
+              same 6 production call sites and 6 test-file positional
+              call sites every prior "beyond PSQT" insertion has,
+              each fixed with one more explicit `nullptr`. One test bug
+              caught and fixed in this session's own new test code (not
+              production code): the first draft of
+              `kKingSafetyParameters`' own "every member pointer reaches
+              exactly the field its name claims" test used -1.0 as its
+              per-field sentinel (the same value every sibling table's
+              own equivalent test already uses safely) — but
+              `KingSafetyWeights`' own defaults happen to contain TWO
+              fields already exactly equal to -1.0
+              (`kAttackUnitPenalty.eg` and `kPawnStormPenalty[3].eg`,
+              both `{..., -1}` in king_safety.h), so the sentinel
+              collided with real default data, producing a genuine
+              `FAILED` assertion (`changed_count == 3`, not the false
+              pass a less careful check might have missed) on the very
+              first test run — fixed by switching the sentinel to
+              -999999.0, a value confirmed not to collide with any real
+              `KingSafetyWeights` default. 655/655 tests green (646
+              carried over + 9 new: 3 in `tests/king_safety_tests.cpp`,
+              2 in `tests/eval_tests.cpp`, 4 in `tests/tune_tests.cpp`)
+              under both Release and Debug/ASan+UBSan, zero new
+              sanitizer findings; `bench` unchanged at 38,679 total
+              nodes.
         - [ ] pawn structure (`eval/pawns.h`) — the most involved of the
               three: FOUR separate 8-entry indexed arrays
               (`kPassedPawnBonus`, `kConnectedPassedPawnBonus`,
@@ -1108,7 +1168,14 @@ Priority Fixes section above).
               `double`-field `Weights`-struct pattern at all as-is —
               needs its own design decision before implementation
               starts, not just a mechanical application of the
-              mobility/space/threats template.
+              mobility/space/threats/king-safety template. King
+              safety's own "flatten the small array into named scalars"
+              resolution (this session, above) may or may not transfer
+              cleanly here — FOUR separate arrays is a meaningfully
+              bigger flattening (24 more named fields, 4 x 6 meaningful
+              indices each) than king safety's single one, and the
+              stray `int` constant has no precedent to follow at all
+              yet.
     - [ ] "A materially larger self-play corpus" and "mandatory
           SPRT-gating before any tuned values are committed" (this
           item's own original intro text, docs/DECISIONS.md, 2026-09-08
