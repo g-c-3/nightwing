@@ -1246,15 +1246,43 @@ Priority Fixes section above).
     - [ ] "A materially larger self-play corpus" and "mandatory
           SPRT-gating before any tuned values are committed" (this
           item's own original intro text, docs/DECISIONS.md, 2026-09-08
-          (2)) — still entirely unaddressed, and, per Session 113's own
-          correction entry, "mandatory SPRT-gating" specifically CAN
-          actually be done with this repo's existing `nightwing_sprt`/
-          `play_match()` tooling (unlike the search-code-comparison gap
-          that correction entry identified) — `play_match()` comparing
-          two `eval::MaterialWeights`-or-generalized-`Weights` vectors is
-          exactly the eval-weight comparison that tool was always built
-          for, so no new infrastructure is needed for THIS specific
-          follow-up, only for the separate search-code-comparison gap.
+          (2)) — still entirely unaddressed. Session 113's own
+          correction entry claimed "mandatory SPRT-gating" specifically
+          could already be done with this repo's existing
+          `nightwing_sprt`/`play_match()` tooling; Session 117 checked
+          that claim against the actual code and found it does NOT
+          hold for any of the 6 "beyond PSQT" terms Sessions 114-116
+          just built (mobility/space/threats/king-safety/pawns/PSQT
+          itself) — `play_match()` (`tuner/match.h`/`match.cpp`) and
+          the `search_fixed_depth()` it calls only thread an
+          `eval::MaterialWeights` override through search at all; none
+          of the other 6 `Weights` types has any path through
+          `search_fixed_depth()`/`negamax()`/`quiescence()` into a real
+          game, so `play_match()`/`nightwing_sprt` today can ONLY
+          strength-compare two `MaterialWeights` vectors, exactly as
+          they could before Sessions 114-116 ever started — this
+          item's own claim was accurate for material weights alone,
+          not for "generalized Weights" as its wording implied.
+          Concretely still needed before any of the 6 new tables can be
+          SPRT-gated at all: `search_fixed_depth()`
+          (`search/search.h`/`.cpp`) and `quiescence()`
+          (`search/quiescence.h`/`.cpp`) each need a `const
+          MobilityWeights*`/`SpaceWeights*`/`ThreatsWeights*`/
+          `KingSafetyWeights*`/`PawnsWeights*`/`PsqtWeights*` parameter
+          apiece (or some more compact way of passing all six/seven at
+          once) threaded down to their own `eval::evaluate()` calls,
+          mirroring `material_weights`'s own existing precedent exactly
+          — then `MatchConfig`/`play_match()` need matching `_a`/`_b`
+          fields and forwarding, the same way `threads_a`/`threads_b`
+          were added on top of the original single-weight-vector
+          design (`match.h`'s own doc comment on that addition). A real
+          multi-file threading effort on the scale of Sessions 114-116
+          themselves, not a quick patch — scoped here, not attempted in
+          the same session this gap was found, so it gets its own
+          dedicated implementation-and-test pass rather than a rushed
+          one squeezed in alongside discovering it. The corpus-size
+          half of this item remains completely untouched by this
+          finding either way.
 
 ## Priority Fixes (external code review, 2026-09-17)
 
