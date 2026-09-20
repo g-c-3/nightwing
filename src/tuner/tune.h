@@ -35,20 +35,23 @@
 // Mobility (Tier 0 Step 7, kMobilityParameters below, docs/
 // DECISIONS.md), space (Tier 0 Step 8a, kSpaceParameters below),
 // threats (Tier 0 Step 8b's first sub-step, kThreatsParameters below),
-// and king safety (Tier 0 Step 8b's second sub-step,
-// kKingSafetyParameters below) have since gained the same ParameterRef
-// table treatment PSQT already has, each with a matching optional
-// `compute_loss()` parameter, forwarded straight to `eval::evaluate()`
-// the same uniform way `psqt_weights` already is — but, like PSQT,
-// NONE of the four is yet actually enumerated/updated by `tune()`
-// itself, only independently correct and tested ahead of that wiring.
-// Every OTHER eval term (pawn structure, and the rest of eval/*.h) is
-// still read from its own compiled-in constexpr constant and has no
-// ParameterRef table at all yet — see docs/DECISIONS.md for the full
-// rationale on why material values were this module's first covered
-// term, and eval/psqt.h's own MaterialWeights/PsqtWeights doc comments
-// for the runtime-mutable-parameter-vector design those two terms
-// already have.
+// king safety (Tier 0 Step 8b's second sub-step, kKingSafetyParameters
+// below), and pawn structure (Tier 0 Step 8b's third and final
+// sub-step, kPawnsParameters below) have since gained the same
+// ParameterRef table treatment PSQT already has, each with a matching
+// optional `compute_loss()` parameter, forwarded straight to
+// `eval::evaluate()` the same uniform way `psqt_weights` already is —
+// but, like PSQT, NONE of the five is yet actually enumerated/updated
+// by `tune()` itself, only independently correct and tested ahead of
+// that wiring. Every eval term this module can reach now has its own
+// ParameterRef table — ROADMAP.md's own Step 8's three sub-steps (8a
+// space, 8b threats/king-safety/pawns) are all closed as of this
+// session, though "closed" here means "has a table and passes its own
+// tests," not "tune() actually consumes it yet" — see docs/DECISIONS.md
+// for the full rationale on why material values were this module's
+// first covered term, and eval/psqt.h's own MaterialWeights/PsqtWeights
+// doc comments for the runtime-mutable-parameter-vector design those
+// two terms already have.
 //
 // Tier 0 Step 5 (docs/DECISIONS.md, this file's own dated entry) added
 // TuneConfig::l2_lambda, an optional L2 regularization term (default
@@ -104,6 +107,7 @@
 
 #include "eval/king_safety.h"
 #include "eval/mobility.h"
+#include "eval/pawns.h"
 #include "eval/psqt.h"
 #include "eval/space.h"
 #include "eval/threats.h"
@@ -560,6 +564,112 @@ inline constexpr std::array<KingSafetyParameterRef, 22> kKingSafetyParameters = 
     {"back_rank_eg", &eval::KingSafetyWeights::back_rank_eg},
 }};
 
+/// `ParameterRef<eval::PawnsWeights>` — the pawn-structure-side
+/// counterpart to MaterialParameterRef/PsqtParameterRef/
+/// MobilityParameterRef/SpaceParameterRef/ThreatsParameterRef/
+/// KingSafetyParameterRef above, introduced this session (ROADMAP.md
+/// Tier 0's "PSQT and beyond" item, Step 8b, the fifth and final
+/// "beyond" term) alongside kPawnsParameters below.
+using PawnsParameterRef = ParameterRef<eval::PawnsWeights>;
+
+/// Every PawnsWeights field, in declaration order — see
+/// PawnsParameterRef's own comment above. 47 entries: 4 plain Score
+/// constants x mg/eg (8 entries: isolated, doubled, backward,
+/// connected) plus FOUR separate 6-entry (ranks 1-6) flattened
+/// relative-rank families x mg/eg (48... actually 4 x 12 = 48, wait: 4
+/// families x 6 ranks x 2 (mg/eg) = 48 entries: passed,
+/// connected_passed, outside_passed, candidate_passed) plus 1 plain
+/// `outside_min_file_gap` scalar (not an mg/eg pair -- a single
+/// threshold value) plus 1 plain Score constant x mg/eg (2 entries:
+/// island) = 8 + 48 + 1 + 2 = 59 entries... see PawnsWeights' own doc
+/// comment (eval/pawns.h) for the full array-flattening rationale
+/// (identical to KingSafetyWeights' own kPawnStormPenalty treatment,
+/// applied four times over here) and for why outside_min_file_gap is a
+/// plain `double` field like every other despite not being a
+/// centipawn value. All 59 `anchored = false` (the field's own
+/// default), the same call every sibling table already made for the
+/// identical reason (those tables' own comments above): every pawn-
+/// structure term is an ADDITIVE per-pawn or per-side bonus/penalty,
+/// exactly like PSQT's/mobility's/space's/threats'/king safety's own
+/// additive terms, so it doesn't share material's specific
+/// MULTIPLICATIVE flat-scaling degeneracy (kMaterialParameters' own
+/// comment above has the full account) — there is no known equivalent
+/// degenerate direction here to anchor against yet either, same caveat
+/// every sibling table's own comment states. `outside_min_file_gap`
+/// specifically also carries the caveat PawnsWeights' own doc comment
+/// states: its true effect on the score is a discrete step function,
+/// not a smooth linear one, so a naive numerical-gradient tuning pass
+/// may treat it very differently from the other 58 entries here —
+/// included in this table for completeness/uniformity regardless, not
+/// because its gradient behavior has been separately validated.
+inline constexpr std::array<PawnsParameterRef, 59> kPawnsParameters = {{
+    {"isolated_mg", &eval::PawnsWeights::isolated_mg},
+    {"isolated_eg", &eval::PawnsWeights::isolated_eg},
+    {"doubled_mg", &eval::PawnsWeights::doubled_mg},
+    {"doubled_eg", &eval::PawnsWeights::doubled_eg},
+    {"backward_mg", &eval::PawnsWeights::backward_mg},
+    {"backward_eg", &eval::PawnsWeights::backward_eg},
+    {"connected_mg", &eval::PawnsWeights::connected_mg},
+    {"connected_eg", &eval::PawnsWeights::connected_eg},
+
+    {"passed_rank1_mg", &eval::PawnsWeights::passed_rank1_mg},
+    {"passed_rank1_eg", &eval::PawnsWeights::passed_rank1_eg},
+    {"passed_rank2_mg", &eval::PawnsWeights::passed_rank2_mg},
+    {"passed_rank2_eg", &eval::PawnsWeights::passed_rank2_eg},
+    {"passed_rank3_mg", &eval::PawnsWeights::passed_rank3_mg},
+    {"passed_rank3_eg", &eval::PawnsWeights::passed_rank3_eg},
+    {"passed_rank4_mg", &eval::PawnsWeights::passed_rank4_mg},
+    {"passed_rank4_eg", &eval::PawnsWeights::passed_rank4_eg},
+    {"passed_rank5_mg", &eval::PawnsWeights::passed_rank5_mg},
+    {"passed_rank5_eg", &eval::PawnsWeights::passed_rank5_eg},
+    {"passed_rank6_mg", &eval::PawnsWeights::passed_rank6_mg},
+    {"passed_rank6_eg", &eval::PawnsWeights::passed_rank6_eg},
+
+    {"connected_passed_rank1_mg", &eval::PawnsWeights::connected_passed_rank1_mg},
+    {"connected_passed_rank1_eg", &eval::PawnsWeights::connected_passed_rank1_eg},
+    {"connected_passed_rank2_mg", &eval::PawnsWeights::connected_passed_rank2_mg},
+    {"connected_passed_rank2_eg", &eval::PawnsWeights::connected_passed_rank2_eg},
+    {"connected_passed_rank3_mg", &eval::PawnsWeights::connected_passed_rank3_mg},
+    {"connected_passed_rank3_eg", &eval::PawnsWeights::connected_passed_rank3_eg},
+    {"connected_passed_rank4_mg", &eval::PawnsWeights::connected_passed_rank4_mg},
+    {"connected_passed_rank4_eg", &eval::PawnsWeights::connected_passed_rank4_eg},
+    {"connected_passed_rank5_mg", &eval::PawnsWeights::connected_passed_rank5_mg},
+    {"connected_passed_rank5_eg", &eval::PawnsWeights::connected_passed_rank5_eg},
+    {"connected_passed_rank6_mg", &eval::PawnsWeights::connected_passed_rank6_mg},
+    {"connected_passed_rank6_eg", &eval::PawnsWeights::connected_passed_rank6_eg},
+
+    {"outside_min_file_gap", &eval::PawnsWeights::outside_min_file_gap},
+
+    {"outside_passed_rank1_mg", &eval::PawnsWeights::outside_passed_rank1_mg},
+    {"outside_passed_rank1_eg", &eval::PawnsWeights::outside_passed_rank1_eg},
+    {"outside_passed_rank2_mg", &eval::PawnsWeights::outside_passed_rank2_mg},
+    {"outside_passed_rank2_eg", &eval::PawnsWeights::outside_passed_rank2_eg},
+    {"outside_passed_rank3_mg", &eval::PawnsWeights::outside_passed_rank3_mg},
+    {"outside_passed_rank3_eg", &eval::PawnsWeights::outside_passed_rank3_eg},
+    {"outside_passed_rank4_mg", &eval::PawnsWeights::outside_passed_rank4_mg},
+    {"outside_passed_rank4_eg", &eval::PawnsWeights::outside_passed_rank4_eg},
+    {"outside_passed_rank5_mg", &eval::PawnsWeights::outside_passed_rank5_mg},
+    {"outside_passed_rank5_eg", &eval::PawnsWeights::outside_passed_rank5_eg},
+    {"outside_passed_rank6_mg", &eval::PawnsWeights::outside_passed_rank6_mg},
+    {"outside_passed_rank6_eg", &eval::PawnsWeights::outside_passed_rank6_eg},
+
+    {"candidate_passed_rank1_mg", &eval::PawnsWeights::candidate_passed_rank1_mg},
+    {"candidate_passed_rank1_eg", &eval::PawnsWeights::candidate_passed_rank1_eg},
+    {"candidate_passed_rank2_mg", &eval::PawnsWeights::candidate_passed_rank2_mg},
+    {"candidate_passed_rank2_eg", &eval::PawnsWeights::candidate_passed_rank2_eg},
+    {"candidate_passed_rank3_mg", &eval::PawnsWeights::candidate_passed_rank3_mg},
+    {"candidate_passed_rank3_eg", &eval::PawnsWeights::candidate_passed_rank3_eg},
+    {"candidate_passed_rank4_mg", &eval::PawnsWeights::candidate_passed_rank4_mg},
+    {"candidate_passed_rank4_eg", &eval::PawnsWeights::candidate_passed_rank4_eg},
+    {"candidate_passed_rank5_mg", &eval::PawnsWeights::candidate_passed_rank5_mg},
+    {"candidate_passed_rank5_eg", &eval::PawnsWeights::candidate_passed_rank5_eg},
+    {"candidate_passed_rank6_mg", &eval::PawnsWeights::candidate_passed_rank6_mg},
+    {"candidate_passed_rank6_eg", &eval::PawnsWeights::candidate_passed_rank6_eg},
+
+    {"island_mg", &eval::PawnsWeights::island_mg},
+    {"island_eg", &eval::PawnsWeights::island_eg},
+}};
+
 /// Tunable knobs for the tuning run itself (distinct from
 /// eval::MaterialWeights, the values BEING tuned).
 struct TuneConfig {
@@ -781,6 +891,16 @@ struct TuneResult {
 /// `mobility_weights`/`space_weights`/`threats_weights` -- any subset
 /// of the five may be non-null.
 ///
+/// `pawns_weights` -- the pawn-structure-term counterpart to
+/// `king_safety_weights` above (ROADMAP.md Tier 0 Step 8b, the fifth
+/// and final "beyond" term), forwarded to eval::evaluate() the exact
+/// same way (see that parameter's own doc comment, eval.h) -- lets a
+/// future pawn-structure-aware tuning run compute the loss at a
+/// candidate pawn-structure weight vector. Defaults to nullptr (the
+/// compiled-in pawn-structure constants), independent of
+/// `psqt_weights`/`mobility_weights`/`space_weights`/`threats_weights`/
+/// `king_safety_weights` -- any subset of the six may be non-null.
+///
 /// Precondition: board::init_masks() AND board::
 /// init_magic_bitboards() have been called (this function parses each
 /// position's FEN and evaluates it, both of which are transitively
@@ -792,8 +912,8 @@ struct TuneResult {
                                    const eval::MobilityWeights* mobility_weights = nullptr,
                                    const eval::SpaceWeights* space_weights = nullptr,
                                    const eval::ThreatsWeights* threats_weights = nullptr,
-                                   const eval::KingSafetyWeights* king_safety_weights =
-                                       nullptr) noexcept;
+                                   const eval::KingSafetyWeights* king_safety_weights = nullptr,
+                                   const eval::PawnsWeights* pawns_weights = nullptr) noexcept;
 
 /// Runs `config.iterations` steps of finite-difference gradient descent
 /// (this file's own header comment for the full algorithm) starting
