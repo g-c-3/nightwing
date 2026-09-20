@@ -33,21 +33,22 @@
 // itself to actually run a `kPsqtParameters`-driven tuning job is a
 // separate, later step — see ROADMAP.md Tier 0's remaining steps.
 // Mobility (Tier 0 Step 7, kMobilityParameters below, docs/
-// DECISIONS.md), space (Tier 0 Step 8a, kSpaceParameters below), and
-// threats (Tier 0 Step 8b's first sub-step, kThreatsParameters below)
-// have since gained the same ParameterRef table treatment PSQT already
-// has, each with a matching optional `compute_loss()` parameter,
-// forwarded straight to `eval::evaluate()` the same uniform way
-// `psqt_weights` already is — but, like PSQT, NONE of the three is yet
-// actually enumerated/updated by `tune()` itself, only independently
-// correct and tested ahead of that wiring. Every OTHER eval term (king
-// safety, pawn structure, and the rest of eval/*.h) is still read from
-// its own compiled-in constexpr constant and has no ParameterRef table
-// at all yet — see docs/DECISIONS.md for the full rationale on why
-// material values were this module's first covered term, and eval/
-// psqt.h's own MaterialWeights/PsqtWeights doc comments for the
-// runtime-mutable-parameter-vector design those two terms already
-// have.
+// DECISIONS.md), space (Tier 0 Step 8a, kSpaceParameters below),
+// threats (Tier 0 Step 8b's first sub-step, kThreatsParameters below),
+// and king safety (Tier 0 Step 8b's second sub-step,
+// kKingSafetyParameters below) have since gained the same ParameterRef
+// table treatment PSQT already has, each with a matching optional
+// `compute_loss()` parameter, forwarded straight to `eval::evaluate()`
+// the same uniform way `psqt_weights` already is — but, like PSQT,
+// NONE of the four is yet actually enumerated/updated by `tune()`
+// itself, only independently correct and tested ahead of that wiring.
+// Every OTHER eval term (pawn structure, and the rest of eval/*.h) is
+// still read from its own compiled-in constexpr constant and has no
+// ParameterRef table at all yet — see docs/DECISIONS.md for the full
+// rationale on why material values were this module's first covered
+// term, and eval/psqt.h's own MaterialWeights/PsqtWeights doc comments
+// for the runtime-mutable-parameter-vector design those two terms
+// already have.
 //
 // Tier 0 Step 5 (docs/DECISIONS.md, this file's own dated entry) added
 // TuneConfig::l2_lambda, an optional L2 regularization term (default
@@ -101,6 +102,7 @@
 #include <utility>
 #include <vector>
 
+#include "eval/king_safety.h"
 #include "eval/mobility.h"
 #include "eval/psqt.h"
 #include "eval/space.h"
@@ -496,6 +498,68 @@ inline constexpr std::array<ThreatsParameterRef, 24> kThreatsParameters = {{
     {"queen_overloaded_eg", &eval::ThreatsWeights::queen_overloaded_eg},
 }};
 
+/// `ParameterRef<eval::KingSafetyWeights>` — the king-safety-side
+/// counterpart to MaterialParameterRef/PsqtParameterRef/
+/// MobilityParameterRef/SpaceParameterRef/ThreatsParameterRef above,
+/// introduced this session (ROADMAP.md Tier 0's "PSQT and beyond" item,
+/// Step 8b, the fourth "beyond" term) alongside kKingSafetyParameters
+/// below.
+using KingSafetyParameterRef = ParameterRef<eval::KingSafetyWeights>;
+
+/// Every KingSafetyWeights field, in declaration order — see
+/// KingSafetyParameterRef's own comment above. 22 entries: 5 plain
+/// Score constants x mg/eg (10 entries: shield, open_file,
+/// semi_open_file, attack_unit, back_rank) plus 6 individually-named
+/// pawn-storm rank fields x mg/eg (12 entries: ranks 1 through 6 —
+/// KingSafetyWeights' own doc comment, eval/king_safety.h, has the full
+/// account of why kPawnStormPenalty's 8-entry array is flattened into 6
+/// named scalar fields here rather than represented via this same
+/// `ParameterRef::array_member` mechanism kPsqtParameters uses below —
+/// in short, `array_member`'s type is hardcoded to
+/// `std::array<double, 64>` specifically for PSQT's own 64-square case,
+/// and generalizing it just for this one much-smaller 8-entry table
+/// wasn't judged worth the risk to PsqtWeights' own already-working
+/// wiring). Every entry here sets only `member` — NONE set
+/// `array_member` — unlike kPsqtParameters below, which sets only
+/// `array_member`+`index`. All 22 `anchored = false` (the field's own
+/// default), the same call every sibling table already made for the
+/// identical reason (those tables' own comments above): every king-
+/// safety term is an ADDITIVE per-condition bonus/penalty, exactly like
+/// PSQT's/mobility's/space's/threats' own additive terms, so it doesn't
+/// share material's specific MULTIPLICATIVE flat-scaling degeneracy
+/// (kMaterialParameters' own comment above has the full account) —
+/// there is no known equivalent degenerate direction here to anchor
+/// against yet either, same caveat every sibling table's own comment
+/// states.
+inline constexpr std::array<KingSafetyParameterRef, 22> kKingSafetyParameters = {{
+    {"shield_mg", &eval::KingSafetyWeights::shield_mg},
+    {"shield_eg", &eval::KingSafetyWeights::shield_eg},
+
+    {"open_file_mg", &eval::KingSafetyWeights::open_file_mg},
+    {"open_file_eg", &eval::KingSafetyWeights::open_file_eg},
+    {"semi_open_file_mg", &eval::KingSafetyWeights::semi_open_file_mg},
+    {"semi_open_file_eg", &eval::KingSafetyWeights::semi_open_file_eg},
+
+    {"attack_unit_mg", &eval::KingSafetyWeights::attack_unit_mg},
+    {"attack_unit_eg", &eval::KingSafetyWeights::attack_unit_eg},
+
+    {"pawn_storm_rank1_mg", &eval::KingSafetyWeights::pawn_storm_rank1_mg},
+    {"pawn_storm_rank1_eg", &eval::KingSafetyWeights::pawn_storm_rank1_eg},
+    {"pawn_storm_rank2_mg", &eval::KingSafetyWeights::pawn_storm_rank2_mg},
+    {"pawn_storm_rank2_eg", &eval::KingSafetyWeights::pawn_storm_rank2_eg},
+    {"pawn_storm_rank3_mg", &eval::KingSafetyWeights::pawn_storm_rank3_mg},
+    {"pawn_storm_rank3_eg", &eval::KingSafetyWeights::pawn_storm_rank3_eg},
+    {"pawn_storm_rank4_mg", &eval::KingSafetyWeights::pawn_storm_rank4_mg},
+    {"pawn_storm_rank4_eg", &eval::KingSafetyWeights::pawn_storm_rank4_eg},
+    {"pawn_storm_rank5_mg", &eval::KingSafetyWeights::pawn_storm_rank5_mg},
+    {"pawn_storm_rank5_eg", &eval::KingSafetyWeights::pawn_storm_rank5_eg},
+    {"pawn_storm_rank6_mg", &eval::KingSafetyWeights::pawn_storm_rank6_mg},
+    {"pawn_storm_rank6_eg", &eval::KingSafetyWeights::pawn_storm_rank6_eg},
+
+    {"back_rank_mg", &eval::KingSafetyWeights::back_rank_mg},
+    {"back_rank_eg", &eval::KingSafetyWeights::back_rank_eg},
+}};
+
 /// Tunable knobs for the tuning run itself (distinct from
 /// eval::MaterialWeights, the values BEING tuned).
 struct TuneConfig {
@@ -707,6 +771,16 @@ struct TuneResult {
 /// `mobility_weights`/`space_weights` -- any subset of the four may be
 /// non-null.
 ///
+/// `king_safety_weights` -- the king-safety-term counterpart to
+/// `threats_weights` above (ROADMAP.md Tier 0 Step 8b, the fourth
+/// "beyond" term), forwarded to eval::evaluate() the exact same way
+/// (see that parameter's own doc comment, eval.h) -- lets a future
+/// king-safety-aware tuning run compute the loss at a candidate king-
+/// safety weight vector. Defaults to nullptr (the compiled-in king-
+/// safety constants), independent of `psqt_weights`/
+/// `mobility_weights`/`space_weights`/`threats_weights` -- any subset
+/// of the five may be non-null.
+///
 /// Precondition: board::init_masks() AND board::
 /// init_magic_bitboards() have been called (this function parses each
 /// position's FEN and evaluates it, both of which are transitively
@@ -717,7 +791,9 @@ struct TuneResult {
                                    const eval::PsqtWeights* psqt_weights = nullptr,
                                    const eval::MobilityWeights* mobility_weights = nullptr,
                                    const eval::SpaceWeights* space_weights = nullptr,
-                                   const eval::ThreatsWeights* threats_weights = nullptr) noexcept;
+                                   const eval::ThreatsWeights* threats_weights = nullptr,
+                                   const eval::KingSafetyWeights* king_safety_weights =
+                                       nullptr) noexcept;
 
 /// Runs `config.iterations` steps of finite-difference gradient descent
 /// (this file's own header comment for the full algorithm) starting
