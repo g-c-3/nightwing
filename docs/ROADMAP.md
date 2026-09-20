@@ -1051,6 +1051,64 @@ Priority Fixes section above).
           Whichever is picked up next should re-read that file's own
           header comment first to gauge shape/scope before assuming it
           will mirror mobility's/space's own straightforward cases.
+        - [x] threats (`eval/threats.h`), Step 8b's first sub-step
+              (Session 116): `ThreatsWeights` (24 plain `double` fields
+              — 12 `kXxxYyyPenalty` constants x mg/eg each, the same
+              plain-scalar shape mobility/space already use, just more
+              fields — 3 penalty categories x 4 piece types, no array
+              indexing needed) and `default_threats_weights()`, both
+              `constexpr`-constructible directly from the 12 constants,
+              same `MaterialWeights`/`MobilityWeights`/`SpaceWeights`
+              pattern. `threats_value()`'s three internal helper
+              functions (`pawn_threat_penalty()`/`hanging_penalty()`/
+              `overloaded_penalty()`, threats.cpp's own anonymous
+              namespace) each gained a `const ThreatsWeights*` parameter
+              alongside `threats_value()`'s own new nullable-override
+              parameter, all four threaded through together.
+              `eval::evaluate()` gained a matching `threats_weights`
+              parameter (inserted between `space_weights` and
+              `incremental_material_psqt`, keeping all five weight-
+              override parameters grouped together), added to the same
+              `eval_cache`-staleness condition the other four already
+              trigger. `tuner/tune.h` gained `ThreatsParameterRef`/
+              `kThreatsParameters` (24 entries, `anchored = false` —
+              additive term, same reasoning every sibling table already
+              established) and `compute_loss()` gained a matching
+              optional `threats_weights` parameter, forwarded to
+              `evaluate()` the same way `space_weights` already is. NOT
+              YET CONSUMED by `tune()` itself, same status every sibling
+              table has after its own introducing session. Inserting
+              `threats_weights` mid-signature broke the same 6
+              production call sites (`search.cpp` x4, `quiescence.cpp`
+              x2) and 6 test-file positional call sites
+              (`eval_tests.cpp` x3, `incremental_eval_tests.cpp` x3)
+              Session 115's space insertion did, each fixed with one
+              more explicit `nullptr`, all caught by the compiler.
+              646/646 tests green (637 carried over + 9 new: 3 in
+              `tests/threats_tests.cpp`, 2 in `tests/eval_tests.cpp`, 4
+              in `tests/tune_tests.cpp`) under both Release and
+              Debug/ASan+UBSan, zero new sanitizer findings; `bench`
+              unchanged at 38,679 total nodes.
+        - [ ] king safety (`eval/king_safety.h`) — has one 8-entry
+              indexed array (`kPawnStormPenalty`, relative-rank-indexed
+              like PSQT's own squares but far smaller) alongside 5 plain
+              Score constants, so this one likely needs `PsqtWeights`'
+              out-of-line-constructor pattern (or a hybrid) rather than
+              the plain-scalar `MaterialWeights`/`MobilityWeights`/
+              `SpaceWeights`/`ThreatsWeights` pattern every sub-step so
+              far has used unmodified.
+        - [ ] pawn structure (`eval/pawns.h`) — the most involved of the
+              three: FOUR separate 8-entry indexed arrays
+              (`kPassedPawnBonus`, `kConnectedPassedPawnBonus`,
+              `kCandidatePassedPawnBonus`, `kOutsidePassedPawnBonus`,
+              all sharing the same relative-rank convention) plus 5
+              plain Score constants PLUS one plain `int` constant
+              (`kOutsidePassedPawnMinFileGap`, a file-distance
+              threshold, not a centipawn value) that doesn't fit the
+              `double`-field `Weights`-struct pattern at all as-is —
+              needs its own design decision before implementation
+              starts, not just a mechanical application of the
+              mobility/space/threats template.
     - [ ] "A materially larger self-play corpus" and "mandatory
           SPRT-gating before any tuned values are committed" (this
           item's own original intro text, docs/DECISIONS.md, 2026-09-08
