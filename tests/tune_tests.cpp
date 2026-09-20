@@ -598,6 +598,106 @@ TEST_CASE("compute_loss: an optional space_weights argument is forwarded to eval
     REQUIRE(loss_with_override == expected_error * expected_error);
 }
 
+// --- ROADMAP.md Tier 0 "PSQT and beyond" -- Step 8b, threats (the third "beyond" term) ---
+
+TEST_CASE("kThreatsParameters: covers exactly the 24 ThreatsWeights fields, each a plain "
+          "scalar entry (member set, array_member null), none anchored",
+          "[tuner][tune]") {
+    // Same structural shape as kMaterialParameters/kMobilityParameters/
+    // kSpaceParameters (plain scalar entries), not kPsqtParameters
+    // (indexed-array entries) -- threats has no per-square dimension,
+    // just 12 kXxxYyyPenalty constants x mg/eg each, more fields than
+    // mobility's 8 or space's 2 but the same plain-scalar shape as
+    // both.
+    REQUIRE(kThreatsParameters.size() == 24);
+    for (const ThreatsParameterRef& param : kThreatsParameters) {
+        REQUIRE(param.member != nullptr);
+        REQUIRE(param.array_member == nullptr);
+        // Every threats parameter is `anchored = false` -- see
+        // kThreatsParameters' own doc comment (tune.h) for why: an
+        // additive per-piece penalty, like PSQT's/mobility's/space's,
+        // doesn't share material's multiplicative flat-scaling
+        // degeneracy.
+        REQUIRE(param.anchored == false);
+    }
+}
+
+TEST_CASE("kThreatsParameters: every member pointer reaches exactly the field its name "
+          "claims, and only that field",
+          "[tuner][tune]") {
+    // Same technique as kMaterialParameters'/kMobilityParameters'/
+    // kSpaceParameters' own equivalent tests above: set each field to a
+    // distinct sentinel through the table and confirm exactly one field
+    // changed.
+    for (std::size_t i = 0; i < kThreatsParameters.size(); ++i) {
+        ThreatsWeights probe = default_threats_weights();
+        probe.*(kThreatsParameters[i].member) = -1.0;
+        int changed_count = 0;
+        for (std::size_t j = 0; j < kThreatsParameters.size(); ++j) {
+            if (probe.*(kThreatsParameters[j].member) == -1.0) {
+                ++changed_count;
+            }
+        }
+        REQUIRE(changed_count == 1);
+    }
+}
+
+TEST_CASE("kThreatsParameters: get()/set() agree with default_threats_weights() and each "
+          "other's inverse, for every entry",
+          "[tuner][tune]") {
+    const ThreatsWeights defaults = default_threats_weights();
+    for (std::size_t i = 0; i < kThreatsParameters.size(); ++i) {
+        const double expected = kThreatsParameters[i].get(defaults);
+        ThreatsWeights w = defaults;
+        kThreatsParameters[i].set(w, 12.5);
+        REQUIRE(kThreatsParameters[i].get(w) == 12.5);
+        w = defaults;
+        REQUIRE(kThreatsParameters[i].get(w) == expected);
+    }
+}
+
+TEST_CASE("compute_loss: an optional threats_weights argument is forwarded to evaluate() "
+          "exactly the same way psqt_weights/mobility_weights/space_weights already are",
+          "[tuner][tune]") {
+    init_all();
+    // A position where threats genuinely differs between the two sides
+    // -- a lone Black pawn attacking a defended White knight (the same
+    // shape tests/threats_tests.cpp's own weights tests and this
+    // session's own evaluate()-level ThreatsWeights test use), so
+    // threats_value()'s own pawn-attack term is the only thing
+    // distinguishing this position from dead equal, and perturbing
+    // kKnightAttackedByPawnPenalty is guaranteed to move the eval.
+    const std::string fen = "k7/8/4p3/3N4/8/8/8/K2R4 w - - 0 1";
+    const Position pos = parse_fen(fen);
+    const MaterialWeights weights = default_material_weights();
+    const double sigmoid_scale = 400.0;
+
+    const int default_eval = evaluate(pos, nullptr, nullptr, &weights);
+    const double default_label = sigmoid(static_cast<double>(default_eval) / sigmoid_scale);
+    SelfPlayPosition position{fen, default_label};
+    REQUIRE(compute_loss({position}, weights, sigmoid_scale) < 1e-12);
+
+    ThreatsWeights perturbed = default_threats_weights();
+    perturbed.knight_pawn_mg -= 500.0; // wildly larger penalty against White
+    perturbed.knight_pawn_eg -= 500.0;
+    const double loss_with_override =
+        compute_loss({position}, weights, sigmoid_scale, /*psqt_weights=*/nullptr,
+                      /*mobility_weights=*/nullptr, /*space_weights=*/nullptr, &perturbed);
+    REQUIRE(loss_with_override > 1e-6);
+
+    // Matches computing evaluate() directly with the same override and
+    // re-deriving the loss by hand -- compute_loss() isn't doing
+    // anything to threats_weights beyond forwarding it straight through
+    // to evaluate().
+    const int perturbed_eval =
+        evaluate(pos, nullptr, nullptr, &weights, /*psqt_weights=*/nullptr,
+                 /*mobility_weights=*/nullptr, /*space_weights=*/nullptr, &perturbed);
+    const double perturbed_predicted =
+        sigmoid(static_cast<double>(perturbed_eval) / sigmoid_scale);
+    const double expected_error = perturbed_predicted - default_label;
+    REQUIRE(loss_with_override == expected_error * expected_error);
+}
+
 // --- ROADMAP.md Tier 0 Step 5 -- L2 regularization (TuneConfig::l2_lambda) ---
 
 TEST_CASE("tune: l2_lambda == 0.0 (the default) leaves TuneResult::initial_loss identical to "

@@ -197,3 +197,105 @@ TEST_CASE("threats_value: adding a second defender to ONE of the two targets rem
 
     REQUIRE(threats_value(pos) == Score{0, 0});
 }
+
+// ---------------------------------------------------------------------
+// ROADMAP.md Tier 0 "PSQT and beyond" -- Step 8b, threats (the third
+// "beyond" term, after mobility and space): ThreatsWeights /
+// default_threats_weights() / threats_value()'s new nullable-override
+// parameter.
+// ---------------------------------------------------------------------
+
+TEST_CASE("default_threats_weights: matches all 12 kXxxYyyPenalty constants exactly",
+          "[eval][threats][tuner]") {
+    const ThreatsWeights defaults = default_threats_weights();
+    REQUIRE(defaults.knight_pawn_mg == kKnightAttackedByPawnPenalty.mg);
+    REQUIRE(defaults.knight_pawn_eg == kKnightAttackedByPawnPenalty.eg);
+    REQUIRE(defaults.bishop_pawn_mg == kBishopAttackedByPawnPenalty.mg);
+    REQUIRE(defaults.bishop_pawn_eg == kBishopAttackedByPawnPenalty.eg);
+    REQUIRE(defaults.rook_pawn_mg == kRookAttackedByPawnPenalty.mg);
+    REQUIRE(defaults.rook_pawn_eg == kRookAttackedByPawnPenalty.eg);
+    REQUIRE(defaults.queen_pawn_mg == kQueenAttackedByPawnPenalty.mg);
+    REQUIRE(defaults.queen_pawn_eg == kQueenAttackedByPawnPenalty.eg);
+
+    REQUIRE(defaults.knight_hanging_mg == kKnightHangingPenalty.mg);
+    REQUIRE(defaults.knight_hanging_eg == kKnightHangingPenalty.eg);
+    REQUIRE(defaults.bishop_hanging_mg == kBishopHangingPenalty.mg);
+    REQUIRE(defaults.bishop_hanging_eg == kBishopHangingPenalty.eg);
+    REQUIRE(defaults.rook_hanging_mg == kRookHangingPenalty.mg);
+    REQUIRE(defaults.rook_hanging_eg == kRookHangingPenalty.eg);
+    REQUIRE(defaults.queen_hanging_mg == kQueenHangingPenalty.mg);
+    REQUIRE(defaults.queen_hanging_eg == kQueenHangingPenalty.eg);
+
+    REQUIRE(defaults.knight_overloaded_mg == kKnightOverloadedPenalty.mg);
+    REQUIRE(defaults.knight_overloaded_eg == kKnightOverloadedPenalty.eg);
+    REQUIRE(defaults.bishop_overloaded_mg == kBishopOverloadedPenalty.mg);
+    REQUIRE(defaults.bishop_overloaded_eg == kBishopOverloadedPenalty.eg);
+    REQUIRE(defaults.rook_overloaded_mg == kRookOverloadedPenalty.mg);
+    REQUIRE(defaults.rook_overloaded_eg == kRookOverloadedPenalty.eg);
+    REQUIRE(defaults.queen_overloaded_mg == kQueenOverloadedPenalty.mg);
+    REQUIRE(defaults.queen_overloaded_eg == kQueenOverloadedPenalty.eg);
+}
+
+TEST_CASE("threats_value: passing default_threats_weights() as an explicit override "
+          "reproduces the no-override result exactly, for pawn-attack, hanging, and "
+          "overloaded penalties alike",
+          "[eval][threats][tuner]") {
+    init_all();
+    const ThreatsWeights defaults = default_threats_weights();
+
+    // Pawn-attack case: same d5-knight-attacked-by-e6-pawn setup as
+    // this file's own "a pawn-attacked, otherwise-defended knight"
+    // test above.
+    Position pawn_attacked = empty_position();
+    pawn_attacked.place_piece(make_square(0, 0), Piece::WhiteKing);
+    pawn_attacked.place_piece(make_square(0, 7), Piece::BlackKing);
+    pawn_attacked.place_piece(make_square(3, 4), Piece::WhiteKnight); // d5
+    pawn_attacked.place_piece(make_square(3, 0), Piece::WhiteRook);   // d1, defends d5
+    pawn_attacked.place_piece(make_square(4, 5), Piece::BlackPawn);   // e6, attacks d5
+    REQUIRE(threats_value(pawn_attacked, &defaults) == threats_value(pawn_attacked));
+    REQUIRE(threats_value(pawn_attacked).mg != 0); // not a vacuous 0 == 0
+
+    // Overloaded case: same Rd1-defends-two-targets setup as this
+    // file's own "a rook that is the SOLE defender of two
+    // separately-attacked pieces is overloaded" test above.
+    Position overloaded = empty_position();
+    overloaded.place_piece(make_square(0, 0), Piece::WhiteKing);
+    overloaded.place_piece(make_square(0, 7), Piece::BlackKing);
+    overloaded.place_piece(make_square(3, 0), Piece::WhiteRook);
+    overloaded.place_piece(make_square(3, 4), Piece::WhiteKnight);
+    overloaded.place_piece(make_square(7, 0), Piece::WhiteRook);
+    overloaded.place_piece(make_square(3, 7), Piece::BlackRook);
+    overloaded.place_piece(make_square(7, 7), Piece::BlackRook);
+    REQUIRE(threats_value(overloaded, &defaults) == threats_value(overloaded));
+    REQUIRE(threats_value(overloaded).mg != 0);
+}
+
+TEST_CASE("threats_value: a modified ThreatsWeights changes only the ONE penalty category "
+          "it targets, leaving the others untouched",
+          "[eval][threats][tuner]") {
+    init_all();
+    // Same pawn-attacked-knight setup as above -- isolates the delta
+    // entirely to the knight_pawn_* fields.
+    Position pos = empty_position();
+    pos.place_piece(make_square(0, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(0, 7), Piece::BlackKing);
+    pos.place_piece(make_square(3, 4), Piece::WhiteKnight); // d5
+    pos.place_piece(make_square(3, 0), Piece::WhiteRook);   // d1, defends d5
+    pos.place_piece(make_square(4, 5), Piece::BlackPawn);   // e6, attacks d5
+    const Score baseline = threats_value(pos);
+    REQUIRE(baseline == kKnightAttackedByPawnPenalty);
+
+    ThreatsWeights perturbed = default_threats_weights();
+    perturbed.knight_pawn_mg += 100.0;
+    perturbed.knight_pawn_eg += 50.0;
+    // Deliberately also perturb an UNRELATED field (queen hanging) to
+    // confirm it has no effect on a position with no queen threat at
+    // all -- the override genuinely only moves the term(s) actually in
+    // play for this position, not every field indiscriminately.
+    perturbed.queen_hanging_mg += 9999.0;
+    perturbed.queen_hanging_eg += 9999.0;
+
+    const Score boosted = threats_value(pos, &perturbed);
+    REQUIRE(boosted.mg == baseline.mg + 100);
+    REQUIRE(boosted.eg == baseline.eg + 50);
+}
