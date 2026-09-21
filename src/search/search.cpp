@@ -1537,6 +1537,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             std::array<std::uint64_t, kMaxPly>& path,
             std::array<int, kMaxPly>& static_eval_history, eval::PawnHashTable& pawn_tt,
             eval::EvalCache& eval_cache, const eval::MaterialWeights* material_weights,
+            const eval::EvalWeightsOverride* eval_weights = nullptr,
             bool allow_null_move = true, SearchLimits* limits = nullptr,
             int contempt_white_pov = 0, int tie_break_variant = 0,
             const eval::Score* mat_psqt = nullptr) {
@@ -1548,6 +1549,22 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     if (limits != nullptr && limits->stopped) {
         return 0;
     }
+
+    // eval::EvalWeightsOverride's own six non-material fields, unpacked
+    // once here rather than re-deriving a ternary at every one of this
+    // function's own eval::evaluate() call sites below (and at the
+    // quiescence() delegation just below, which needs the same bundle
+    // forwarded unpacked-then-repacked). `eval_weights == nullptr`
+    // (every existing caller, before this parameter existed) leaves
+    // every one of these at its own nullptr default, exactly
+    // reproducing this function's pre-existing behavior.
+    const eval::PsqtWeights* const ew_psqt = eval_weights ? eval_weights->psqt : nullptr;
+    const eval::MobilityWeights* const ew_mobility = eval_weights ? eval_weights->mobility : nullptr;
+    const eval::SpaceWeights* const ew_space = eval_weights ? eval_weights->space : nullptr;
+    const eval::ThreatsWeights* const ew_threats = eval_weights ? eval_weights->threats : nullptr;
+    const eval::KingSafetyWeights* const ew_king_safety =
+        eval_weights ? eval_weights->king_safety : nullptr;
+    const eval::PawnsWeights* const ew_pawns = eval_weights ? eval_weights->pawns : nullptr;
 
     if (depth <= 0) {
         // Quiescence search (search/quiescence.h) rather than a raw
@@ -1563,7 +1580,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // quiescence.h's own doc comment on why quiescence search
         // participates in the same interruption scheme.
         return quiescence(pos, alpha, beta, ply, nodes, /*include_checks=*/true, &pawn_tt,
-                           &eval_cache, material_weights, limits, contempt_white_pov, mat_psqt);
+                           &eval_cache, material_weights, eval_weights, limits, contempt_white_pov,
+                           mat_psqt);
     }
 
     // Periodic deadline/external-stop check (search.h's SearchLimits
@@ -1748,9 +1766,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     if (!in_check(pos)) {
         const int white_relative =
             eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights,
-                          /*psqt_weights=*/nullptr, /*mobility_weights=*/nullptr,
-                          /*space_weights=*/nullptr, /*threats_weights=*/nullptr,
-                          /*king_safety_weights=*/nullptr, /*pawns_weights=*/nullptr, mat_psqt);
+                          ew_psqt, ew_mobility, ew_space, ew_threats, ew_king_safety, ew_pawns,
+                          mat_psqt);
         node_static_eval = (us == Color::White ? white_relative : -white_relative) +
                             correction_history.correction(us, pawn_key);
         if (ply < kMaxPly) {
@@ -1781,9 +1798,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     if (!in_check(pos) && depth <= kReverseFutilityMaxDepth && beta < kMateThreshold) {
         const int white_relative =
             eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights,
-                          /*psqt_weights=*/nullptr, /*mobility_weights=*/nullptr,
-                          /*space_weights=*/nullptr, /*threats_weights=*/nullptr,
-                          /*king_safety_weights=*/nullptr, /*pawns_weights=*/nullptr, mat_psqt);
+                          ew_psqt, ew_mobility, ew_space, ew_threats, ew_king_safety, ew_pawns,
+                          mat_psqt);
         // Correction history folded in here too (ROADMAP.md's
         // "Correction history" item) -- this site's own static eval is
         // computed independently of node_static_eval above (this file's
@@ -1874,7 +1890,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                                          correction_history,
                                          /*prev_piece=*/board::PieceType::None, /*prev_to=*/0,
                                          /*prev_was_capture=*/false, game_history, path,
-                                         static_eval_history, pawn_tt, eval_cache, material_weights,
+                                         static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
                                          /*allow_null_move=*/false, limits, contempt_white_pov,
                                          tie_break_variant, mat_psqt);
         board::unmake_null_move(pos, null_undo);
@@ -1903,9 +1919,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     if (!in_check(pos) && depth <= kRazorMaxDepth && alpha < kMateThreshold) {
         const int white_relative =
             eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights,
-                          /*psqt_weights=*/nullptr, /*mobility_weights=*/nullptr,
-                          /*space_weights=*/nullptr, /*threats_weights=*/nullptr,
-                          /*king_safety_weights=*/nullptr, /*pawns_weights=*/nullptr, mat_psqt);
+                          ew_psqt, ew_mobility, ew_space, ew_threats, ew_king_safety, ew_pawns,
+                          mat_psqt);
         // Correction history folded in here too (ROADMAP.md's
         // "Correction history" item) -- same independent-computation
         // rationale as RFP's own site above.
@@ -1914,8 +1929,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         if (razor_static_eval + kRazorMargins[static_cast<std::size_t>(depth)] <= alpha) {
             const int razor_score = quiescence(pos, alpha, beta, ply, nodes,
                                                 /*include_checks=*/true, &pawn_tt, &eval_cache,
-                                                material_weights, limits, contempt_white_pov,
-                                                mat_psqt);
+                                                material_weights, eval_weights, limits,
+                                                contempt_white_pov, mat_psqt);
             if ((limits == nullptr || !limits->stopped) && razor_score <= alpha) {
                 return razor_score;
             }
@@ -2030,7 +2045,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 -negamax(pos, depth - kProbCutReduction, -probcut_beta, -probcut_beta + 1, ply + 1,
                          nodes, tt, killers, history, cont_history, capture_history, correction_history,
                          probcut_moved_piece, probcut_move.to(), probcut_move.is_capture(), game_history,
-                         path, static_eval_history, pawn_tt, eval_cache, material_weights,
+                         path, static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
                          /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant);
             board::unmake_move(pos, probcut_move, probcut_undo);
             if (limits != nullptr && limits->stopped) {
@@ -2070,9 +2085,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     if (futility_may_apply) {
         const int white_relative =
             eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights,
-                          /*psqt_weights=*/nullptr, /*mobility_weights=*/nullptr,
-                          /*space_weights=*/nullptr, /*threats_weights=*/nullptr,
-                          /*king_safety_weights=*/nullptr, /*pawns_weights=*/nullptr, mat_psqt);
+                          ew_psqt, ew_mobility, ew_space, ew_threats, ew_king_safety, ew_pawns,
+                          mat_psqt);
         // Correction history folded in here too (ROADMAP.md's
         // "Correction history" item) -- same independent-computation
         // rationale as RFP's/razoring's own sites above.
@@ -2240,7 +2254,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                     -negamax(pos, singular_depth, -singular_beta, -singular_beta + 1, ply + 1, nodes,
                              tt, killers, history, cont_history, capture_history, correction_history,
                              alt_moved_piece, alt_move.to(), alt_move.is_capture(), game_history, path,
-                             static_eval_history, pawn_tt, eval_cache, material_weights,
+                             static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
                              /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant);
                 board::unmake_move(pos, alt_move, alt_undo);
                 if (limits != nullptr && limits->stopped) {
@@ -2394,7 +2408,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt, killers,
                               history, cont_history, capture_history, correction_history, moved_piece,
                               move.to(), move.is_capture(), game_history, path, static_eval_history,
-                              pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits,
+                              pawn_tt, eval_cache, material_weights, eval_weights, /*allow_null_move=*/true, limits,
                               contempt_white_pov, tie_break_variant, child_mat_psqt);
         } else {
             // Futility pruning (CPW "Futility Pruning", this function's
@@ -2514,7 +2528,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                               nodes, tt, killers, history, cont_history, capture_history,
                               correction_history, moved_piece, move.to(), move.is_capture(),
                               game_history, path, static_eval_history, pawn_tt, eval_cache,
-                              material_weights, /*allow_null_move=*/true, limits, contempt_white_pov,
+                              material_weights, eval_weights, /*allow_null_move=*/true, limits, contempt_white_pov,
                               tie_break_variant, child_mat_psqt);
             if ((limits == nullptr || !limits->stopped) && reduction > 0 && score > alpha) {
                 // The reduced probe suggested this move might actually
@@ -2537,7 +2551,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, ply + 1, nodes, tt,
                                   killers, history, cont_history, capture_history, correction_history,
                                   moved_piece, move.to(), move.is_capture(), game_history, path,
-                                  static_eval_history, pawn_tt, eval_cache, material_weights,
+                                  static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
                                   /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant,
                                   child_mat_psqt);
             }
@@ -2545,7 +2559,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt,
                                   killers, history, cont_history, capture_history, correction_history,
                                   moved_piece, move.to(), move.is_capture(), game_history, path,
-                                  static_eval_history, pawn_tt, eval_cache, material_weights,
+                                  static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
                                   /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant,
                                   child_mat_psqt);
             }
@@ -2929,6 +2943,7 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
                           std::array<std::uint64_t, kMaxPly>& path,
                           std::array<int, kMaxPly>& static_eval_history, eval::PawnHashTable& pawn_tt,
                           eval::EvalCache& eval_cache, const eval::MaterialWeights* material_weights,
+                          const eval::EvalWeightsOverride* eval_weights = nullptr,
                           SearchLimits* limits = nullptr,
                           std::span<const Move> excluded_moves = {}, int contempt_white_pov = 0,
                           int tie_break_variant = 0) {
@@ -3082,20 +3097,20 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
             score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt, killers,
                               history, cont_history, capture_history, correction_history, moved_piece,
                               move.to(), move.is_capture(), game_history, path, static_eval_history,
-                              pawn_tt, eval_cache, material_weights, /*allow_null_move=*/true, limits,
+                              pawn_tt, eval_cache, material_weights, eval_weights, /*allow_null_move=*/true, limits,
                               contempt_white_pov, tie_break_variant, child_mat_psqt);
         } else {
             score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, 1, result.nodes, tt,
                               killers, history, cont_history, capture_history, correction_history,
                               moved_piece, move.to(), move.is_capture(), game_history, path,
-                              static_eval_history, pawn_tt, eval_cache, material_weights,
+                              static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
                               /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant,
                               child_mat_psqt);
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
                 score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt,
                                   killers, history, cont_history, capture_history, correction_history,
                                   moved_piece, move.to(), move.is_capture(), game_history, path,
-                                  static_eval_history, pawn_tt, eval_cache, material_weights,
+                                  static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
                                   /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant,
                                   child_mat_psqt);
             }
@@ -3195,12 +3210,14 @@ namespace {
 void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
                           std::span<const std::uint64_t> game_history,
                           const eval::MaterialWeights* material_weights,
+                          const eval::EvalWeightsOverride* eval_weights,
                           const std::atomic<bool>& stop, std::uint64_t& nodes_out,
                           int contempt_white_pov = 0, int helper_id = 0);
 } // namespace
 
 SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::uint64_t> game_history,
-                                 const eval::MaterialWeights* material_weights, int num_threads,
+                                 const eval::MaterialWeights* material_weights,
+                                 const eval::EvalWeightsOverride* eval_weights, int num_threads,
                                  std::size_t hash_size_mb, int contempt_cp,
                                  TranspositionTable* external_tt) {
     assert(depth >= 1 && "search_fixed_depth: depth must be at least 1");
@@ -3300,7 +3317,7 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
                                         // ordering rationale as search_iterative_deepening()'s
                                         // own identical comment below.
             helpers.emplace_back(run_lazy_smp_helper, std::move(helper_pos), depth, std::ref(tt),
-                                  game_history, material_weights, std::cref(smp_stop),
+                                  game_history, material_weights, eval_weights, std::cref(smp_stop),
                                   std::ref(helper_nodes[i]), contempt_white_pov, static_cast<int>(i));
         }
     }
@@ -3310,7 +3327,7 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
     // aspiration-windows entry) -- always the full window.
     SearchResult result = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history,
                                        cont_history, capture_history, correction_history, game_history,
-                                       path, static_eval_history, pawn_tt, eval_cache, material_weights,
+                                       path, static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
                                        /*limits=*/nullptr, /*excluded_moves=*/{}, contempt_white_pov);
 
     // Same stop/join/fold-in-node-counts pattern as
@@ -3381,6 +3398,7 @@ namespace {
 void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
                           std::span<const std::uint64_t> game_history,
                           const eval::MaterialWeights* material_weights,
+                          const eval::EvalWeightsOverride* eval_weights,
                           const std::atomic<bool>& stop, std::uint64_t& nodes_out,
                           int contempt_white_pov, int helper_id) {
     KillerTable killers;
@@ -3460,7 +3478,7 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
         const SearchResult r = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history,
                                             *cont_history, *capture_history, *correction_history,
                                             game_history, path, static_eval_history, pawn_tt, eval_cache,
-                                            material_weights, &limits, /*excluded_moves=*/{},
+                                            material_weights, eval_weights, &limits, /*excluded_moves=*/{},
                                             contempt_white_pov, tie_break_variant);
         total_nodes += r.nodes;
 
@@ -3519,8 +3537,8 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
 SearchResult search_iterative_deepening_multipv(
     Position& pos, int max_depth, int time_limit_ms, std::span<const std::uint64_t> game_history,
     const IterationCallback& on_iteration, const eval::MaterialWeights* material_weights,
-    int max_lines, std::atomic<bool>* external_stop, std::size_t hash_size_mb,
-    int contempt_white_pov, TranspositionTable* external_tt) {
+    const eval::EvalWeightsOverride* eval_weights, int max_lines, std::atomic<bool>* external_stop,
+    std::size_t hash_size_mb, int contempt_white_pov, TranspositionTable* external_tt) {
     const auto start_time = std::chrono::steady_clock::now();
 
     // Same table set, same lifetime rationale, as the single-line path
@@ -3566,7 +3584,8 @@ SearchResult search_iterative_deepening_multipv(
         SearchResult r =
             search_root(pos, 1, -kInfinity, kInfinity, tt, killers, *history, *cont_history, *capture_history,
                         *correction_history, game_history, path, static_eval_history, pawn_tt,
-                        eval_cache, material_weights, /*limits=*/nullptr, excluded, contempt_white_pov);
+                        eval_cache, material_weights, eval_weights, /*limits=*/nullptr, excluded,
+                        contempt_white_pov);
         total_nodes += r.nodes;
         r.multipv_index = line;
         excluded.push_back(r.best_move);
@@ -3644,7 +3663,8 @@ SearchResult search_iterative_deepening_multipv(
             SearchResult r =
                 search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history, *cont_history, *capture_history,
                             *correction_history, game_history, path, static_eval_history, pawn_tt,
-                            eval_cache, material_weights, &limits, depth_excluded, contempt_white_pov);
+                            eval_cache, material_weights, eval_weights, &limits, depth_excluded,
+                            contempt_white_pov);
             depth_nodes += r.nodes;
             if (limits.stopped) {
                 interrupted = true;
@@ -3700,6 +3720,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                                          std::span<const std::uint64_t> game_history,
                                          IterationCallback on_iteration,
                                          const eval::MaterialWeights* material_weights,
+                                         const eval::EvalWeightsOverride* eval_weights,
                                          int num_threads, std::atomic<bool>* external_stop,
                                          std::size_t hash_size_mb, int multi_pv,
                                          int soft_time_limit_ms, int contempt_cp,
@@ -3732,8 +3753,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
         const int max_lines = std::min(multi_pv, root_moves.size());
         if (max_lines > 1) {
             return search_iterative_deepening_multipv(pos, max_depth, time_limit_ms, game_history,
-                                                        on_iteration, material_weights, max_lines,
-                                                        external_stop, hash_size_mb,
+                                                        on_iteration, material_weights, eval_weights,
+                                                        max_lines, external_stop, hash_size_mb,
                                                         contempt_white_pov, external_tt);
         }
         // max_lines <= 1 (0 or 1 legal root moves): nothing extra to
@@ -3814,8 +3835,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     SearchResult result = search_root(pos, 1, -kInfinity, kInfinity, tt, killers, *history,
                                        *cont_history, *capture_history, *correction_history,
                                        game_history, path, static_eval_history, pawn_tt, eval_cache,
-                                       material_weights, /*limits=*/nullptr, /*excluded_moves=*/{},
-                                       contempt_white_pov);
+                                       material_weights, eval_weights, /*limits=*/nullptr,
+                                       /*excluded_moves=*/{}, contempt_white_pov);
     std::uint64_t total_nodes = result.nodes;
 
     // Position already over (checkmate/stalemate at the root): every
@@ -3876,8 +3897,9 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
         for (std::size_t i = 0; i < n; ++i) {
             Position helper_pos = pos; // synchronous copy on the calling thread -- see above
             helpers.emplace_back(run_lazy_smp_helper, std::move(helper_pos), max_depth,
-                                  std::ref(tt), game_history, material_weights, std::cref(smp_stop),
-                                  std::ref(helper_nodes[i]), contempt_white_pov, static_cast<int>(i));
+                                  std::ref(tt), game_history, material_weights, eval_weights,
+                                  std::cref(smp_stop), std::ref(helper_nodes[i]), contempt_white_pov,
+                                  static_cast<int>(i));
         }
     }
 
@@ -3974,7 +3996,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             for (;;) {
                 next = search_root(pos, depth, window_alpha, window_beta, tt, killers, *history,
                                     *cont_history, *capture_history, *correction_history, game_history,
-                                    path, static_eval_history, pawn_tt, eval_cache, material_weights,
+                                    path, static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
                                     &limits, /*excluded_moves=*/{}, contempt_white_pov);
 
                 if (limits.stopped) {
@@ -4019,7 +4041,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
         } else {
             next = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history, *cont_history, *capture_history,
                                 *correction_history, game_history, path, static_eval_history, pawn_tt,
-                                eval_cache, material_weights, &limits, /*excluded_moves=*/{},
+                                eval_cache, material_weights, eval_weights, &limits, /*excluded_moves=*/{},
                                 contempt_white_pov);
         }
 

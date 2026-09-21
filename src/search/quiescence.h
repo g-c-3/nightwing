@@ -117,11 +117,17 @@ namespace nightwing::search {
 ///
 /// Precondition: same as negamax()'s own -- init_masks()/
 /// init_magic_bitboards() have been called.
+/// `eval_weights`: same meaning and default as negamax()'s own
+/// parameter of the same name (search.cpp) -- forwarded, unpacked, to
+/// this function's own stand-pat and kMaxQuiescencePly-fallback
+/// eval::evaluate() calls exactly the way `material_weights` already
+/// is, and threaded through this function's own recursion into itself.
 [[nodiscard]] int quiescence(board::Position& pos, int alpha, int beta, int ply,
                               std::uint64_t& nodes, bool include_checks,
                               eval::PawnHashTable* pawn_tt = nullptr,
                               eval::EvalCache* eval_cache = nullptr,
                               const eval::MaterialWeights* material_weights = nullptr,
+                              const eval::EvalWeightsOverride* eval_weights = nullptr,
                               SearchLimits* limits = nullptr, int contempt_white_pov = 0,
                               const eval::Score* mat_psqt = nullptr) noexcept;
 

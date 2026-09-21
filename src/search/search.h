@@ -42,6 +42,7 @@
 
 #include "board/board.h"
 #include "board/move.h"
+#include "eval/eval.h"
 #include "eval/psqt.h"
 
 namespace nightwing::search {
@@ -379,14 +380,29 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// expects -- every test/bench/tuner call site that doesn't pass this
 /// parameter is entirely unaffected, still getting its own private,
 /// game-independent table exactly as before this parameter existed.
-[[nodiscard]] SearchResult search_fixed_depth(board::Position& pos, int depth,
-                                               std::span<const std::uint64_t> game_history = {},
-                                               const eval::MaterialWeights* material_weights =
-                                                   nullptr,
-                                               int num_threads = 1,
-                                               std::size_t hash_size_mb = kDefaultTTSizeMB,
-                                               int contempt_cp = 0,
-                                               TranspositionTable* external_tt = nullptr);
+/// `eval_weights`, if non-null, bundles the six NON-material weight
+/// overrides (PsqtWeights through PawnsWeights -- eval/eval.h's own
+/// EvalWeightsOverride, and evaluate()'s matching individual
+/// parameters) forwarded to every eval::evaluate() call this search
+/// makes, exactly the way `material_weights` above already is --
+/// independent of `material_weights` (either, both, or neither may be
+/// set on a given call; `eval_weights->material`, if set, is itself
+/// ignored here -- see EvalWeightsOverride's own doc comment for why).
+/// The primary intended caller is tuner::play_match() (src/tuner/
+/// match.h), so a strength comparison can be run for a candidate
+/// vector of any of the six "beyond PSQT" terms (mobility/space/
+/// threats/king-safety/pawns/PSQT), not just material -- ROADMAP.md's
+/// Tier 0 tuner item's own still-open "materially larger self-play
+/// corpus and mandatory SPRT-gating" follow-up. Defaults to nullptr,
+/// meaning "use the compiled-in constants for all six" -- every
+/// existing caller (every test, bench, the tuner's existing material-
+/// only match/SPRT tooling) is entirely unaffected.
+[[nodiscard]] SearchResult search_fixed_depth(
+    board::Position& pos, int depth, std::span<const std::uint64_t> game_history = {},
+    const eval::MaterialWeights* material_weights = nullptr,
+    const eval::EvalWeightsOverride* eval_weights = nullptr, int num_threads = 1,
+    std::size_t hash_size_mb = kDefaultTTSizeMB, int contempt_cp = 0,
+    TranspositionTable* external_tt = nullptr);
 
 /// Runs iterative deepening: searches at depth = 1, 2, 3, ... up to
 /// `max_depth`, keeping the most recently *completed* iteration's
@@ -598,10 +614,15 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// effect, so a persistent table set up by src/uci/uci.cpp keeps
 /// working correctly regardless of whether `MultiPV` is active for a
 /// given `go`.
+/// `eval_weights`: same meaning and default as search_fixed_depth()'s
+/// parameter of the same name -- see that function's doc comment.
+/// Shared across every depth iteration of this one call, same as
+/// `material_weights` itself already is.
 [[nodiscard]] SearchResult search_iterative_deepening(
     board::Position& pos, int max_depth, int time_limit_ms = 0,
     std::span<const std::uint64_t> game_history = {}, IterationCallback on_iteration = nullptr,
-    const eval::MaterialWeights* material_weights = nullptr, int num_threads = 1,
+    const eval::MaterialWeights* material_weights = nullptr,
+    const eval::EvalWeightsOverride* eval_weights = nullptr, int num_threads = 1,
     std::atomic<bool>* external_stop = nullptr, std::size_t hash_size_mb = kDefaultTTSizeMB,
     int multi_pv = 1, int soft_time_limit_ms = 0, int contempt_cp = 0,
     TranspositionTable* external_tt = nullptr);

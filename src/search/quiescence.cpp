@@ -141,8 +141,19 @@ void order_captures_first(MoveList& moves, const Position& pos) noexcept {
 int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& nodes,
                      bool include_checks, int qs_ply, eval::PawnHashTable* pawn_tt,
                      eval::EvalCache* eval_cache, const eval::MaterialWeights* material_weights,
-                     SearchLimits* limits, int contempt_white_pov,
-                     const eval::Score* mat_psqt) noexcept {
+                     const eval::EvalWeightsOverride* eval_weights, SearchLimits* limits,
+                     int contempt_white_pov, const eval::Score* mat_psqt) noexcept {
+    // eval::EvalWeightsOverride's own six non-material fields, unpacked
+    // once here -- same rationale/pattern as negamax()'s own identical
+    // local aliases (search.cpp).
+    const eval::PsqtWeights* const ew_psqt = eval_weights ? eval_weights->psqt : nullptr;
+    const eval::MobilityWeights* const ew_mobility = eval_weights ? eval_weights->mobility : nullptr;
+    const eval::SpaceWeights* const ew_space = eval_weights ? eval_weights->space : nullptr;
+    const eval::ThreatsWeights* const ew_threats = eval_weights ? eval_weights->threats : nullptr;
+    const eval::KingSafetyWeights* const ew_king_safety =
+        eval_weights ? eval_weights->king_safety : nullptr;
+    const eval::PawnsWeights* const ew_pawns = eval_weights ? eval_weights->pawns : nullptr;
+
     // Mid-search time-budget interruption (search.h's SearchLimits):
     // fast-path bail if a shallower quiescence/negamax() frame already
     // noticed the deadline has passed, mirroring negamax()'s own
@@ -219,12 +230,8 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         // this depth, and this branch is not expected to be reached in
         // normal play).
         const int white_relative = eval::evaluate(pos, pawn_tt, eval_cache, material_weights,
-                                                    /*psqt_weights=*/nullptr,
-                                                    /*mobility_weights=*/nullptr,
-                                                    /*space_weights=*/nullptr,
-                                                    /*threats_weights=*/nullptr,
-                                                    /*king_safety_weights=*/nullptr,
-                                                    /*pawns_weights=*/nullptr, mat_psqt);
+                                                    ew_psqt, ew_mobility, ew_space, ew_threats,
+                                                    ew_king_safety, ew_pawns, mat_psqt);
         return pos.side_to_move == Color::White ? white_relative : -white_relative;
     }
 
@@ -252,10 +259,8 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         const int lazy_beta_white = pos.side_to_move == Color::White ? beta : -alpha;
         const int white_relative =
             eval::evaluate(pos, pawn_tt, eval_cache, material_weights,
-                            /*psqt_weights=*/nullptr, /*mobility_weights=*/nullptr,
-                            /*space_weights=*/nullptr, /*threats_weights=*/nullptr,
-                            /*king_safety_weights=*/nullptr, /*pawns_weights=*/nullptr, mat_psqt,
-                            &lazy_alpha_white, &lazy_beta_white);
+                            ew_psqt, ew_mobility, ew_space, ew_threats, ew_king_safety, ew_pawns,
+                            mat_psqt, &lazy_alpha_white, &lazy_beta_white);
         best = pos.side_to_move == Color::White ? white_relative : -white_relative;
         if (best >= beta) {
             return best;
@@ -391,7 +396,7 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
 
         const int score = -quiescence_impl(pos, -beta, -alpha, ply + 1, nodes,
                                             /*include_checks=*/false, qs_ply + 1, pawn_tt,
-                                            eval_cache, material_weights, limits,
+                                            eval_cache, material_weights, eval_weights, limits,
                                             contempt_white_pov, child_mat_psqt);
         board::unmake_move(pos, move, undo);
 
@@ -422,10 +427,12 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
 
 int quiescence(Position& pos, int alpha, int beta, int ply, std::uint64_t& nodes,
                bool include_checks, eval::PawnHashTable* pawn_tt, eval::EvalCache* eval_cache,
-               const eval::MaterialWeights* material_weights, SearchLimits* limits,
+               const eval::MaterialWeights* material_weights,
+               const eval::EvalWeightsOverride* eval_weights, SearchLimits* limits,
                int contempt_white_pov, const eval::Score* mat_psqt) noexcept {
     return quiescence_impl(pos, alpha, beta, ply, nodes, include_checks, /*qs_ply=*/0, pawn_tt,
-                            eval_cache, material_weights, limits, contempt_white_pov, mat_psqt);
+                            eval_cache, material_weights, eval_weights, limits, contempt_white_pov,
+                            mat_psqt);
 }
 
 } // namespace nightwing::search
