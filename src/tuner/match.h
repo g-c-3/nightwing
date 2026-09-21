@@ -63,6 +63,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "eval/eval.h"
 #include "eval/psqt.h"
 
 namespace nightwing::tuner {
@@ -128,6 +129,29 @@ struct MatchConfig {
     /// just for that one comparison.
     int threads_a = 1;
     int threads_b = 1;
+
+    /// Per-side overrides for the six non-material eval terms (PSQT
+    /// through pawn structure -- eval/eval.h's own EvalWeightsOverride,
+    /// and search_fixed_depth()'s matching `eval_weights` parameter),
+    /// forwarded straight through to each side's own
+    /// search_fixed_depth() call the same way `weights_a`/`weights_b`
+    /// already are for material. Both default to nullptr (every
+    /// pre-existing caller/test unaffected, exactly reproducing this
+    /// module's behavior before these two fields existed -- material-
+    /// only comparisons, `eval_weights_a == eval_weights_b == nullptr`,
+    /// work identically to before). Added specifically to close the gap
+    /// docs/SESSIONS.md's Session 117 entry found: before this, nothing
+    /// in this repo could play a real match/SPRT run for any of the six
+    /// "beyond PSQT" Weights types Sessions 114-116 built (mobility,
+    /// space, threats, king safety, pawns, PSQT itself) -- only
+    /// eval::MaterialWeights had a path from a candidate vector into an
+    /// actual played game. `eval_weights_a`/`eval_weights_b`'s own
+    /// `material` field (EvalWeightsOverride's own doc comment) is
+    /// still ignored here, same as search_fixed_depth()'s own --
+    /// `weights_a`/`weights_b` above remain the one and only path for
+    /// material.
+    const eval::EvalWeightsOverride* eval_weights_a = nullptr;
+    const eval::EvalWeightsOverride* eval_weights_b = nullptr;
 };
 
 /// Result of one play_match() call.
