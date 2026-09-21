@@ -1243,46 +1243,67 @@ Priority Fixes section above).
               SPRT-gating — for what standing between here and an
               actual tuning run still looks like; that item, not a new
               Step 9, is next in top-to-bottom order).
-    - [ ] "A materially larger self-play corpus" and "mandatory
+    - [x] "A materially larger self-play corpus" and "mandatory
           SPRT-gating before any tuned values are committed" (this
           item's own original intro text, docs/DECISIONS.md, 2026-09-08
-          (2)) — still entirely unaddressed. Session 113's own
-          correction entry claimed "mandatory SPRT-gating" specifically
-          could already be done with this repo's existing
-          `nightwing_sprt`/`play_match()` tooling; Session 117 checked
-          that claim against the actual code and found it does NOT
-          hold for any of the 6 "beyond PSQT" terms Sessions 114-116
-          just built (mobility/space/threats/king-safety/pawns/PSQT
-          itself) — `play_match()` (`tuner/match.h`/`match.cpp`) and
-          the `search_fixed_depth()` it calls only thread an
-          `eval::MaterialWeights` override through search at all; none
-          of the other 6 `Weights` types has any path through
-          `search_fixed_depth()`/`negamax()`/`quiescence()` into a real
-          game, so `play_match()`/`nightwing_sprt` today can ONLY
-          strength-compare two `MaterialWeights` vectors, exactly as
-          they could before Sessions 114-116 ever started — this
-          item's own claim was accurate for material weights alone,
-          not for "generalized Weights" as its wording implied.
-          Concretely still needed before any of the 6 new tables can be
-          SPRT-gated at all: `search_fixed_depth()`
-          (`search/search.h`/`.cpp`) and `quiescence()`
-          (`search/quiescence.h`/`.cpp`) each need a `const
-          MobilityWeights*`/`SpaceWeights*`/`ThreatsWeights*`/
-          `KingSafetyWeights*`/`PawnsWeights*`/`PsqtWeights*` parameter
-          apiece (or some more compact way of passing all six/seven at
-          once) threaded down to their own `eval::evaluate()` calls,
-          mirroring `material_weights`'s own existing precedent exactly
-          — then `MatchConfig`/`play_match()` need matching `_a`/`_b`
-          fields and forwarding, the same way `threads_a`/`threads_b`
-          were added on top of the original single-weight-vector
-          design (`match.h`'s own doc comment on that addition). A real
-          multi-file threading effort on the scale of Sessions 114-116
-          themselves, not a quick patch — scoped here, not attempted in
-          the same session this gap was found, so it gets its own
-          dedicated implementation-and-test pass rather than a rushed
-          one squeezed in alongside discovering it. The corpus-size
-          half of this item remains completely untouched by this
-          finding either way.
+          (2)) — the SPRT-gating half is now addressed; the corpus-size
+          half remains open, tracked as its own item immediately below.
+          Session 113's own correction entry claimed "mandatory
+          SPRT-gating" specifically could already be done with this
+          repo's existing `nightwing_sprt`/`play_match()` tooling;
+          Session 117 checked that claim against the actual code and
+          found it did NOT hold for any of the 6 "beyond PSQT" terms
+          Sessions 114-116 just built (mobility/space/threats/king-
+          safety/pawns/PSQT itself) — `play_match()`
+          (`tuner/match.h`/`match.cpp`) and the `search_fixed_depth()`
+          it called only threaded an `eval::MaterialWeights` override
+          through search at all; none of the other 6 `Weights` types
+          had any path through `search_fixed_depth()`/`negamax()`/
+          `quiescence()` into a real game. Session 118 closed that gap:
+          rather than adding a `const MobilityWeights*`/`SpaceWeights*`/
+          `ThreatsWeights*`/`KingSafetyWeights*`/`PawnsWeights*`/
+          `PsqtWeights*` parameter apiece (six separate insertions,
+          Session 117's first-listed option), a single bundling struct,
+          `eval::EvalWeightsOverride` (`eval/eval.h`), was added instead
+          — a `const EvalWeightsOverride*` (default `nullptr`) is now
+          threaded through `search_fixed_depth()`/
+          `search_iterative_deepening()`/`negamax()`/`search_root()`/
+          `run_lazy_smp_helper()`/`quiescence()` at every call site,
+          unpacked into the matching six individual pointers exactly at
+          each `eval::evaluate()` call. `EvalWeightsOverride` also
+          carries a `material` field for uniformity, but
+          `search.cpp`/`quiescence.cpp` deliberately do NOT read it —
+          `material_weights` keeps its own pre-existing, separately-
+          threaded parameter unchanged (avoiding re-touching that
+          parameter's own many already-wired call sites for zero
+          behavioral benefit). `MatchConfig` (`tuner/match.h`) gained
+          `eval_weights_a`/`eval_weights_b` fields (both default
+          `nullptr`), forwarded through `play_match()`'s existing
+          per-game color-alternation logic into
+          `play_one_match_game()`'s own `search_fixed_depth()` call,
+          the same way `threads_a`/`threads_b` were added previously.
+          Two new tests confirm the fix end to end, not just that it
+          compiles: a direct `search_fixed_depth()` call with a
+          20x-boosted `MobilityWeights` override changes the returned
+          score at real search depth, and a `play_match()` run with one
+          side's mobility weights turned into an active penalty
+          (`eval_weights_b` only, `eval_weights_a` left `nullptr`) loses
+          every game rather than scoring the ~50/50 result silent-
+          ignoring would produce (`tests/match_tests.cpp`,
+          `[eval_weights]`). Every one of this session's own resulting
+          call-site fixes across `search.cpp`/`quiescence.cpp`/
+          `uci.cpp`, and the ~20 existing test call sites that needed an
+          explicit `nullptr` inserted for the new parameter (mirroring
+          every prior "beyond PSQT" insertion's own established
+          pattern), reverified against a real `cmake`+`ctest` build in
+          this session, not compiled-in-isolation guesswork — full
+          existing suite plus the 2 new cases green (668 test cases, 0
+          failures).
+    - [ ] "A materially larger self-play corpus" (the corpus-size half
+          of the item above, now split out on its own since the SPRT-
+          gating half it was originally paired with is done) — still
+          entirely unaddressed; scope not yet defined beyond the
+          original intro text (docs/DECISIONS.md, 2026-09-08 (2)).
 
 ## Priority Fixes (external code review, 2026-09-17)
 
