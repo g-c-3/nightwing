@@ -41,7 +41,7 @@ on:
         required: false
         default: "200"
       tune_iterations:
-        description: "nightwing_tune: finite-difference gradient descent iterations (used for material mode and all 5 term modes below)"
+        description: "nightwing_tune: finite-difference gradient descent iterations (used for material mode and all 6 term modes below — PSQT included, though its own tune_psqt() uses an analytic gradient rather than finite differences, tune.h's own doc comment on why)"
         required: false
         default: "200"
       match_games:
@@ -257,6 +257,36 @@ jobs:
           retention-days: 30
 
   # ROADMAP.md's "Actually run tune_mobility()/tune_space()/tune_threats()/
+  # tune_king_safety()/tune_pawns() against real self-play data" item, PLUS
+  # PSQT (`--psqt`, `tune_psqt()`) added to this same matrix rather than
+  # left out: PSQT was already fully built and CLI-wired (Tier 0 Step 6,
+  # tune_main.cpp's own `--psqt` flag) but had never actually been added
+  # to this workflow at all — a real gap, not a deliberate scoping choice,
+  # noticed only when asked directly "how to Texel-tune the WHOLE thing in
+  # GitHub Actions" and checked against this file rather than assumed
+  # already covered. PSQT fits this same matrix cleanly despite being
+  # algorithmically different (analytic gradient, tune.h's own doc
+  # comment, vs. finite-difference for the other five): tune_main.cpp's
+  # own CLI dispatch treats `--psqt` exactly like any other mode flag
+  # (same positional-argument slot, same internal `TuneConfig::learning_rate`
+  # override handled inside tune_main.cpp itself, not something this
+  # workflow needs to special-case), and — measured directly, not assumed
+  # — PSQT's own per-iteration cost is roughly `1/(2N+1)` of a
+  # finite-difference term's at the same N, since an analytic gradient is
+  # ONE pass over the training data per iteration rather than `2N+1`
+  # (tune.h's own header comment on why PSQT specifically got an analytic
+  # path in the first place): ~26 minutes at this workflow's own
+  # 5000-game/200-iteration defaults, the cheapest leg in this entire
+  # matrix despite having by far the most parameters (768). No
+  # `nightwing_match` counterpart for PSQT either, same reason as the
+  # other five (`tuner::match.h`'s own `eval::MaterialWeights`-only
+  # scope) — and PSQT's own tuned result is a per-square 8x8 grid, not
+  # `name=value` lines (`print_psqt_field()`, tune_main.cpp), written to
+  # stderr rather than stdout, so `tuned_weights.txt` for this leg will be
+  # an empty file; that's expected, not a bug — the real output is in
+  # `tune_stderr.txt`.
+  #
+  # ROADMAP.md's "Actually run tune_mobility()/tune_space()/tune_threats()/
   # tune_king_safety()/tune_pawns() against real self-play data" item. A
   # SEPARATE job per mode (matrix strategy below), not extra steps tacked
   # onto tuning-pipeline above, for a real, measured reason: a single
@@ -274,13 +304,13 @@ jobs:
   # hours — before self-play/material-tune/match's own time, and before
   # checkout/build/artifact-upload overhead — that a real dispatch risks
   # the job being killed by the platform ceiling with NOTHING uploaded,
-  # including modes that finished fine minutes earlier. Splitting into 5
+  # including modes that finished fine minutes earlier. Splitting into
   # independent jobs fixes this two ways at once: GitHub runs independent
   # jobs concurrently (account concurrency limits permitting), so total
   # WALL-CLOCK time drops to roughly the slowest single mode (pawns, ~3
-  # hours) instead of the sum of all five: and each job gets its own full
+  # hours) instead of the sum of all six: and each job gets its own full
   # 6-hour ceiling and its own artifact upload, so one mode running long
-  # or failing doesn't cost the other four their results.
+  # or failing doesn't cost the others their results.
   #
   # Each job regenerates training_data.txt itself with the SAME
   # selfplay_games/selfplay_search_depth/selfplay_random_opening_plies/
@@ -305,8 +335,8 @@ jobs:
     # NOT derived from `matrix.mode` via string manipulation, since
     # GitHub Actions expressions have no built-in capitalize()) exists
     # so that list reads as a short, unambiguous "Mobility"/"Space"/
-    # "Threats"/"King-safety"/"Pawns" rather than a long, mobile-UI-
-    # truncating "Tuning pipeline, king-saf..." this job's own name
+    # "Threats"/"King-safety"/"Pawns"/"PSQT" rather than a long, mobile-
+    # UI-truncating "Tuning pipeline, king-saf..." this job's own name
     # used before. `matrix.mode` (still the actual `--mode` value the
     # step below passes to nightwing_tune) is unchanged.
     name: ${{ matrix.label }}
@@ -314,6 +344,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - mode: psqt
+            label: PSQT
           - mode: mobility
             label: Mobility
           - mode: space
