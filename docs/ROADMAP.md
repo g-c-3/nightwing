@@ -1380,34 +1380,50 @@ Priority Fixes section above).
           2026-08-31 (1)/(2)/(3)). **Session 121 progress:** `.github/
           workflows/ci.yml`'s existing `tuning-pipeline` job only ever
           ran material tuning — it had no way to actually exercise the
-          5 new entry points at all. Added a new step, "Run the 5
-          beyond-material tune modes against the same training data",
-          running all 5 (`--mobility`/`--space`/`--threats`/
-          `--king-safety`/`--pawns`) against the EXACT SAME
-          `training_data.txt` the existing material run already
-          produces (one 5000-game corpus, six tuning runs against it),
-          each mode's tuned weights and full loss-history stderr
-          uploaded as its own pair of pipeline artifacts. No
-          `nightwing_match` counterpart added for these five —
+          5 new entry points at all. First added them as an extra
+          sequential step in that same job — then, asked directly
+          whether the whole thing would fit inside GitHub Actions' hard
+          6-hour per-job ceiling, measured (not guessed) that it
+          wouldn't reliably: `compute_loss()`'s own cost scales with
+          training-position count, walked `2N+1` times per tuning
+          iteration for an `N`-parameter table, and `pawns` (59
+          parameters) alone comes out to roughly 2.7 hours at this
+          workflow's own 5000-game/200-iteration defaults — the
+          sequential-step version summed to ~5.8 hours total, uncomfortably
+          close to the ceiling with real risk of the job being killed
+          with NOTHING uploaded. Restructured instead: the 5 term modes
+          now live in a SEPARATE job, `tuning-pipeline-term`, using a
+          `strategy.matrix` over `[mobility, space, threats,
+          king-safety, pawns]` so each runs independently with its own
+          full 6-hour budget and its own artifact upload (GitHub also
+          runs independent jobs concurrently, so wall-clock time drops
+          to roughly the slowest single mode, ~3 hours, rather than the
+          sum of all five). Each matrix leg regenerates
+          `training_data.txt` itself with the same fixed `base_seed=1`
+          `tuning-pipeline`'s own material run uses —
+          `nightwing_selfplay` is fully deterministic, so this is the
+          EXACT SAME corpus, not a separately-drawn one. No
+          `nightwing_match` counterpart for these five —
           `tuner::match.h` is deliberately scoped to
           `eval::MaterialWeights` only (its own header comment),
           generalizing it is a distinct, not-yet-scoped item, out of
-          reach of this one. Verified the exact new command sequence
-          locally (bash, matching GitHub Actions' own default shell —
-          the sandbox's own default `/bin/sh` doesn't support the
-          `${mode//-/_}` substitution used) against a small real
-          self-play corpus (20 games) before committing it to CI YAML,
-          the same "don't write untested shell into a workflow file"
+          reach of this one. Verified the exact command sequence
+          locally (bash, a small real self-play corpus, the
+          `--king-safety` mode specifically since its hyphenated name
+          most needed checking) before committing it to CI YAML, the
+          same "don't write untested shell into a workflow file"
           discipline this job's own introducing session (2026-08-31)
-          already established: all 5 modes ran clean, exit 0, sensible
-          output. **NOT YET DISPATCHED at the real 5000-game scale** —
-          that requires a human to trigger `workflow_dispatch` from
-          GitHub's own Actions tab (`pipeline: tuning`, mobile browser
-          works fine per this workflow's own existing `type: choice`
-          convention) — this repo-assistant has no GitHub API
-          credentials to do that itself. This item stays open until a
-          future session reads back that real run's actual loss-history
-          artifacts and makes the corpus-adequacy call from them.
+          already established: clean, exit 0. **NOT YET DISPATCHED at
+          the real 5000-game scale** — that requires a human to trigger
+          `workflow_dispatch` from GitHub's own Actions tab (`pipeline:
+          tuning`, mobile browser works fine per this workflow's own
+          existing `type: choice` convention) — this repo-assistant has
+          no GitHub API credentials to do that itself. This item stays
+          open until a future session reads back that real run's actual
+          loss-history artifacts (the material job's own
+          `tuning-pipeline-results` artifact, plus the 5 separate
+          `tuning-pipeline-<mode>-results` artifacts) and makes the
+          corpus-adequacy call from them.
 
 ## Priority Fixes (external code review, 2026-09-17)
 
