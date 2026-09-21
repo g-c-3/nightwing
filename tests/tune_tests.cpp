@@ -1260,3 +1260,202 @@ TEST_CASE("tune_psqt: TuneConfig::l2_lambda applies the same closed-form penalty
     REQUIRE(std::fabs(result.initial_loss - expected) < 1e-9);
 }
 
+
+// --- ROADMAP.md "Generalize tune() to the 5 remaining 'beyond PSQT' tables" ---
+//
+// One "all-neutral" test per term (tune_mobility()/tune_space()/
+// tune_threats()/tune_king_safety()/tune_pawns()), each the direct
+// counterpart of this file's own pre-existing material-side "tune: an
+// all-neutral (bare kings, 0.5 result) training set leaves material
+// weights exactly unchanged" test above: bare kings only, no knight/
+// pawn/rook/etc. of any kind on the board, so every one of mobility_
+// value()/space_value()/threats_value()/king_safety_value()/pawn_
+// structure_value()'s own terms is identically 0 regardless of the
+// weight vector queried -- the gradient for every field in the
+// relevant kXxxParameters table must come out EXACTLY 0, not just
+// small, so tune_XXX()'s own finite-difference loop should leave
+// every field bit-for-bit at its starting value no matter how many
+// iterations or how large a learning rate, while still exercising the
+// real generic tune_term() plumbing (tune.cpp) end to end: TermTuneResult
+// construction, the compute_loss_for() overload for this Weights type,
+// history bookkeeping, and TuneConfig::l2_lambda defaulting to 0.0.
+// (The loss itself is not exactly 0 -- the same small, constant tempo-
+// bonus residual the material-side version of this test already notes,
+// unrelated to any of these five terms.)
+
+TEST_CASE("tune_mobility: an all-neutral (bare kings, 0.5 result) training set leaves mobility "
+          "weights exactly unchanged, and history/initial_loss/final_loss are internally "
+          "consistent",
+          "[tuner][tune]") {
+    init_all();
+    std::vector<SelfPlayPosition> positions;
+    for (int i = 0; i < 5; ++i) {
+        positions.push_back(SelfPlayPosition{"4k3/8/8/8/8/8/8/4K3 w - - 0 1", 0.5});
+    }
+
+    TuneConfig config;
+    config.iterations = 5;
+    const MaterialWeights material = default_material_weights();
+    const MobilityWeights initial = default_mobility_weights();
+    const TermTuneResult<MobilityWeights> result =
+        tune_mobility(positions, material, initial, config);
+
+    REQUIRE(result.history.size() == static_cast<std::size_t>(config.iterations + 1));
+    REQUIRE(result.initial_loss == result.history.front().loss);
+    REQUIRE(result.final_loss == result.history.back().loss);
+    REQUIRE(result.final_loss == result.initial_loss); // every gradient is exactly 0
+    REQUIRE(result.weights.knight_mg == initial.knight_mg);
+    REQUIRE(result.weights.queen_eg == initial.queen_eg);
+}
+
+TEST_CASE("tune_space: an all-neutral (bare kings, 0.5 result) training set leaves space "
+          "weights exactly unchanged, and history/initial_loss/final_loss are internally "
+          "consistent",
+          "[tuner][tune]") {
+    init_all();
+    std::vector<SelfPlayPosition> positions;
+    for (int i = 0; i < 5; ++i) {
+        positions.push_back(SelfPlayPosition{"4k3/8/8/8/8/8/8/4K3 w - - 0 1", 0.5});
+    }
+
+    TuneConfig config;
+    config.iterations = 5;
+    const MaterialWeights material = default_material_weights();
+    const SpaceWeights initial = default_space_weights();
+    const TermTuneResult<SpaceWeights> result = tune_space(positions, material, initial, config);
+
+    REQUIRE(result.history.size() == static_cast<std::size_t>(config.iterations + 1));
+    REQUIRE(result.initial_loss == result.history.front().loss);
+    REQUIRE(result.final_loss == result.history.back().loss);
+    REQUIRE(result.final_loss == result.initial_loss);
+    REQUIRE(result.weights.square_mg == initial.square_mg);
+    REQUIRE(result.weights.square_eg == initial.square_eg);
+}
+
+TEST_CASE("tune_threats: an all-neutral (bare kings, 0.5 result) training set leaves threats "
+          "weights exactly unchanged, and history/initial_loss/final_loss are internally "
+          "consistent",
+          "[tuner][tune]") {
+    init_all();
+    std::vector<SelfPlayPosition> positions;
+    for (int i = 0; i < 5; ++i) {
+        positions.push_back(SelfPlayPosition{"4k3/8/8/8/8/8/8/4K3 w - - 0 1", 0.5});
+    }
+
+    TuneConfig config;
+    config.iterations = 5;
+    const MaterialWeights material = default_material_weights();
+    const ThreatsWeights initial = default_threats_weights();
+    const TermTuneResult<ThreatsWeights> result =
+        tune_threats(positions, material, initial, config);
+
+    REQUIRE(result.history.size() == static_cast<std::size_t>(config.iterations + 1));
+    REQUIRE(result.initial_loss == result.history.front().loss);
+    REQUIRE(result.final_loss == result.history.back().loss);
+    REQUIRE(result.final_loss == result.initial_loss);
+    REQUIRE(result.weights.knight_hanging_mg == initial.knight_hanging_mg);
+    REQUIRE(result.weights.queen_overloaded_eg == initial.queen_overloaded_eg);
+}
+
+TEST_CASE("tune_king_safety: an all-neutral (bare kings, 0.5 result) training set leaves king "
+          "safety weights exactly unchanged, and history/initial_loss/final_loss are internally "
+          "consistent",
+          "[tuner][tune]") {
+    init_all();
+    // Bare kings only -- no own pawns anywhere near either king, so the
+    // shield/open-file/pawn-storm terms are all at their unshielded
+    // baseline for BOTH sides identically, and no enemy knight/bishop/
+    // rook/queen exists to contribute an attacker-weighting or back-
+    // rank term either -- king_safety_value() is symmetric (0 net)
+    // regardless of the weight vector queried, the same "every term
+    // identically 0" property this section's other four tests rely on.
+    std::vector<SelfPlayPosition> positions;
+    for (int i = 0; i < 5; ++i) {
+        positions.push_back(SelfPlayPosition{"4k3/8/8/8/8/8/8/4K3 w - - 0 1", 0.5});
+    }
+
+    TuneConfig config;
+    config.iterations = 5;
+    const MaterialWeights material = default_material_weights();
+    const KingSafetyWeights initial = default_king_safety_weights();
+    const TermTuneResult<KingSafetyWeights> result =
+        tune_king_safety(positions, material, initial, config);
+
+    REQUIRE(result.history.size() == static_cast<std::size_t>(config.iterations + 1));
+    REQUIRE(result.initial_loss == result.history.front().loss);
+    REQUIRE(result.final_loss == result.history.back().loss);
+    REQUIRE(result.final_loss == result.initial_loss);
+    REQUIRE(result.weights.shield_mg == initial.shield_mg);
+    REQUIRE(result.weights.back_rank_eg == initial.back_rank_eg);
+}
+
+TEST_CASE("tune_pawns: an all-neutral (bare kings, 0.5 result) training set leaves pawn "
+          "structure weights exactly unchanged, and history/initial_loss/final_loss are "
+          "internally consistent",
+          "[tuner][tune]") {
+    init_all();
+    std::vector<SelfPlayPosition> positions;
+    for (int i = 0; i < 5; ++i) {
+        positions.push_back(SelfPlayPosition{"4k3/8/8/8/8/8/8/4K3 w - - 0 1", 0.5});
+    }
+
+    TuneConfig config;
+    config.iterations = 5;
+    const MaterialWeights material = default_material_weights();
+    const PawnsWeights initial = default_pawns_weights();
+    const TermTuneResult<PawnsWeights> result = tune_pawns(positions, material, initial, config);
+
+    REQUIRE(result.history.size() == static_cast<std::size_t>(config.iterations + 1));
+    REQUIRE(result.initial_loss == result.history.front().loss);
+    REQUIRE(result.final_loss == result.history.back().loss);
+    REQUIRE(result.final_loss == result.initial_loss);
+    REQUIRE(result.weights.isolated_mg == initial.isolated_mg);
+    REQUIRE(result.weights.passed_rank5_eg == initial.passed_rank5_eg);
+    // outside_min_file_gap specifically -- the one non-mg/eg-paired,
+    // discrete-step field in this table (PawnsWeights' own doc comment,
+    // eval/pawns.h) -- has no pawns on the board to have a file gap
+    // between at all, so its own gradient must come out exactly 0 here
+    // too, the same as every other field.
+    REQUIRE(result.weights.outside_min_file_gap == initial.outside_min_file_gap);
+}
+
+TEST_CASE("tune_mobility: a training signal that consistently disagrees with an otherwise-tiny "
+          "mobility edge reduces loss over the course of the run, material held exactly fixed",
+          "[tuner][tune]") {
+    init_all();
+    // Same shape as the pre-existing material-side "reduces loss" test
+    // above and tune_psqt()'s own "deliberately-bad PSQT cell" test: a
+    // lone White knight with real room to move (kKnightMobilityBonus's
+    // own contribution is the only structural difference from dead
+    // equal besides the knight's own material value, which
+    // material_weights being held FIXED here removes from the tuner's
+    // own reach entirely), labeled a clear White win (1.0) -- a strong,
+    // consistent "White is even better here than raw material already
+    // says" signal for mobility specifically to try to explain.
+    const std::string fen = "4k3/8/8/8/8/8/8/1N2K3 w - - 0 1";
+    std::vector<SelfPlayPosition> positions;
+    for (int i = 0; i < 8; ++i) {
+        positions.push_back(SelfPlayPosition{fen, 1.0});
+    }
+
+    TuneConfig config;
+    config.iterations = 20;
+    const MaterialWeights material = default_material_weights();
+    const MobilityWeights initial = default_mobility_weights();
+    const TermTuneResult<MobilityWeights> result =
+        tune_mobility(positions, material, initial, config);
+
+    REQUIRE(result.history.size() == static_cast<std::size_t>(config.iterations + 1));
+    REQUIRE(result.final_loss < result.initial_loss);
+    // The loss curve should be non-increasing step to step, the same
+    // property this file's own pre-existing material-side "reduces
+    // loss" test checks.
+    for (std::size_t i = 1; i < result.history.size(); ++i) {
+        REQUIRE(result.history[i].loss <= result.history[i - 1].loss);
+    }
+    // knight_mg should have moved UP -- more reward per attacked square
+    // -- the direction that makes evaluate() agree more with this
+    // training set's consistent "White is winning even more than
+    // material alone explains" label.
+    REQUIRE(result.weights.knight_mg > initial.knight_mg);
+}
