@@ -22,6 +22,8 @@
 #include "board/board.h"
 #include "board/masks.h"
 #include "board/zobrist.h"
+#include "eval/eval.h"
+#include "eval/mobility.h"
 #include "eval/psqt.h"
 #include "search/search.h"
 #include "tuner/match.h"
@@ -207,4 +209,86 @@ TEST_CASE("search_fixed_depth: a material_weights override actually changes the 
     const SearchResult doubled_result = search_fixed_depth(pos, 3, {}, &doubled_rook);
 
     REQUIRE(doubled_result.score > default_result.score);
+}
+
+TEST_CASE("search_fixed_depth: an eval_weights (EvalWeightsOverride) mobility override actually "
+          "changes the returned score, confirming the bundle reaches search/quiescence's own "
+          "eval::evaluate() calls end to end -- not just a raw eval::evaluate() call, and not "
+          "silently ignored the way it would be before this session's own negamax()/"
+          "quiescence()/search_root() threading",
+          "[tuner][match][eval_weights]") {
+    init_all();
+    // Same fixture shape as the material_weights test just above, but
+    // isolating mobility instead: White's rook sits on an open file
+    // with several empty squares to move to, so a much larger mobility
+    // bonus should measurably increase White's returned score at a
+    // real search depth -- confirming eval::EvalWeightsOverride's own
+    // `mobility` field genuinely propagates through negamax()'s
+    // razoring/futility eval::evaluate() calls and quiescence()'s
+    // stand-pat, exactly the way `material_weights` already was
+    // confirmed to just above, not merely accepted as a parameter and
+    // ignored (this session's own starting bug: docs/SESSIONS.md's
+    // Session 117 entry).
+    Position pos = empty_position();
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(4, 7), Piece::BlackKing);
+    pos.place_piece(make_square(0, 3), Piece::WhiteRook); // d1 -- open file/rank ahead of it
+    pos.place_piece(make_square(7, 3), Piece::BlackRook); // d8 -- symmetric, so the ONLY
+
+    const SearchResult default_result = search_fixed_depth(pos, 3, {}, nullptr, nullptr);
+
+    MobilityWeights boosted_mobility = default_mobility_weights();
+    boosted_mobility.rook_mg *= 20.0;
+    boosted_mobility.rook_eg *= 20.0;
+    EvalWeightsOverride eval_weights;
+    eval_weights.mobility = &boosted_mobility;
+    const SearchResult boosted_result = search_fixed_depth(pos, 3, {}, nullptr, &eval_weights);
+
+    // Symmetric material and rook placement (both sides), but White is
+    // the side to move at the root -- White's own extra tempo/greater
+    // realized mobility this ply is what the boosted weight should
+    // amplify, the same asymmetry-from-symmetric-material approach
+    // tests/eval_tests.cpp's own mobility tests already use.
+    REQUIRE(boosted_result.score != default_result.score);
+}
+
+TEST_CASE("play_match: MatchConfig's eval_weights_a/eval_weights_b actually reach the games "
+          "played, closing the gap docs/SESSIONS.md's Session 117 entry found -- before this "
+          "session, nothing in this file could compare any of the six non-material Weights "
+          "types (mobility/space/threats/king safety/pawns/PSQT) in a real played game, only "
+          "eval::MaterialWeights",
+          "[tuner][match][eval_weights]") {
+    init_all();
+    // Same fixture family as the "crippled queen" MaterialWeights match
+    // test above this file's own search_fixed_depth() tests -- an
+    // extreme, deliberately lopsided single-term override on one side
+    // only, so the match result is expected to be almost entirely
+    // one-sided rather than needing a statistically borderline SPRT
+    // judgment call.
+    MaterialWeights defaults = default_material_weights();
+
+    MobilityWeights crippled_mobility = default_mobility_weights();
+    crippled_mobility.knight_mg = -crippled_mobility.knight_mg * 50.0;
+    crippled_mobility.knight_eg = -crippled_mobility.knight_eg * 50.0;
+    crippled_mobility.bishop_mg = -crippled_mobility.bishop_mg * 50.0;
+    crippled_mobility.bishop_eg = -crippled_mobility.bishop_eg * 50.0;
+    crippled_mobility.rook_mg = -crippled_mobility.rook_mg * 50.0;
+    crippled_mobility.rook_eg = -crippled_mobility.rook_eg * 50.0;
+    crippled_mobility.queen_mg = -crippled_mobility.queen_mg * 50.0;
+    crippled_mobility.queen_eg = -crippled_mobility.queen_eg * 50.0;
+    EvalWeightsOverride crippled_eval_weights;
+    crippled_eval_weights.mobility = &crippled_mobility;
+
+    MatchConfig config = small_config();
+    config.eval_weights_b = &crippled_eval_weights; // config.eval_weights_a left nullptr
+
+    const MatchResult result = play_match(defaults, defaults, 1, config);
+
+    // Side B, searching with mobility turned into an active PENALTY,
+    // should not come out ahead of side A (searching with ordinary
+    // default weights) across this match -- if eval_weights_b were
+    // silently ignored (the pre-fix behavior), both sides would search
+    // identically and this would be a random ~50/50 result instead.
+    REQUIRE(result.wins_b == 0);
+    REQUIRE(result.score_a() >= 0.5);
 }

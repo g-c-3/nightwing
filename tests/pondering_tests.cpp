@@ -94,7 +94,7 @@ TEST_CASE("search_iterative_deepening: a non-null external_stop flipped true fro
     const auto t0 = std::chrono::steady_clock::now();
     const SearchResult result =
         search_iterative_deepening(pos, /*max_depth=*/64, /*time_limit_ms=*/0, /*game_history=*/{},
-                                    /*on_iteration=*/nullptr, /*material_weights=*/nullptr,
+                                    /*on_iteration=*/nullptr, /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                                     /*num_threads=*/1, &stop);
     const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::steady_clock::now() - t0)
@@ -119,7 +119,7 @@ TEST_CASE("search_iterative_deepening: external_stop defaulting to nullptr leave
     const SearchResult default_call = search_iterative_deepening(pos, 4);
     const SearchResult explicit_null =
         search_iterative_deepening(pos, /*max_depth=*/4, /*time_limit_ms=*/0, /*game_history=*/{},
-                                    /*on_iteration=*/nullptr, /*material_weights=*/nullptr,
+                                    /*on_iteration=*/nullptr, /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                                     /*num_threads=*/1, /*external_stop=*/nullptr);
     REQUIRE(default_call.best_move == explicit_null.best_move);
     REQUIRE(default_call.score == explicit_null.score);

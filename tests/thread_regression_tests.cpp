@@ -62,7 +62,7 @@ TEST_CASE("search_fixed_depth: num_threads > 1 still returns a legal move at exa
     Position pos = parse_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
     const SearchResult result =
         search_fixed_depth(pos, /*depth=*/4, /*game_history=*/{}, /*material_weights=*/nullptr,
-                            /*num_threads=*/4);
+                            /*eval_weights=*/nullptr, /*num_threads=*/4);
     REQUIRE_FALSE(result.best_move.is_null());
     REQUIRE(result.depth_completed == 4);
     REQUIRE(result.nodes > 0);
@@ -76,7 +76,7 @@ TEST_CASE("search_fixed_depth: num_threads defaulting to 1 leaves every existing
     const SearchResult default_call = search_fixed_depth(pos, 4);
     const SearchResult explicit_one =
         search_fixed_depth(pos, /*depth=*/4, /*game_history=*/{}, /*material_weights=*/nullptr,
-                            /*num_threads=*/1);
+                            /*eval_weights=*/nullptr, /*num_threads=*/1);
     REQUIRE(default_call.best_move == explicit_one.best_move);
     REQUIRE(default_call.score == explicit_one.score);
     REQUIRE(default_call.nodes == explicit_one.nodes);
@@ -89,8 +89,8 @@ TEST_CASE("search_fixed_depth: node counts never DECREASE when helper threads ar
     init_all();
     Position pos_1 = parse_fen("r1bq1rk1/pp2bppp/2n1pn2/2pp4/3P4/2PBPN2/PP1N1PPP/R1BQ1RK1 w - - 0 1");
     Position pos_4 = pos_1;
-    const SearchResult with_1_thread = search_fixed_depth(pos_1, 4, {}, nullptr, 1);
-    const SearchResult with_4_threads = search_fixed_depth(pos_4, 4, {}, nullptr, 4);
+    const SearchResult with_1_thread = search_fixed_depth(pos_1, 4, {}, nullptr, nullptr, 1);
+    const SearchResult with_4_threads = search_fixed_depth(pos_4, 4, {}, nullptr, nullptr, 4);
     // NOT a strict `>`: whether any given helper thread gets scheduled
     // in time to complete even its own first depth iteration (the only
     // point at which run_lazy_smp_helper(), search.cpp, adds anything to

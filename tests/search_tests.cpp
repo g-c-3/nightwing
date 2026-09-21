@@ -1234,7 +1234,7 @@ TEST_CASE("search_iterative_deepening: multi_pv <= 1 leaves multipv_lines empty 
     Position pos = start_position();
     const SearchResult default_mpv = search_iterative_deepening(pos, 4);
     const SearchResult explicit_one =
-        search_iterative_deepening(pos, 4, 0, {}, nullptr, nullptr, 1, nullptr,
+        search_iterative_deepening(pos, 4, 0, {}, nullptr, nullptr, nullptr, 1, nullptr,
                                     kDefaultTTSizeMB, /*multi_pv=*/1);
     REQUIRE(default_mpv.multipv_lines.empty());
     REQUIRE(explicit_one.multipv_lines.empty());
@@ -1251,7 +1251,7 @@ TEST_CASE("search_iterative_deepening: multi_pv > 1 returns that many distinct l
     generate_legal_moves(pos, legal);
 
     const SearchResult result =
-        search_iterative_deepening(pos, 4, 0, {}, nullptr, nullptr, 1, nullptr,
+        search_iterative_deepening(pos, 4, 0, {}, nullptr, nullptr, nullptr, 1, nullptr,
                                     kDefaultTTSizeMB, /*multi_pv=*/3);
 
     REQUIRE(result.multipv_lines.size() == 3);
@@ -1294,7 +1294,7 @@ TEST_CASE("search_iterative_deepening: multi_pv requesting more lines than legal
     REQUIRE(legal.size() < 500); // sanity, not a real assertion on the exact count
 
     const SearchResult result = search_iterative_deepening(
-        pos, 3, 0, {}, nullptr, nullptr, 1, nullptr, kDefaultTTSizeMB, /*multi_pv=*/500);
+        pos, 3, 0, {}, nullptr, nullptr, nullptr, 1, nullptr, kDefaultTTSizeMB, /*multi_pv=*/500);
     REQUIRE(static_cast<int>(result.multipv_lines.size()) == legal.size());
 }
 
@@ -1316,7 +1316,7 @@ TEST_CASE("search_iterative_deepening: multi_pv on a position with exactly one l
     REQUIRE(legal.size() == 1);
 
     const SearchResult result = search_iterative_deepening(
-        pos, 3, 0, {}, nullptr, nullptr, 1, nullptr, kDefaultTTSizeMB, /*multi_pv=*/5);
+        pos, 3, 0, {}, nullptr, nullptr, nullptr, 1, nullptr, kDefaultTTSizeMB, /*multi_pv=*/5);
     REQUIRE(result.multipv_lines.empty());
     REQUIRE_FALSE(result.best_move.is_null());
     REQUIRE(result.best_move == legal[0]);
@@ -1332,7 +1332,7 @@ TEST_CASE("search_iterative_deepening: multi_pv's on_iteration callback fires on
     const SearchResult result = search_iterative_deepening(
         pos, 3, 0, {},
         [&fired](const SearchResult& r) { fired.push_back(r); },
-        nullptr, 1, nullptr, kDefaultTTSizeMB, /*multi_pv=*/2);
+        nullptr, nullptr, 1, nullptr, kDefaultTTSizeMB, /*multi_pv=*/2);
 
     REQUIRE(result.multipv_lines.size() == 2);
     // 3 depths (1, 2, 3) x 2 lines each = 6 callback firings.
@@ -1370,7 +1370,7 @@ TEST_CASE("search_iterative_deepening: soft_time_limit_ms <= 0 (the default) lea
     Position pos = parse_fen("4k3/8/8/8/8/8/4q3/4K2R w K - 0 1");
     const auto t0 = std::chrono::steady_clock::now();
     const SearchResult result =
-        search_iterative_deepening(pos, 30, /*time_limit_ms=*/300, {}, nullptr, nullptr, 1,
+        search_iterative_deepening(pos, 30, /*time_limit_ms=*/300, {}, nullptr, nullptr, nullptr, 1,
                                     nullptr, kDefaultTTSizeMB, /*multi_pv=*/1,
                                     /*soft_time_limit_ms=*/0);
     const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1391,7 +1391,7 @@ TEST_CASE("search_iterative_deepening: with soft_time_limit_ms set, a position w
     Position pos = parse_fen("4k3/8/8/8/8/8/4q3/4K2R w K - 0 1");
     const auto t0 = std::chrono::steady_clock::now();
     const SearchResult result =
-        search_iterative_deepening(pos, 30, /*time_limit_ms=*/1000, {}, nullptr, nullptr, 1,
+        search_iterative_deepening(pos, 30, /*time_limit_ms=*/1000, {}, nullptr, nullptr, nullptr, 1,
                                     nullptr, kDefaultTTSizeMB, /*multi_pv=*/1,
                                     /*soft_time_limit_ms=*/80);
     const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1422,7 +1422,7 @@ TEST_CASE("search_iterative_deepening: soft_time_limit_ms never allows the searc
     Position pos = start_position();
     const auto t0 = std::chrono::steady_clock::now();
     const SearchResult result =
-        search_iterative_deepening(pos, 30, /*time_limit_ms=*/300, {}, nullptr, nullptr, 1,
+        search_iterative_deepening(pos, 30, /*time_limit_ms=*/300, {}, nullptr, nullptr, nullptr, 1,
                                     nullptr, kDefaultTTSizeMB, /*multi_pv=*/1,
                                     /*soft_time_limit_ms=*/80);
     const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(

@@ -53,7 +53,7 @@ TEST_CASE("search_fixed_depth: external_tt defaulting to nullptr leaves every ex
     Position pos2 = start_position();
     const SearchResult default_call = search_fixed_depth(pos1, 5);
     const SearchResult explicit_null =
-        search_fixed_depth(pos2, 5, /*game_history=*/{}, /*material_weights=*/nullptr,
+        search_fixed_depth(pos2, 5, /*game_history=*/{}, /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                             /*num_threads=*/1, /*hash_size_mb=*/kDefaultTTSizeMB,
                             /*contempt_cp=*/0, /*external_tt=*/nullptr);
     REQUIRE(default_call.best_move == explicit_null.best_move);
@@ -71,7 +71,7 @@ TEST_CASE("search_iterative_deepening: external_tt defaulting to nullptr leaves 
     const SearchResult default_call = search_iterative_deepening(pos1, 5);
     const SearchResult explicit_null = search_iterative_deepening(
         pos2, /*max_depth=*/5, /*time_limit_ms=*/0, /*game_history=*/{}, /*on_iteration=*/nullptr,
-        /*material_weights=*/nullptr, /*num_threads=*/1, /*external_stop=*/nullptr,
+        /*material_weights=*/nullptr, /*eval_weights=*/nullptr, /*num_threads=*/1, /*external_stop=*/nullptr,
         /*hash_size_mb=*/kDefaultTTSizeMB, /*multi_pv=*/1, /*soft_time_limit_ms=*/0,
         /*contempt_cp=*/0, /*external_tt=*/nullptr);
     REQUIRE(default_call.best_move == explicit_null.best_move);
@@ -86,7 +86,7 @@ TEST_CASE("search_fixed_depth: a non-null external_tt is genuinely used -- probi
     Position pos = start_position();
     TranspositionTable tt(16);
     const SearchResult result = search_fixed_depth(
-        pos, 5, /*game_history=*/{}, /*material_weights=*/nullptr, /*num_threads=*/1,
+        pos, 5, /*game_history=*/{}, /*material_weights=*/nullptr, /*eval_weights=*/nullptr, /*num_threads=*/1,
         /*hash_size_mb=*/1 /* deliberately different from tt's own 16 MB -- ignored, see below */,
         /*contempt_cp=*/0, &tt);
 
@@ -115,7 +115,7 @@ TEST_CASE("search_iterative_deepening: a non-null external_tt is genuinely used 
     TranspositionTable tt(16);
     const SearchResult result = search_iterative_deepening(
         pos, /*max_depth=*/5, /*time_limit_ms=*/0, /*game_history=*/{}, /*on_iteration=*/nullptr,
-        /*material_weights=*/nullptr, /*num_threads=*/1, /*external_stop=*/nullptr,
+        /*material_weights=*/nullptr, /*eval_weights=*/nullptr, /*num_threads=*/1, /*external_stop=*/nullptr,
         /*hash_size_mb=*/kDefaultTTSizeMB, /*multi_pv=*/1, /*soft_time_limit_ms=*/0,
         /*contempt_cp=*/0, &tt);
 
@@ -133,7 +133,7 @@ TEST_CASE("search_fixed_depth: reusing an already-populated external_tt for an i
 
     Position first_pos = start_position();
     const SearchResult first = search_fixed_depth(first_pos, 6, /*game_history=*/{},
-                                                    /*material_weights=*/nullptr,
+                                                    /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                                                     /*num_threads=*/1, /*hash_size_mb=*/16,
                                                     /*contempt_cp=*/0, &tt);
 
@@ -143,7 +143,7 @@ TEST_CASE("search_fixed_depth: reusing an already-populated external_tt for an i
     // testing the SAME starting position, not some mutated leftover).
     Position second_pos = start_position();
     const SearchResult second = search_fixed_depth(second_pos, 6, /*game_history=*/{},
-                                                     /*material_weights=*/nullptr,
+                                                     /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                                                      /*num_threads=*/1, /*hash_size_mb=*/16,
                                                      /*contempt_cp=*/0, &tt);
 
@@ -169,7 +169,7 @@ TEST_CASE("search_fixed_depth: reusing an already-populated external_tt for an i
     TranspositionTable fresh_tt(16);
     Position third_pos = start_position();
     const SearchResult third = search_fixed_depth(third_pos, 6, /*game_history=*/{},
-                                                    /*material_weights=*/nullptr,
+                                                    /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                                                     /*num_threads=*/1, /*hash_size_mb=*/16,
                                                     /*contempt_cp=*/0, &fresh_tt);
     REQUIRE(third.nodes == first.nodes);
@@ -199,12 +199,12 @@ TEST_CASE("search_fixed_depth: a warm external_tt reproduces the cold call's own
         TranspositionTable tt(16);
         Position cold_pos = start_position();
         const SearchResult cold = search_fixed_depth(cold_pos, depth, /*game_history=*/{},
-                                                       /*material_weights=*/nullptr,
+                                                       /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                                                        /*num_threads=*/1, /*hash_size_mb=*/16,
                                                        /*contempt_cp=*/0, &tt);
         Position warm_pos = start_position();
         const SearchResult warm = search_fixed_depth(warm_pos, depth, /*game_history=*/{},
-                                                       /*material_weights=*/nullptr,
+                                                       /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                                                        /*num_threads=*/1, /*hash_size_mb=*/16,
                                                        /*contempt_cp=*/0, &tt);
         INFO("depth = " << depth);
@@ -248,7 +248,7 @@ TEST_CASE("search_iterative_deepening: a non-null external_tt still works correc
     TranspositionTable tt(16);
     const SearchResult result = search_iterative_deepening(
         pos, /*max_depth=*/4, /*time_limit_ms=*/0, /*game_history=*/{}, /*on_iteration=*/nullptr,
-        /*material_weights=*/nullptr, /*num_threads=*/1, /*external_stop=*/nullptr,
+        /*material_weights=*/nullptr, /*eval_weights=*/nullptr, /*num_threads=*/1, /*external_stop=*/nullptr,
         /*hash_size_mb=*/kDefaultTTSizeMB, /*multi_pv=*/2, /*soft_time_limit_ms=*/0,
         /*contempt_cp=*/0, &tt);
 

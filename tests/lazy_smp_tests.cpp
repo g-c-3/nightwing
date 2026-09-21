@@ -83,7 +83,7 @@ TEST_CASE("search_iterative_deepening: num_threads > 1 finds a legal move and do
     Position pos = parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
     const SearchResult result = search_iterative_deepening(pos, /*max_depth=*/6, /*time_limit_ms=*/0,
                                                              /*game_history=*/{}, /*on_iteration=*/nullptr,
-                                                             /*material_weights=*/nullptr,
+                                                             /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                                                              test_thread_count());
     REQUIRE_FALSE(result.best_move.is_null());
 
@@ -113,7 +113,7 @@ TEST_CASE("search_iterative_deepening: num_threads > 1 still finds the same forc
     Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
     const SearchResult result =
         search_iterative_deepening(pos, /*max_depth=*/6, /*time_limit_ms=*/0, /*game_history=*/{},
-                                    /*on_iteration=*/nullptr, /*material_weights=*/nullptr,
+                                    /*on_iteration=*/nullptr, /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                                     test_thread_count());
     REQUIRE(result.score >= kMateThreshold);
 }
@@ -123,7 +123,7 @@ TEST_CASE("search_iterative_deepening: num_threads > 1 leaves the position unmod
     Position pos = parse_fen("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3");
     const Position before = pos;
     (void)search_iterative_deepening(pos, /*max_depth=*/5, /*time_limit_ms=*/0, /*game_history=*/{},
-                                      /*on_iteration=*/nullptr, /*material_weights=*/nullptr,
+                                      /*on_iteration=*/nullptr, /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                                       test_thread_count());
     REQUIRE(pos.zobrist_hash == before.zobrist_hash);
 }
@@ -136,7 +136,7 @@ TEST_CASE("search_iterative_deepening: num_threads > 1 respects a small time bud
     const auto t0 = std::chrono::steady_clock::now();
     const SearchResult result =
         search_iterative_deepening(pos, /*max_depth=*/64, /*time_limit_ms=*/100, /*game_history=*/{},
-                                    /*on_iteration=*/nullptr, /*material_weights=*/nullptr,
+                                    /*on_iteration=*/nullptr, /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                                     test_thread_count());
     const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::steady_clock::now() - t0)
@@ -161,7 +161,7 @@ TEST_CASE("search_iterative_deepening: num_threads == 1 is unaffected by the par
     const SearchResult default_call = search_iterative_deepening(pos, 4);
     const SearchResult explicit_one =
         search_iterative_deepening(pos, /*max_depth=*/4, /*time_limit_ms=*/0, /*game_history=*/{},
-                                    /*on_iteration=*/nullptr, /*material_weights=*/nullptr,
+                                    /*on_iteration=*/nullptr, /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                                     /*num_threads=*/1);
     REQUIRE(default_call.best_move == explicit_one.best_move);
     REQUIRE(default_call.score == explicit_one.score);
@@ -192,7 +192,7 @@ TEST_CASE("search_iterative_deepening: helper thread diversification (staggered 
     Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
     for (int threads = 2; threads <= 5; ++threads) {
         const SearchResult result = search_fixed_depth(pos, /*depth=*/6, /*game_history=*/{},
-                                                         /*material_weights=*/nullptr,
+                                                         /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                                                          /*num_threads=*/threads);
         REQUIRE(result.score >= kMateThreshold);
     }

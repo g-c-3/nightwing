@@ -67,7 +67,7 @@ TEST_CASE("search_fixed_depth: a positive Contempt penalizes an immediate stalem
     init_all();
     Position pos = parse_fen("7k/5Q2/7K/8/8/8/8/8 b - - 0 1"); // Black to move, stalemated.
     const SearchResult result =
-        search_fixed_depth(pos, 2, /*game_history=*/{}, /*material_weights=*/nullptr,
+        search_fixed_depth(pos, 2, /*game_history=*/{}, /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                             /*num_threads=*/1, kDefaultTTSizeMB, /*contempt_cp=*/50);
     REQUIRE(result.score == kDrawScore - 50);
 }
@@ -78,7 +78,7 @@ TEST_CASE("search_fixed_depth: a negative Contempt REWARDS an immediate stalemat
     init_all();
     Position pos = parse_fen("7k/5Q2/7K/8/8/8/8/8 b - - 0 1"); // Black to move, stalemated.
     const SearchResult result =
-        search_fixed_depth(pos, 2, /*game_history=*/{}, /*material_weights=*/nullptr,
+        search_fixed_depth(pos, 2, /*game_history=*/{}, /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                             /*num_threads=*/1, kDefaultTTSizeMB, /*contempt_cp=*/-50);
     REQUIRE(result.score == kDrawScore + 50);
 }
@@ -93,7 +93,7 @@ TEST_CASE("search_fixed_depth: Contempt's sign is relative to whichever side is 
     // identical stalemate, opposite colors and side to move.
     Position pos = parse_fen("7K/5q2/7k/8/8/8/8/8 w - - 0 1");
     const SearchResult result =
-        search_fixed_depth(pos, 2, /*game_history=*/{}, /*material_weights=*/nullptr,
+        search_fixed_depth(pos, 2, /*game_history=*/{}, /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
                             /*num_threads=*/1, kDefaultTTSizeMB, /*contempt_cp=*/50);
     REQUIRE(result.score == kDrawScore - 50);
 }
@@ -130,7 +130,8 @@ TEST_CASE("search_fixed_depth: Contempt correctly propagates several plies deep 
     // reported score, exactly as negamax()'s own doc comment on this
     // parameter (search.cpp) says it should.
     const SearchResult penalized =
-        search_fixed_depth(pos, 2, history, /*material_weights=*/nullptr, /*num_threads=*/1,
+        search_fixed_depth(pos, 2, history, /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
+                            /*num_threads=*/1,
                             kDefaultTTSizeMB, /*contempt_cp=*/100);
     REQUIRE(penalized.score == kDrawScore - 100);
     REQUIRE_FALSE(penalized.best_move.is_null());
@@ -143,7 +144,8 @@ TEST_CASE("search_fixed_depth: Contempt correctly propagates several plies deep 
     // option) -- the reported score reflects the boost by exactly the
     // same magnitude.
     const SearchResult rewarded =
-        search_fixed_depth(pos, 2, history, /*material_weights=*/nullptr, /*num_threads=*/1,
+        search_fixed_depth(pos, 2, history, /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
+                            /*num_threads=*/1,
                             kDefaultTTSizeMB, /*contempt_cp=*/-100);
     REQUIRE(rewarded.score == kDrawScore + 100);
     REQUIRE_FALSE(rewarded.best_move.is_null());
@@ -162,7 +164,7 @@ TEST_CASE("search_iterative_deepening: Contempt 0 (default) is completely unaffe
     const SearchResult with_default_contempt =
         search_iterative_deepening(pos2, /*max_depth=*/2, /*time_limit_ms=*/0,
                                     /*game_history=*/{}, /*on_iteration=*/nullptr,
-                                    /*material_weights=*/nullptr, /*num_threads=*/1,
+                                    /*material_weights=*/nullptr, /*eval_weights=*/nullptr, /*num_threads=*/1,
                                     /*external_stop=*/nullptr, kDefaultTTSizeMB, /*multi_pv=*/1,
                                     /*soft_time_limit_ms=*/0, /*contempt_cp=*/0);
 
