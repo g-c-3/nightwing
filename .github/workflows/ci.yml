@@ -41,7 +41,7 @@ on:
         required: false
         default: "200"
       tune_iterations:
-        description: "nightwing_tune: finite-difference gradient descent iterations"
+        description: "nightwing_tune: finite-difference gradient descent iterations (used for material mode and all 5 term modes below)"
         required: false
         default: "200"
       match_games:
@@ -246,6 +246,33 @@ jobs:
             "${{ inputs.selfplay_max_plies }}" \
             < tuned_weights.txt | tee match_result.txt
 
+      # ROADMAP.md's "Actually run tune_mobility()/tune_space()/
+      # tune_threats()/tune_king_safety()/tune_pawns() against real
+      # self-play data" item — reuses the EXACT SAME training_data.txt
+      # the material run above just produced (one self-play corpus,
+      # six tuning runs against it: material plus these five), so the
+      # corpus-adequacy question ("is 5000 games enough for these
+      # smaller tables too?") is answered from the same data material
+      # tuning already uses, not a separately-generated, not-directly-
+      # comparable corpus. No nightwing_match counterpart for these five
+      # (tuner::match.h is deliberately scoped to eval::MaterialWeights
+      # only — its own header comment — generalizing it is a distinct,
+      # not-yet-scoped future item); this step's own loss-history output
+      # (nightwing_tune's own stderr, captured to each *_stderr.txt
+      # file below) is what a later session reads to judge convergence/
+      # corpus adequacy, per that ROADMAP item's own wording.
+      - name: Run the 5 beyond-material tune modes against the same training data
+        working-directory: build
+        run: |
+          set -euo pipefail
+          for mode in mobility space threats king-safety pawns; do
+            echo "== nightwing_tune --$mode: ${{ inputs.tune_iterations }} iterations =="
+            ./src/nightwing_tune "--$mode" "${{ inputs.tune_iterations }}" \
+              < training_data.txt > "tuned_${mode//-/_}.txt" 2> "tuned_${mode//-/_}_stderr.txt"
+            cat "tuned_${mode//-/_}.txt"
+            tail -20 "tuned_${mode//-/_}_stderr.txt"
+          done
+
       - name: Upload pipeline artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -254,6 +281,16 @@ jobs:
             build/training_data.txt
             build/tuned_weights.txt
             build/match_result.txt
+            build/tuned_mobility.txt
+            build/tuned_mobility_stderr.txt
+            build/tuned_space.txt
+            build/tuned_space_stderr.txt
+            build/tuned_threats.txt
+            build/tuned_threats_stderr.txt
+            build/tuned_king_safety.txt
+            build/tuned_king_safety_stderr.txt
+            build/tuned_pawns.txt
+            build/tuned_pawns_stderr.txt
           retention-days: 30
 
   # ROADMAP.md Phase 8's "PGO build pipeline" item. Manually triggered
