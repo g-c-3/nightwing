@@ -1014,4 +1014,109 @@ struct PsqtTuneResult {
                                             eval::default_psqt_weights(),
                                         const TuneConfig& config = {});
 
+// ---------------------------------------------------------------------
+// ROADMAP.md "Generalize tune() to the 5 remaining 'beyond PSQT'
+// tables (mobility/space/threats/king-safety/pawns)" — corrects the
+// prior "materially larger self-play corpus" framing (docs/DECISIONS.md,
+// 2026-09-21 (2)): compute_loss() above already accepts all 5 of these
+// as optional overrides (each wired in independently across Tier 0
+// Steps 7/8a/8b), but nothing before this section ever walked their
+// own kMobilityParameters/kSpaceParameters/kThreatsParameters/
+// kKingSafetyParameters/kPawnsParameters tables to actually tune them.
+//
+// DESIGN CHOICE (left explicitly open by 2026-09-21 (2)'s own
+// "Alternatives considered" — settled here): a family of five named
+// entry points (tune_mobility()/tune_space()/tune_threats()/
+// tune_king_safety()/tune_pawns()), mirroring tune_psqt()'s own
+// existing "one named function per term" precedent, rather than a
+// single runtime-selectable `tune<Weights>()`. All five are thin
+// wrappers around one shared template helper (tune_term(), tune.cpp's
+// own anonymous namespace) that runs finite-difference gradient
+// descent generically over any `ParameterRef<Weights>` table — the
+// same `2N+1`-compute_loss()-calls-per-iteration algorithm tune()'s
+// own kMaterialParameters loop already uses, generalized rather than
+// reimplemented five times. Unlike PSQT (Tier 0 Step 6's tune_psqt()),
+// none of these five terms is anywhere near PSQT's 768-parameter scale
+// (the largest, pawns, has 59 entries) — see docs/DECISIONS.md,
+// 2026-09-21 (2), for the full rationale on why finite-difference (not
+// a second analytic-gradient effort) is the right approach here, not
+// just a placeholder until something better is built.
+//
+// Every one of the five tables (kMobilityParameters/kSpaceParameters/
+// kThreatsParameters/kKingSafetyParameters/kPawnsParameters, tune.h
+// above) has `anchored = false` on every entry today (each table's own
+// doc comment already says so — none of these five terms shares
+// material's specific multiplicative flat-scaling degeneracy that
+// kMaterialParameters' own pawn_mg/pawn_eg anchoring exists to fix).
+// tune_term() below does NOT special-case an `anchored` field at all,
+// unlike tune()'s own kMaterialParameters loop — adding untested,
+// never-exercised anchoring logic for a case that doesn't currently
+// occur would be speculative code, not a real requirement; a future
+// table that DOES need an anchored entry would need this revisited,
+// flagged here rather than silently assumed away.
+// ---------------------------------------------------------------------
+
+/// Result of one tune_mobility()/tune_space()/tune_threats()/
+/// tune_king_safety()/tune_pawns() call — same shape as TuneResult/
+/// PsqtTuneResult above, templated over `Weights` so one struct serves
+/// all five terms instead of five copy-pasted ones.
+template <typename Weights>
+struct TermTuneResult {
+    Weights weights;
+    double initial_loss = 0.0;
+    double final_loss = 0.0;
+    std::vector<TuneIteration> history;
+};
+
+/// Finite-difference-tunes `initial_weights` (MobilityWeights, this
+/// term's own struct — eval/mobility.h) against `positions`, holding
+/// `material_weights` fixed for the whole run — same "tune one term,
+/// hold the others at their current value" convention tune_psqt()
+/// already established for PSQT. Internally: tune.cpp's own generic
+/// tune_term() helper, instantiated over kMobilityParameters.
+///
+/// Precondition: same as compute_loss()'s own.
+[[nodiscard]] TermTuneResult<eval::MobilityWeights>
+tune_mobility(const std::vector<SelfPlayPosition>& positions,
+              const eval::MaterialWeights& material_weights,
+              const eval::MobilityWeights& initial_weights = eval::default_mobility_weights(),
+              const TuneConfig& config = {});
+
+/// The space-term counterpart to tune_mobility() above — see that
+/// function's own doc comment for the full convention. Internally:
+/// tune_term() instantiated over kSpaceParameters.
+[[nodiscard]] TermTuneResult<eval::SpaceWeights>
+tune_space(const std::vector<SelfPlayPosition>& positions,
+           const eval::MaterialWeights& material_weights,
+           const eval::SpaceWeights& initial_weights = eval::default_space_weights(),
+           const TuneConfig& config = {});
+
+/// The threats-term counterpart to tune_mobility() above — see that
+/// function's own doc comment for the full convention. Internally:
+/// tune_term() instantiated over kThreatsParameters.
+[[nodiscard]] TermTuneResult<eval::ThreatsWeights>
+tune_threats(const std::vector<SelfPlayPosition>& positions,
+             const eval::MaterialWeights& material_weights,
+             const eval::ThreatsWeights& initial_weights = eval::default_threats_weights(),
+             const TuneConfig& config = {});
+
+/// The king-safety-term counterpart to tune_mobility() above — see
+/// that function's own doc comment for the full convention.
+/// Internally: tune_term() instantiated over kKingSafetyParameters.
+[[nodiscard]] TermTuneResult<eval::KingSafetyWeights>
+tune_king_safety(const std::vector<SelfPlayPosition>& positions,
+                  const eval::MaterialWeights& material_weights,
+                  const eval::KingSafetyWeights& initial_weights =
+                      eval::default_king_safety_weights(),
+                  const TuneConfig& config = {});
+
+/// The pawn-structure-term counterpart to tune_mobility() above — see
+/// that function's own doc comment for the full convention.
+/// Internally: tune_term() instantiated over kPawnsParameters.
+[[nodiscard]] TermTuneResult<eval::PawnsWeights>
+tune_pawns(const std::vector<SelfPlayPosition>& positions,
+           const eval::MaterialWeights& material_weights,
+           const eval::PawnsWeights& initial_weights = eval::default_pawns_weights(),
+           const TuneConfig& config = {});
+
 } // namespace nightwing::tuner

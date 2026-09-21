@@ -339,4 +339,144 @@ PsqtTuneResult tune_psqt(const std::vector<SelfPlayPosition>& positions,
     return result;
 }
 
+namespace {
+
+// One tiny overload per "beyond PSQT" Weights type, each forwarding to
+// compute_loss()'s own correctly-named optional slot — lets tune_term()
+// below call `compute_loss_for(positions, material_weights,
+// sigmoid_scale, result.weights)` generically, via ordinary overload
+// resolution on `w`'s static type, instead of tune_term() itself
+// needing to know which of compute_loss()'s six trailing pointer
+// parameters corresponds to any given `Weights` template argument.
+double compute_loss_for(const std::vector<SelfPlayPosition>& positions,
+                         const eval::MaterialWeights& material_weights, double sigmoid_scale,
+                         const eval::MobilityWeights& w) noexcept {
+    return compute_loss(positions, material_weights, sigmoid_scale, /*psqt_weights=*/nullptr, &w);
+}
+
+double compute_loss_for(const std::vector<SelfPlayPosition>& positions,
+                         const eval::MaterialWeights& material_weights, double sigmoid_scale,
+                         const eval::SpaceWeights& w) noexcept {
+    return compute_loss(positions, material_weights, sigmoid_scale, /*psqt_weights=*/nullptr,
+                         /*mobility_weights=*/nullptr, &w);
+}
+
+double compute_loss_for(const std::vector<SelfPlayPosition>& positions,
+                         const eval::MaterialWeights& material_weights, double sigmoid_scale,
+                         const eval::ThreatsWeights& w) noexcept {
+    return compute_loss(positions, material_weights, sigmoid_scale, /*psqt_weights=*/nullptr,
+                         /*mobility_weights=*/nullptr, /*space_weights=*/nullptr, &w);
+}
+
+double compute_loss_for(const std::vector<SelfPlayPosition>& positions,
+                         const eval::MaterialWeights& material_weights, double sigmoid_scale,
+                         const eval::KingSafetyWeights& w) noexcept {
+    return compute_loss(positions, material_weights, sigmoid_scale, /*psqt_weights=*/nullptr,
+                         /*mobility_weights=*/nullptr, /*space_weights=*/nullptr,
+                         /*threats_weights=*/nullptr, &w);
+}
+
+double compute_loss_for(const std::vector<SelfPlayPosition>& positions,
+                         const eval::MaterialWeights& material_weights, double sigmoid_scale,
+                         const eval::PawnsWeights& w) noexcept {
+    return compute_loss(positions, material_weights, sigmoid_scale, /*psqt_weights=*/nullptr,
+                         /*mobility_weights=*/nullptr, /*space_weights=*/nullptr,
+                         /*threats_weights=*/nullptr, /*king_safety_weights=*/nullptr, &w);
+}
+
+// Shared implementation behind tune_mobility()/tune_space()/
+// tune_threats()/tune_king_safety()/tune_pawns() (tune.h) — the exact
+// same finite-difference gradient-descent shape tune()'s own
+// kMaterialParameters loop above uses (full-batch numerical gradient,
+// simultaneous parameter update, TuneConfig::l2_lambda's analytic
+// gradient contribution added the same way), generalized over `Weights`
+// via `params` and `compute_loss_for()`'s overload set above instead of
+// being hand-copied once per term. See tune.h's own "Generalize tune()"
+// section header comment for why no `anchored` field is special-cased
+// here, unlike tune()'s own loop.
+template <typename Weights, std::size_t N>
+TermTuneResult<Weights> tune_term(const std::vector<SelfPlayPosition>& positions,
+                                   const eval::MaterialWeights& material_weights,
+                                   const std::array<ParameterRef<Weights>, N>& params,
+                                   const Weights& initial_weights, const TuneConfig& config) {
+    TermTuneResult<Weights> result;
+    result.weights = initial_weights;
+    result.initial_loss =
+        compute_loss_for(positions, material_weights, config.sigmoid_scale, result.weights) +
+        l2_penalty(params, result.weights, config.l2_lambda);
+    result.history.push_back(TuneIteration{0, result.initial_loss});
+
+    std::array<double, N> gradient{};
+
+    for (int iteration = 1; iteration <= config.iterations; ++iteration) {
+        for (std::size_t i = 0; i < N; ++i) {
+            const ParameterRef<Weights>& param = params[i];
+            const double original = param.get(result.weights);
+
+            param.set(result.weights, original + config.finite_diff_epsilon);
+            const double loss_plus =
+                compute_loss_for(positions, material_weights, config.sigmoid_scale, result.weights);
+
+            param.set(result.weights, original - config.finite_diff_epsilon);
+            const double loss_minus =
+                compute_loss_for(positions, material_weights, config.sigmoid_scale, result.weights);
+
+            param.set(result.weights, original); // restore before the next parameter's probe
+            gradient[i] = (loss_plus - loss_minus) / (2.0 * config.finite_diff_epsilon);
+            gradient[i] += 2.0 * config.l2_lambda * original;
+        }
+
+        for (std::size_t i = 0; i < N; ++i) {
+            const ParameterRef<Weights>& param = params[i];
+            param.set(result.weights,
+                      param.get(result.weights) - config.learning_rate * gradient[i]);
+        }
+
+        const double loss_after_step =
+            compute_loss_for(positions, material_weights, config.sigmoid_scale, result.weights) +
+            l2_penalty(params, result.weights, config.l2_lambda);
+        result.history.push_back(TuneIteration{iteration, loss_after_step});
+    }
+
+    result.final_loss = result.history.back().loss;
+    return result;
+}
+
+} // namespace
+
+TermTuneResult<eval::MobilityWeights>
+tune_mobility(const std::vector<SelfPlayPosition>& positions,
+              const eval::MaterialWeights& material_weights,
+              const eval::MobilityWeights& initial_weights, const TuneConfig& config) {
+    return tune_term(positions, material_weights, kMobilityParameters, initial_weights, config);
+}
+
+TermTuneResult<eval::SpaceWeights> tune_space(const std::vector<SelfPlayPosition>& positions,
+                                               const eval::MaterialWeights& material_weights,
+                                               const eval::SpaceWeights& initial_weights,
+                                               const TuneConfig& config) {
+    return tune_term(positions, material_weights, kSpaceParameters, initial_weights, config);
+}
+
+TermTuneResult<eval::ThreatsWeights>
+tune_threats(const std::vector<SelfPlayPosition>& positions,
+             const eval::MaterialWeights& material_weights,
+             const eval::ThreatsWeights& initial_weights, const TuneConfig& config) {
+    return tune_term(positions, material_weights, kThreatsParameters, initial_weights, config);
+}
+
+TermTuneResult<eval::KingSafetyWeights>
+tune_king_safety(const std::vector<SelfPlayPosition>& positions,
+                  const eval::MaterialWeights& material_weights,
+                  const eval::KingSafetyWeights& initial_weights, const TuneConfig& config) {
+    return tune_term(positions, material_weights, kKingSafetyParameters, initial_weights, config);
+}
+
+TermTuneResult<eval::PawnsWeights> tune_pawns(const std::vector<SelfPlayPosition>& positions,
+                                               const eval::MaterialWeights& material_weights,
+                                               const eval::PawnsWeights& initial_weights,
+                                               const TuneConfig& config) {
+    return tune_term(positions, material_weights, kPawnsParameters, initial_weights, config);
+}
+
 } // namespace nightwing::tuner

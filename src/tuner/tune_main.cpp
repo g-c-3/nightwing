@@ -19,6 +19,27 @@
 //   nightwing_selfplay 200 1 4 8 200 > training_data.txt
 //   nightwing_tune < training_data.txt
 //   nightwing_tune --psqt < training_data.txt
+//   nightwing_tune --mobility < training_data.txt
+//   nightwing_tune --space < training_data.txt
+//   nightwing_tune --threats < training_data.txt
+//   nightwing_tune --king-safety < training_data.txt
+//   nightwing_tune --pawns < training_data.txt
+//
+// The five new "--term" modes (ROADMAP.md's "Generalize tune() to the 5
+// remaining 'beyond PSQT' tables" item — docs/DECISIONS.md, 2026-09-21
+// (2), corrects the earlier "materially larger self-play corpus"
+// framing) each run tuner::tune_mobility()/tune_space()/tune_threats()/
+// tune_king_safety()/tune_pawns() (tuner/tune.h) starting from that
+// term's own eval::default_XXX_weights(), holding material fixed at
+// eval::default_material_weights() — same "tune one term, hold the
+// others fixed" convention --psqt already established. Same positional
+// argument slots as material/--psqt mode (this file's own comment
+// below has the shared parsing rationale); output is a flat
+// name=value list (this mode's own print_term_weights() below), not
+// --psqt's 8x8-grid format — none of these five tables has PSQT's
+// per-square dimension, so kMobilityParameters/kSpaceParameters/
+// kThreatsParameters/kKingSafetyParameters/kPawnsParameters' own
+// `name` fields (tune.h) are already exactly the right output labels.
 //
 // MATERIAL MODE (default) -- every argument optional and positional, in
 // this order (mirroring TuneConfig's own fields, selfplay_main.cpp's own
@@ -104,6 +125,26 @@ void print_psqt_field(const char* name, const std::array<double, 64>& values) {
     }
 }
 
+/// Shared output for every "--term" mode below (mobility/space/threats/
+/// king-safety/pawns) — one `name=value` line per entry in `params`
+/// (kMobilityParameters/etc., tuner/tune.h), read out of `weights` via
+/// each entry's own get(). Unlike print_psqt_field() above, none of
+/// these five tables has a per-square dimension to lay out as a grid,
+/// so `params[i].name` is already exactly the right label — this is
+/// deliberately generic over `Weights` (a template, not five copy-
+/// pasted printers) the same way tuner::tune_term() (tune.cpp) is
+/// generic over the tuning loop itself. Printed to stdout, matching
+/// material mode's own stdout-only convention (see this file's header
+/// comment) so a caller can redirect stdout alone to a file and get
+/// exactly the tuned values, nothing else mixed in.
+template <typename Weights, std::size_t N>
+void print_term_weights(const std::array<nightwing::tuner::ParameterRef<Weights>, N>& params,
+                         const Weights& weights) {
+    for (const nightwing::tuner::ParameterRef<Weights>& param : params) {
+        std::cout << param.name << "=" << param.get(weights) << "\n";
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -111,17 +152,35 @@ int main(int argc, char** argv) {
     nightwing::board::init_magic_bitboards();
     nightwing::board::init_zobrist_keys();
 
-    // --psqt, if present, must be the very first argument -- every
-    // positional argument after it (iterations, learning_rate, ...)
-    // keeps the exact same slot it has in material mode, so switching
-    // modes never requires renumbering the rest of the command line
-    // (this file's own header comment).
-    bool psqt_mode = false;
+    // --psqt/--mobility/--space/--threats/--king-safety/--pawns, if
+    // present, must be the very first argument -- every positional
+    // argument after it (iterations, learning_rate, ...) keeps the
+    // exact same slot it has in material mode, so switching modes
+    // never requires renumbering the rest of the command line (this
+    // file's own header comment).
+    enum class Mode { Material, Psqt, Mobility, Space, Threats, KingSafety, Pawns };
+    Mode mode = Mode::Material;
     int arg_offset = 1;
     if (argc > 1 && std::strcmp(argv[1], "--psqt") == 0) {
-        psqt_mode = true;
+        mode = Mode::Psqt;
+        arg_offset = 2;
+    } else if (argc > 1 && std::strcmp(argv[1], "--mobility") == 0) {
+        mode = Mode::Mobility;
+        arg_offset = 2;
+    } else if (argc > 1 && std::strcmp(argv[1], "--space") == 0) {
+        mode = Mode::Space;
+        arg_offset = 2;
+    } else if (argc > 1 && std::strcmp(argv[1], "--threats") == 0) {
+        mode = Mode::Threats;
+        arg_offset = 2;
+    } else if (argc > 1 && std::strcmp(argv[1], "--king-safety") == 0) {
+        mode = Mode::KingSafety;
+        arg_offset = 2;
+    } else if (argc > 1 && std::strcmp(argv[1], "--pawns") == 0) {
+        mode = Mode::Pawns;
         arg_offset = 2;
     }
+    const bool psqt_mode = (mode == Mode::Psqt);
 
     nightwing::tuner::TuneConfig config;
     if (psqt_mode) {
@@ -136,6 +195,21 @@ int main(int argc, char** argv) {
         // gets a chance to override it again in turn.
         config.learning_rate = 100.0;
     }
+    // The five --mobility/--space/--threats/--king-safety/--pawns modes
+    // deliberately do NOT override learning_rate the way --psqt does
+    // above: unlike tune_psqt()'s analytic gradient (a different
+    // algorithm with its own, separately-measured scale), tune_mobility()/
+    // etc. all use the exact same finite-difference probe (same
+    // finite_diff_epsilon default) tune()'s own material mode does, so
+    // TuneConfig's own default learning_rate (20000.0) is the same
+    // starting point that's already known to work for a finite-
+    // difference gradient at this general centipawn scale -- not a
+    // guess, but also not independently re-measured against these five
+    // terms' own real production data yet (this session's own scope:
+    // make the run possible and correct, not claim its hyperparameters
+    // are already tuned for a real corpus -- same honesty convention
+    // --psqt's own introducing session already established, tune.h's
+    // TuneConfig::iterations/learning_rate doc comments).
 
     if (argc > arg_offset) {
         config.iterations = std::atoi(argv[arg_offset]);
@@ -170,25 +244,45 @@ int main(int argc, char** argv) {
                       1.0 / (2.0 * config.learning_rate));
     }
 
+    const char* mode_name = "material";
+    switch (mode) {
+        case Mode::Material: mode_name = "material"; break;
+        case Mode::Psqt: mode_name = "psqt"; break;
+        case Mode::Mobility: mode_name = "mobility"; break;
+        case Mode::Space: mode_name = "space"; break;
+        case Mode::Threats: mode_name = "threats"; break;
+        case Mode::KingSafety: mode_name = "king-safety"; break;
+        case Mode::Pawns: mode_name = "pawns"; break;
+    }
+
     const std::vector<nightwing::tuner::SelfPlayPosition> positions =
         nightwing::tuner::read_training_data(std::cin);
 
     std::fprintf(stderr,
                   "Nightwing tune: mode=%s, %zu training positions, iterations=%d, "
                   "learning_rate=%g, finite_diff_epsilon=%g, sigmoid_scale=%g, l2_lambda=%g\n",
-                  psqt_mode ? "psqt" : "material", positions.size(), config.iterations,
-                  config.learning_rate, config.finite_diff_epsilon, config.sigmoid_scale,
-                  config.l2_lambda);
-    if (!psqt_mode) {
+                  mode_name, positions.size(), config.iterations, config.learning_rate,
+                  config.finite_diff_epsilon, config.sigmoid_scale, config.l2_lambda);
+    if (mode == Mode::Material) {
         std::fprintf(
             stderr,
             "pawn_mg/pawn_eg are anchored (kMaterialParameters, tuner/tune.h) -- they will "
             "stay fixed at their starting value for this whole run.\n");
-    } else {
+    } else if (mode == Mode::Psqt) {
         std::fprintf(stderr,
                       "Material held fixed at eval::default_material_weights() for this whole "
                       "run (tune_psqt() does not co-tune material -- tune.h's own doc comment). "
                       "No PsqtWeights field is anchored.\n");
+    } else {
+        // The five term modes (mobility/space/threats/king-safety/pawns)
+        // all share this same convention -- see tune.h's own
+        // "Generalize tune()" section header comment for why none of
+        // their own kXxxParameters tables has an anchored entry today.
+        std::fprintf(stderr,
+                      "Material held fixed at eval::default_material_weights() for this whole "
+                      "run (tune_%s() does not co-tune material, same convention as tune_psqt() "
+                      "-- tune.h's own doc comment). No %s field is anchored.\n",
+                      mode_name, mode_name);
     }
 
     if (positions.empty()) {
@@ -231,6 +325,90 @@ int main(int argc, char** argv) {
         print_psqt_field("queen_eg", result.weights.queen_eg);
         print_psqt_field("king_mg", result.weights.king_mg);
         print_psqt_field("king_eg", result.weights.king_eg);
+        return 0;
+    }
+
+    // The five term modes below all follow the identical shape: hold
+    // material fixed at its own compiled-in defaults, tune this one
+    // term's own Weights struct starting from ITS compiled-in defaults,
+    // print the loss history to stderr, print `name=value` per tunable
+    // field (print_term_weights() above) to stdout. Each is a thin
+    // wrapper around its own tuner::tune_XXX() (tune.h) -- the mode
+    // dispatch here is the only place this file's own logic differs
+    // between the five.
+    if (mode == Mode::Mobility) {
+        const nightwing::eval::MaterialWeights material_weights =
+            nightwing::eval::default_material_weights();
+        const nightwing::tuner::TermTuneResult<nightwing::eval::MobilityWeights> result =
+            nightwing::tuner::tune_mobility(positions, material_weights,
+                                             nightwing::eval::default_mobility_weights(), config);
+        std::fprintf(stderr, "Initial loss: %.6f\nFinal loss:   %.6f\n", result.initial_loss,
+                      result.final_loss);
+        std::fprintf(stderr, "Loss history (iteration, loss):\n");
+        for (const nightwing::tuner::TuneIteration& step : result.history) {
+            std::fprintf(stderr, "  %4d  %.6f\n", step.iteration, step.loss);
+        }
+        print_term_weights(nightwing::tuner::kMobilityParameters, result.weights);
+        return 0;
+    }
+    if (mode == Mode::Space) {
+        const nightwing::eval::MaterialWeights material_weights =
+            nightwing::eval::default_material_weights();
+        const nightwing::tuner::TermTuneResult<nightwing::eval::SpaceWeights> result =
+            nightwing::tuner::tune_space(positions, material_weights,
+                                          nightwing::eval::default_space_weights(), config);
+        std::fprintf(stderr, "Initial loss: %.6f\nFinal loss:   %.6f\n", result.initial_loss,
+                      result.final_loss);
+        std::fprintf(stderr, "Loss history (iteration, loss):\n");
+        for (const nightwing::tuner::TuneIteration& step : result.history) {
+            std::fprintf(stderr, "  %4d  %.6f\n", step.iteration, step.loss);
+        }
+        print_term_weights(nightwing::tuner::kSpaceParameters, result.weights);
+        return 0;
+    }
+    if (mode == Mode::Threats) {
+        const nightwing::eval::MaterialWeights material_weights =
+            nightwing::eval::default_material_weights();
+        const nightwing::tuner::TermTuneResult<nightwing::eval::ThreatsWeights> result =
+            nightwing::tuner::tune_threats(positions, material_weights,
+                                            nightwing::eval::default_threats_weights(), config);
+        std::fprintf(stderr, "Initial loss: %.6f\nFinal loss:   %.6f\n", result.initial_loss,
+                      result.final_loss);
+        std::fprintf(stderr, "Loss history (iteration, loss):\n");
+        for (const nightwing::tuner::TuneIteration& step : result.history) {
+            std::fprintf(stderr, "  %4d  %.6f\n", step.iteration, step.loss);
+        }
+        print_term_weights(nightwing::tuner::kThreatsParameters, result.weights);
+        return 0;
+    }
+    if (mode == Mode::KingSafety) {
+        const nightwing::eval::MaterialWeights material_weights =
+            nightwing::eval::default_material_weights();
+        const nightwing::tuner::TermTuneResult<nightwing::eval::KingSafetyWeights> result =
+            nightwing::tuner::tune_king_safety(
+                positions, material_weights, nightwing::eval::default_king_safety_weights(), config);
+        std::fprintf(stderr, "Initial loss: %.6f\nFinal loss:   %.6f\n", result.initial_loss,
+                      result.final_loss);
+        std::fprintf(stderr, "Loss history (iteration, loss):\n");
+        for (const nightwing::tuner::TuneIteration& step : result.history) {
+            std::fprintf(stderr, "  %4d  %.6f\n", step.iteration, step.loss);
+        }
+        print_term_weights(nightwing::tuner::kKingSafetyParameters, result.weights);
+        return 0;
+    }
+    if (mode == Mode::Pawns) {
+        const nightwing::eval::MaterialWeights material_weights =
+            nightwing::eval::default_material_weights();
+        const nightwing::tuner::TermTuneResult<nightwing::eval::PawnsWeights> result =
+            nightwing::tuner::tune_pawns(positions, material_weights,
+                                          nightwing::eval::default_pawns_weights(), config);
+        std::fprintf(stderr, "Initial loss: %.6f\nFinal loss:   %.6f\n", result.initial_loss,
+                      result.final_loss);
+        std::fprintf(stderr, "Loss history (iteration, loss):\n");
+        for (const nightwing::tuner::TuneIteration& step : result.history) {
+            std::fprintf(stderr, "  %4d  %.6f\n", step.iteration, step.loss);
+        }
+        print_term_weights(nightwing::tuner::kPawnsParameters, result.weights);
         return 0;
     }
 
