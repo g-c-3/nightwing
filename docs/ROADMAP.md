@@ -1246,8 +1246,11 @@ Priority Fixes section above).
     - [x] "A materially larger self-play corpus" and "mandatory
           SPRT-gating before any tuned values are committed" (this
           item's own original intro text, docs/DECISIONS.md, 2026-09-08
-          (2)) — the SPRT-gating half is now addressed; the corpus-size
-          half remains open, tracked as its own item immediately below.
+          (2)) — the SPRT-gating half is now addressed. The corpus-size
+          half's own item, immediately below, was corrected/rescoped by
+          Session 119 (docs/DECISIONS.md has the full account) — it
+          turned out NOT to be the actual remaining blocker; see that
+          item's own text for what is.
           Session 113's own correction entry claimed "mandatory
           SPRT-gating" specifically could already be done with this
           repo's existing `nightwing_sprt`/`play_match()` tooling;
@@ -1299,11 +1302,50 @@ Priority Fixes section above).
           this session, not compiled-in-isolation guesswork — full
           existing suite plus the 2 new cases green (668 test cases, 0
           failures).
-    - [ ] "A materially larger self-play corpus" (the corpus-size half
-          of the item above, now split out on its own since the SPRT-
-          gating half it was originally paired with is done) — still
-          entirely unaddressed; scope not yet defined beyond the
-          original intro text (docs/DECISIONS.md, 2026-09-08 (2)).
+    - [ ] **Generalize `tune()` to the 5 remaining "beyond PSQT" tables
+          (mobility/space/threats/king-safety/pawns)** — corrected/
+          rescoped by Session 119 from this item's own prior text
+          ("A materially larger self-play corpus"), which
+          mischaracterized what's actually still blocking a real tuning
+          run for these 5 terms. Checked `tune.cpp`/`tune_main.cpp`
+          directly rather than assuming from ROADMAP wording alone:
+          `compute_loss()` already accepts all 7 `Weights` types as
+          optional overrides (Tier 0 Steps 4/7/8a/8b each wired their
+          own term through to it independently), but `tune()`'s own
+          finite-difference gradient-descent loop still only
+          enumerates/updates `kMaterialParameters` — none of
+          `kMobilityParameters`/`kSpaceParameters`/`kThreatsParameters`/
+          `kKingSafetyParameters`/`kPawnsParameters` is ever walked by
+          it, so no corpus of any size can currently train any of these
+          5 terms. PSQT is a separate case, already addressed: Tier 0
+          Step 6 built `tune_psqt()`, an analytic-gradient path
+          specifically for PSQT's 768-parameter space (scoped that way
+          because PSQT's contribution to `evaluate()` is exactly linear
+          in each table entry, docs/DECISIONS.md 2026-09-08 (2) —
+          confirmed WIRED into `tune_main.cpp` via its `--psqt` flag,
+          contrary to an earlier, now-stale DECISIONS.md note claiming
+          it wasn't referenced there). The 5 remaining terms are each a
+          much smaller parameter count than PSQT (8-50ish scalars
+          apiece, not 768), so the design doc's own analytic-gradient
+          rationale for PSQT (justified specifically by that scale)
+          doesn't apply here — the natural path is generalizing
+          `tune()`'s EXISTING finite-difference loop (already generic
+          over `ParameterRef<Weights>` as a template, just hardcoded to
+          one table) to also drive the other 5, the same
+          finite-difference approach material tuning already uses
+          successfully, not a second analytic-gradient effort. Once
+          that exists, whether the existing 5000-game self-play corpus
+          size (already used twice for material, Sessions 61/62) is
+          adequate for these 5 modest-sized tables, or genuinely needs
+          to be larger, becomes an answerable empirical question rather
+          than a guess — not decided here, since there is nothing yet
+          to test it against.
+    - [ ] A materially larger self-play corpus, if the item just above
+          demonstrates the existing 5000-game size is inadequate once
+          there's something new to actually train against it — not
+          scoped further than that pending that finding; NOT to be
+          conflated with the already-closed material-only corpus work
+          (Sessions 61/62, docs/DECISIONS.md 2026-08-31 (1)/(2)/(3)).
 
 ## Priority Fixes (external code review, 2026-09-17)
 

@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+### Session 119 — 2026-09-21 (2) — Correction: Session 118's "materially larger self-play corpus" framing was wrong — `tune()` doesn't consume 5 of the 7 tunable `Weights` tables at all yet
+
+Picked up Session 118's own handoff verbatim ("the corpus-size half of the item just closed... has no defined scope yet"). Before proposing a concrete corpus size, re-read `docs/DECISIONS.md` in full for prior self-play/tuning-pipeline history rather than assuming none existed — found that a real large-scale production run (5000 self-play games, 200 tune iterations, 400 match games) already happened twice (Sessions 61/62), for material weights only, with the tuned result coming out statistically indistinguishable from the hand-set defaults (Phase 5 closed keeping the defaults, docs/DECISIONS.md 2026-08-31 (1)/(2)/(3)) — directly contradicting the implicit premise that a fresh 5000-game run was needed.
+
+That finding by itself only showed the *proposed number* was redundant, not that the ROADMAP item itself was mis-scoped. Checked further, reading `tune.h`/`tune.cpp`/`tune_main.cpp` directly rather than trusting either file's own header comments in isolation: `tune()`'s finite-difference gradient-descent loop still only enumerates `kMaterialParameters` — none of `kMobilityParameters`/`kSpaceParameters`/`kThreatsParameters`/`kKingSafetyParameters`/`kPawnsParameters` (each independently built and tested across Tier 0 Steps 7/8a/8b) is ever walked by it, so no self-play corpus, of any size, could currently train any of those 5 terms. Separately confirmed PSQT is NOT in the same boat — Tier 0 Step 6's `tune_psqt()` (an analytic-gradient path, justified by PSQT's 768-parameter scale) is wired into `tune_main.cpp` via a `--psqt` flag, correcting an unrelated stale note elsewhere in DECISIONS.md claiming it wasn't referenced there.
+
+**Decision:** corrected ROADMAP.md's item in place — "A materially larger self-play corpus" replaced with the actual next task (generalizing `tune()`'s existing finite-difference loop, already generic over `ParameterRef<Weights>` as a template, to also drive the 5 non-PSQT tables), with corpus size re-added below it as an explicitly conditional, not-yet-relevant follow-up. Full reasoning, including why finite-difference (not a second analytic-gradient effort like PSQT's) is the right approach for these 5 smaller-parameter-count terms, logged in `docs/DECISIONS.md`, 2026-09-21 (2).
+
+**Files changed:** `docs/ROADMAP.md` (item corrected/rescoped, including fixing a stale forward-reference in the immediately-preceding checked item), `docs/DECISIONS.md` (new entry), `docs/SESSIONS.md` (this entry). No source or test files touched — this was a scoping correction only, following Session 117's own precedent of correcting a stale claim rather than rushing an implementation on top of a wrong premise. No build/test run was needed or performed.
+
+**Next session starts:** implement the actual generalization — extend `tune()` (or build table-specific entry points mirroring `tune_psqt()`'s own precedent, a real design choice not yet settled) to walk `kMobilityParameters`/`kSpaceParameters`/`kThreatsParameters`/`kKingSafetyParameters`/`kPawnsParameters`, wire each into `tune_main.cpp`, and only then revisit whether the existing 5000-game corpus size is adequate for these smaller parameter sets.
+
+---
+
 ### Session 118 — 2026-09-21 — `eval::EvalWeightsOverride`: closing the gap Session 117 found — all 6 "beyond PSQT" `Weights` types now reach a real played game through `search_fixed_depth()`/`quiescence()`/`play_match()`
 
 Picked up Session 117's own scoped handoff verbatim: thread the 6 non-material `Weights` types (mobility/space/threats/king-safety/pawns/PSQT) through `search_fixed_depth()`/`negamax()`/`quiescence()` down to `eval::evaluate()`, then `MatchConfig`/`play_match()`, mirroring `material_weights`'s own existing precedent. Session 117 had explicitly left the design choice open between "one parameter per `Weights` type" (six separate insertions) and "some more compact way of passing all six/seven at once."
