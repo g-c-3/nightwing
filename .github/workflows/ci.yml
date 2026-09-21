@@ -299,11 +299,31 @@ jobs:
   tuning-pipeline-term:
     if: github.event_name == 'workflow_dispatch' && inputs.pipeline == 'tuning'
     runs-on: ubuntu-latest
-    name: Tuning pipeline, ${{ matrix.mode }} term (selfplay -> tune)
+    # `name:` is the string GitHub's own run-summary UI shows per matrix
+    # leg (the "Matrix: tuning-pipeline-term" list on the Actions run
+    # page) -- `matrix.label` (a small, explicit include-list below,
+    # NOT derived from `matrix.mode` via string manipulation, since
+    # GitHub Actions expressions have no built-in capitalize()) exists
+    # so that list reads as a short, unambiguous "Mobility"/"Space"/
+    # "Threats"/"King-safety"/"Pawns" rather than a long, mobile-UI-
+    # truncating "Tuning pipeline, king-saf..." this job's own name
+    # used before. `matrix.mode` (still the actual `--mode` value the
+    # step below passes to nightwing_tune) is unchanged.
+    name: ${{ matrix.label }}
     strategy:
       fail-fast: false
       matrix:
-        mode: [mobility, space, threats, king-safety, pawns]
+        include:
+          - mode: mobility
+            label: Mobility
+          - mode: space
+            label: Space
+          - mode: threats
+            label: Threats
+          - mode: king-safety
+            label: King-safety
+          - mode: pawns
+            label: Pawns
 
     steps:
       - name: Checkout
