@@ -85,6 +85,55 @@ namespace nightwing::eval {
 /// comment for why that mattered.
 [[nodiscard]] int compute_phase(const board::Position& pos) noexcept;
 
+/// Bundles pointers to all seven per-term weight overrides evaluate()
+/// accepts (MaterialWeights through PawnsWeights, each documented at
+/// evaluate()'s own matching parameter below) into a single struct, so
+/// a caller that needs to thread every one of them through several
+/// intermediate function signatures at once -- search_fixed_depth() ->
+/// negamax()/quiescence() -> evaluate(), or tuner::play_match()'s own
+/// per-side game loop -- can pass one pointer instead of seven. A
+/// default-constructed EvalWeightsOverride (every field left at its
+/// nullptr default), or a null EvalWeightsOverride* itself, is exactly
+/// equivalent to passing nullptr for every individual weight parameter
+/// evaluate() accepts -- any caller that never touches this type is
+/// completely unaffected.
+///
+/// This does NOT replace evaluate()'s own seven individual parameters
+/// (a caller unpacks this struct's fields at the evaluate() call site
+/// instead) -- changing evaluate()'s own signature to take this struct
+/// directly would break every one of its existing call sites a second
+/// time (each already updated once, across Sessions 104/114-116, when
+/// its own weight parameter was first added) for no behavioral benefit
+/// over adding this purely as an additive convenience type. See
+/// docs/DECISIONS.md, this struct's introducing entry (ROADMAP.md's
+/// Tier 0 "beyond PSQT" follow-up, ": correct a stale claim about
+/// SPRT-gating tooling supporting the six non-material Weights types),
+/// for the full account of why a bundling struct was chosen over
+/// threading six/seven individual new parameters through
+/// search_fixed_depth()/negamax()/quiescence()/tuner::play_match() one
+/// at a time the way each of the seven Weights types was originally
+/// threaded onto evaluate() itself.
+///
+/// `material` is included here for completeness/uniformity (so a
+/// caller building one full weight-vector bundle, e.g. a tuning tool
+/// iterating over "every term at once," has a single type covering all
+/// seven), but search.cpp/quiescence.cpp do NOT read it: those two
+/// files continue to thread `material_weights` as their own
+/// pre-existing, separately-named parameter (added long before this
+/// struct existed, with many existing call sites already wired to it)
+/// rather than being changed to read it out of this bundle instead --
+/// see search.h's own `eval_weights` parameter doc comment for exactly
+/// which six fields of this struct it actually forwards.
+struct EvalWeightsOverride {
+    const MaterialWeights* material = nullptr;
+    const PsqtWeights* psqt = nullptr;
+    const MobilityWeights* mobility = nullptr;
+    const SpaceWeights* space = nullptr;
+    const ThreatsWeights* threats = nullptr;
+    const KingSafetyWeights* king_safety = nullptr;
+    const PawnsWeights* pawns = nullptr;
+};
+
 /// Evaluates `pos` and returns a centipawn score from White's
 /// perspective: positive means White stands better, negative means
 /// Black stands better, 0 is balanced. Search code (Phase 2's alpha-beta,
