@@ -986,8 +986,9 @@ void handle_go(Position& pos, const std::vector<std::uint64_t>& game_history,
     const search::SearchResult result = search::search_iterative_deepening(
         pos, budget.max_depth, budget.time_limit_ms, game_history,
         [&out](const search::SearchResult& iteration_result) { emit_info(iteration_result, out); },
-        /*material_weights=*/nullptr, num_threads, /*external_stop=*/nullptr, hash_size_mb,
-        search_multi_pv, budget.soft_time_limit_ms, contempt_cp, &persistent_tt);
+        /*material_weights=*/nullptr, /*eval_weights=*/nullptr, num_threads,
+        /*external_stop=*/nullptr, hash_size_mb, search_multi_pv, budget.soft_time_limit_ms,
+        contempt_cp, &persistent_tt);
 
     // `search::pick_skill_move()` (search/skill.h): returns
     // `result.best_move` unchanged, drawing nothing from `skill_rng`,
@@ -1212,8 +1213,9 @@ void start_pondering(Position& pos, const std::vector<std::uint64_t>& game_histo
                                   stop_ptr, suppress_ptr, tt_ptr]() mutable {
         const search::SearchResult result = search::search_iterative_deepening(
             ponder_pos, kTimedSearchMaxDepth, /*time_limit_ms=*/0, ponder_history,
-            /*on_iteration=*/nullptr, /*material_weights=*/nullptr, num_threads, stop_ptr,
-            hash_size_mb, /*multi_pv=*/1, /*soft_time_limit_ms=*/0, /*contempt_cp=*/0, tt_ptr);
+            /*on_iteration=*/nullptr, /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
+            num_threads, stop_ptr, hash_size_mb, /*multi_pv=*/1, /*soft_time_limit_ms=*/0,
+            /*contempt_cp=*/0, tt_ptr);
         if (suppress_ptr->load(std::memory_order_relaxed)) {
             return;
         }
