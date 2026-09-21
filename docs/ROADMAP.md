@@ -1354,15 +1354,20 @@ Priority Fixes section above).
           material-side version of that same test — plus one "a
           consistent training signal reduces loss" test for
           `tune_mobility` specifically, modeled on the already-existing
-          material- and PSQT-side versions of that same test. Not
-          independently verified against a real `cmake`+`ctest` build in
-          this session (no C++ toolchain available in this session's own
-          environment) — every field name used was cross-checked
-          directly against `eval/mobility.h`/`space.h`/`threats.h`/
-          `king_safety.h`/`pawns.h`, and brace balance was checked
-          mechanically, but this is flagged here as real, unretired risk
-          until CI (or a build-capable session) confirms it — see
-          docs/SESSIONS.md's own entry for this session.
+          material- and PSQT-side versions of that same test. Reverified
+          against a real `cmake`+`ctest` build later in this session (a
+          build-capable environment turned out to be available after
+          all — `cmake` installed via `apt-get`, real repo tarball
+          downloaded, this session's 4 changed files dropped in): both
+          `nightwing_lib` and `nightwing_tune` compiled and linked
+          clean, CLI smoke tests of all 5 new modes matched the new
+          tests' own predictions exactly (zero-gradient on all-neutral
+          input, `knight_mg` moving up with loss monotonically
+          decreasing on a disagreeing mobility signal), and the full
+          suite passed green — 674 test cases, 691,106 assertions, 0
+          failures, including all 52 `[tuner][tune]`-tagged tests. See
+          docs/SESSIONS.md's own entry for this session for the full
+          verification detail.
     - [ ] Actually run `tune_mobility()`/`tune_space()`/`tune_threats()`/
           `tune_king_safety()`/`tune_pawns()` (the item just above)
           against real self-play data, and decide from that run's own
