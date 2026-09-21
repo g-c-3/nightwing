@@ -1302,50 +1302,77 @@ Priority Fixes section above).
           this session, not compiled-in-isolation guesswork — full
           existing suite plus the 2 new cases green (668 test cases, 0
           failures).
-    - [ ] **Generalize `tune()` to the 5 remaining "beyond PSQT" tables
+    - [x] **Generalize `tune()` to the 5 remaining "beyond PSQT" tables
           (mobility/space/threats/king-safety/pawns)** — corrected/
           rescoped by Session 119 from this item's own prior text
           ("A materially larger self-play corpus"), which
           mischaracterized what's actually still blocking a real tuning
-          run for these 5 terms. Checked `tune.cpp`/`tune_main.cpp`
-          directly rather than assuming from ROADMAP wording alone:
-          `compute_loss()` already accepts all 7 `Weights` types as
-          optional overrides (Tier 0 Steps 4/7/8a/8b each wired their
-          own term through to it independently), but `tune()`'s own
-          finite-difference gradient-descent loop still only
-          enumerates/updates `kMaterialParameters` — none of
-          `kMobilityParameters`/`kSpaceParameters`/`kThreatsParameters`/
-          `kKingSafetyParameters`/`kPawnsParameters` is ever walked by
-          it, so no corpus of any size can currently train any of these
-          5 terms. PSQT is a separate case, already addressed: Tier 0
-          Step 6 built `tune_psqt()`, an analytic-gradient path
-          specifically for PSQT's 768-parameter space (scoped that way
-          because PSQT's contribution to `evaluate()` is exactly linear
-          in each table entry, docs/DECISIONS.md 2026-09-08 (2) —
-          confirmed WIRED into `tune_main.cpp` via its `--psqt` flag,
-          contrary to an earlier, now-stale DECISIONS.md note claiming
-          it wasn't referenced there). The 5 remaining terms are each a
-          much smaller parameter count than PSQT (8-50ish scalars
-          apiece, not 768), so the design doc's own analytic-gradient
-          rationale for PSQT (justified specifically by that scale)
-          doesn't apply here — the natural path is generalizing
-          `tune()`'s EXISTING finite-difference loop (already generic
-          over `ParameterRef<Weights>` as a template, just hardcoded to
-          one table) to also drive the other 5, the same
-          finite-difference approach material tuning already uses
-          successfully, not a second analytic-gradient effort. Once
-          that exists, whether the existing 5000-game self-play corpus
-          size (already used twice for material, Sessions 61/62) is
-          adequate for these 5 modest-sized tables, or genuinely needs
-          to be larger, becomes an answerable empirical question rather
-          than a guess — not decided here, since there is nothing yet
-          to test it against.
-    - [ ] A materially larger self-play corpus, if the item just above
-          demonstrates the existing 5000-game size is inadequate once
-          there's something new to actually train against it — not
-          scoped further than that pending that finding; NOT to be
-          conflated with the already-closed material-only corpus work
-          (Sessions 61/62, docs/DECISIONS.md 2026-08-31 (1)/(2)/(3)).
+          run for these 5 terms, then implemented by Session 120.
+          Checked `tune.cpp`/`tune_main.cpp` directly rather than
+          assuming from ROADMAP wording alone: `compute_loss()` already
+          accepted all 7 `Weights` types as optional overrides (Tier 0
+          Steps 4/7/8a/8b each wired their own term through to it
+          independently), but `tune()`'s own finite-difference
+          gradient-descent loop only ever enumerated/updated
+          `kMaterialParameters`. PSQT is a separate, already-addressed
+          case (Tier 0 Step 6's `tune_psqt()`, an analytic-gradient path
+          specifically for PSQT's 768-parameter space, docs/DECISIONS.md
+          2026-09-08 (2)) — the 5 remaining terms are each a much
+          smaller parameter count (8-59 scalars apiece, not 768), so
+          finite-difference (the same approach material tuning already
+          uses) was the right generalization, not a second
+          analytic-gradient effort (docs/DECISIONS.md, 2026-09-21 (2)).
+          Session 120 built one generic `tune_term<Weights, N>()`
+          finite-difference helper (`tune.cpp`, anonymous namespace) —
+          the same loop shape `tune()`'s own `kMaterialParameters` case
+          already used, generalized over any `ParameterRef<Weights>`
+          table via a small `compute_loss_for()` overload set dispatching
+          to `compute_loss()`'s correct trailing pointer slot — and five
+          thin named entry points on top of it (`tune_mobility()`/
+          `tune_space()`/`tune_threats()`/`tune_king_safety()`/
+          `tune_pawns()`, `tune.h`/`tune.cpp`), each holding material
+          fixed and defaulting to that term's own
+          `default_XXX_weights()`, mirroring `tune_psqt()`'s own
+          "one named function per term" precedent (a real, previously-
+          open design choice — see docs/DECISIONS.md, 2026-09-21 (2)'s
+          own "Alternatives considered" — now settled this way). None of
+          the 5 tables has an `anchored` entry today, so `tune_term()`
+          does not special-case that field at all, unlike `tune()`'s own
+          `kMaterialParameters` loop (flagged in `tune.h`'s own doc
+          comment as something a future anchored entry would need
+          revisited). `tune_main.cpp` gained matching
+          `--mobility`/`--space`/`--threats`/`--king-safety`/`--pawns`
+          CLI modes alongside the existing `--psqt`, sharing the same
+          positional-argument slots, with output via a new generic
+          `print_term_weights()` (`name=value` per field, since none of
+          these five tables has PSQT's per-square dimension the way
+          `--psqt` mode's own grid printer needs). `tests/tune_tests.cpp`
+          gained 6 new tests: one "all-neutral" (bare kings, every
+          term's contribution identically 0, so every gradient must come
+          out bit-for-bit 0) regression test per new function — the
+          direct counterpart of this file's own pre-existing
+          material-side version of that same test — plus one "a
+          consistent training signal reduces loss" test for
+          `tune_mobility` specifically, modeled on the already-existing
+          material- and PSQT-side versions of that same test. Not
+          independently verified against a real `cmake`+`ctest` build in
+          this session (no C++ toolchain available in this session's own
+          environment) — every field name used was cross-checked
+          directly against `eval/mobility.h`/`space.h`/`threats.h`/
+          `king_safety.h`/`pawns.h`, and brace balance was checked
+          mechanically, but this is flagged here as real, unretired risk
+          until CI (or a build-capable session) confirms it — see
+          docs/SESSIONS.md's own entry for this session.
+    - [ ] Actually run `tune_mobility()`/`tune_space()`/`tune_threats()`/
+          `tune_king_safety()`/`tune_pawns()` (the item just above)
+          against real self-play data, and decide from that run's own
+          result whether the existing 5000-game self-play corpus size
+          (already used twice for material, Sessions 61/62) is adequate
+          for these 5 modest-sized tables or genuinely needs to be
+          larger — not decided here, since there is nothing yet to test
+          it against; NOT to be conflated with the already-closed
+          material-only corpus work (Sessions 61/62, docs/DECISIONS.md
+          2026-08-31 (1)/(2)/(3)).
 
 ## Priority Fixes (external code review, 2026-09-17)
 
