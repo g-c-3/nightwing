@@ -246,33 +246,6 @@ jobs:
             "${{ inputs.selfplay_max_plies }}" \
             < tuned_weights.txt | tee match_result.txt
 
-      # ROADMAP.md's "Actually run tune_mobility()/tune_space()/
-      # tune_threats()/tune_king_safety()/tune_pawns() against real
-      # self-play data" item — reuses the EXACT SAME training_data.txt
-      # the material run above just produced (one self-play corpus,
-      # six tuning runs against it: material plus these five), so the
-      # corpus-adequacy question ("is 5000 games enough for these
-      # smaller tables too?") is answered from the same data material
-      # tuning already uses, not a separately-generated, not-directly-
-      # comparable corpus. No nightwing_match counterpart for these five
-      # (tuner::match.h is deliberately scoped to eval::MaterialWeights
-      # only — its own header comment — generalizing it is a distinct,
-      # not-yet-scoped future item); this step's own loss-history output
-      # (nightwing_tune's own stderr, captured to each *_stderr.txt
-      # file below) is what a later session reads to judge convergence/
-      # corpus adequacy, per that ROADMAP item's own wording.
-      - name: Run the 5 beyond-material tune modes against the same training data
-        working-directory: build
-        run: |
-          set -euo pipefail
-          for mode in mobility space threats king-safety pawns; do
-            echo "== nightwing_tune --$mode: ${{ inputs.tune_iterations }} iterations =="
-            ./src/nightwing_tune "--$mode" "${{ inputs.tune_iterations }}" \
-              < training_data.txt > "tuned_${mode//-/_}.txt" 2> "tuned_${mode//-/_}_stderr.txt"
-            cat "tuned_${mode//-/_}.txt"
-            tail -20 "tuned_${mode//-/_}_stderr.txt"
-          done
-
       - name: Upload pipeline artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -281,16 +254,98 @@ jobs:
             build/training_data.txt
             build/tuned_weights.txt
             build/match_result.txt
-            build/tuned_mobility.txt
-            build/tuned_mobility_stderr.txt
-            build/tuned_space.txt
-            build/tuned_space_stderr.txt
-            build/tuned_threats.txt
-            build/tuned_threats_stderr.txt
-            build/tuned_king_safety.txt
-            build/tuned_king_safety_stderr.txt
-            build/tuned_pawns.txt
-            build/tuned_pawns_stderr.txt
+          retention-days: 30
+
+  # ROADMAP.md's "Actually run tune_mobility()/tune_space()/tune_threats()/
+  # tune_king_safety()/tune_pawns() against real self-play data" item. A
+  # SEPARATE job per mode (matrix strategy below), not extra steps tacked
+  # onto tuning-pipeline above, for a real, measured reason: a single
+  # GitHub-hosted job has a hard 6-hour execution ceiling, and these five
+  # terms' own parameter counts vary by an order of magnitude (space: 2,
+  # pawns: 59) — compute_loss()'s own cost scales with TRAINING POSITION
+  # COUNT, walked 2*N+1 times per tuning iteration (finite-difference), so
+  # a 59-parameter table costs ~30x a 2-parameter one at the same
+  # iteration count. Measured directly (this session, a real build, a
+  # 732-position corpus, 20 iterations per mode) and scaled linearly to
+  # this workflow's own 5000-game/200-iteration defaults: pawns alone
+  # comes out to roughly 2.5-3 hours by itself, and mobility+space+
+  # threats+king-safety+pawns run SEQUENTIALLY in one job (as an earlier
+  # version of this workflow briefly had it) sums to close enough to 6
+  # hours — before self-play/material-tune/match's own time, and before
+  # checkout/build/artifact-upload overhead — that a real dispatch risks
+  # the job being killed by the platform ceiling with NOTHING uploaded,
+  # including modes that finished fine minutes earlier. Splitting into 5
+  # independent jobs fixes this two ways at once: GitHub runs independent
+  # jobs concurrently (account concurrency limits permitting), so total
+  # WALL-CLOCK time drops to roughly the slowest single mode (pawns, ~3
+  # hours) instead of the sum of all five: and each job gets its own full
+  # 6-hour ceiling and its own artifact upload, so one mode running long
+  # or failing doesn't cost the other four their results.
+  #
+  # Each job regenerates training_data.txt itself with the SAME
+  # selfplay_games/selfplay_search_depth/selfplay_random_opening_plies/
+  # selfplay_max_plies inputs and the same fixed base_seed=1 the
+  # tuning-pipeline job above uses — nightwing_selfplay is fully
+  # deterministic given identical inputs (tuner/selfplay.h's own header
+  # comment), so this produces the EXACT SAME corpus tuning-pipeline's own
+  # material run trains against, not a separately-drawn, not-directly-
+  # comparable one, without needing cross-job artifact hand-off (a real
+  # option too, but a second job dependency/download step for a
+  # regeneration this cheap — ~6 minutes of this job's own multi-hour
+  # budget — isn't worth the added coupling). No nightwing_match
+  # counterpart here: tuner::match.h is deliberately scoped to
+  # eval::MaterialWeights only (its own header comment) — generalizing it
+  # is a distinct, not-yet-scoped future item, out of reach of this one.
+  tuning-pipeline-term:
+    if: github.event_name == 'workflow_dispatch' && inputs.pipeline == 'tuning'
+    runs-on: ubuntu-latest
+    name: Tuning pipeline, ${{ matrix.mode }} term (selfplay -> tune)
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [mobility, space, threats, king-safety, pawns]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure CMake (Release, no tests)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF
+
+      - name: Build tuner executables
+        run: cmake --build build --config Release --parallel --target nightwing_selfplay nightwing_tune
+
+      # Same positional args as tuning-pipeline's own step above; see that
+      # step's own comment for the full reference. nightwing_tune's
+      # `--${{ matrix.mode }}` must be its own separate argument, before
+      # `tune_iterations` (tune_main.cpp's own CLI-mode-must-be-argv[1]
+      # convention, tuner/tune_main.cpp's own header comment).
+      - name: Run self-play -> tune (${{ matrix.mode }}) pipeline
+        working-directory: build
+        run: |
+          set -euo pipefail
+          echo "== nightwing_selfplay: ${{ inputs.selfplay_games }} games =="
+          ./src/nightwing_selfplay \
+            "${{ inputs.selfplay_games }}" 1 \
+            "${{ inputs.selfplay_search_depth }}" \
+            "${{ inputs.selfplay_random_opening_plies }}" \
+            "${{ inputs.selfplay_max_plies }}" \
+            > training_data.txt
+          wc -l training_data.txt
+
+          echo "== nightwing_tune --${{ matrix.mode }}: ${{ inputs.tune_iterations }} iterations =="
+          ./src/nightwing_tune "--${{ matrix.mode }}" "${{ inputs.tune_iterations }}" \
+            < training_data.txt > tuned_weights.txt 2> tune_stderr.txt
+          cat tuned_weights.txt
+          tail -40 tune_stderr.txt
+
+      - name: Upload pipeline artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tuning-pipeline-${{ matrix.mode }}-results
+          path: |
+            build/tuned_weights.txt
+            build/tune_stderr.txt
           retention-days: 30
 
   # ROADMAP.md Phase 8's "PGO build pipeline" item. Manually triggered
