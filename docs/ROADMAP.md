@@ -1405,7 +1405,7 @@ Priority Fixes section above).
           rather than causal correlation. See docs/DECISIONS.md,
           2026-09-22, for the full per-term numbers and reasoning; two
           new items below follow directly from this finding.
-    - [ ] **Fix `tune_psqt()`'s zero-movement bug** — found while
+    - [x] **Fix `tune_psqt()`'s zero-movement bug** — found while
           closing the item above (Session 122): loss stayed EXACTLY
           flat (0.050887) across all 200 iterations of a real
           208,360-position dispatch, and the "tuned" `king_mg`/
@@ -1417,14 +1417,35 @@ Priority Fixes section above).
           smoke test before dispatch and was wrongly written off there
           as "too little signal for this toy scale" rather than
           investigated — a real regression that should have been
-          caught before, not after, shipping. Root cause not yet
-          found; `tests/tune_tests.cpp`'s own existing `tune_psqt()`
-          tests apparently don't catch this, since they use a narrow,
-          deliberately-engineered single-cell scenario rather than
-          anything resembling real, natural training data — that test
-          gap likely needs addressing alongside the fix itself, not
-          just the fix in isolation. Blocks any future PSQT-related
-          tuning work until resolved.
+          caught before, not after, shipping. FIXED (Session 125):
+          root cause was NOT a broken gradient (`compute_psqt_gradient()`
+          still independently agrees with a hand-rolled finite-difference
+          probe, `tests/tune_tests.cpp`) — it was `tune_main.cpp`'s own
+          `--psqt` `learning_rate` default (100.0), calibrated only
+          against `tests/tune_tests.cpp`'s narrow, single-repeated-
+          position toy scenario, colliding with `psqt_value()`'s own
+          `round_to_int()` on every real, diverse self-play corpus: a
+          real per-cell average gradient magnitude (measured directly
+          against an 8104-position self-play corpus: ~1e-5, roughly
+          1000x weaker than the toy test's own unanimous, uncontested
+          signal) times that learning rate produces a per-iteration step
+          orders of magnitude too small to ever cross a full integer
+          unit within a normal run — so the underlying double weights
+          WERE moving, just never far enough for any table cell's
+          rounded, printed value (or `compute_loss()`'s own rounded-
+          eval-dependent output) to visibly change at all. Fixed by
+          raising the default to 200000.0 (chosen the same "measure,
+          don't guess" way, tried directly against the same real corpus
+          at several candidate values — loss decreases smoothly and
+          monotonically through at least 1,000,000, with instability
+          only appearing around 2,000,000; 200000.0 sits an order of
+          magnitude below that with real headroom while still producing
+          a genuine, substantial loss reduction). `tests/tune_tests.cpp`
+          gained a new diluted/mixed-signal regression test specifically
+          exercising this "small but genuine gradient, real learning
+          rate" regime, closing the test-coverage gap this item's own
+          note already flagged. See docs/DECISIONS.md, this session's
+          own dated entry, for the full measured account.
     - [ ] **Investigate regularization / per-term learning rates for
           the sign-flip instability** found in mobility/space/some
           king-safety sub-terms (item above) — `TuneConfig::l2_lambda`
@@ -1853,12 +1874,11 @@ This section's own item order is a STARTING recommendation, not a
 commitment — re-sequence freely if a later session's own judgment differs,
 same as every other Priority Fixes section here.
 
-**Note on sequencing against the already-open `tune_psqt()` bug** (Phase 5
-above, filed 2026-09-22 (1)): that bug and this section were found in the
-same sitting but are unrelated systems (tuner vs. UCI/search engine
-proper) — nothing below depends on it or blocks it. Whichever gets picked
-up first is a scheduling call for whoever starts the next session, not
-something this list order settles.
+**Note on sequencing against the `tune_psqt()` bug** (Phase 5
+above, filed 2026-09-22 (1), fixed Session 125): that bug and this section
+were found in the same sitting but were always unrelated systems (tuner
+vs. UCI/search engine proper) — nothing below depended on it or blocked
+it either way.
 
 1. [x] **Asynchronous `go` with working `stop`/`isready`/`quit`** (findings 1
    and 2) — DONE (Session 124). `handle_go()` (`src/uci/uci.cpp`) previously
