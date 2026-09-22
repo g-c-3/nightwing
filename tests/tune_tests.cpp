@@ -1217,6 +1217,107 @@ TEST_CASE("tune_psqt: a training signal that consistently disagrees with a delib
             default_psqt_weights().knight_mg[make_square(0, 0)]);
 }
 
+TEST_CASE("tune_psqt: a diluted, mixed (partly-contradicting) training signal still moves the "
+          "table at the CLI's own real production learning_rate -- regression test for the "
+          "zero-movement bug (ROADMAP.md/docs/DECISIONS.md, Session 122/124)",
+          "[tuner][tune]") {
+    init_all();
+    // Same lone-White-knight-on-b1-vs-bare-kings shape as this file's
+    // other PSQT tests above, but DELIBERATELY diluted rather than
+    // unanimous -- see the label proportions' own comment just below
+    // for the exact numbers and why they're NOT simply 0.5/0.5 split
+    // around "White wins" -- a net signal that still points the same
+    // direction as the "consistently disagrees" test
+    // above, but far more weakly, the way a real PSQT cell's gradient
+    // actually looks once it's averaged over many different games that
+    // mostly pull against each other (docs/DECISIONS.md, this entry's
+    // own dated account, measured this directly against a real 8104-
+    // position self-play corpus: ~1e-5 average per-cell gradient
+    // magnitude, roughly three orders of magnitude weaker than this
+    // file's other, unanimous-signal PSQT tests above). This is exactly
+    // the regime the zero-movement bug lived in: a genuinely computed,
+    // correctly-SIGNED, but small analytic gradient that a too-small
+    // learning_rate (the OLD default, 100.0 -- tune_main.cpp's own
+    // dated comment on that default has the full account) could never
+    // accumulate past psqt_value()'s own round_to_int() boundary within
+    // a normal-length run, leaving `tune_psqt()` report an EXACTLY flat
+    // loss curve and a "tuned" table byte-for-byte identical to its own
+    // starting values -- indistinguishable, from the CALLER's side, from
+    // a genuinely broken gradient, even though compute_psqt_gradient()
+    // itself was never wrong (this file's own "agrees with a hand-
+    // rolled finite-difference probe" test above already covers that
+    // half independently). This test exercises the OTHER half: that a
+    // correctly-computed but small gradient, at the CLI's actual
+    // production learning_rate, still produces genuine, visible
+    // movement rather than silently vanishing into round_to_int()'s own
+    // granularity.
+    Position pos;
+    pos.side_to_move = Color::White;
+    pos.place_piece(make_square(4, 0), Piece::WhiteKing);
+    pos.place_piece(make_square(4, 7), Piece::BlackKing);
+    pos.place_piece(make_square(1, 0), Piece::WhiteKnight); // b1
+    const std::string fen = to_fen(pos);
+
+    // This position's own material edge (a lone extra knight vs bare
+    // kings) already predicts White winning with fair confidence on its
+    // own (measured directly: eval::evaluate() on this exact position
+    // scores +302, i.e. sigmoid(302/400) ~= 0.68 BEFORE any PSQT signal
+    // is even considered) -- so the net training-label average needs to
+    // clear that ~0.68 baseline, not just clear 0.5, for the resulting
+    // gradient to genuinely point "this square is undervalued, move it
+    // up" rather than "this position is over-predicted, move everything
+    // down" (a real, if easy to miss, side effect of testing PSQT
+    // gradients on a position that ALSO carries a material edge, unlike
+    // a real self-play corpus's own typically near-material-balanced
+    // positions). 12 of 20 positions labeled a clear White win (1.0),
+    // the other 8 labeled a clear White DISADVANTAGE (0.3, deliberately
+    // contradicting the material edge, not just "less enthusiastic") --
+    // net average 0.72, comfortably above the ~0.68 baseline (so the
+    // gradient points the intended direction) while still genuinely
+    // diluted/mixed, not unanimous like this file's other PSQT tests.
+    std::vector<SelfPlayPosition> positions;
+    for (int i = 0; i < 12; ++i) {
+        positions.push_back(SelfPlayPosition{fen, 1.0});
+    }
+    for (int i = 0; i < 8; ++i) {
+        positions.push_back(SelfPlayPosition{fen, 0.3});
+    }
+
+    TuneConfig config;
+    config.iterations = 200;
+    // The CLI's own real, corrected --psqt default (tune_main.cpp) --
+    // not this file's other PSQT tests' own 100.0, which this test
+    // exists specifically to NOT use, since 100.0 is the exact value
+    // that silently failed to move anything under a diluted signal like
+    // this one.
+    config.learning_rate = 200000.0;
+    const PsqtWeights initial = default_psqt_weights();
+    const PsqtTuneResult result = tune_psqt(positions, default_material_weights(), initial, config);
+
+    REQUIRE(result.history.size() == static_cast<std::size_t>(config.iterations + 1));
+
+    // The core regression guard: loss must NOT be exactly flat across
+    // the run -- the precise, directly-observed symptom of the original
+    // bug (docs/SESSIONS.md, Session 122: "loss stayed EXACTLY flat
+    // (0.050887) across all 200 iterations"). Comparing the FIRST step
+    // against the start is enough to catch a genuinely inert update
+    // loop; a real, if small, per-iteration movement should already
+    // separate them.
+    REQUIRE(result.history[1].loss != result.history[0].loss);
+    REQUIRE(result.final_loss < result.initial_loss);
+
+    // The b1 knight_mg cell specifically should have moved up (less
+    // negative) -- same direction as the unanimous-signal test above,
+    // just via a much weaker net push -- and, critically, moved far
+    // enough that round_to_int() actually sees a DIFFERENT integer, not
+    // just a differing double that would still print identically to
+    // psqt.cpp's own compiled-in table the way the original bug's
+    // "byte-for-byte identical" tuned output did.
+    const int b1 = make_square(1, 0);
+    REQUIRE(result.weights.knight_mg[b1] > initial.knight_mg[b1]);
+    REQUIRE(std::lround(result.weights.knight_mg[b1]) != std::lround(initial.knight_mg[b1]));
+}
+
 TEST_CASE("tune_psqt: TuneConfig::l2_lambda applies the same closed-form penalty it does in "
           "tune(), against kPsqtParameters instead of kMaterialParameters",
           "[tuner][tune]") {
