@@ -93,7 +93,18 @@ TEST_CASE("uci: 'quit' stops the loop -- later commands are never processed", "[
 
 TEST_CASE("uci: bare 'go' from the default (start) position returns a legal bestmove", "[uci]") {
     init_all();
-    const std::string out = run_uci({"go", "quit"});
+    // A bare `go` (no depth, no usable time control) now runs genuinely
+    // unbounded until an async `stop` arrives (ROADMAP.md Priority
+    // Fixes, 2026-09-22, item 1 -- compute_search_budget()'s own final
+    // `else` branch, src/uci/uci.cpp), same as `go infinite` already
+    // does and same as `go ponder` already did before this item -- so,
+    // like every other test in this file that exercises an unbounded
+    // search, an explicit `stop` is required before `quit` for a
+    // `bestmove` to appear at all (finish_go()'s own doc comment,
+    // src/uci/uci.cpp, covers why `quit` alone deliberately does NOT
+    // wait for a genuinely unbounded search the way it does for a
+    // bounded one).
+    const std::string out = run_uci({"go", "stop", "quit"});
     REQUIRE(contains(out, "bestmove "));
     REQUIRE_FALSE(contains(out, "bestmove 0000"));
 }
@@ -370,14 +381,27 @@ TEST_CASE("uci: 'ucinewgame' resets to the starting position", "[uci]") {
 
 TEST_CASE("uci: a full self-play-style exchange (uci/isready/position/go, twice) works end to end", "[uci]") {
     init_all();
+    // Each "go depth 1" is followed by an explicit "stop" before the
+    // next "position" -- required now that `go` runs asynchronously
+    // (ROADMAP.md Priority Fixes, 2026-09-22, item 1): `position`/
+    // `ucinewgame` arriving while a `go` is still in flight and was
+    // never `stop`ped is out-of-protocol and abandons that search
+    // outright, discarding its `bestmove` (abandon_go()'s own doc
+    // comment, src/uci/uci.cpp) -- exactly mirroring the identical,
+    // pre-existing "always `stop` before a new `position` while
+    // pondering" contract this same test would already have to follow
+    // for `go ponder`. A real, compliant GUI always sends `stop` here
+    // too; this test now does the same.
     const std::string out = run_uci({
         "uci",
         "isready",
         "ucinewgame",
         "position startpos",
         "go depth 1",
+        "stop",
         "position startpos moves e2e4",
         "go depth 1",
+        "stop",
         "quit",
     });
     REQUIRE(contains(out, "uciok"));
