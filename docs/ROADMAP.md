@@ -1368,62 +1368,81 @@ Priority Fixes section above).
           failures, including all 52 `[tuner][tune]`-tagged tests. See
           docs/SESSIONS.md's own entry for this session for the full
           verification detail.
-    - [ ] Actually run `tune_mobility()`/`tune_space()`/`tune_threats()`/
-          `tune_king_safety()`/`tune_pawns()` (the item just above)
-          against real self-play data, and decide from that run's own
-          result whether the existing 5000-game self-play corpus size
-          (already used twice for material, Sessions 61/62) is adequate
-          for these 5 modest-sized tables or genuinely needs to be
-          larger — not decided here, since there is nothing yet to test
-          it against; NOT to be conflated with the already-closed
-          material-only corpus work (Sessions 61/62, docs/DECISIONS.md
-          2026-08-31 (1)/(2)/(3)). **Session 121 progress:** `.github/
-          workflows/ci.yml`'s existing `tuning-pipeline` job only ever
-          ran material tuning — it had no way to actually exercise the
-          5 new entry points at all. First added them as an extra
-          sequential step in that same job — then, asked directly
-          whether the whole thing would fit inside GitHub Actions' hard
-          6-hour per-job ceiling, measured (not guessed) that it
-          wouldn't reliably: `compute_loss()`'s own cost scales with
-          training-position count, walked `2N+1` times per tuning
-          iteration for an `N`-parameter table, and `pawns` (59
-          parameters) alone comes out to roughly 2.7 hours at this
-          workflow's own 5000-game/200-iteration defaults — the
-          sequential-step version summed to ~5.8 hours total, uncomfortably
-          close to the ceiling with real risk of the job being killed
-          with NOTHING uploaded. Restructured instead: the 5 term modes
-          now live in a SEPARATE job, `tuning-pipeline-term`, using a
-          `strategy.matrix` over `[mobility, space, threats,
-          king-safety, pawns]` so each runs independently with its own
-          full 6-hour budget and its own artifact upload (GitHub also
-          runs independent jobs concurrently, so wall-clock time drops
-          to roughly the slowest single mode, ~3 hours, rather than the
-          sum of all five). Each matrix leg regenerates
-          `training_data.txt` itself with the same fixed `base_seed=1`
-          `tuning-pipeline`'s own material run uses —
-          `nightwing_selfplay` is fully deterministic, so this is the
-          EXACT SAME corpus, not a separately-drawn one. No
-          `nightwing_match` counterpart for these five —
-          `tuner::match.h` is deliberately scoped to
-          `eval::MaterialWeights` only (its own header comment),
-          generalizing it is a distinct, not-yet-scoped item, out of
-          reach of this one. Verified the exact command sequence
-          locally (bash, a small real self-play corpus, the
-          `--king-safety` mode specifically since its hyphenated name
-          most needed checking) before committing it to CI YAML, the
-          same "don't write untested shell into a workflow file"
-          discipline this job's own introducing session (2026-08-31)
-          already established: clean, exit 0. **NOT YET DISPATCHED at
-          the real 5000-game scale** — that requires a human to trigger
-          `workflow_dispatch` from GitHub's own Actions tab (`pipeline:
-          tuning`, mobile browser works fine per this workflow's own
-          existing `type: choice` convention) — this repo-assistant has
-          no GitHub API credentials to do that itself. This item stays
-          open until a future session reads back that real run's actual
-          loss-history artifacts (the material job's own
-          `tuning-pipeline-results` artifact, plus the 5 separate
-          `tuning-pipeline-<mode>-results` artifacts) and makes the
-          corpus-adequacy call from them.
+    - [x] Actually run `tune_mobility()`/`tune_space()`/`tune_threats()`/
+          `tune_king_safety()`/`tune_pawns()` (the item above) against
+          real self-play data, and decide from that run's own result
+          whether the existing 5000-game self-play corpus size is
+          adequate for these 5 modest-sized tables — closed by Session
+          122, which read back the real dispatch (5000 games, 208,360
+          quiet positions, 200 iterations each). **The honest answer is
+          NOT a single yes/no — it varies by term, and two of the five
+          are not trustworthy as converged regardless of corpus size:**
+          `pawns` (3.3% loss reduction) converged cleanly to a sensible,
+          rank-monotonic passed-pawn table — corpus adequate here.
+          `king-safety` (3.1%) converged well for its dominant terms
+          (closest-to-king pawn-storm ranks stayed stable, correctly
+          signed) but several of its own weaker sub-terms
+          (`attack_unit_mg`, `semi_open_file_mg`, a few
+          `pawn_storm_rank2-4` entries) flipped sign. `mobility` (7.0%
+          loss reduction — the LARGEST of the five, which here is a bad
+          sign, not a good one) had nearly every knight/bishop/queen
+          mg/eg bonus flip from small-positive to sizeable-negative —
+          chess-nonsensical, not trusted as converged. `space` (0.7%)
+          showed the same pattern at smaller scale (`square_mg` moved
+          8x its own magnitude for under 1% loss improvement).
+          `threats` (0.026% — essentially flat) barely moved at all —
+          NOT a corpus-size problem: self-play's quiet-position filter
+          structurally excludes tactical (hanging/overloaded-piece)
+          positions by construction, so more games drawn the SAME way
+          won't fix it; a different sampling method would be needed.
+          The mobility/space/king-safety-subterm sign flips are a
+          DIFFERENT failure mode from threats' flatness: those loss
+          curves are smooth and genuinely converged (not
+          oscillating/diverging) — the optimizer found a real local
+          optimum in this specific sample, just one where a
+          weaker-signal term tuned in isolation (every other correlated
+          `evaluate()` term frozen at its default) picked up a spurious
+          rather than causal correlation. See docs/DECISIONS.md,
+          2026-09-22, for the full per-term numbers and reasoning; two
+          new items below follow directly from this finding.
+    - [ ] **Fix `tune_psqt()`'s zero-movement bug** — found while
+          closing the item above (Session 122): loss stayed EXACTLY
+          flat (0.050887) across all 200 iterations of a real
+          208,360-position dispatch, and the "tuned" `king_mg`/
+          `king_eg` tables came back byte-for-byte identical to
+          `psqt.cpp`'s own compiled-in `kKingMgTable`/`kKingEgTable` —
+          `tune_psqt()`'s analytic gradient is doing nothing at full
+          scale, not just moving slowly. The same flat-loss symptom was
+          visible on Session 121's own small (732-position) local
+          smoke test before dispatch and was wrongly written off there
+          as "too little signal for this toy scale" rather than
+          investigated — a real regression that should have been
+          caught before, not after, shipping. Root cause not yet
+          found; `tests/tune_tests.cpp`'s own existing `tune_psqt()`
+          tests apparently don't catch this, since they use a narrow,
+          deliberately-engineered single-cell scenario rather than
+          anything resembling real, natural training data — that test
+          gap likely needs addressing alongside the fix itself, not
+          just the fix in isolation. Blocks any future PSQT-related
+          tuning work until resolved.
+    - [ ] **Investigate regularization / per-term learning rates for
+          the sign-flip instability** found in mobility/space/some
+          king-safety sub-terms (item above) — `TuneConfig::l2_lambda`
+          already exists and is plumbed through `tune_term()` (Session
+          120) but was left at 0.0 (no regularization) for this run;
+          likely candidates, neither attempted yet: (a) a nonzero
+          `l2_lambda` pulling each term back toward its own starting
+          value, reducing the incentive to chase a spurious correlation
+          far from a sensible default; (b) per-term learning rates
+          instead of borrowing material's own 20000.0 uniformly across
+          all 5 finite-difference terms (docs/DECISIONS.md, 2026-09-21
+          (3), already flagged this as "not independently re-verified
+          for these five terms' own real production data" — this is
+          that re-verification, and it suggests the borrowed value may
+          be too aggressive for smaller-magnitude terms specifically).
+          NOT the same problem as `threats`' near-zero movement (a
+          sampling-methodology gap, not a tuning-stability one) — keep
+          these two findings' own follow-up work separate.
 
 ## Priority Fixes (external code review, 2026-09-17)
 
@@ -1807,6 +1826,193 @@ shipping it, not just this one time.
 - [ ] Engine-vs-engine match infrastructure for search-code changes (not just eval weights): the smaller-lift option, following `MatchConfig`'s own existing `threads_a`/`threads_b` precedent (`src/tuner/match.h` — added specifically to repurpose that same single-process module for a different per-side knob, holding weights equal) — add an analogous per-side movegen-strategy (or, more generally, a per-side function-pointer/`std::function`-based search-variant) toggle threaded through `search_fixed_depth()`/`negamax()`, so `play_match()` can compare two search-CODE configurations within the same process/binary the same way it already compares two weight vectors
 - [ ] Alternative, larger-lift option: a genuine two-process UCI-vs-UCI match runner (spawn two separate `nightwing` binaries — e.g. a just-built one plus a checked-out-and-built-separately baseline — and referee games between them over stdin/stdout UCI), closer to how real engine testing frameworks (cutechess-cli, fastchess, OpenBench) work, and the only option that can compare two commits/binaries without adding any new in-process toggle to `negamax()` itself
 - [ ] Whichever option is built, retroactively apply it to the "Staged / lazy move generation" item's still-open Step 3b (pre- vs. post-Step-2b `negamax()`) as this new tool's first real use case, rather than leaving that comparison undone indefinitely
+
+## Priority Fixes (external code review, 2026-09-22)
+
+Not phase-gated — inserted here, ahead of Phase 9 and the Release Automation
+work, per this project's established "bugs before enhancements" convention
+(see the three Priority Fixes sections above). A `report.md` code-review
+document (GCC 13.3/CMake/Ninja build, 24 perft positions, a ThreadSanitizer
+concurrency pass, manual/scripted UCI sessions, and direct reading of
+`search.cpp`/`uci.cpp`/`attacks.cpp`/`cpu_features.cpp`/`ci.yml`) was
+reviewed against `main` on 2026-09-22. Every finding was independently
+re-verified against the actual repository (direct source reading, `grep`,
+line/parameter counts, `du`/`wc` on the docs and source trees) before being
+filed here, same "verify before trusting" discipline as the 2026-09-17
+section above. All 13 findings held up. One correction to the report
+itself: finding 10 (`negamax`'s parameter count) is understated — the real
+count is **27**, not 22. One finding (the KQ-vs-K "13M nodes / 60s
+unresolved" observation) is a runtime behavior this sandbox has not
+independently reproduced; filed as an observation to check, not a
+confirmed bug. See docs/DECISIONS.md, 2026-09-22 (2), for the full
+per-finding verification account.
+
+Ordered per the report's own "Recommended Order of Work"; items 7/12/13/the
+KQ-vs-K observation (not part of that ordering) are appended after it.
+This section's own item order is a STARTING recommendation, not a
+commitment — re-sequence freely if a later session's own judgment differs,
+same as every other Priority Fixes section here.
+
+**Note on sequencing against the already-open `tune_psqt()` bug** (Phase 5
+above, filed 2026-09-22 (1)): that bug and this section were found in the
+same sitting but are unrelated systems (tuner vs. UCI/search engine
+proper) — nothing below depends on it or blocks it. Whichever gets picked
+up first is a scheduling call for whoever starts the next session, not
+something this list order settles.
+
+1. **Asynchronous `go` with working `stop`/`isready`/`quit`** (findings 1
+   and 2) — `handle_go()` (`src/uci/uci.cpp`) currently runs fully
+   synchronously on the same thread that reads UCI input, exactly as that
+   file's own header comment already documents ("still not attempted...
+   `stop` sent while an ordinary `go` is in flight is parsed but has no
+   effect"). Move it onto a worker thread the way `start_pondering()`
+   already does for `go ponder` (same file, same general shape — a
+   `PonderState`-like struct holding the `std::thread` and an
+   `std::atomic<bool>` stop flag the search polls via `SearchLimits::
+   external_stop`, which `negamax()` already supports and
+   `run_lazy_smp_helper()` already threads through via its own
+   `const_cast`, so the plumbing this needs mostly already exists one
+   layer up). Once `go` is async, `go infinite`/bare `go` (currently
+   falling back to the fixed `kNoTimeControlDepth = 5` — that constant's
+   own doc comment's stale "Phase 2 has no pruning yet" justification
+   should be corrected or removed in the same change) can run genuinely
+   unbounded until an async `stop` arrives, rather than self-terminating
+   at a shallow fixed depth.
+2. **Real BMI2 portability** (finding 3) — `build_pext_table()`
+   (`src/board/attacks.cpp`) calls `_pext_u64` unconditionally inside
+   `init_magic_bitboards()`, gated only by the compile-time
+   `#if defined(NIGHTWING_ENABLE_BMI2)` (which defaults ON,
+   `NIGHTWING_ENABLE_BMI2` option, root `CMakeLists.txt`), NOT by the
+   runtime `support::cpu_has_bmi2()` check — that check only decides
+   `g_use_pext` (which table `rook_attacks()`/`bishop_attacks()` read from
+   afterward), set at the very END of `init_magic_bitboards()`, well after
+   the unconditional PEXT table build already ran. A default build
+   (BMI2 flags on) will execute an illegal instruction at startup on any
+   pre-Haswell x86 CPU, regardless of the runtime detection machinery
+   existing. Fix per the report: move the PEXT table-building code into
+   its own translation unit compiled with `-mbmi2`, call it only when
+   `support::cpu_has_bmi2()` confirms the running CPU supports it, and
+   build the rest of `nightwing_lib` without `-mbmi2`/`-mpopcnt` so a
+   single binary is safe on any x86_64 host regardless of BMI2 support.
+3. **Emit a ponder move in `bestmove`** (finding 4) — both `bestmove`
+   call sites (`src/uci/uci.cpp`, ordinary `go` and the post-`ponderhit`
+   path) write `bestmove <move>` only; the advertised `Ponder` UCI option
+   is consequently unusable by any GUI, since it can never receive a
+   second move to start pondering on. Needs a real PV-based or TT-probe-
+   based second move, not just any legal reply.
+4. **Validate the null-move gate and the singular-extension rewrite with
+   SPRT** (findings 5 and 6) — `negamax()`'s null-move condition (its own
+   `if (allow_null_move && depth >= kNullMoveMinDepth && beta <
+   kMateThreshold && non_pawn_material && !in_check(pos))` block) has no
+   `static_eval >= beta` gate at all, unlike standard practice — a node
+   whose static eval is already well below beta still pays for a full
+   reduced-depth null-move probe that's very unlikely to fail high.
+   Separately, the singular-extension block runs one full, separate
+   `negamax()` recursive call PER alternative non-TT move (its own
+   `for (int j = 0; j < moves.size() ...)` loop, each iteration a real
+   zero-window search), rather than the standard single search of the
+   node with the TT move excluded — up to `moves.size() - 1` extra
+   sub-searches per singular candidate, and forces full quiet-move
+   generation (`ensure_quiets()`) to do it. Both are real algorithmic
+   deviations from standard practice worth fixing, but both also change
+   search behavior in ways that need `nightwing_sprt` validation (not
+   just a correctness argument) before being trusted as a strength gain
+   rather than just a different, possibly weaker, set of trade-offs.
+5. **Fix the mate-vs-fifty-move ordering; tighten UCI parsing** (findings
+   8 and 9) — `is_draw_by_rule()` (`src/search/search.cpp`) returns a
+   draw immediately on `halfmove_clock >= 100`, called at the very top of
+   `negamax()` well before any move generation or legality check further
+   down — so a checkmate delivered on exactly the 100th halfmove is
+   misscored as a draw rather than a mate. Rare (an exact-ply
+   coincidence) but a real rules-correctness bug, not just an edge case
+   to document away. Same item: `go nodes`/`go mate`/`searchmoves` are
+   parsed nowhere in `uci.cpp`'s `go`-token loop and are silently
+   dropped; `apply_uci_moves()` silently `break`s on the first
+   unmatched move token in `position ... moves`, discarding the rest of
+   the list rather than reporting anything; `emit_info()` writes only
+   `depth`/`multipv`/`score`/`nodes`/`pv` — no `nps`, `time`, `seldepth`,
+   or `hashfull`, all of which real tooling (cutechess and similar)
+   consumes.
+6. **Refactor `negamax`'s parameter list; prune stale docs** (finding 10,
+   and part of 11) — `negamax()` (`src/search/search.cpp`) is a real 27
+   parameters (not the report's own stated 22 — re-verify this count
+   directly from the function's current signature before using it
+   anywhere else, since it will keep drifting as new search features add
+   their own parameters) across roughly 1,230 lines, with the same long
+   argument list repeated at every recursive call site. A
+   `ThreadData`/`SearchContext`-style struct bundling the
+   per-search-invariant pieces (tables, weights, limits, tie-break/
+   contempt config) would remove most of the repetition and — per the
+   report — would also let `run_lazy_smp_helper()`'s own documented,
+   deliberate `const_cast<std::atomic<bool>*>(&stop)` (`SearchLimits::
+   external_stop` being non-const while the helper's own `stop` parameter
+   is held const) go away, since a struct could hold the right constness
+   from construction instead. This is a substantial refactor across every
+   recursive call site in the file — budget it as such, not a quick
+   pass. Same item, smaller: `docs/DECISIONS.md` (792 KB) and
+   `docs/SESSIONS.md` (~600 KB, still growing) are each individually
+   larger than the ~22.8k-line source tree they document; nothing in this
+   section asks for docs to be pruned or rewritten wholesale (this
+   project's "the repo is the memory" convention is deliberate, not an
+   oversight), but any stale statement actually caught in passing — the
+   report specifically named the TT "per-search lifetime" note,
+   `setoption` "besides `Threads`" being ignored, and the already-being-
+   fixed "Phase 2 has no pruning" comment (item 1 above) — should be
+   corrected on sight rather than left for a dedicated cleanup pass that
+   may never come.
+
+Not part of the report's own ordering, appended here:
+
+- [ ] **Reduce redundant per-node work** (finding 7, lower priority —
+      report's own framing: "probably a cheap NPS gain," profile first)
+      — `eval::evaluate()` is called up to 4 separate times per
+      `negamax()` node (node static eval, reverse futility, razoring,
+      futility; confirmed at 4 distinct call sites) — `EvalCache`
+      absorbs most of the real cost already (its own header comment
+      in `eval.cpp` names this exact scenario as the reason the cache
+      exists), so this is a smaller win than it looks at first glance.
+      `board::compute_pawn_hash()`, by contrast, genuinely re-scans
+      every pawn on the board from scratch once per node (confirmed:
+      a plain bitboard loop, no incremental field the way
+      `pos.zobrist_hash` has), unlike the rest of this engine's
+      Zobrist hashing, which IS incrementally maintained through
+      make/unmake — an incremental pawn-hash update (XOR out/in only
+      the pawn(s) actually touched by the move just made) would remove
+      this real O(pawn-count)-per-node cost. Profile before spending
+      time on either — the report's own caution, not lowered.
+- [ ] **Add a LICENSE and a `.gitignore`** (finding 13) — neither exists
+      in the repository today (confirmed absent). The README has a
+      documented attribution policy but nothing governs actual reuse
+      terms; whoever operates this repository should pick a license
+      (not this repo-assistant's call to make) before this is closed.
+- [ ] **Audit fixed-depth vs. production-path test coverage** (finding
+      12, a methodology observation, not a bug by itself) — Internal
+      Iterative Reduction (`negamax()`'s own `if (!probe.hit && depth >=
+      kIIRMinDepth && limits != nullptr)` gate, confirmed) only fires
+      when `limits != nullptr`, i.e. only on the real
+      `search_iterative_deepening()` production path, never on
+      `search_fixed_depth()` — and 10 test files call
+      `search_fixed_depth()` against only 6 that call
+      `search_iterative_deepening()` (confirmed counts), so the
+      majority of this project's own search tests do not exercise IIR
+      at all. This is documented, deliberate behavior (`limits` gating
+      IIR is intentional, not an oversight) — the actionable item is
+      making sure test coverage's own balance is a conscious choice
+      going forward, not silently skewing further toward the path that
+      exercises less of production `negamax()` as new tests get added.
+- [ ] **Investigate the KQ-vs-K "unresolved after ~13M nodes / 60s"
+      observation** — reported from `8/8/8/4k3/8/8/4K1Q1/8 w`, not yet
+      independently reproduced by this sandbox. `basic_mates.h`
+      (confirmed) only defines dedicated algorithmic terms for KRK and
+      KBNK — no KQK term exists — which is at least consistent with a
+      real gap, though KQK is conventionally one of the EASIEST won
+      endgames for any competent engine via plain material + mobility
+      eval alone, with no special technique needed, so a genuine
+      13M-node stall on it (if reproduced) would be a surprising,
+      worth-prioritizing finding rather than a minor gap. First step:
+      actually reproduce it (a real search run, not code reading) before
+      deciding whether this needs a fix or was a one-off
+      timeout/environment artifact in the original review.
 
 ## Phase 9 — Advanced / Stretch Goals (beyond great-engine baseline)
 - [ ] NUMA-aware thread/memory allocation (large multi-socket hardware only)
