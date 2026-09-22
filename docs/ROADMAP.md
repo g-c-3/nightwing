@@ -1860,24 +1860,35 @@ proper) — nothing below depends on it or blocks it. Whichever gets picked
 up first is a scheduling call for whoever starts the next session, not
 something this list order settles.
 
-1. **Asynchronous `go` with working `stop`/`isready`/`quit`** (findings 1
-   and 2) — `handle_go()` (`src/uci/uci.cpp`) currently runs fully
-   synchronously on the same thread that reads UCI input, exactly as that
-   file's own header comment already documents ("still not attempted...
-   `stop` sent while an ordinary `go` is in flight is parsed but has no
-   effect"). Move it onto a worker thread the way `start_pondering()`
-   already does for `go ponder` (same file, same general shape — a
-   `PonderState`-like struct holding the `std::thread` and an
-   `std::atomic<bool>` stop flag the search polls via `SearchLimits::
-   external_stop`, which `negamax()` already supports and
-   `run_lazy_smp_helper()` already threads through via its own
-   `const_cast`, so the plumbing this needs mostly already exists one
-   layer up). Once `go` is async, `go infinite`/bare `go` (currently
-   falling back to the fixed `kNoTimeControlDepth = 5` — that constant's
-   own doc comment's stale "Phase 2 has no pruning yet" justification
-   should be corrected or removed in the same change) can run genuinely
-   unbounded until an async `stop` arrives, rather than self-terminating
-   at a shallow fixed depth.
+1. [x] **Asynchronous `go` with working `stop`/`isready`/`quit`** (findings 1
+   and 2) — DONE (Session 124). `handle_go()` (`src/uci/uci.cpp`) previously
+   ran fully synchronously on the same thread that reads UCI input, exactly
+   as that file's own header comment used to document ("still not
+   attempted... `stop` sent while an ordinary `go` is in flight is parsed
+   but has no effect"). Replaced with a `GoState` struct (thread +
+   `std::atomic<bool> stop`/`suppress_output`, mirroring `PonderState`) and
+   `abandon_go()`/`start_go()`/`handle_go_stop()`/`finish_go()`, the same
+   general shape `start_pondering()` already used for `go ponder` — `go`
+   now moves onto its own worker thread and the search polls
+   `SearchLimits::external_stop` via that flag, exactly as
+   `run_lazy_smp_helper()` already did one layer up. `go infinite`/bare
+   `go` (previously falling back to the fixed `kNoTimeControlDepth = 5`)
+   now run genuinely unbounded via `kTimedSearchMaxDepth` until an async
+   `stop` arrives, same as `go ponder` already did; `kNoTimeControlDepth`'s
+   stale "Phase 2 has no pruning yet" doc comment was corrected — it now
+   applies only to a malformed explicit `depth` token. A new
+   `SearchBudget::unbounded`/`GoState::unbounded` flag lets `quit`/
+   end-of-input tell a bounded search (joined — let it finish and print
+   `bestmove`, reproducing the exact old synchronous behavior) apart from
+   a genuinely unbounded one (abandoned, to avoid hanging forever) — see
+   `finish_go()`'s own doc comment. A new `out_mutex` (`run()`'s own
+   local) serializes every write to `out` across the main thread and both
+   background threads, now that concurrent writers are possible. Two
+   pre-existing `tests/uci_tests.cpp` cases that encoded the old
+   synchronous-`go` assumption (a bare `go` immediately followed by
+   `quit`; two `go depth 1` calls with no `stop` between them) were
+   updated to send the `stop` a real, compliant GUI would send in both
+   cases — see docs/DECISIONS.md, 2026-09-22 (3).
 2. **Real BMI2 portability** (finding 3) — `build_pext_table()`
    (`src/board/attacks.cpp`) calls `_pext_u64` unconditionally inside
    `init_magic_bitboards()`, gated only by the compile-time
