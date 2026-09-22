@@ -66,7 +66,7 @@
 // finite differences (tune.h's own header comment on why that shortcut
 // is valid specifically for PSQT), so there is nothing in this mode for
 // that argument to configure. `learning_rate`'s own DEFAULT differs
-// between the two modes (20000.0 material, 100.0 PSQT) -- see this
+// between the two modes (20000.0 material, 200000.0 PSQT) -- see this
 // file's own comment at that default, below, for why.
 //   nightwing_tune --psqt [iterations] [learning_rate] [finite_diff_epsilon]
 //                  [sigmoid_scale] [l2_lambda]
@@ -188,12 +188,64 @@ int main(int argc, char** argv) {
         // empirically chosen against MaterialWeights' specific gradient
         // scale (tune.h's own doc comment on that field) -- PSQT's
         // analytic gradient (tune.cpp's compute_psqt_gradient()) has a
-        // materially different scale (tests/tune_tests.cpp's own
-        // tune_psqt() test measured 100.0 to work well there, vs.
-        // material's 20000.0), so --psqt mode overrides the DEFAULT
-        // here, before any user-supplied learning_rate argument below
-        // gets a chance to override it again in turn.
-        config.learning_rate = 100.0;
+        // materially different scale, so --psqt mode overrides the
+        // DEFAULT here, before any user-supplied learning_rate argument
+        // below gets a chance to override it again in turn.
+        //
+        // 200000.0, NOT 100.0 -- ROADMAP.md's "Fix tune_psqt()'s zero-
+        // movement bug" (Session 122/124): 100.0 was calibrated ONLY
+        // against tests/tune_tests.cpp's own narrow, deliberately-
+        // engineered single-cell scenario (one FEN, repeated 8x, one
+        // knight, a maximally strong and uncontested training signal) --
+        // never independently re-verified against real, diverse self-
+        // play data the way this comment's own discipline (see the five
+        // "--term" modes' own comment below) already calls for. Measured
+        // directly this session (a real 8104-position self-play corpus,
+        // nightwing_selfplay 200 1 4 8 200, and a small standalone
+        // harness printing compute_psqt_gradient()'s own raw output):
+        // real per-cell analytic gradient magnitude on genuine, varied
+        // game data averages ~1e-5, roughly three orders of magnitude
+        // smaller than the toy test's own single-direction, uncontested
+        // signal -- because a real PSQT cell's gradient AVERAGES over
+        // many different games/contexts that mostly pull against each
+        // other, while the toy test's 8 identical, unanimous positions
+        // never do. At the OLD 100.0 rate, that real-data gradient
+        // produces a per-iteration step of order 1e-3 -- so small that
+        // no cell's underlying double value ever crosses psqt_value()'s
+        // own round_to_int() boundary within a normal-length run (even
+        // 200 iterations only accumulates ~0.2 if every step happened to
+        // agree in sign, well under the 0.5 needed) -- which is exactly
+        // why a real production run (Session 122, 208,360 positions, 200
+        // iterations) came back with loss EXACTLY flat to six decimal
+        // places at every single iteration and every "tuned" table
+        // byte-for-byte identical to its own compiled-in default: not
+        // because the analytic gradient was wrong (independently cross-
+        // checked against a hand-rolled finite-difference probe,
+        // tests/tune_tests.cpp's own "agrees with a hand-rolled finite-
+        // difference probe" test, which still passes unchanged), but
+        // because a learning rate calibrated for a signal ~1000x
+        // stronger than real data's own was never going to move a
+        // rounded integer table at all. 200000.0 was chosen the same
+        // "measure, don't guess" way -- tried directly, on the same real
+        // corpus, at several candidate values: loss decreases smoothly
+        // and monotonically from 100 up through at least 1,000,000
+        // (200 iterations: 0.040473 -> 0.025713 at 1,000,000, a real,
+        // substantial reduction, not noise), with the first signs of
+        // instability (loss ticking back UP late in a run rather than
+        // still falling) only appearing around 2,000,000. 200000.0 sits
+        // an order of magnitude below that observed instability
+        // threshold while still producing a real, meaningful loss
+        // reduction (0.040473 -> 0.029312 over 200 iterations on the
+        // same corpus) -- see docs/DECISIONS.md, this entry's own dated
+        // account, for the full measured table across candidate values
+        // and a spot-check of the resulting king_mg/king_eg tables
+        // (genuinely moved, and sane: the five most-played back ranks
+        // converge close to the existing compiled-in table, exactly as
+        // expected from real games broadly validating an already-
+        // reasonable default, while the less-visited back rank shows
+        // more real variation -- the shape a healthy tuner run should
+        // produce at this corpus size, not garbage).
+        config.learning_rate = 200000.0;
     }
     // The five --mobility/--space/--threats/--king-safety/--pawns modes
     // deliberately do NOT override learning_rate the way --psqt does
