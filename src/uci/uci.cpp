@@ -698,6 +698,50 @@ void emit_info(const search::SearchResult& result, std::ostream& out) {
     out.flush();
 }
 
+/// Picks the ponder move to advertise alongside `bestmove` — ROADMAP.md
+/// Priority Fixes (2026-09-22), item 3 (finding 4): both `bestmove`
+/// call sites below previously wrote `bestmove <move>` alone, with no
+/// `ponder <move>` token at all, making the advertised `Ponder` UCI
+/// option (`option name Ponder`, handle_setoption() above) unusable by
+/// any real GUI — a GUI can only start pondering on a move THIS engine
+/// names, never one it guesses itself.
+///
+/// `result`'s own `multipv_lines` (SearchResult's own doc comment) is
+/// searched for the line whose `best_move` equals `move_to_play`.
+/// Ordinarily that's just `result` itself (`multi_pv == 1`, or skill
+/// limiting off, in which case `multipv_lines` is empty and the search
+/// below never runs) — but `search::pick_skill_move()` (search/skill.h)
+/// can choose a move belonging to a DIFFERENT MultiPV line than
+/// `result.best_move`/`result.pv` describes, and that other line's own
+/// `pv` — not `result.pv` — is the one whose second entry is the
+/// genuine, actually-searched reply to `move_to_play` specifically.
+/// Falls back to `result.pv` itself whenever `multipv_lines` is empty
+/// or (defensively — shouldn't happen for any real caller) no line's
+/// own `best_move` matches.
+///
+/// Returns a null move (`Move::is_null() == true`) whenever the chosen
+/// line's own `pv` has fewer than 2 entries — e.g. `move_to_play`
+/// itself delivers checkmate, so there's no reply to ponder on, or the
+/// TT-walk PV reconstruction (SearchResult::pv's own doc comment) came
+/// back too short to have a second move at all. Both `bestmove` call
+/// sites below treat a null return as "omit the `ponder` token
+/// entirely," never as `ponder 0000` — the UCI spec's `ponder` token
+/// always names a real move, unlike `bestmove`'s own `0000` convention
+/// for "no move."
+[[nodiscard]] Move ponder_move_for(const search::SearchResult& result, const Move& move_to_play) {
+    const std::vector<Move>* pv = &result.pv;
+    for (const search::SearchResult& line : result.multipv_lines) {
+        if (line.best_move == move_to_play) {
+            pv = &line.pv;
+            break;
+        }
+    }
+    if (pv->size() < 2) {
+        return Move();
+    }
+    return (*pv)[1];
+}
+
 /// Fills `tt` with a TranspositionTable sized to `requested_mb`, with
 /// the same graceful, halve-and-retry std::bad_alloc fallback
 /// search::make_transposition_table() gives every top-level search
@@ -1190,6 +1234,13 @@ void start_go(Position& pos, const std::vector<std::uint64_t>& game_history,
             out << "0000";
         } else {
             out << move_to_play.to_uci();
+            // See ponder_move_for()'s own doc comment above -- omitted
+            // entirely (not `ponder 0000`) whenever there's no genuine
+            // second move to offer.
+            const Move ponder_move = ponder_move_for(result, move_to_play);
+            if (!ponder_move.is_null()) {
+                out << " ponder " << ponder_move.to_uci();
+            }
         }
         out << '\n';
         out.flush();
@@ -1467,6 +1518,17 @@ void start_pondering(Position& pos, const std::vector<std::uint64_t>& game_histo
             out << "0000";
         } else {
             out << result.best_move.to_uci();
+            // See ponder_move_for()'s own doc comment above -- this
+            // search always runs at multi_pv=1 (this function's own
+            // call into search_iterative_deepening() a few lines up),
+            // so multipv_lines is always empty here and the fallback to
+            // result.pv is the only path ever taken -- still routed
+            // through the shared helper rather than duplicated, so both
+            // bestmove sites stay in sync if that ever changes.
+            const Move ponder_move = ponder_move_for(result, result.best_move);
+            if (!ponder_move.is_null()) {
+                out << " ponder " << ponder_move.to_uci();
+            }
         }
         out << '\n';
         out.flush();
