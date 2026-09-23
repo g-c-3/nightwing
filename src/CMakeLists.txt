@@ -111,12 +111,40 @@ if(NIGHTWING_ENABLE_BMI2 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD6
     # checks the actual host CPU before ever executing a PEXT instruction
     # (see board/attacks.cpp for the runtime dispatch).
     target_compile_definitions(nightwing_lib PUBLIC NIGHTWING_ENABLE_BMI2=1)
-    if(NOT MSVC)
-        # MSVC doesn't need an equivalent flag: its <immintrin.h> intrinsics
-        # are available unconditionally on x86_64, gated by our own runtime
-        # check before use rather than by a compiler target flag.
-        target_compile_options(nightwing_lib PUBLIC -mbmi2 -mpopcnt)
-    endif()
+    # NOTE: this block deliberately does NOT add -mbmi2/-mpopcnt here
+    # (ROADMAP.md Priority Fixes, 2026-09-22, finding 3 — fixed Session
+    # 126; see docs/DECISIONS.md, this dated entry, for the full account).
+    # Applying either flag to the WHOLE nightwing_lib target, as this
+    # block used to, does two separately dangerous things at once: (1) it
+    # lets the compiler auto-generate BMI2/POPCNT hardware instructions
+    # ANYWHERE in the library's ~40 .cpp files, including the ordinary,
+    # supposedly-portable magic-bitboard fallback path and every plain
+    # std::popcount() call throughout eval/search (bitboard.h's own doc
+    # comment on popcount() promises a portable software fallback on CPUs
+    # without hardware POPCNT — a promise that -mpopcnt applied library-
+    # wide silently broke, since std::popcount() then always lowers to
+    # the hardware instruction with no runtime check anywhere); (2) it
+    # made board/attacks.cpp's OWN, deliberately unconditional
+    # build_pext_table() call the exact bug finding 3 describes: an
+    # illegal instruction on any pre-Haswell x86 CPU regardless of the
+    # runtime detection machinery that already existed alongside it.
+    # Neither flag is needed here anymore: board/attacks.cpp isolates the
+    # actual PEXT instruction to a single function (pext_u64(), marked
+    # with a GCC/Clang __attribute__((target("bmi2"))) — see that file's
+    # own "BMI2 CODE ISOLATION" header comment), called only after
+    # support::cpu_has_bmi2() has confirmed the running CPU supports it;
+    # every other function in the library, popcount() included, now
+    # compiles under this target's own ordinary flags and gets whatever
+    # portable (or, on MSVC, always-available-regardless-of-target-flags
+    # per this block's own next comment) codegen the compiler judges
+    # correct for a CPU that hasn't been runtime-confirmed as anything
+    # more capable than baseline x86_64.
+    # MSVC needs no equivalent flag here at all: its <immintrin.h>
+    # intrinsics are available unconditionally on x86_64 regardless of
+    # /arch: flags, gated by the same runtime check before use rather
+    # than by any compiler target setting — see board/attacks.cpp's own
+    # NIGHTWING_BMI2_TARGET macro, which expands to nothing at all on
+    # MSVC for exactly this reason.
 endif()
 
 add_executable(nightwing main.cpp)
