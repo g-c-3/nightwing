@@ -1958,24 +1958,38 @@ it either way.
    `ponder 0000`) whenever the chosen line's PV has fewer than 2
    entries — e.g. the position is one ply from checkmate. See
    docs/DECISIONS.md, 2026-09-23, for the full design/rationale.
-4. **Validate the null-move gate and the singular-extension rewrite with
-   SPRT** (findings 5 and 6) — `negamax()`'s null-move condition (its own
-   `if (allow_null_move && depth >= kNullMoveMinDepth && beta <
-   kMateThreshold && non_pawn_material && !in_check(pos))` block) has no
-   `static_eval >= beta` gate at all, unlike standard practice — a node
-   whose static eval is already well below beta still pays for a full
-   reduced-depth null-move probe that's very unlikely to fail high.
-   Separately, the singular-extension block runs one full, separate
-   `negamax()` recursive call PER alternative non-TT move (its own
-   `for (int j = 0; j < moves.size() ...)` loop, each iteration a real
-   zero-window search), rather than the standard single search of the
-   node with the TT move excluded — up to `moves.size() - 1` extra
-   sub-searches per singular candidate, and forces full quiet-move
-   generation (`ensure_quiets()`) to do it. Both are real algorithmic
-   deviations from standard practice worth fixing, but both also change
-   search behavior in ways that need `nightwing_sprt` validation (not
-   just a correctness argument) before being trusted as a strength gain
-   rather than just a different, possibly weaker, set of trade-offs.
+4. [ ] **Validate the null-move gate and the singular-extension rewrite
+   with SPRT** (findings 5 and 6) — CODE FIXES LANDED this session;
+   left unchecked because the item's own text explicitly requires
+   `nightwing_sprt` validation before either change is trusted as a
+   strength gain, and no compiler/SPRT toolchain is available in this
+   sandbox (GitHub Actions handles all building, per this project's own
+   core rules) — that run is the concrete remaining step, not more
+   code. What landed: `negamax()`'s null-move condition now also
+   requires `node_static_eval >= beta` (previously missing entirely);
+   the singular-extension block now makes a single verification
+   `negamax()` call with the TT move excluded via a new `exclude_move`
+   parameter, at the same `ply` and the same side to move, rather than
+   one full recursive call per alternative legal move in a
+   `for (int j = 0; j < moves.size() ...)` loop — replacing up to
+   `moves.size() - 1` extra sub-searches per singular candidate (and an
+   unconditional `ensure_quiets()` call) with exactly one, at standard-
+   technique cost. `exclude_move` also had to disable this position's
+   own TT cutoff and skip both the TT store and the correction-history
+   update for that one call — see docs/DECISIONS.md, 2026-09-23 (2),
+   for the full correctness argument on why (a subtler hazard than the
+   node-count savings alone). Verified by inspection and a new
+   `[nmp][singular_extension]`-tagged depth-8 regression test in
+   `tests/search_tests.cpp` (61 `TEST_CASE`s total, up from 60) — deep
+   enough to actually reach `kSingularMinDepth` (8) at internal nodes,
+   not just the shallower depth-6 tests this position's other Phase 4
+   entries already use. **Next session starts here**: run
+   `nightwing_sprt` (via CI, once these changes are on `main`) against
+   the pre-fix build for both changes, ideally isolated as two separate
+   SPRT runs rather than one combined test, so a regression in either
+   one doesn't get masked by an improvement in the other; only check
+   this item off once that comes back non-regressing (or revert
+   whichever half doesn't).
 5. **Fix the mate-vs-fifty-move ordering; tighten UCI parsing** (findings
    8 and 9) — `is_draw_by_rule()` (`src/search/search.cpp`) returns a
    draw immediately on `halfmove_clock >= 100`, called at the very top of
