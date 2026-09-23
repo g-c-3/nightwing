@@ -1944,12 +1944,20 @@ it either way.
    account of why the function-attribute approach was chosen over the
    report's own literal suggestion, and the disassembly-level
    verification performed.
-3. **Emit a ponder move in `bestmove`** (finding 4) — both `bestmove`
-   call sites (`src/uci/uci.cpp`, ordinary `go` and the post-`ponderhit`
-   path) write `bestmove <move>` only; the advertised `Ponder` UCI option
-   is consequently unusable by any GUI, since it can never receive a
-   second move to start pondering on. Needs a real PV-based or TT-probe-
-   based second move, not just any legal reply.
+3. [x] **Emit a ponder move in `bestmove`** (finding 4) — DONE (this
+   session). Both `bestmove` call sites (`src/uci/uci.cpp`'s `start_go()`
+   and `start_pondering()`, the latter also serving a `ponderhit`-
+   continued search) now append `ponder <move>` whenever a genuine
+   second PV move exists, via a new shared helper, `ponder_move_for()`.
+   The move comes from `SearchResult::pv[1]` in the ordinary case, or
+   from the matching `multipv_lines` entry's own `pv[1]` whenever
+   `search::pick_skill_move()` (search/skill.h) chose a different line
+   than `result.best_move` — reading `result.pv[1]` unconditionally
+   would have reported a wrong ponder move in that case, not just a
+   missing one. The `ponder` token is omitted entirely (never
+   `ponder 0000`) whenever the chosen line's PV has fewer than 2
+   entries — e.g. the position is one ply from checkmate. See
+   docs/DECISIONS.md, 2026-09-23, for the full design/rationale.
 4. **Validate the null-move gate and the singular-extension rewrite with
    SPRT** (findings 5 and 6) — `negamax()`'s null-move condition (its own
    `if (allow_null_move && depth >= kNullMoveMinDepth && beta <
