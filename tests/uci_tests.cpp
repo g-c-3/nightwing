@@ -998,6 +998,54 @@ TEST_CASE("uci: 'setoption name Ponder value false/true' is accepted without err
     REQUIRE_FALSE(contains(out_after_true, "bestmove 0000"));
 }
 
+TEST_CASE("uci: an ordinary 'go' with a real PV emits a 'ponder' move alongside 'bestmove' "
+          "(ROADMAP.md Priority Fixes, 2026-09-22, item 3 -- finding 4)",
+          "[uci][ponder]") {
+    init_all();
+    // "moves g1h3": the same non-bare-startpos convention this file's
+    // MultiPV tests above already use, and depth 4 (rather than a
+    // shallower depth) to comfortably give the reconstructed PV
+    // (SearchResult::pv, search.h) at least 2 entries in the ordinary
+    // (non-skill-limited, multi_pv==1) case this test exercises.
+    const std::string out =
+        run_uci({"position startpos moves g1h3", "go depth 4", "quit"});
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+    REQUIRE(contains(out, " ponder "));
+}
+
+TEST_CASE("uci: a 'ponderhit'-converted search also emits a 'ponder' move alongside its own "
+          "'bestmove' -- the second of the two 'bestmove' call sites ponder_move_for() (uci.cpp) "
+          "feeds",
+          "[uci][ponder][pondering]") {
+    init_all();
+    // Same wtime/btime=1000 -> 50ms watchdog-delay convention as
+    // pondering_tests.cpp's own "'go ponder' followed by 'ponderhit' "
+    // ... test -- see that test's own comment for why run_uci()
+    // returning at all already guarantees the watchdog fired and
+    // 'bestmove' was printed before this assertion runs.
+    const std::string out = run_uci({"position startpos moves g1h3",
+                                      "go ponder wtime 1000 btime 1000 winc 0 binc 0", "ponderhit",
+                                      "quit"});
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+    REQUIRE(contains(out, " ponder "));
+}
+
+TEST_CASE("uci: 'go' at a position one move from checkmate never emits a 'ponder' token -- "
+          "ponder_move_for() (uci.cpp) returns a null move (fewer than 2 PV entries) rather than "
+          "'ponder 0000'",
+          "[uci][ponder]") {
+    init_all();
+    // Fool's mate setup: after 1.f3 e5 2.g4, Black has Qh4# available --
+    // the PV's own best_move (Qh4#) ends the game, so there is no
+    // reply to ponder on at all.
+    const std::string out =
+        run_uci({"position startpos moves f2f3 e7e5 g2g4", "go depth 3", "quit"});
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, " ponder "));
+}
+
 // --- `bench` command (ROADMAP.md Phase 8, "`bench` command") ---
 // The actual CLI-argument path (`./nightwing bench`, src/main.cpp) is
 // its own separate translation unit (a distinct `main()`) and isn't
