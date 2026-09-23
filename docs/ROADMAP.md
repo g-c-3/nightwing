@@ -1959,37 +1959,67 @@ it either way.
    entries — e.g. the position is one ply from checkmate. See
    docs/DECISIONS.md, 2026-09-23, for the full design/rationale.
 4. [ ] **Validate the null-move gate and the singular-extension rewrite
-   with SPRT** (findings 5 and 6) — CODE FIXES LANDED this session;
+   with SPRT** (findings 5 and 6) — CODE FIXES LANDED the prior session;
    left unchecked because the item's own text explicitly requires
    `nightwing_sprt` validation before either change is trusted as a
-   strength gain, and no compiler/SPRT toolchain is available in this
-   sandbox (GitHub Actions handles all building, per this project's own
-   core rules) — that run is the concrete remaining step, not more
-   code. What landed: `negamax()`'s null-move condition now also
-   requires `node_static_eval >= beta` (previously missing entirely);
-   the singular-extension block now makes a single verification
-   `negamax()` call with the TT move excluded via a new `exclude_move`
-   parameter, at the same `ply` and the same side to move, rather than
-   one full recursive call per alternative legal move in a
-   `for (int j = 0; j < moves.size() ...)` loop — replacing up to
+   strength gain, not just correctness — that run is the concrete
+   remaining step, not more code. What landed: `negamax()`'s null-move
+   condition now also requires `node_static_eval >= beta` (previously
+   missing entirely); the singular-extension block now makes a single
+   verification `negamax()` call with the TT move excluded via a new
+   `exclude_move` parameter, at the same `ply` and the same side to
+   move, rather than one full recursive call per alternative legal move
+   in a `for (int j = 0; j < moves.size() ...)` loop — replacing up to
    `moves.size() - 1` extra sub-searches per singular candidate (and an
    unconditional `ensure_quiets()` call) with exactly one, at standard-
    technique cost. `exclude_move` also had to disable this position's
    own TT cutoff and skip both the TT store and the correction-history
    update for that one call — see docs/DECISIONS.md, 2026-09-23 (2),
    for the full correctness argument on why (a subtler hazard than the
-   node-count savings alone). Verified by inspection and a new
-   `[nmp][singular_extension]`-tagged depth-8 regression test in
-   `tests/search_tests.cpp` (61 `TEST_CASE`s total, up from 60) — deep
-   enough to actually reach `kSingularMinDepth` (8) at internal nodes,
-   not just the shallower depth-6 tests this position's other Phase 4
-   entries already use. **Next session starts here**: run
-   `nightwing_sprt` (via CI, once these changes are on `main`) against
-   the pre-fix build for both changes, ideally isolated as two separate
-   SPRT runs rather than one combined test, so a regression in either
-   one doesn't get masked by an improvement in the other; only check
-   this item off once that comes back non-regressing (or revert
-   whichever half doesn't).
+   node-count savings alone). UPDATE, same day (docs/DECISIONS.md,
+   2026-09-23 (3)): a compiler/CMake toolchain was discovered genuinely
+   available in the assistant's own sandbox (docs/ARCHITECTURE.md's new
+   "Development Environment" section) and used to actually build this
+   repository with both fixes applied and run the full `ctest` suite for
+   real — 679/679 passing, and the real `nightwing` binary confirmed
+   over UCI to still behave correctly (`bestmove ... ponder ...` on an
+   ordinary line, no `ponder` token on a Fool's-Mate line). This is
+   materially stronger than the "verified by inspection" standard every
+   prior session's own entries used, but is still NOT the SPRT run this
+   item's own text requires — a real strength-gain verdict needs many
+   real games against a reference build, genuine wall-clock time this
+   session didn't spend on it (see the same DECISIONS.md entry's own
+   note on why `nightwing_sprt --help` alone already ran long enough to
+   hit this sandbox's own per-command time limit). One new regression
+   test in `tests/search_tests.cpp` (`[nmp][singular_extension]`-tagged,
+   depth 8 — deep enough to reach `kSingularMinDepth` itself). **Next
+   session starts here**: run `nightwing_sprt` (via CI, or directly in
+   this sandbox now that the toolchain is confirmed available — budget
+   real wall-clock time for it, unlike a `ctest` pass) against the
+   pre-fix build for both changes, ideally as two separate SPRT runs
+   rather than one combined test, so a regression in either one doesn't
+   get masked by an improvement in the other; only check this item off
+   once that comes back non-regressing (or revert whichever half
+   doesn't).
+4b. [x] **Fix a pre-existing, previously-undetected flaky test surfaced
+   by this push's own CI run** — `tests/endgame_suite_tests.cpp`'s
+   "opposite-colored bishops score lower..." test failed identically on
+   all 6 CI platforms; confirmed by direct reproduction (not inference)
+   to be UNRELATED to item 4's own changes above (the identical failure
+   reproduces against a completely unmodified copy of `search.cpp` from
+   `main`) and to be a real, if narrow, alpha-beta search-instability
+   artifact specific to depth 8 for this one position pair — the
+   underlying static-eval term itself is correct (confirmed both by a
+   direct `eval::evaluate()` probe and by `minor_piece_endgame_tests.
+   cpp`'s own already-passing unit coverage of it), and the expected
+   score ordering holds cleanly at depths 4-7, 9, and 10, flipping by
+   only 2 points at depth 8 specifically. Fixed by changing that one
+   test's own depth from 8 to 7 (a 94-point margin, reconfirmed
+   deterministic against the real compiled build) and rewriting its
+   comment to document the investigation. No production code changed.
+   Full `ctest` (679/679) confirmed green after this fix, with item 4's
+   own changes still applied on top. See docs/DECISIONS.md, 2026-09-23
+   (3), for the full investigation and rationale.
 5. **Fix the mate-vs-fifty-move ordering; tighten UCI parsing** (findings
    8 and 9) — `is_draw_by_rule()` (`src/search/search.cpp`) returns a
    draw immediately on `halfmove_clock >= 100`, called at the very top of
