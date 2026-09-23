@@ -948,6 +948,34 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
     REQUIRE(result.score >= kMateThreshold);
 }
 
+TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found correctly at "
+          "depth 8 -- ROADMAP.md Priority Fixes (2026-09-22), item 4, findings 5 and 6: the "
+          "null-move static_eval>=beta gate and the rewritten single-excluded-move singular "
+          "extension",
+          "[search][nmp][singular_extension]") {
+    init_all();
+    // Same position as every Phase 4 test above, at depth 8 specifically
+    // -- deep enough that internal nodes reach kSingularMinDepth (8)
+    // itself, not just the shallower depths the existing depth-6 tests
+    // above exercise, giving the REWRITTEN singular-extension path
+    // (search.cpp's negamax(), the single `exclude_move`-based
+    // verification call that replaced the old one-search-per-alternative
+    // loop -- docs/DECISIONS.md 2026-09-23 has the full before/after
+    // account) and the newly-added `node_static_eval >= beta` null-move
+    // gate (same DECISIONS.md entry) more opportunity to both actually
+    // fire within a single test than the pre-existing depth-6 tests
+    // already provide. Purely a "still finds the mate, still correctly
+    // scored, doesn't crash or hang" end-to-end regression check --
+    // proving either change is a genuine STRENGTH gain (rather than
+    // just differently-shaped, still-correct pruning) needs
+    // `nightwing_sprt` (ROADMAP.md's own item 4 text), not a unit test,
+    // and is intentionally not attempted here.
+    Position pos = parse_fen("2k5/8/8/8/3Q4/8/6K1/R7 w - - 0 1");
+    const SearchResult result = search_iterative_deepening(pos, 8);
+    REQUIRE(result.score >= kMateThreshold);
+    REQUIRE_FALSE(result.best_move.is_null());
+}
+
 // ---------------------------------------------------------------------
 // Staged / lazy move generation, Step 2b (docs/ROADMAP.md, docs/
 // DECISIONS.md): negamax()'s own move loop now generates
@@ -956,9 +984,12 @@ TEST_CASE("search_iterative_deepening: the same forced mate-in-3 is still found 
 // them -- an empty captures list (this node might be terminal, might
 // just have no captures), `tt_move` naming a move that isn't among the
 // captures (it might be a genuine quiet best move from a prior,
-// shallower iterative-deepening pass), Singular Extensions' own
-// alternative-move scan (needs every legal move, not just captures),
-// or the main loop simply running out of captures without a cutoff.
+// shallower iterative-deepening pass), or the main loop simply running
+// out of captures without a cutoff. (Singular Extensions' own
+// excluded-move verification search, docs/DECISIONS.md 2026-09-23, is
+// a SEPARATE negamax() call with its own independent staged generation
+// -- it no longer needs THIS node's own `moves` list widened to include
+// quiets the way the old, pre-rewrite alternative-move scan did.)
 // `negamax()` itself isn't part of search.h's public surface (unlike
 // quiescence(), which quiescence_tests.cpp calls directly) -- these two
 // tests exercise it the same way every other test in this file already
