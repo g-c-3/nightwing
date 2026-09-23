@@ -1909,22 +1909,41 @@ it either way.
    `quit`; two `go depth 1` calls with no `stop` between them) were
    updated to send the `stop` a real, compliant GUI would send in both
    cases — see docs/DECISIONS.md, 2026-09-22 (3).
-2. **Real BMI2 portability** (finding 3) — `build_pext_table()`
-   (`src/board/attacks.cpp`) calls `_pext_u64` unconditionally inside
+2. [x] **Real BMI2 portability** (finding 3) — `build_pext_table()`
+   (`src/board/attacks.cpp`) called `_pext_u64` unconditionally inside
    `init_magic_bitboards()`, gated only by the compile-time
    `#if defined(NIGHTWING_ENABLE_BMI2)` (which defaults ON,
    `NIGHTWING_ENABLE_BMI2` option, root `CMakeLists.txt`), NOT by the
-   runtime `support::cpu_has_bmi2()` check — that check only decides
+   runtime `support::cpu_has_bmi2()` check — that check only decided
    `g_use_pext` (which table `rook_attacks()`/`bishop_attacks()` read from
    afterward), set at the very END of `init_magic_bitboards()`, well after
    the unconditional PEXT table build already ran. A default build
-   (BMI2 flags on) will execute an illegal instruction at startup on any
+   (BMI2 flags on) would execute an illegal instruction at startup on any
    pre-Haswell x86 CPU, regardless of the runtime detection machinery
-   existing. Fix per the report: move the PEXT table-building code into
-   its own translation unit compiled with `-mbmi2`, call it only when
-   `support::cpu_has_bmi2()` confirms the running CPU supports it, and
-   build the rest of `nightwing_lib` without `-mbmi2`/`-mpopcnt` so a
-   single binary is safe on any x86_64 host regardless of BMI2 support.
+   existing. FIXED (Session 126): `support::cpu_has_bmi2()` is now checked
+   at the very START of `init_magic_bitboards()` (setting `g_use_pext`
+   immediately, before any table-building loop runs), and every
+   `build_pext_table()` call is now itself gated by that flag rather than
+   running unconditionally. Separately, and just as load-bearing: the
+   actual PEXT instruction is now isolated to one small function,
+   `pext_u64()`, marked with a GCC/Clang
+   `__attribute__((target("bmi2")))` rather than the report's own
+   literally-suggested "separate translation unit" — verified against
+   this project's own compiler (a real `-O2` build and a real `-O3 -flto`
+   Release-config build) that this isolates the PEXT instruction to
+   exactly that one function's own machine code and nothing else in the
+   binary, confirmed by disassembling the actual linked test binary, not
+   just by inspection. `src/CMakeLists.txt` no longer applies
+   `-mbmi2`/`-mpopcnt` to `nightwing_lib` as a whole — a second, closely
+   related hazard this fix also closes: `-mpopcnt` applied library-wide
+   meant `std::popcount()` (`board/bitboard.h`, used throughout
+   eval/search, not just `attacks.cpp`) always lowered to the hardware
+   POPCNT instruction with no runtime check at all, contradicting that
+   function's own doc comment's promise of a portable fallback. See
+   docs/DECISIONS.md, this session's own dated entry, for the full
+   account of why the function-attribute approach was chosen over the
+   report's own literal suggestion, and the disassembly-level
+   verification performed.
 3. **Emit a ponder move in `bestmove`** (finding 4) — both `bestmove`
    call sites (`src/uci/uci.cpp`, ordinary `go` and the post-`ponderhit`
    path) write `bestmove <move>` only; the advertised `Ponder` UCI option
