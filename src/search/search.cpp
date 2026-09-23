@@ -613,21 +613,43 @@ constexpr int kCheckExtensionPly = 1;
 /// loop below, evaluated only for the TT move specifically) constants.
 /// Unlike check extensions (a cheap, purely local decision -- just look
 /// at whether the move gives check), this technique pays for a real,
-/// reduced-depth VERIFICATION search of every OTHER legal move at the
-/// node, all under a narrow window built from the TT's own previously-
-/// stored score, before deciding whether the TT move is "singular" --
-/// so much better than every alternative that none of them can even
-/// approach a score just below it. If none can, the TT move is
+/// reduced-depth VERIFICATION search of the node with the TT move
+/// itself EXCLUDED (`negamax()`'s own `exclude_move` parameter -- see
+/// its doc comment above the function signature), searched under a
+/// narrow window built from the TT's own previously-stored score,
+/// before deciding whether the TT move is "singular" -- so much better
+/// than every alternative that none of them can even approach a score
+/// just below it. If the excluded-move search fails LOW (stays under
+/// `singular_beta`), no alternative reached that bar, so the TT move is
 /// considered forced/critical enough to deserve an extra ply of its own
 /// child search, on the premise that a position with only one genuinely
 /// good move is exactly where a shallow search is most likely to
-/// misjudge how forced the line actually is. Deliberately expensive
-/// (an entire extra search per eligible node), so gated behind several
-/// guards: `kSingularMinDepth` (8) -- shallow nodes can't afford to pay
-/// for a verification search at all; `kSingularTTDepthMargin` (3) -- the
-/// TT entry itself must be from a search deep enough to trust (`probe.
-/// depth >= depth - kSingularTTDepthMargin`), or its stored score isn't
-/// a reliable enough baseline to build a verification window from;
+/// misjudge how forced the line actually is.
+///
+/// FIXED (ROADMAP.md Priority Fixes, 2026-09-22, item 4, finding 6):
+/// this used to run one full, separate `negamax()` call PER alternative
+/// legal move at the node (a `for` loop over every move but the TT
+/// move, each iteration its own real recursive search) rather than the
+/// single, standard "one search of the node, TT move excluded from its
+/// own move loop" shape described above -- up to `moves.size() - 1`
+/// extra sub-searches per singular candidate, and forcing full
+/// quiet-move generation (`ensure_quiets()`) unconditionally to do it.
+/// The single-search shape is both cheaper (one recursive call instead
+/// of up to a whole move list's worth) and the textbook technique (CPW,
+/// Stockfish-classic and every other reference implementation) --
+/// docs/DECISIONS.md has the full before/after account and the SPRT
+/// validation this fix was gated on before being trusted as a real
+/// strength change rather than just a different, cheaper set of
+/// trade-offs.
+///
+/// Deliberately expensive even in its corrected, single-search form (a
+/// genuine extra reduced-depth search per eligible node), so gated
+/// behind several guards: `kSingularMinDepth` (8) -- shallow nodes
+/// can't afford to pay for a verification search at all;
+/// `kSingularTTDepthMargin` (3) -- the TT entry itself must be from a
+/// search deep enough to trust (`probe.depth >= depth -
+/// kSingularTTDepthMargin`), or its stored score isn't a reliable
+/// enough baseline to build a verification window from;
 /// `kSingularMarginPerPly` (2) -- `singular_beta = probe.score -
 /// kSingularMarginPerPly * depth`, a margin that widens with depth
 /// (rather than a fixed lookup table the way most of this file's other
@@ -1528,6 +1550,29 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
 /// if profiling ever shows otherwise). Defaults to nullptr, meaning
 /// "always run the 64-square scan" -- every existing call site (every
 /// test, bench, the tuner) is entirely unaffected.
+///
+/// `exclude_move` (ROADMAP.md Priority Fixes, 2026-09-22, item 4,
+/// finding 6 -- the singular-extension rewrite; kSingularMinDepth's own
+/// doc comment above has the full technique rationale): when non-null,
+/// this call is a singular-extension VERIFICATION search of THIS SAME
+/// node/position (called at the same `ply`, not `ply + 1` -- no move
+/// has been made) with exactly one move -- always the TT move being
+/// tested for singularity -- excluded from the move loop below, so the
+/// search explores every OTHER legal move instead. Two consequences,
+/// both required for correctness, not just efficiency: (1) the TT
+/// cutoff near the top of this function is skipped whenever
+/// `exclude_move` is set, since this position's own TT entry is
+/// exactly the previously-stored result THIS search exists to
+/// interrogate -- trusting it here would let the cutoff hand back the
+/// old score without ever considering an alternative move, defeating
+/// the entire technique; (2) this call's own result is NOT stored back
+/// into the TT at the bottom of this function, since it reflects a
+/// deliberately narrowed search (one legal move missing) rather than a
+/// genuine result for the position, and caching it would let a LATER,
+/// ordinary search of this same position wrongly reuse a score that
+/// was never allowed to consider its own best move. Defaults to
+/// `Move()` (null), meaning "no exclusion" -- every existing call site
+/// is entirely unaffected.
 int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_t& nodes,
             TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
             ContinuationHistoryTable& cont_history, CaptureHistoryTable& capture_history,
@@ -1540,7 +1585,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             const eval::EvalWeightsOverride* eval_weights = nullptr,
             bool allow_null_move = true, SearchLimits* limits = nullptr,
             int contempt_white_pov = 0, int tie_break_variant = 0,
-            const eval::Score* mat_psqt = nullptr) {
+            const eval::Score* mat_psqt = nullptr, Move exclude_move = Move()) {
     // Mid-search time-budget interruption fast path (search.h's
     // SearchLimits doc comment has the full contract): checked before
     // anything else, including the depth <= 0 quiescence delegation
@@ -1711,7 +1756,11 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     tt.prefetch(key);
 
     const TTProbeResult probe = tt.probe(key, ply);
-    if (probe.hit && probe.depth >= depth) {
+    // `exclude_move.is_null()` guard: see negamax()'s own exclude_move
+    // doc comment above -- a singular-extension verification search
+    // must never take this cutoff, since the stored entry here IS the
+    // very result this search exists to test alternatives against.
+    if (probe.hit && probe.depth >= depth && exclude_move.is_null()) {
         if (probe.bound == Bound::Exact) {
             return probe.score;
         }
@@ -1832,9 +1881,15 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // move has no non-pawn, non-king material, the classic
     // king-and-pawn-endgame case where "passing" can be a strictly
     // WORSE option than any real move, making the technique unsound
-    // there); and a mate-range beta (a reduced-depth null-move probe
+    // there); a mate-range beta (a reduced-depth null-move probe
     // stumbling onto what looks like a mate score isn't a trustworthy
-    // claim of an actual forced mate at full depth). Beyond that hard
+    // claim of an actual forced mate at full depth); and
+    // `node_static_eval >= beta` (ROADMAP.md Priority Fixes, 2026-09-22,
+    // item 4, finding 5 -- FIXED this session; this gate was previously
+    // missing entirely) -- a node whose own static eval doesn't already
+    // look at least as good as beta is very unlikely to still reach
+    // beta after handing the opponent a free tempo, so paying for the
+    // reduced-depth probe at all isn't worth it there. Beyond that hard
     // guard, a SOFTER zugzwang bias also applies just below (the `if
     // (eval::is_zugzwang_prone(...))` check right after `reduction` is
     // first computed) -- material signatures that are merely
@@ -1844,8 +1899,21 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     const bool non_pawn_material =
         (pos.pieces(us, board::PieceType::Knight) | pos.pieces(us, board::PieceType::Bishop) |
          pos.pieces(us, board::PieceType::Rook) | pos.pieces(us, board::PieceType::Queen)) != 0;
+    // `node_static_eval >= beta` (ROADMAP.md Priority Fixes, 2026-09-22,
+    // item 4, finding 5): standard practice this gate was previously
+    // missing entirely -- without it, a node whose static eval is
+    // already well below beta still paid for a full reduced-depth
+    // null-move probe that's very unlikely to fail high (if the
+    // position doesn't even LOOK like it's worth beta before giving the
+    // opponent a free tempo, it's extremely unlikely to still reach
+    // beta after doing so). `node_static_eval` is always a genuine
+    // value (never `kNoStaticEval`) at this point, since it's computed
+    // unconditionally whenever `!in_check(pos)` (this function's own
+    // "improving" flag block, just above) -- the exact same condition
+    // this null-move block already requires below, so no extra
+    // `kNoStaticEval` guard is needed here.
     if (allow_null_move && depth >= kNullMoveMinDepth && beta < kMateThreshold && non_pawn_material &&
-        !in_check(pos)) {
+        !in_check(pos) && node_static_eval >= beta) {
         int reduction =
             depth >= kNullMoveBigReductionDepth ? kNullMoveBigReduction : kNullMoveReduction;
         // Zugzwang-aware bias (ROADMAP.md Phase 6's "Zugzwang-aware
@@ -2034,6 +2102,13 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         const int probcut_beta = beta + kProbCutMargin;
         for (int i = 0; i < moves.size(); ++i) {
             const Move probcut_move = moves[i];
+            // `exclude_move` (negamax()'s own doc comment): a singular-
+            // extension verification search must never let ProbCut
+            // consider the very move it exists to test alternatives
+            // against.
+            if (!exclude_move.is_null() && probcut_move == exclude_move) {
+                continue;
+            }
             if (!probcut_move.is_capture() && !probcut_move.is_promotion()) {
                 continue;
             }
@@ -2161,14 +2236,23 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // the point they're actually needed (the search must
             // continue past whatever's been generated so far); if they
             // already have (via `ensure_quiets()` firing earlier, above
-            // this loop or inside the singular-extension block), or the
-            // position genuinely has no more moves either way, the loop
-            // is really done.
+            // this loop), or the position genuinely has no more moves
+            // either way, the loop is really done.
             if (quiets_generated) break;
             ensure_quiets();
             if (i >= moves.size()) break;
         }
         const Move move = moves[i];
+        // `exclude_move` (negamax()'s own doc comment above the
+        // function signature): a singular-extension verification
+        // search skips the one move it exists to test alternatives
+        // against, exploring every other legal move instead. Checked
+        // before any of this iteration's own per-move computation below
+        // -- there's nothing else to compute for a move this node isn't
+        // even going to consider.
+        if (!exclude_move.is_null() && move == exclude_move) {
+            continue;
+        }
         // Castling excluded alongside captures/promotions (docs/
         // DECISIONS.md has the full bug account): before this exclusion
         // existed, castling was treated as an ordinary quiet move by
@@ -2215,68 +2299,52 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // here.
         const int capture_see = move.is_capture() ? static_exchange_evaluation(pos, move) : 0;
 
-        // Singular extensions (this function's header comment): only
-        // evaluated for the TT move itself (order_moves() places it
-        // first whenever `tt_move` is present and legal, so this is
-        // scoped to `i == 0`), and using `pos` as it stands BEFORE
-        // `move` is played -- the verification search below tries every
-        // OTHER legal move from this same position, so it has to run
-        // before this iteration's own make_move() changes it.
+        // Singular extensions (this function's header comment, above
+        // kSingularMinDepth, has the full before/after account of this
+        // fix): only evaluated for the TT move itself (order_moves()
+        // places it first whenever `tt_move` is present and legal, so
+        // this is scoped to `i == 0`), and using `pos` as it stands
+        // BEFORE `move` is played -- the verification search below
+        // explores this same position with `move` itself excluded from
+        // its own move loop, so it has to run before this iteration's
+        // own make_move() changes `pos`.
         int singular_extension = 0;
         if (i == 0 && probe.hit && move == tt_move && probe.bound == Bound::Lower &&
             depth >= kSingularMinDepth && probe.depth >= depth - kSingularTTDepthMargin &&
             probe.score > -kMateThreshold && probe.score < kMateThreshold) {
-            // The alternative-move scan just below needs every OTHER
-            // legal move at this node, not just captures -- staged
-            // generation's own "ensure_quiets()" lambda, defined above
-            // this function's move loop, is exactly the same fallback
-            // the main loop below uses when it runs out of captures
-            // without a cutoff; triggered here too since this scan can
-            // legitimately need the full list even when the main loop
-            // itself never would have (a cutoff on `move` -- the TT
-            // move, already established to cause one, or this check
-            // wouldn't be reachable -- would otherwise have kept the
-            // main loop from ever exhausting captures).
-            ensure_quiets();
             const int singular_beta = probe.score - kSingularMarginPerPly * depth;
             const int singular_depth = (depth - 1) / kSingularDepthDivisor;
-            bool any_alternative_matched = false;
-            for (int j = 0; j < moves.size() && !any_alternative_matched; ++j) {
-                if (moves[j] == tt_move) {
-                    continue;
-                }
-                const Move alt_move = moves[j];
-                const board::PieceType alt_moved_piece =
-                    board::piece_type_of(pos.piece_at(alt_move.from()));
-                UndoInfo alt_undo;
-                board::make_move(pos, alt_move, alt_undo);
-                const int alt_score =
-                    -negamax(pos, singular_depth, -singular_beta, -singular_beta + 1, ply + 1, nodes,
-                             tt, killers, history, cont_history, capture_history, correction_history,
-                             alt_moved_piece, alt_move.to(), alt_move.is_capture(), game_history, path,
-                             static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
-                             /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant);
-                board::unmake_move(pos, alt_move, alt_undo);
-                if (limits != nullptr && limits->stopped) {
-                    // Truncated subtree -- stop the verification loop
-                    // rather than trying more alternatives against a
-                    // score that can no longer be trusted (same
-                    // reasoning as NMP's/ProbCut's own guards above);
-                    // `singular_extension` simply stays 0 below, which
-                    // is harmless either way since this whole node's
-                    // result will be discarded (SearchLimits' own doc
-                    // comment).
-                    break;
-                }
-                if (alt_score >= singular_beta) {
-                    // Some other move can already reach almost as high a
-                    // score as the TT move's own previous cutoff --
-                    // disproves singularity (the TT move isn't the ONLY
-                    // good option here), so no extension.
-                    any_alternative_matched = true;
-                }
-            }
-            if (!any_alternative_matched) {
+            // A single call at the SAME `ply` (not `ply + 1` -- no move
+            // has been made, this explores ALTERNATIVES to `move`, it
+            // doesn't descend past it) and the SAME side to move, so
+            // the returned score is already in `us`'s own perspective
+            // -- no negation, unlike every other recursive call in this
+            // loop, which all follow a real make_move() and so need
+            // one. `move` itself is excluded via the `exclude_move`
+            // parameter (its own doc comment above the function
+            // signature has the full correctness argument for why the
+            // TT cutoff and TT store both have to be skipped for this
+            // one call). The excluded-move search generates and orders
+            // its own move list independently (this node's own staged-
+            // generation machinery, `ensure_quiets()` included), so
+            // there's no need to force quiets into THIS node's own
+            // `moves` list just to feed an alternative-move scan the
+            // way the old, one-search-per-alternative version required.
+            const int singular_score =
+                negamax(pos, singular_depth, singular_beta - 1, singular_beta, ply, nodes, tt,
+                        killers, history, cont_history, capture_history, correction_history,
+                        prev_piece, prev_to, prev_was_capture, game_history, path,
+                        static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
+                        /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant,
+                        mat_psqt, /*exclude_move=*/move);
+            // A truncated subtree (SearchLimits' own doc comment) makes
+            // `singular_score` meaningless -- same reasoning as NMP's/
+            // ProbCut's own guards above; `singular_extension` simply
+            // stays 0, harmless either way since this whole node's own
+            // result will be discarded.
+            if ((limits == nullptr || !limits->stopped) && singular_score < singular_beta) {
+                // No alternative move reached even singular_beta -- the
+                // TT move is judged the only genuinely good option here.
                 singular_extension = kSingularExtensionPly;
             }
         }
@@ -2720,8 +2788,14 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // `best_move` here may reflect a truncated subtree rather than a
     // genuine result for this depth, and caching that would pollute
     // the TT with a wrong entry that could mislead a later, real
-    // search at this same position.
-    if (limits == nullptr || !limits->stopped) {
+    // search at this same position. Also skipped whenever `exclude_move`
+    // is set (negamax()'s own doc comment above the function signature)
+    // -- this result reflects a deliberately narrowed search (one legal
+    // move missing), never a genuine result for the position, and
+    // storing it would let a LATER, ordinary search of this same
+    // position wrongly reuse a score that was never allowed to
+    // consider its own best move.
+    if ((limits == nullptr || !limits->stopped) && exclude_move.is_null()) {
         tt.store(key, depth, best, bound_type, best_move, ply);
     }
 
@@ -2751,8 +2825,13 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // one-shot "raw eval was wrong by X" measurement, so the moving
     // average converges toward a stable correction rather than
     // repeatedly re-learning the same offset from scratch.
+    // `exclude_move.is_null()` guard: same reasoning as the TT store's
+    // own identical guard just above -- a narrowed, one-move-missing
+    // search's own `best` is not a genuine measure of this node's true
+    // value, so it shouldn't teach correction history anything either.
     if ((limits == nullptr || !limits->stopped) && bound_type == Bound::Exact &&
-        node_static_eval != kNoStaticEval && best < kMateThreshold && best > -kMateThreshold) {
+        node_static_eval != kNoStaticEval && best < kMateThreshold && best > -kMateThreshold &&
+        exclude_move.is_null()) {
         correction_history.update(us, pawn_key, best - node_static_eval);
     }
 
