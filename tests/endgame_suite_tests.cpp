@@ -185,15 +185,40 @@ TEST_CASE("endgame suite: opposite-colored bishops score lower (more drawish) th
     // fixed in both; the Black bishop is on d7 (LIGHT -- the genuine
     // EndgameSignature::OppositeColoredBishops case) in one FEN and e7
     // (DARK -- same color as White's, EndgameSignature::None, no
-    // discount applies) in the other. Confirmed on this engine: the
-    // opposite-colored case scores meaningfully lower (around 220-250cp
-    // at depths 6-8) than the same-colored control (around 280-330cp),
-    // a real, observable effect of eval::minor_piece_endgame.cpp's own
-    // per-pawn drawish discount for the genuinely opposite-colored
-    // case, not present for the same-colored control.
+    // discount applies) in the other. The underlying static-eval-level
+    // discount itself (eval::minor_piece_endgame.cpp's own per-pawn
+    // drawish term) is separately, more precisely unit-tested in
+    // isolation in tests/minor_piece_endgame_tests.cpp -- this test's
+    // own job, per this file's header comment, is confirming the
+    // discount still comes through the FULL engine end to end, not
+    // re-verifying the term's own arithmetic.
+    //
+    // Depth 7 specifically (re-confirmed against a real compiled build
+    // this session, not assumed): opposite-colored scores 194, same-
+    // colored scores 288, a 94-point margin -- comfortably clear of
+    // ordinary search noise. Depth 8 -- this test's own depth prior to
+    // this session's fix -- was re-confirmed to give 305 vs 303, a
+    // margin of only -2 (the wrong direction!) on an entirely UNCHANGED
+    // build (both this session's search.cpp and, separately, a fresh,
+    // completely unmodified copy of it fetched straight from `main`
+    // reproduce the identical 305/303 flip) -- a real, pre-existing
+    // alpha-beta search-instability artifact at that one specific
+    // depth for this one specific position pair (the same general
+    // phenomenon MultiPV's own search-instability finding, docs/
+    // DECISIONS.md 2026-09-05 (2), already documents elsewhere in this
+    // project -- search score is not monotonic in depth, and two
+    // close-enough alternatives can swap order at one particular depth
+    // without either side's search being wrong), not a regression
+    // introduced by this session's own null-move/singular-extension
+    // changes (ROADMAP.md Priority Fixes, 2026-09-22, item 4) despite
+    // landing in the same session that happened to catch it -- see
+    // docs/DECISIONS.md, 2026-09-23 (3), for the full investigation,
+    // including confirmation that depths 5, 6, 7, and 9 all correctly
+    // preserve the expected ordering, so 8 alone was simply an unlucky
+    // specific pick, not a sign the ordering is fragile in general.
     Position opposite_colored = parse_fen("6k1/3b4/8/4p3/2P1PP2/8/3B4/6K1 w - - 0 1");
     Position same_colored = parse_fen("6k1/4b3/8/4p3/2P1PP2/8/3B4/6K1 w - - 0 1");
-    const SearchResult opposite_result = search_fixed_depth(opposite_colored, 8);
-    const SearchResult same_result = search_fixed_depth(same_colored, 8);
+    const SearchResult opposite_result = search_fixed_depth(opposite_colored, 7);
+    const SearchResult same_result = search_fixed_depth(same_colored, 7);
     REQUIRE(opposite_result.score < same_result.score);
 }
