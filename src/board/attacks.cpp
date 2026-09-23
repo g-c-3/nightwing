@@ -13,9 +13,14 @@
 //      This is the portable path, always built.
 //   4. A BMI2 PEXT-indexed table, built only when compiled with
 //      NIGHTWING_ENABLE_BMI2 (see root/src CMakeLists.txt — only ever
-//      defined on x86/x86_64). No search needed here: PEXT itself
-//      guarantees a collision-free dense index, so the table is just
-//      "for every occupancy subset, store its reference attack set at
+//      defined on x86/x86_64) AND, since ROADMAP.md Priority Fixes
+//      (2026-09-22, finding 3), only when the *running* CPU actually
+//      supports BMI2 (support::cpu_has_bmi2(), checked up front in
+//      init_magic_bitboards() below, before any PEXT code runs at all —
+//      see that function's own comment for the bug this fixes and why).
+//      No search needed here regardless: PEXT itself guarantees a
+//      collision-free dense index, so the table is just "for every
+//      occupancy subset, store its reference attack set at
 //      pext(subset, mask)".
 //   5. Runtime dispatch between the two: rook_attacks()/bishop_attacks()
 //      use the PEXT table only when support::cpu_has_bmi2() confirms the
@@ -23,8 +28,40 @@
 //      code was compiled in — a BMI2 build still runs correctly on older
 //      hardware.
 //
+// BMI2 CODE ISOLATION (ROADMAP.md Priority Fixes, 2026-09-22, finding 3):
+// src/CMakeLists.txt no longer applies -mbmi2/-mpopcnt to nightwing_lib
+// as a whole — only pext_u64() below, the single, minimal wrapper around
+// the actual _pext_u64 intrinsic, carries a GCC/Clang
+// __attribute__((target("bmi2"))) (NIGHTWING_BMI2_TARGET below). Every
+// other function in this file — including build_pext_table(),
+// rook_attacks()/bishop_attacks() THEMSELVES, and the portable
+// magic-multiply fallback path inside them — compiles under this TU's
+// ordinary, non-BMI2 target and calls pext_u64() as a perfectly ordinary
+// function call (calling a target-attributed function imposes no target
+// requirement on the caller — this is standard GCC/Clang "function
+// multiversioning" practice, confirmed against this project's own
+// compiler (GCC 13.3, matching CI) with a real -O2 and a real -O3 -flto
+// build: the PEXT instruction appears ONLY inside pext_u64()'s own
+// generated code, nowhere else). This is deliberately NARROWER than the
+// external review's own literally-suggested fix (a wholly separate
+// translation unit for the PEXT table-BUILDING code) — see
+// docs/DECISIONS.md, this dated entry, for why: splitting
+// rook_attacks()/bishop_attacks() into a second TU would either (a)
+// leave their own portable-fallback branch compiled under -mbmi2 too if
+// naively whole-function-isolated (letting the compiler auto-generate a
+// BMI2 instruction into the very fallback path meant to run on non-BMI2
+// hardware — reintroducing a subtler version of the identical bug this
+// item exists to fix), or (b) require moving rook_attacks()/
+// bishop_attacks() themselves out of this file, giving up same-TU
+// inlining for a genuinely hot path (called on nearly every search
+// node) in exchange for LTO's less certain cross-TU guarantee. Isolating
+// down to the single, tiny intrinsic-wrapping function avoids both.
+//
 // All of this runs once at startup; none of it is hot-path code, so
-// clarity is favored over micro-optimization throughout this file.
+// clarity is favored over micro-optimization throughout this file. The
+// one exception is pext_u64() itself, called from rook_attacks()/
+// bishop_attacks()'s own hot path — but it's a single-instruction
+// wrapper, so there's no clarity/speed tradeoff to weigh there either.
 
 #include "board/attacks.h"
 
@@ -41,6 +78,46 @@
 #endif
 
 namespace nightwing::board {
+
+#if defined(NIGHTWING_ENABLE_BMI2)
+namespace {
+
+// GCC/Clang function-multiversioning target attribute (see this file's
+// own header comment, "BMI2 CODE ISOLATION", for the full rationale) —
+// MSVC needs no equivalent: its <immintrin.h> intrinsics are available
+// unconditionally on x86_64 regardless of /arch: flags (src/CMakeLists.txt's
+// own comment at the BMI2 option block), so pext_u64() below needs no
+// special annotation there at all, just the runtime check its own
+// caller already performs.
+#if defined(__GNUC__) || defined(__clang__)
+#define NIGHTWING_BMI2_TARGET __attribute__((target("bmi2")))
+#else
+#define NIGHTWING_BMI2_TARGET
+#endif
+
+/// The ONLY function in this file (indeed, in this codebase) whose own
+/// compiled machine code can contain a PEXT instruction — every caller
+/// below (build_pext_table(), rook_attacks()/bishop_attacks(), the
+/// test-only PEXT hooks) calls this as an ordinary function, imposing no
+/// target requirement on itself in turn. Precondition, enforced entirely
+/// by this file's OWN callers, not by anything inside this function:
+/// support::cpu_has_bmi2() must have already confirmed the running CPU
+/// supports BMI2 before this is ever reached — calling it on hardware
+/// that doesn't raises SIGILL, the exact bug this file's own "BMI2 CODE
+/// ISOLATION" header comment and ROADMAP.md Priority Fixes (2026-09-22,
+/// finding 3) describe. This function itself cannot check that
+/// precondition — support::cpu_has_bmi2() is an ordinary, non-BMI2-
+/// requiring function, deliberately kept as the single source of truth
+/// callers consult BEFORE reaching here, rather than duplicating that
+/// check on every call to what needs to stay a trivial, fast wrapper on
+/// rook_attacks()'s/bishop_attacks()'s own hot path.
+NIGHTWING_BMI2_TARGET
+[[nodiscard]] std::uint64_t pext_u64(std::uint64_t value, std::uint64_t mask) noexcept {
+    return _pext_u64(value, mask);
+}
+
+} // namespace
+#endif
 
 namespace {
 
@@ -209,12 +286,19 @@ std::uint64_t find_magic_for_square(Bitboard mask, const SubsetData& data,
 /// Builds the PEXT-indexed attack table for `mask`. No search needed:
 /// PEXT deterministically maps each subset's bit pattern to a unique
 /// dense index in [0, 2^bits), so this is a direct one-pass fill.
+///
+/// Precondition: support::cpu_has_bmi2() has confirmed the running CPU
+/// actually supports BMI2 (this function itself carries no target
+/// attribute and cannot execute a PEXT instruction directly — see
+/// pext_u64()'s own doc comment above for why that check lives entirely
+/// in this function's own callers, init_magic_bitboards() below being
+/// the one that matters here).
 std::vector<Bitboard> build_pext_table(Bitboard mask, const SubsetData& data) {
     const int size = 1 << popcount(mask);
     std::vector<Bitboard> table(static_cast<std::size_t>(size), kEmptyBitboard);
 
     for (std::size_t i = 0; i < data.occupancies.size(); ++i) {
-        const std::uint64_t index = _pext_u64(data.occupancies[i], mask);
+        const std::uint64_t index = pext_u64(data.occupancies[i], mask);
         table[index] = data.reference[i];
     }
     return table;
@@ -251,6 +335,22 @@ void init_magic_bitboards() {
 
     nightwing::support::detect_cpu_features();
 
+#if defined(NIGHTWING_ENABLE_BMI2)
+    // THE FIX (ROADMAP.md Priority Fixes, 2026-09-22, finding 3): decided
+    // HERE, before a single PEXT instruction has any chance to run, not
+    // at the end of this function after build_pext_table() had already
+    // been called unconditionally on every BMI2-compiled build regardless
+    // of what the running CPU actually supports — the bug that made a
+    // default build (NIGHTWING_ENABLE_BMI2 defaults ON) execute an
+    // illegal instruction at startup on any pre-Haswell x86 CPU, even
+    // though the runtime detection machinery (support::cpu_has_bmi2())
+    // already existed; it just wasn't consulted until too late to matter.
+    // g_use_pext is ALSO the flag rook_attacks()/bishop_attacks() read at
+    // every call below, so setting it here, once, up front, is both the
+    // fix and the only place that ever needs to set it.
+    g_use_pext = nightwing::support::cpu_has_bmi2();
+#endif
+
     // Fixed seed: reproducible magics/tables across every run and platform.
     nightwing::support::Xorshift64Star rng(0x9E3779B97F4A7C15ULL);
 
@@ -260,7 +360,9 @@ void init_magic_bitboards() {
         const SubsetData data = enumerate_subsets(sq, g_rook_mask[sq], kRookDeltas);
         g_rook_magic[sq] = find_magic_for_square(g_rook_mask[sq], data, rng, g_rook_table[sq]);
 #if defined(NIGHTWING_ENABLE_BMI2)
-        g_rook_pext_table[sq] = build_pext_table(g_rook_mask[sq], data);
+        if (g_use_pext) {
+            g_rook_pext_table[sq] = build_pext_table(g_rook_mask[sq], data);
+        }
 #endif
     }
 
@@ -270,13 +372,11 @@ void init_magic_bitboards() {
         const SubsetData data = enumerate_subsets(sq, g_bishop_mask[sq], kBishopDeltas);
         g_bishop_magic[sq] = find_magic_for_square(g_bishop_mask[sq], data, rng, g_bishop_table[sq]);
 #if defined(NIGHTWING_ENABLE_BMI2)
-        g_bishop_pext_table[sq] = build_pext_table(g_bishop_mask[sq], data);
+        if (g_use_pext) {
+            g_bishop_pext_table[sq] = build_pext_table(g_bishop_mask[sq], data);
+        }
 #endif
     }
-
-#if defined(NIGHTWING_ENABLE_BMI2)
-    g_use_pext = nightwing::support::cpu_has_bmi2();
-#endif
 
     g_initialized = true;
 }
@@ -285,7 +385,7 @@ Bitboard rook_attacks(Square sq, Bitboard occupied) noexcept {
     const Bitboard relevant = occupied & g_rook_mask[sq];
 #if defined(NIGHTWING_ENABLE_BMI2)
     if (g_use_pext) {
-        return g_rook_pext_table[sq][_pext_u64(relevant, g_rook_mask[sq])];
+        return g_rook_pext_table[sq][pext_u64(relevant, g_rook_mask[sq])];
     }
 #endif
     const std::uint64_t index = (relevant * g_rook_magic[sq]) >> (64 - g_rook_bits[sq]);
@@ -296,7 +396,7 @@ Bitboard bishop_attacks(Square sq, Bitboard occupied) noexcept {
     const Bitboard relevant = occupied & g_bishop_mask[sq];
 #if defined(NIGHTWING_ENABLE_BMI2)
     if (g_use_pext) {
-        return g_bishop_pext_table[sq][_pext_u64(relevant, g_bishop_mask[sq])];
+        return g_bishop_pext_table[sq][pext_u64(relevant, g_bishop_mask[sq])];
     }
 #endif
     const std::uint64_t index = (relevant * g_bishop_magic[sq]) >> (64 - g_bishop_bits[sq]);
@@ -306,12 +406,12 @@ Bitboard bishop_attacks(Square sq, Bitboard occupied) noexcept {
 #if defined(NIGHTWING_ENABLE_BMI2)
 Bitboard rook_attacks_pext_for_testing(Square sq, Bitboard occupied) noexcept {
     const Bitboard relevant = occupied & g_rook_mask[sq];
-    return g_rook_pext_table[sq][_pext_u64(relevant, g_rook_mask[sq])];
+    return g_rook_pext_table[sq][pext_u64(relevant, g_rook_mask[sq])];
 }
 
 Bitboard bishop_attacks_pext_for_testing(Square sq, Bitboard occupied) noexcept {
     const Bitboard relevant = occupied & g_bishop_mask[sq];
-    return g_bishop_pext_table[sq][_pext_u64(relevant, g_bishop_mask[sq])];
+    return g_bishop_pext_table[sq][pext_u64(relevant, g_bishop_mask[sq])];
 }
 #endif
 
