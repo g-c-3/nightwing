@@ -927,9 +927,37 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
                                     std::span<const std::uint64_t> game_history,
                                     const std::array<std::uint64_t, kMaxPly>& path) noexcept {
     if (pos.halfmove_clock >= 100) {
-        return true;
-    }
-    if (is_insufficient_material(pos)) {
+        // Checkmate delivered by the very move that pushes halfmove_clock
+        // to 100 must still be scored as a win, not a draw -- the 50-move
+        // rule only produces a draw when the side to move actually has a
+        // legal reply. Cheap in the overwhelmingly common case (not in
+        // check): only the rare in-check branch pays for a real
+        // generate_legal_moves() call, the same proven technique
+        // Stockfish's own Position::is_draw() uses (`st->rule50 > 99 &&
+        // (!checkers() || MoveList<LEGAL>(*this).size())`) -- credited
+        // here per ARCHITECTURE.md's attribution policy, not worked out
+        // from scratch.
+        if (!in_check(pos)) {
+            return true;
+        }
+        board::MoveList legal_replies;
+        board::generate_legal_moves(pos, legal_replies);
+        if (!legal_replies.empty()) {
+            return true;
+        }
+        // In check with zero legal replies: this position is checkmate,
+        // not a draw. Return false directly (rather than falling into
+        // the repetition walk below) -- a genuine game history can never
+        // actually repeat a checkmate position (the earlier occurrence
+        // would itself have already been checkmate and ended the game),
+        // so this is purely defensive, not reachable in practice, but
+        // costs nothing to make explicit rather than rely on that
+        // invariant silently. negamax()'s own move loop discovers the
+        // empty move list itself just below and scores this node as
+        // -(kMateScore - ply), never this function's own
+        // contempt_draw_score().
+        return false;
+    } else if (is_insufficient_material(pos)) {
         return true;
     }
     if (ply >= kMaxPly) {
