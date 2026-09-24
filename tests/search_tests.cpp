@@ -1173,6 +1173,38 @@ TEST_CASE("search_fixed_depth: 50-move rule forces a draw score one quiet ply af
     REQUIRE(result.score == kDrawScore);
 }
 
+TEST_CASE("search_fixed_depth: checkmate delivered by the move that pushes halfmove_clock to "
+          "100 is scored as a win, NOT the 50-move-rule draw -- Priority Fixes (2026-09-22), "
+          "finding 8",
+          "[search][fifty-move][mate]") {
+    init_all();
+    // Bare White king (f7) and queen (g1) vs. a bare Black king boxed
+    // into the h-file corner (h8), halfmove_clock at 99 -- ANY quiet
+    // queen move here (no pawns, no captures available to either side)
+    // pushes the clock to exactly 100. Qg1-h1# (or an equivalent
+    // mate-in-1 the search may instead prefer, given move-ordering is
+    // not being pinned down here) delivers checkmate along the h-file,
+    // supported by the king covering g7/g8 -- a completely standard
+    // "king supports the queen next to a boxed-in enemy king" mate
+    // pattern, chosen specifically because it needs no capture and no
+    // pawn move, so the halfmove clock genuinely reaches 100 on the
+    // mating move itself, not one ply later. Before this fix,
+    // is_draw_by_rule() (search.cpp) returned true on `halfmove_clock
+    // >= 100` unconditionally, checked before any move generation --
+    // so the position after this mating move was misscored
+    // kDrawScore (confirmed by direct reproduction against the
+    // pre-fix build: `score cp 0`, the search actively AVOIDING the
+    // mate it could see, in favor of an ordinary king-and-queen
+    // shuffle) rather than being recognized as checkmate. Depth 2
+    // (root ply + the mated child) is enough for the search to reach
+    // and evaluate that child node the same way the existing 50-move
+    // test above does.
+    Position pos = parse_fen("7k/5K2/8/8/8/8/8/6Q1 w - - 99 60");
+    const SearchResult result = search_fixed_depth(pos, 2);
+    REQUIRE_FALSE(result.best_move.is_null());
+    REQUIRE(result.score >= kMateThreshold);
+}
+
 TEST_CASE("search_fixed_depth: insufficient material (king and a single knight vs. bare king) "
           "forces a draw score at the root immediately, no captures or waiting required -- "
           "is_insufficient_material() (search.cpp)",
