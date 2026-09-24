@@ -2062,21 +2062,69 @@ it either way.
    Full `ctest` (679/679) confirmed green after this fix, with item 4's
    own changes still applied on top. See docs/DECISIONS.md, 2026-09-23
    (3), for the full investigation and rationale.
-5. **Fix the mate-vs-fifty-move ordering; tighten UCI parsing** (findings
-   8 and 9) — `is_draw_by_rule()` (`src/search/search.cpp`) returns a
-   draw immediately on `halfmove_clock >= 100`, called at the very top of
-   `negamax()` well before any move generation or legality check further
-   down — so a checkmate delivered on exactly the 100th halfmove is
-   misscored as a draw rather than a mate. Rare (an exact-ply
-   coincidence) but a real rules-correctness bug, not just an edge case
-   to document away. Same item: `go nodes`/`go mate`/`searchmoves` are
-   parsed nowhere in `uci.cpp`'s `go`-token loop and are silently
-   dropped; `apply_uci_moves()` silently `break`s on the first
-   unmatched move token in `position ... moves`, discarding the rest of
-   the list rather than reporting anything; `emit_info()` writes only
-   `depth`/`multipv`/`score`/`nodes`/`pv` — no `nps`, `time`, `seldepth`,
-   or `hashfull`, all of which real tooling (cutechess and similar)
-   consumes.
+5a. [x] **Fix the mate-vs-fifty-move ordering** (finding 8) —
+   `is_draw_by_rule()` (`src/search/search.cpp`) returned a draw
+   immediately on `halfmove_clock >= 100`, checked before any move
+   generation or legality check — so a checkmate delivered by the very
+   move that pushed the halfmove clock to 100 was misscored as a draw
+   rather than a win. Rare (an exact-ply coincidence) but a real
+   rules-correctness bug, not just an edge case to document away. FIXED
+   (this session): the `halfmove_clock >= 100` branch now only returns
+   a draw unconditionally when the side to move is NOT in check;
+   when it IS in check, `board::generate_legal_moves()` is called (the
+   one real cost, paid only in this rare branch) and a draw is returned
+   only if at least one legal reply exists — zero legal replies while
+   in check is checkmate, and the function returns `false` so
+   `negamax()`'s own move loop discovers the empty move list itself and
+   scores the node as a genuine mate. Same technique Stockfish's own
+   `Position::is_draw()` uses (`st->rule50 > 99 && (!checkers() ||
+   MoveList<LEGAL>(*this).size())`), credited per
+   docs/ARCHITECTURE.md's attribution policy, not derived from scratch.
+   **Verified against a real compiled build, not inspection**: a
+   constructed FEN (`7k/5K2/8/8/8/8/8/6Q1 w - - 99 60` — bare-king mate
+   pattern, halfmove_clock 99, any quiet queen move reaches 100) was
+   run through the actual pre-fix binary first, confirming the bug
+   reproduces exactly as described (`score cp 0`, the search visibly
+   avoiding a mate it could see, `bestmove g1g5` instead of a mating
+   move); the same FEN against the post-fix binary correctly reports
+   `score mate 1` / `bestmove g1h1`. Full `ctest` (680/680, including
+   one new regression test,
+   `tests/search_tests.cpp`'s `[fifty-move][mate]`-tagged case built
+   from this exact FEN) confirmed green.
+5b. [ ] **Tighten UCI parsing** (finding 9) — `go nodes`/`go mate`/
+   `searchmoves` are parsed nowhere in `uci.cpp`'s `go`-token loop and
+   are silently dropped; `apply_uci_moves()` silently `break`s on the
+   first unmatched move token in `position ... moves`, discarding the
+   rest of the list rather than reporting anything; `emit_info()`
+   writes only `depth`/`multipv`/`score`/`nodes`/`pv` — no `nps`,
+   `time`, `seldepth`, or `hashfull`, all of which real tooling
+   (cutechess and similar) consumes. NOT started this session —
+   deliberately split out from 5a (finding 8, above) rather than rushed
+   in alongside it: unlike 5a's single, cleanly-isolable function,
+   this is four genuinely separate additions spread across
+   `search.h`/`search.cpp`/`uci.cpp` (`SearchLimits`/`SearchResult`
+   both already 150+/80-line structs with an established
+   "new optional parameter, default to prior behavior" convention that
+   should be followed, not shortcut) — a node-count search limit (new
+   `SearchLimits` field, checked in the same periodic block as
+   `deadline`/`external_stop`), a `searchmoves` root-move restriction
+   (threaded into `search_iterative_deepening()`'s root move loop), a
+   `seldepth` tracker (new `SearchResult` field, updated from the
+   deepest `ply` any `negamax()`/`quiescence()` call actually reached),
+   and a `TranspositionTable` hashfull query (permille of slots
+   occupied) — each is small individually but genuinely separate
+   plumbing, not one shared change; budget it as such next session, per
+   this project's own established "a substantial change gets its own
+   session, not a rushed aside" convention (see item 6's own note
+   below). `go mate <n>` needs a design decision first (minimal
+   treatment: most engines just search to a depth sufficient to find a
+   mate in `n` and let ordinary mate-distance pruning/scoring do the
+   rest, rather than a dedicated mate-search mode — worth confirming
+   against CPW's own "go mate" convention before implementing, not
+   assuming). Read `src/uci/uci.cpp`'s `go`-token loop and
+   `apply_uci_moves()`, and `src/search/search.h`'s `SearchLimits`/
+   `SearchResult`/`search_iterative_deepening()` doc comments, in full
+   before writing anything.
 6. **Refactor `negamax`'s parameter list; prune stale docs** (finding 10,
    and part of 11) — `negamax()` (`src/search/search.cpp`) is a real 27
    parameters (not the report's own stated 22 — re-verify this count

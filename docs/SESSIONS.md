@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+### Session 131 — 2026-09-24 (2) — Mate-vs-fifty-move-rule ordering fixed and verified against a real build (Priority Fixes item 5a, finding 8); item 5 split into 5a/5b
+
+Continued in the same sandbox session as Session 130, via "Start" — the next incomplete ROADMAP.md item after item 4 (closed last entry) is item 5, "Fix the mate-vs-fifty-move ordering; tighten UCI parsing" (findings 8 and 9). Read `src/search/search.cpp`'s `is_draw_by_rule()` and `negamax()`'s call-order around it, and `src/uci/uci.cpp`'s `go`-token loop and `apply_uci_moves()`, per the prior session's own handoff, before writing anything.
+
+**What was found:** `is_draw_by_rule()` returns `true` unconditionally on `pos.halfmove_clock >= 100`, called before any move generation in `negamax()` — confirmed directly by reading the function, not just trusting the report. A checkmate delivered by the very move that pushes the clock to 100 would be misscored as a draw.
+
+**Fix:** the `halfmove_clock >= 100` branch now only auto-returns a draw when the side to move isn't in check; when it is, `board::generate_legal_moves()` is called (paying real cost only in this rare branch) and a draw returns only if a legal reply actually exists — zero legal replies while in check falls through with an explicit `return false`, letting `negamax()`'s own move loop find the empty list and score a genuine mate. Same technique as Stockfish's own `Position::is_draw()`, credited per ARCHITECTURE.md's attribution policy.
+
+**Verified against a real compiled build, both directions:** a constructed FEN (`7k/5K2/8/8/8/8/8/6Q1 w - - 99 60`, halfmove_clock 99, any quiet queen move reaches 100) was run through the actual pre-fix binary first — `score cp 0`, `bestmove g1g5`, the search visibly dodging a mate it could see — then through the post-fix binary — `score mate 1`, `bestmove g1h1`. A new regression test built from this exact FEN was added to `tests/search_tests.cpp`. Full `ctest`: 680/680 green.
+
+**Scope decision:** item 5's other half (finding 9, UCI-parsing tightening — `go nodes`/`go mate`/`searchmoves`, `apply_uci_moves()`'s silent discard, `emit_info()`'s missing `nps`/`time`/`seldepth`/`hashfull`) was deliberately NOT started this session — four genuinely separate additions across `search.h`/`search.cpp`/`uci.cpp`, not a quick aside alongside 8's single-function fix. ROADMAP.md item 5 split into 5a (this entry, checked off) and 5b (left open, explicitly scoped for next session, including the `go mate` design question).
+
+**Bugs fixed:** the mate-vs-fifty-move-rule misscoring described above (finding 8) — cause: `is_draw_by_rule()`'s halfmove-clock branch ran before any legality/mate check; fix: gate that branch on `!in_check(pos) || <a legal reply exists>`; why correct: checkmate ends the game immediately and takes precedence over a 50-move-rule draw, and this now matches that rule exactly rather than only in the (overwhelmingly common) not-in-check case.
+
+**Decisions made:** logged in full in docs/DECISIONS.md, 2026-09-24 (2).
+
+**Files changed:** `src/search/search.cpp` (`is_draw_by_rule()` fix), `tests/search_tests.cpp` (one new regression test, `[fifty-move][mate]`-tagged), `docs/ROADMAP.md` (item 5 split into 5a checked off / 5b scoped and left open), `docs/DECISIONS.md` (new 2026-09-24 (2) entry), `docs/SESSIONS.md` (this entry). `src/uci/uci.cpp` was read in full but not modified — finding 9 (item 5b) touches it, not finding 8.
+
+**Next session starts:** ROADMAP.md item 5b — "Tighten UCI parsing" (finding 9). Read `src/uci/uci.cpp`'s `go`-token loop and `apply_uci_moves()`, and `src/search/search.h`'s `SearchLimits`/`SearchResult`/`search_iterative_deepening()` doc comments, in full first (not yet re-read this session beyond the `apply_uci_moves()`/`go`-loop skim already done). Four separate additions, per item 5b's own ROADMAP text: a `SearchLimits` node-count limit, a `searchmoves` root-move restriction, a `SearchResult` `seldepth` field, and a `TranspositionTable` hashfull query — plus `emit_info()` wiring all of them in, and an `apply_uci_moves()` reporting tweak for a discarded move-list remainder. Settle `go mate <n>`'s own interpretation (minimal depth-based treatment vs. a dedicated mode) before implementing it specifically. Say "Continue" or "Start" to proceed.
+
+---
+
 ### Session 130 — 2026-09-24 — Priority Fixes item 4 closed: real engine-vs-engine matches built and run to validate the null-move gate and singular-extension rewrite
 
 Picked up ROADMAP.md item 4, per Session 129's own handoff — the explicit next-session start point, now that a real compiler toolchain is confirmed available. Read `docs/ROADMAP.md` and the last `docs/SESSIONS.md` entry (Tier 1), then `docs/DECISIONS.md` and `docs/ARCHITECTURE.md` in full (Tier 2), per the "Go" trigger.
