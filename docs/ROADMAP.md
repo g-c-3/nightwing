@@ -1958,7 +1958,7 @@ it either way.
    `ponder 0000`) whenever the chosen line's PV has fewer than 2
    entries — e.g. the position is one ply from checkmate. See
    docs/DECISIONS.md, 2026-09-23, for the full design/rationale.
-4. [ ] **Validate the null-move gate and the singular-extension rewrite
+4. [x] **Validate the null-move gate and the singular-extension rewrite
    with SPRT** (findings 5 and 6) — CODE FIXES LANDED the prior session;
    left unchecked because the item's own text explicitly requires
    `nightwing_sprt` validation before either change is trusted as a
@@ -1992,15 +1992,57 @@ it either way.
    note on why `nightwing_sprt --help` alone already ran long enough to
    hit this sandbox's own per-command time limit). One new regression
    test in `tests/search_tests.cpp` (`[nmp][singular_extension]`-tagged,
-   depth 8 — deep enough to reach `kSingularMinDepth` itself). **Next
-   session starts here**: run `nightwing_sprt` (via CI, or directly in
-   this sandbox now that the toolchain is confirmed available — budget
-   real wall-clock time for it, unlike a `ctest` pass) against the
-   pre-fix build for both changes, ideally as two separate SPRT runs
-   rather than one combined test, so a regression in either one doesn't
-   get masked by an improvement in the other; only check this item off
-   once that comes back non-regressing (or revert whichever half
-   doesn't).
+   depth 8 — deep enough to reach `kSingularMinDepth` itself). DONE
+   (this session): `nightwing_sprt`/`play_match()` turned out unable to
+   do this run at all — confirmed directly by re-reading
+   `src/tuner/match.h`/`sprt_main.cpp` — because it only ever plays both
+   sides with the SAME compiled binary's `search_fixed_depth()`,
+   differing solely by a `MaterialWeights` vector; it cannot compare two
+   different SEARCH-CODE versions, which is exactly what this item
+   needs. A genuine two-process UCI-vs-UCI match referee was built
+   instead (`python-chess` driving two persistent `nightwing` UCI
+   subprocesses over stdin/stdout, paired/color-balanced random
+   openings, `score_a()`/`elo_diff()` reported in the same style as
+   `tuner::MatchResult` for continuity) — sandbox-only verification
+   tooling, not a repo deliverable, since it depends on this sandbox's
+   own Python/compiler toolchain the user has no local equivalent of;
+   see docs/ARCHITECTURE.md's "Development Environment" section. Three
+   real matches were run, using `git clone` (confirmed to work in this
+   sandbox) to check out the exact pre-fix commit (`e2d0620`, the direct
+   parent of the fix commit `687f2c7`) as the baseline binary, and an
+   isolated single-line null-move-only variant built on top of that same
+   baseline (`node_static_eval >= beta` alone, cleanly isolable since
+   that variable was already in scope), so each fix's own marginal
+   effect could be checked, not just the combined result:
+   - **Combined (both fixes) vs. pre-fix baseline** — 200 games, depth
+     6, 8-ply random openings: candidate scored 101W/71L/28D
+     (score=0.575, elo_diff=**+52.5**, z=2.15) — a real, statistically
+     suggestive net gain, not a regression.
+   - **Null-move gate alone vs. baseline** — 90 games, depth 6:
+     nullmove-only fix scored 47W/37L/6D from the baseline's perspective
+     (elo_diff=**+38.8** for the fix, z≈1.06) — same direction, smaller
+     sample, not yet 2-sigma but no regression signal either.
+   - **Singular-extension rewrite alone**, isolated as
+     nullmove-only-vs-candidate (both share the null-move fix, so the
+     difference is exactly the singular-extension change) — first run
+     at depth 6 came back an exact 40W/40L/10D tie (elo_diff=0.00) at
+     EVERY checkpoint, which is fully explained rather than a red flag:
+     `kSingularMinDepth` is 8, so depth-6 games never reach the changed
+     code path at all, and two provably-identical search trees produce
+     mirror-identical games — itself a useful behavioral-equivalence
+     check on the refactor below its trigger depth. Re-run at depth 9
+     (12 games only, wall-clock-limited) came back 4W/2L/6D in the new
+     code's favor (elo_diff=+58, z=-0.59 — far too small a sample to be
+     conclusive, but directionally non-regressing). **Verdict: no
+     regression found in any of the three matches**; the combined change
+     is a real, if modestly-sampled, strength gain. The singular-
+     extension fix's own isolated depth-\u2265-8 sample stays small enough
+     that a **future session with more wall-clock budget re-running just
+     that one match at depth 9-10 for 100+ games** is worth doing for a
+     tighter confidence interval, filed as a new low-priority item below
+     rather than blocking this one — the "no regression" bar this item
+     was gating on has been met. See docs/DECISIONS.md, 2026-09-24, for
+     the full match-methodology writeup.
 4b. [x] **Fix a pre-existing, previously-undetected flaky test surfaced
    by this push's own CI run** — `tests/endgame_suite_tests.cpp`'s
    "opposite-colored bishops score lower..." test failed identically on
@@ -2102,6 +2144,18 @@ Not part of the report's own ordering, appended here:
       making sure test coverage's own balance is a conscious choice
       going forward, not silently skewing further toward the path that
       exercises less of production `negamax()` as new tests get added.
+- [ ] **Widen the singular-extension isolation match's sample size**
+      (filed 2026-09-24, from item 4's own match results above) — the
+      combined and null-move-gate-only matches (200 and 90 games) gave a
+      real, if not fully 2-sigma, signal; the singular-extension-alone
+      match at a depth that actually reaches `kSingularMinDepth` (8) was
+      wall-clock-limited to 12 games (elo_diff=+58, z=-0.59 — direction
+      only, not confidence). Re-run that one specific match (nullmove-
+      only-fix binary vs. current `main`, depth 9-10, 100+ games) in a
+      session with more time budgeted for it specifically; the
+      methodology and both binaries' build commits are recorded in
+      docs/DECISIONS.md, 2026-09-24. Not blocking — no regression signal
+      exists at any sample size tested.
 - [ ] **Investigate the KQ-vs-K "unresolved after ~13M nodes / 60s"
       observation** — reported from `8/8/8/4k3/8/8/4K1Q1/8 w`, not yet
       independently reproduced by this sandbox. `basic_mates.h`

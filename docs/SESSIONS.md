@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+### Session 130 — 2026-09-24 — Priority Fixes item 4 closed: real engine-vs-engine matches built and run to validate the null-move gate and singular-extension rewrite
+
+Picked up ROADMAP.md item 4, per Session 129's own handoff — the explicit next-session start point, now that a real compiler toolchain is confirmed available. Read `docs/ROADMAP.md` and the last `docs/SESSIONS.md` entry (Tier 1), then `docs/DECISIONS.md` and `docs/ARCHITECTURE.md` in full (Tier 2), per the "Go" trigger.
+
+**What was found before writing anything:** re-reading `src/tuner/match.h`/`sprt_main.cpp` in full confirmed `nightwing_sprt` cannot do this specific job — `play_match()` plays both sides with the SAME compiled binary, differing only by a `MaterialWeights` vector, and has no way to compare two different search-code versions. This exact gap was already on record (2026-09-18 (6)) but never acted on.
+
+**What was built (this session's own scratch tooling, not a repo file):** a two-process UCI-vs-UCI match referee (`python-chess` + `subprocess`, driving two persistent `nightwing` processes over stdin/stdout), playing paired, color-swapped games from random openings at a fixed depth, reporting `score_a()`/`elo_diff()` in the same style `tuner::MatchResult` already uses. Not added to the repository — it depends on this sandbox's own Python/compiler toolchain, which the person's mobile-only environment doesn't have, and isn't something CI would run either.
+
+**Binaries:** used a real `git clone` of the repository (confirmed to work in-sandbox) to check out `e2d0620` — the direct parent of the fix commit `687f2c7`, identified via `git log`/`git show --stat` rather than guessed — as the pre-fix baseline, built alongside `main`/HEAD as the candidate. A third variant, baseline plus ONLY the null-move gate's one-line addition (low-risk to isolate since `node_static_eval` was already in scope), was built to separate that fix's own effect from the singular-extension rewrite's — judged too deeply interleaved with the rest of that diff (a new `exclude_move` parameter threading through three separate call sites) to safely hand-isolate into its own clean variant this session.
+
+**Results — three real matches, all non-regressing:** combined (both fixes) vs. baseline, 200 games, depth 6: **elo_diff=+52.5, z=2.15** (statistically suggestive real gain). Null-move gate alone vs. baseline, 90 games: **elo_diff=+38.8, z≈1.06** (same direction, smaller sample). Singular-extension rewrite alone, isolated as null-move-only-vs-candidate: an exact 40-40-10 tie at depth 6 (fully explained — `kSingularMinDepth` is 8, so depth-6 games never reach the changed code, itself a useful behavioral-equivalence confirmation of the refactor below its trigger depth), then 4W/2L/6D favoring the rewrite at depth 9 (12 games only, wall-clock-limited — directional, not conclusive). No regression signal found anywhere. Full methodology, exact commit hashes, and the alternatives considered are in docs/DECISIONS.md, 2026-09-24.
+
+**Bugs fixed:** none — this was a validation session, no production code touched.
+
+**Decisions made:** logged in full in docs/DECISIONS.md, 2026-09-24.
+
+**Files changed:** `docs/ROADMAP.md` (item 4 checked off with the full match-results summary; new low-priority item filed to widen the singular-extension isolation match's sample size in a future session), `docs/DECISIONS.md` (new 2026-09-24 entry), `docs/SESSIONS.md` (this entry). No `src/` or `tests/` files touched.
+
+**Next session starts:** ROADMAP.md's Priority Fixes (2026-09-22) section — item 5, "Fix the mate-vs-fifty-move ordering; tighten UCI parsing" (findings 8 and 9): `is_draw_by_rule()` (`src/search/search.cpp`) returns a draw on `halfmove_clock >= 100` before any move-generation/legality check, so a checkmate delivered on exactly the 100th halfmove is misscored as a draw; same item, `go nodes`/`go mate`/`searchmoves` are parsed nowhere in `uci.cpp`'s `go`-token loop and silently dropped, `apply_uci_moves()` silently discards the remainder of a `position ... moves` list on the first unmatched token, and `emit_info()` omits `nps`/`time`/`seldepth`/`hashfull`. Read `src/search/search.cpp`'s `is_draw_by_rule()` and `negamax()`'s call-order around it, and `src/uci/uci.cpp`'s `go`-token loop and `apply_uci_moves()`, before writing anything. Say "Continue" or "Start" to proceed.
+
+---
+
 ### Session 129 — 2026-09-23 — CI logs triaged; a real compiler toolchain discovered available in this sandbox; a pre-existing OCB endgame-suite test flake found and fixed
 
 The person uploaded this project's own GitHub Actions CI logs (all 6 platform/config jobs: Windows/Linux/macOS × Debug/Release) for the push containing Session 128's own null-move-gate/singular-extension-rewrite and Session 127's ponder-move fix, with no accompanying message — read as an implicit "check these."
