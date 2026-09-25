@@ -269,4 +269,37 @@ void TranspositionTable::store(std::uint64_t key, int depth, int score, Bound bo
     write(*replace);
 }
 
+int TranspositionTable::hashfull() const noexcept {
+    // See this method's own doc comment (tt.h) for the "why 1000, why
+    // no age check" rationale. Iterates buckets in storage order (an
+    // arbitrary but fixed, reproducible sample -- there's no
+    // requirement the sample be random, only representative, and
+    // Zobrist-hash-indexed bucket placement already scatters real
+    // positions across bucket order uniformly).
+    constexpr int kSampleTarget = 1000;
+    int sampled = 0;
+    int occupied = 0;
+    for (const TTBucket& bucket : buckets_) {
+        for (const TTEntry& entry : bucket.entries) {
+            if (sampled >= kSampleTarget) {
+                break;
+            }
+            ++sampled;
+            if (entry.key_xor_data.load(std::memory_order_relaxed) != 0) {
+                ++occupied;
+            }
+        }
+        if (sampled >= kSampleTarget) {
+            break;
+        }
+    }
+    if (sampled == 0) {
+        return 0; // A zero-bucket table shouldn't exist (constructor's own
+                  // "minimum 1-bucket table" guarantee, tt.h), but this
+                  // avoids a divide-by-zero if that guarantee were ever
+                  // violated rather than trusting it silently.
+    }
+    return static_cast<int>((static_cast<std::int64_t>(occupied) * 1000) / sampled);
+}
+
 } // namespace nightwing::search

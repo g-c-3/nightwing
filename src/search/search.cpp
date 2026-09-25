@@ -1657,16 +1657,18 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                            mat_psqt);
     }
 
-    // Periodic deadline/external-stop check (search.h's SearchLimits
-    // doc comment, this file's kTimeCheckNodeInterval comment above):
-    // checked after `nodes` is incremented so the shared counter's
-    // periodicity is consistent regardless of how deep in the tree this
-    // particular call happens to be. Two independent trigger conditions
-    // -- a passed wall-clock `deadline` (the original mechanism), or a
-    // Lazy SMP helper thread's `external_stop` flag having been raised
-    // by the main thread (search.h's own doc comment on that field) --
-    // either one sets `stopped` the same way; everything downstream of
-    // `stopped` doesn't care which one fired.
+    // Periodic deadline/external-stop/node-limit check (search.h's
+    // SearchLimits doc comment, this file's kTimeCheckNodeInterval
+    // comment above): checked after `nodes` is incremented so the
+    // shared counter's periodicity is consistent regardless of how deep
+    // in the tree this particular call happens to be. Three independent
+    // trigger conditions -- a passed wall-clock `deadline` (the
+    // original mechanism), a Lazy SMP helper thread's `external_stop`
+    // flag having been raised by the main thread (search.h's own doc
+    // comment on that field), or UCI `go nodes` (search.h's
+    // `has_node_limit`/`max_nodes` doc comment) -- any one sets
+    // `stopped` the same way; everything downstream of `stopped`
+    // doesn't care which one fired.
     ++nodes;
     if (limits != nullptr && (nodes & kTimeCheckNodeMask) == 0) {
         const bool deadline_passed =
@@ -1674,10 +1676,21 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         const bool externally_stopped =
             limits->external_stop != nullptr &&
             limits->external_stop->load(std::memory_order_relaxed);
-        if (deadline_passed || externally_stopped) {
+        const bool node_limit_reached = limits->has_node_limit && nodes >= limits->max_nodes;
+        if (deadline_passed || externally_stopped || node_limit_reached) {
             limits->stopped = true;
             return 0;
         }
+    }
+
+    // UCI `info seldepth` (search.h's SearchLimits::seldepth doc
+    // comment): recorded unconditionally whenever this iteration is
+    // tracking it, regardless of whether the check above just stopped
+    // the search -- `ply` is still a genuine depth this search reached,
+    // stop or no stop. Cheap: one comparison and, on the (rare) new-max
+    // case, one write to a plain `int` the caller already owns.
+    if (limits != nullptr && limits->seldepth != nullptr && ply > *limits->seldepth) {
+        *limits->seldepth = ply;
     }
 
     const std::uint64_t key = pos.zobrist_hash;
@@ -3053,7 +3066,8 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
                           const eval::EvalWeightsOverride* eval_weights = nullptr,
                           SearchLimits* limits = nullptr,
                           std::span<const Move> excluded_moves = {}, int contempt_white_pov = 0,
-                          int tie_break_variant = 0) {
+                          int tie_break_variant = 0,
+                          std::span<const Move> searchmoves_filter = {}) {
     SearchResult result;
 
     MoveList moves;
@@ -3076,9 +3090,48 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         moves = filtered;
     }
 
+    // UCI `searchmoves` (ROADMAP.md Priority Fixes, 2026-09-22, finding
+    // 9; search_iterative_deepening()'s own `searchmoves` doc comment,
+    // search.h, has the full contract) -- an INCLUSION filter, the
+    // mirror image of `excluded_moves` just above (which is itself used
+    // for a completely different purpose, singular extension's own
+    // exclude_move plumbing -- see negamax()'s doc comment on that
+    // parameter -- not for this feature). Applied AFTER the exclusion
+    // filter so the two compose correctly if a future caller somehow
+    // needed both at once (none does today: `excluded_moves` is never
+    // non-empty on any call this function receives that also has a
+    // non-empty `searchmoves_filter`), rather than one silently
+    // shadowing the other depending on application order. Empty (the
+    // default) means "every legal move is a candidate," identical to
+    // every call site before this parameter existed -- the loop below
+    // is skipped entirely in that case, exactly as it already is when
+    // `excluded_moves` is empty.
+    if (!searchmoves_filter.empty()) {
+        MoveList filtered;
+        for (const Move& m : moves) {
+            for (const Move& allowed : searchmoves_filter) {
+                if (m == allowed) {
+                    filtered.push_back(m);
+                    break;
+                }
+            }
+        }
+        moves = filtered;
+    }
+
     if (moves.empty()) {
         // Nothing to play: report the terminal score with a null
         // best_move (Move::is_null()) rather than an arbitrary one.
+        // Reached both for a genuine checkmate/stalemate (as before
+        // this parameter existed) AND for a `searchmoves_filter` that,
+        // after filtering, leaves nothing legal to search (e.g. every
+        // listed move was actually illegal in `pos`) -- uci.cpp's own
+        // `go`-token parser is responsible for only ever passing
+        // already-confirmed-legal moves here (search_iterative_
+        // deepening()'s own `searchmoves` doc comment), so this second
+        // case is not expected in practice, but is handled the same
+        // safe way as a genuine terminal position rather than crashing
+        // or asserting.
         result.score = in_check(pos) ? -kMateScore : contempt_draw_score(pos, contempt_white_pov);
         result.nodes = 1;
         return result;
@@ -3831,7 +3884,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                                          int num_threads, std::atomic<bool>* external_stop,
                                          std::size_t hash_size_mb, int multi_pv,
                                          int soft_time_limit_ms, int contempt_cp,
-                                         TranspositionTable* external_tt) {
+                                         TranspositionTable* external_tt, std::uint64_t max_nodes,
+                                         std::span<const Move> searchmoves) {
     assert(max_depth >= 1 && "search_iterative_deepening: max_depth must be at least 1");
 
     // Contempt (ROADMAP.md Phase 8, "Contempt / draw score adjustment"):
@@ -3937,13 +3991,26 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // Depth 1 always runs unconditionally, before any time check, so
     // there's always a legal best_move to fall back on (see search.h's
     // header comment). Full window: there's no previous iteration yet
-    // to aspirate around (see the depth-2-onward loop below).
+    // to aspirate around (see the depth-2-onward loop below). `limits`
+    // stays nullptr here (preserving the "always have a legal move"
+    // guarantee this comment already describes -- SearchLimits::
+    // has_deadline's own doc comment), so `max_nodes`/seldepth-tracking
+    // don't apply to this one mandatory iteration (search.h's own
+    // `max_nodes`/`SearchResult::seldepth` doc comments already note
+    // this); `searchmoves`, independent of `limits` entirely, still
+    // applies from the very first iteration.
     tt.new_search();
     SearchResult result = search_root(pos, 1, -kInfinity, kInfinity, tt, killers, *history,
                                        *cont_history, *capture_history, *correction_history,
                                        game_history, path, static_eval_history, pawn_tt, eval_cache,
                                        material_weights, eval_weights, /*limits=*/nullptr,
-                                       /*excluded_moves=*/{}, contempt_white_pov);
+                                       /*excluded_moves=*/{}, contempt_white_pov,
+                                       /*tie_break_variant=*/0, searchmoves);
+    result.seldepth = 1; // See SearchResult::seldepth's own doc comment on this fallback.
+    result.elapsed_ms = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                 start_time)
+            .count());
     std::uint64_t total_nodes = result.nodes;
 
     // Position already over (checkmate/stalemate at the root): every
@@ -4075,6 +4142,24 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
         // to before.
         limits.external_stop = external_stop;
 
+        // UCI `go nodes` (search.h's own doc comment on this function's
+        // `max_nodes` parameter): a no-op (has_node_limit stays false)
+        // when `max_nodes == 0`, the default -- identical to every
+        // caller before this parameter existed.
+        limits.has_node_limit = max_nodes > 0;
+        limits.max_nodes = max_nodes;
+
+        // UCI `info seldepth` (search.h's SearchLimits::seldepth /
+        // SearchResult::seldepth doc comments): initialized to `depth`
+        // itself (this iteration's own nominal depth) rather than 0, so
+        // a `limits.stopped` interruption before any deeper node is
+        // reached still reports a sensible lower bound, matching the
+        // UCI spec's "seldepth is at least as deep as depth" convention
+        // this file's own SearchLimits::seldepth doc comment already
+        // describes.
+        int seldepth_this_iteration = depth;
+        limits.seldepth = &seldepth_this_iteration;
+
         // Aspiration windows (CPW "Aspiration Windows"): the previous
         // iteration's score is usually a good estimate of this
         // iteration's score too (positions rarely swing wildly between
@@ -4104,7 +4189,13 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                 next = search_root(pos, depth, window_alpha, window_beta, tt, killers, *history,
                                     *cont_history, *capture_history, *correction_history, game_history,
                                     path, static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
-                                    &limits, /*excluded_moves=*/{}, contempt_white_pov);
+                                    &limits, /*excluded_moves=*/{}, contempt_white_pov,
+                                    /*tie_break_variant=*/0, searchmoves);
+                next.seldepth = seldepth_this_iteration;
+                next.elapsed_ms = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - start_time)
+                        .count());
 
                 if (limits.stopped) {
                     // Interrupted mid-retry -- see the post-loop
@@ -4149,7 +4240,12 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             next = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history, *cont_history, *capture_history,
                                 *correction_history, game_history, path, static_eval_history, pawn_tt,
                                 eval_cache, material_weights, eval_weights, &limits, /*excluded_moves=*/{},
-                                contempt_white_pov);
+                                contempt_white_pov, /*tie_break_variant=*/0, searchmoves);
+            next.seldepth = seldepth_this_iteration;
+            next.elapsed_ms = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                         start_time)
+                    .count());
         }
 
         // `next.nodes` reflects real work done regardless of whether

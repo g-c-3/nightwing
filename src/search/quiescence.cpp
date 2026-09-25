@@ -166,23 +166,33 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
 
     ++nodes;
 
-    // Periodic deadline/external-stop check, same node-count granularity
-    // and rationale as negamax()'s own (search.cpp's kTimeCheckNodeInterval
-    // comment, and its own comment on the two independent trigger
-    // conditions -- a passed `deadline`, or Lazy SMP's `external_stop`)
-    // -- checked after `nodes` is up to date so both negamax()'s and
-    // quiescence()'s own counters contribute to the same shared
-    // periodicity.
+    // Periodic deadline/external-stop/node-limit check, same node-count
+    // granularity and rationale as negamax()'s own (search.cpp's
+    // kTimeCheckNodeInterval comment, and its own comment on the three
+    // independent trigger conditions -- a passed `deadline`, Lazy SMP's
+    // `external_stop`, or UCI `go nodes`) -- checked after `nodes` is up
+    // to date so both negamax()'s and quiescence()'s own counters
+    // contribute to the same shared periodicity.
     if (limits != nullptr && (nodes & kTimeCheckNodeMask) == 0) {
         const bool deadline_passed =
             limits->has_deadline && std::chrono::steady_clock::now() >= limits->deadline;
         const bool externally_stopped =
             limits->external_stop != nullptr &&
             limits->external_stop->load(std::memory_order_relaxed);
-        if (deadline_passed || externally_stopped) {
+        const bool node_limit_reached = limits->has_node_limit && nodes >= limits->max_nodes;
+        if (deadline_passed || externally_stopped || node_limit_reached) {
             limits->stopped = true;
             return 0;
         }
+    }
+
+    // UCI `info seldepth` (search.h's SearchLimits::seldepth doc
+    // comment) -- quiescence search routinely reaches well past
+    // negamax()'s own nominal horizon, so this is where `seldepth`
+    // actually grows in practice, same rationale and mechanism as
+    // negamax()'s own identical block (search.cpp).
+    if (limits != nullptr && limits->seldepth != nullptr && ply > *limits->seldepth) {
+        *limits->seldepth = ply;
     }
 
     const bool us_in_check = in_check(pos);

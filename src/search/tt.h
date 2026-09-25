@@ -235,6 +235,35 @@ public:
     /// exercise the replacement scheme deterministically).
     [[nodiscard]] std::size_t num_buckets() const noexcept { return buckets_.size(); }
 
+    /// UCI `info hashfull` (ROADMAP.md Priority Fixes, 2026-09-22,
+    /// finding 9): occupancy of the table, in permille (0-1000, per the
+    /// UCI spec's own units -- NOT a percentage). Samples up to the
+    /// first 1000 entries in bucket order (Stockfish's own convention
+    /// for this exact field -- credited per ARCHITECTURE.md's
+    /// attribution policy) rather than the whole table, so this stays
+    /// cheap to call once per completed iteration regardless of how
+    /// large `size_mb` was: a multi-hundred-MB table can hold millions
+    /// of entries, and a full scan of all of them every iteration would
+    /// be real, needless work for a value whose whole purpose is a
+    /// rough, glanceable "how full is the hash table" -- a 1000-entry
+    /// sample already estimates that within a percentage point or two
+    /// for any table with a reasonably uniform Zobrist-hash
+    /// distribution, which this project's `PRNG`-seeded key generation
+    /// already provides (CPW "Zobrist Hashing"). An entry counts as
+    /// occupied if `key_xor_data != 0` -- the same "empty slot" sentinel
+    /// TTEntry::key_xor_data's own doc comment above describes -- with
+    /// NO age check: an entry from an older search generation still
+    /// occupies real table space until store()'s own replacement scheme
+    /// (this class's store() doc comment) actually overwrites it, so it
+    /// counts here too, matching what "hashfull" means to a GUI
+    /// displaying it (how much of the table currently holds SOME data,
+    /// not how much holds data from the CURRENT search specifically).
+    /// A table with fewer than 1000 total entries (num_buckets() * 4)
+    /// samples all of them, not 1000 -- `sampled` below is always
+    /// `min(1000, total_entries)`, never a divide-by-a-bigger-number
+    /// than what was actually examined.
+    [[nodiscard]] int hashfull() const noexcept;
+
 private:
     struct alignas(64) TTBucket {
         std::array<TTEntry, 4> entries{};

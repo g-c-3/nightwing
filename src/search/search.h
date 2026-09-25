@@ -188,6 +188,47 @@ struct SearchLimits {
     /// search.cpp), not a value anything else's correctness depends on
     /// ordering against.
     std::atomic<bool>* external_stop = nullptr;
+
+    /// UCI `go nodes <n>` (ROADMAP.md Priority Fixes, 2026-09-22, finding
+    /// 9): the SAME periodic check that already tests `deadline`/
+    /// `stopped`/`external_stop` (search.cpp's kTimeCheckNodeInterval
+    /// comment) also tests `nodes >= max_nodes` when `has_node_limit` is
+    /// true, and sets `stopped` exactly the same way a passed deadline
+    /// would -- everything downstream of `stopped` is unaffected by
+    /// *which* of the three conditions triggered it, same pattern as
+    /// `external_stop` above. `false` (the default) means "no node
+    /// budget for this call" -- identical to `has_deadline == false`,
+    /// and to every caller before this field existed. Checked at the
+    /// SAME periodic interval as the other two conditions, not every
+    /// single node -- `go nodes` is a soft target already (this is a
+    /// classical, non-NNUE engine with no exact node-accounting
+    /// guarantee down to the last node the way a test harness might
+    /// assume; ROADMAP.md's own "budget it as such" note on this item
+    /// applies here too), not a hard, node-exact stop.
+    bool has_node_limit = false;
+    std::uint64_t max_nodes = 0;
+
+    /// UCI `info seldepth` (ROADMAP.md Priority Fixes, 2026-09-22,
+    /// finding 9): an OUTPUT, not a limit, despite living on this
+    /// "Limits" struct -- reusing the one pointer-to-shared-state
+    /// channel `external_stop` above already establishes for threading
+    /// something through every negamax()/quiescence() call for one
+    /// iteration, rather than adding a whole new parameter to both
+    /// functions' already-long signatures for a single `int*`. Points
+    /// at the calling iteration's own local `int`, initialized to the
+    /// iteration's nominal depth before the call (matching the UCI
+    /// spec's own "seldepth is at least as deep as depth" convention)
+    /// and updated to `std::max(*seldepth, ply)` at every negamax()/
+    /// quiescence() call that receives a non-null `limits` -- see
+    /// negamax()'s own doc comment for exactly where. `nullptr` (the
+    /// default) means "don't bother tracking this" -- every caller that
+    /// doesn't need it (search_fixed_depth(), and iterative deepening's
+    /// own always-unlimited depth-1 iteration, which passes
+    /// `limits=nullptr` entirely -- see this struct's own
+    /// `has_deadline` doc comment above for why depth 1 already skips
+    /// this whole struct) is completely unaffected, exactly as if this
+    /// field didn't exist.
+    int* seldepth = nullptr;
 };
 
 /// Result of a search — either a single fixed-depth call or a full
@@ -273,6 +314,37 @@ struct SearchResult {
     /// entirely still gets exactly the single best line, the same as
     /// every non-MultiPV caller always has.
     std::vector<SearchResult> multipv_lines;
+
+    /// UCI `info seldepth` (ROADMAP.md Priority Fixes, 2026-09-22,
+    /// finding 9) -- the deepest ply any negamax()/quiescence() call
+    /// this iteration actually reached, which is routinely deeper than
+    /// `depth_completed` itself (extensions, and quiescence search's
+    /// own further descent past the nominal horizon). Stays at its
+    /// default, 0, for any SearchResult produced without a non-null
+    /// SearchLimits::seldepth threaded in -- iterative deepening's own
+    /// always-unlimited depth-1 iteration (SearchLimits::seldepth's own
+    /// doc comment) is the one caller inside this codebase where that
+    /// currently applies; emit_info() (src/uci/uci.cpp) falls back to
+    /// `depth_completed` for that one line rather than reporting a
+    /// misleadingly-small `seldepth 0`, since depth_completed is always
+    /// a legitimate lower bound on how deep the search actually went.
+    int seldepth = 0;
+
+    /// UCI `info time`/`nps` (ROADMAP.md Priority Fixes, 2026-09-22,
+    /// finding 9) -- milliseconds elapsed since search_iterative_
+    /// deepening() itself was called, as of the moment THIS iteration
+    /// completed (not this one iteration's own duration -- matching
+    /// `nodes`' own existing "cumulative total across every completed
+    /// iteration" convention just above, for the same reason: `nps`
+    /// derived from a per-iteration-only elapsed/nodes pair would
+    /// understate early iterations, which finish almost instantly
+    /// relative to process/thread-spawn and table-setup overhead not
+    /// worth measuring separately). 0 for search_fixed_depth() (a
+    /// single, synchronous call with no iteration boundary to time
+    /// against, and no existing caller of that function needs wall-
+    /// clock reporting -- the tuner/bench paths that call it measure
+    /// their own timing independently).
+    std::uint64_t elapsed_ms = 0;
 };
 
 /// Optional callback invoked by search_iterative_deepening() once after
@@ -618,6 +690,40 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// parameter of the same name -- see that function's doc comment.
 /// Shared across every depth iteration of this one call, same as
 /// `material_weights` itself already is.
+/// `max_nodes` (ROADMAP.md Priority Fixes, 2026-09-22, finding 9 -- UCI
+/// `go nodes <n>`): 0 (the default) means "no node budget," identical
+/// to every caller before this parameter existed. A positive value is
+/// threaded into each depth-2-onward iteration's own SearchLimits
+/// (SearchLimits::has_node_limit/max_nodes doc comment, above) --
+/// checked at the same periodic interval as `time_limit_ms`/
+/// `external_stop`, so it's a soft target reached "soon after" the
+/// bound, not a hard, node-exact stop (same accepted imprecision
+/// `time_limit_ms` itself already has against wall-clock time). NOT
+/// threaded into the mandatory depth-1 iteration (which always passes
+/// `limits=nullptr` -- see SearchLimits::has_deadline's own doc
+/// comment for why) nor into search_iterative_deepening_multipv() --
+/// both deliberate scope limits, not bugs, matching `soft_time_limit_ms`'s
+/// own precedent just above for the exact same reason: a genuinely new
+/// UCI feature gets the single-line, non-MultiPV path first, with
+/// MultiPV composition as explicit future work rather than rushed in
+/// alongside.
+///
+/// `searchmoves` (ROADMAP.md Priority Fixes, 2026-09-22, finding 9 --
+/// UCI `searchmoves <m1> <m2> ...`): empty (the default) means "every
+/// legal root move is a candidate," identical to every caller before
+/// this parameter existed. When non-empty, restricts BOTH the
+/// mandatory depth-1 iteration and every depth-2-onward iteration to
+/// only the moves listed (search_root()'s own new `searchmoves_filter`
+/// parameter, internal to search.cpp, does the actual filtering --
+/// this function just forwards the same span to every search_root()
+/// call it makes). A move in `searchmoves` that isn't actually legal in
+/// `pos` is silently ignored by search_root()'s own filter (matching
+/// -- not duplicating -- the legality check uci.cpp's own `go`-token
+/// parser already has to do to convert the UCI move strings into
+/// board::Move values in the first place; this parameter only ever
+/// receives moves already confirmed legal by that caller). NOT threaded
+/// into search_iterative_deepening_multipv() -- same deliberate scope
+/// limit as `max_nodes` just above, for the same reason.
 [[nodiscard]] SearchResult search_iterative_deepening(
     board::Position& pos, int max_depth, int time_limit_ms = 0,
     std::span<const std::uint64_t> game_history = {}, IterationCallback on_iteration = nullptr,
@@ -625,6 +731,7 @@ using IterationCallback = std::function<void(const SearchResult&)>;
     const eval::EvalWeightsOverride* eval_weights = nullptr, int num_threads = 1,
     std::atomic<bool>* external_stop = nullptr, std::size_t hash_size_mb = kDefaultTTSizeMB,
     int multi_pv = 1, int soft_time_limit_ms = 0, int contempt_cp = 0,
-    TranspositionTable* external_tt = nullptr);
+    TranspositionTable* external_tt = nullptr, std::uint64_t max_nodes = 0,
+    std::span<const board::Move> searchmoves = {});
 
 } // namespace nightwing::search
