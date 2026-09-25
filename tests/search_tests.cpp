@@ -1205,6 +1205,61 @@ TEST_CASE("search_fixed_depth: checkmate delivered by the move that pushes halfm
     REQUIRE(result.score >= kMateThreshold);
 }
 
+TEST_CASE("search_iterative_deepening: max_nodes stops the search well short of an unbounded "
+          "max_depth -- ROADMAP.md Priority Fixes (2026-09-22), item 5b (finding 9), UCI `go "
+          "nodes`",
+          "[search][id][nodes]") {
+    init_all();
+    // A real middlegame-ish position (not the bare-king endgames used
+    // elsewhere in this file) specifically so max_depth=15 with no
+    // max_nodes limit would genuinely take many tens of thousands of
+    // nodes -- the point of this test is to show max_nodes actually
+    // cuts that short, which an already-trivial position could satisfy
+    // vacuously (depth alone might exhaust the position's whole game
+    // tree before any node limit even mattered).
+    Position pos = parse_fen("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3");
+    const SearchResult limited =
+        search_iterative_deepening(pos, /*max_depth=*/15, /*time_limit_ms=*/0, /*game_history=*/{},
+                                    /*on_iteration=*/nullptr, /*material_weights=*/nullptr,
+                                    /*eval_weights=*/nullptr, /*num_threads=*/1,
+                                    /*external_stop=*/nullptr, /*hash_size_mb=*/kDefaultTTSizeMB,
+                                    /*multi_pv=*/1, /*soft_time_limit_ms=*/0, /*contempt_cp=*/0,
+                                    /*external_tt=*/nullptr, /*max_nodes=*/1000);
+    // Not an exact bound (SearchLimits::has_node_limit's own doc
+    // comment, search.h, explains the periodic-check granularity this
+    // allows for), but well below what depth 15 unbounded on this
+    // position would take -- confirmed empirically to be comfortably
+    // into the tens of thousands, not low thousands, for this exact
+    // FEN/depth combination.
+    REQUIRE(limited.nodes < 10000);
+    REQUIRE_FALSE(limited.best_move.is_null()); // Still a real, legal, usable result.
+}
+
+TEST_CASE("search_iterative_deepening: searchmoves restricts the result to one of the listed "
+          "moves -- ROADMAP.md Priority Fixes (2026-09-22), item 5b (finding 9), UCI "
+          "`searchmoves`",
+          "[search][id][searchmoves]") {
+    init_all();
+    Position pos = start_position();
+    // g1f3 (Nf3) is unambiguously legal from the start position;
+    // restricting to just this one move forces the search to report it
+    // regardless of what an unrestricted search would have preferred --
+    // the strongest, least ambiguous way to confirm the filter is
+    // actually being applied (see search_root()'s own doc comment on
+    // `searchmoves_filter` for how "moves not in the list" are dropped
+    // before the root move loop ever sees them).
+    const Move nf3(make_square(6, 0), make_square(5, 2), MoveFlag::Quiet);
+    const std::array<Move, 1> allowed{nf3};
+    const SearchResult result =
+        search_iterative_deepening(pos, /*max_depth=*/4, /*time_limit_ms=*/0, /*game_history=*/{},
+                                    /*on_iteration=*/nullptr, /*material_weights=*/nullptr,
+                                    /*eval_weights=*/nullptr, /*num_threads=*/1,
+                                    /*external_stop=*/nullptr, /*hash_size_mb=*/kDefaultTTSizeMB,
+                                    /*multi_pv=*/1, /*soft_time_limit_ms=*/0, /*contempt_cp=*/0,
+                                    /*external_tt=*/nullptr, /*max_nodes=*/0, /*searchmoves=*/allowed);
+    REQUIRE(result.best_move == nf3);
+}
+
 TEST_CASE("search_fixed_depth: insufficient material (king and a single knight vs. bare king) "
           "forces a draw score at the root immediately, no captures or waiting required -- "
           "is_insufficient_material() (search.cpp)",

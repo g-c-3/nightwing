@@ -220,3 +220,47 @@ TEST_CASE("TranspositionTable: size rounds down to a power of 2 bucket count", "
     TranspositionTable tt(1);
     REQUIRE(tt.num_buckets() == 16384);
 }
+
+TEST_CASE("TranspositionTable: hashfull() is 0 on a freshly constructed table", "[tt][hashfull]") {
+    TranspositionTable tt(1);
+    REQUIRE(tt.hashfull() == 0);
+}
+
+TEST_CASE("TranspositionTable: hashfull() reflects occupied entries as permille, not percent",
+          "[tt][hashfull]") {
+    // size_mb=0 floors to the constructor's own documented minimum: one
+    // bucket, 4 entries -- see TranspositionTable::TranspositionTable's
+    // own comment (tt.cpp). A small, exactly-sized sample (well under
+    // hashfull()'s own 1000-entry sample cap) makes the exact expected
+    // permille value easy to state and check precisely, rather than
+    // approximating against a large table.
+    TranspositionTable tt(0);
+    REQUIRE(tt.num_buckets() == 1);
+    tt.store(1, 1, 0, Bound::Exact, Move(), 0);
+    tt.store(2, 1, 0, Bound::Exact, Move(), 0);
+    // 2 of 4 entries occupied -> 500 permille (50%), not "50".
+    REQUIRE(tt.hashfull() == 500);
+}
+
+TEST_CASE("TranspositionTable: hashfull() reaches 1000 (permille) when every sampled entry is "
+          "occupied",
+          "[tt][hashfull]") {
+    TranspositionTable tt(0); // 1 bucket, 4 entries -- see the test above.
+    for (std::uint64_t key = 1; key <= 4; ++key) {
+        tt.store(key, 1, 0, Bound::Exact, Move(), 0);
+    }
+    REQUIRE(tt.hashfull() == 1000);
+}
+
+TEST_CASE("TranspositionTable: hashfull() counts an older-generation entry as still occupied",
+          "[tt][hashfull]") {
+    // hashfull()'s own doc comment (tt.h): deliberately no age check --
+    // an entry from a previous search generation still occupies real
+    // table space until store()'s replacement scheme actually
+    // overwrites it, so it must still count here.
+    TranspositionTable tt(0);
+    tt.store(1, 1, 0, Bound::Exact, Move(), 0);
+    tt.new_search(); // advances the age -- this entry is now "stale" but not cleared
+    REQUIRE(tt.hashfull() == 250); // 1 of 4 entries, still occupied
+}
+

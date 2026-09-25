@@ -666,8 +666,9 @@ TEST_CASE("uci: every 'info' line always includes a 'multipv' token, even at the
     // exact test (and two siblings below) failed only when run as part
     // of the FULL suite, never in isolation, before this fix.
     const std::string out = run_uci({"position startpos moves g1h3", "go depth 2", "quit"});
-    REQUIRE(contains(out, "info depth 1 multipv 1 score "));
-    REQUIRE(contains(out, "info depth 2 multipv 1 score "));
+    REQUIRE(contains(out, "info depth 1 seldepth 1 multipv 1 score "));
+    REQUIRE(contains(out, "info depth 2 seldepth "));
+    REQUIRE(contains(out, "multipv 1 score "));
 }
 
 TEST_CASE("uci: 'setoption name MultiPV value N' followed by 'go' emits N distinct 'multipv' "
@@ -1106,5 +1107,114 @@ TEST_CASE("uci: 'bench' followed by an ordinary 'go' still works normally -- ben
     REQUIRE(contains(out, "Nodes searched  : "));
     REQUIRE(contains(out, "bestmove "));
     REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
+TEST_CASE("uci: 'info' lines include 'seldepth', 'time', 'nps', and 'hashfull' -- ROADMAP.md "
+          "Priority Fixes (2026-09-22), item 5b (finding 9)",
+          "[uci][info]") {
+    init_all();
+    const std::string out = run_uci({"position startpos moves g1h3", "go depth 3", "quit"});
+    REQUIRE(contains(out, "seldepth "));
+    REQUIRE(contains(out, " time "));
+    REQUIRE(contains(out, "hashfull "));
+    // `nps` needs elapsed_ms > 0 to appear at all (emit_info()'s own doc
+    // comment on why a same-millisecond depth-1 result can legitimately
+    // omit it) -- depth 3 on an opening position is comfortably past
+    // that, so this should be present, unlike a bare depth-1 test which
+    // couldn't safely assert this either way.
+    REQUIRE(contains(out, "nps "));
+}
+
+TEST_CASE("uci: 'go nodes <n>' caps the search well short of what an unbounded 'go depth <d>' "
+          "would take -- ROADMAP.md Priority Fixes (2026-09-22), item 5b (finding 9)",
+          "[uci][go][nodes]") {
+    init_all();
+    // Same real middlegame-ish FEN and rationale as this project's
+    // search-layer max_nodes test (tests/search_tests.cpp) -- a position
+    // where depth 15 unbounded would take many tens of thousands of
+    // nodes, so a small node cap actually being enforced is
+    // demonstrated, not merely consistent with a trivially-short search
+    // anyway.
+    const std::string out =
+        run_uci({"position fen r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
+                  "go depth 15 nodes 1000", "quit"});
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+
+    // Pull the LAST "nodes " value reported (the final, most complete
+    // iteration) and confirm it's well below what an unbounded depth-15
+    // search on this position would need.
+    std::size_t search_from = out.rfind("nodes ");
+    REQUIRE(search_from != std::string::npos);
+    search_from += std::string("nodes ").size();
+    const std::size_t end = out.find(' ', search_from);
+    const std::uint64_t reported_nodes =
+        std::stoull(out.substr(search_from, end - search_from));
+    REQUIRE(reported_nodes < 10000);
+}
+
+TEST_CASE("uci: 'go searchmoves <m>' restricts 'bestmove' to the listed move -- ROADMAP.md "
+          "Priority Fixes (2026-09-22), item 5b (finding 9)",
+          "[uci][go][searchmoves]") {
+    init_all();
+    // g1h3 (Nh3) is legal but a deliberately weak, unusual choice from
+    // the start position -- an unrestricted search would essentially
+    // never pick it on its own merits, making this the strongest
+    // possible confirmation that `searchmoves` is the reason it was
+    // played, not a coincidence.
+    const std::string out =
+        run_uci({"position startpos", "go depth 4 searchmoves g1h3", "quit"});
+    REQUIRE(contains(out, "bestmove g1h3"));
+}
+
+TEST_CASE("uci: 'go mate <n>' is accepted and parsed, not silently dropped -- ROADMAP.md "
+          "Priority Fixes (2026-09-22), item 5b (finding 9)",
+          "[uci][go][mate]") {
+    init_all();
+    // Same bare-king mate-in-1 FEN as this project's mate-vs-fifty-move
+    // regression test (tests/search_tests.cpp) -- `go mate 1` is
+    // implemented as a depth-2-ply ceiling (compute_search_budget()'s
+    // own doc comment on this design choice), comfortably enough to
+    // find this mate-in-1 and report it correctly, confirming the token
+    // is actually consumed as a depth-driving option rather than
+    // ignored (the pre-fix behavior, which would fall through to
+    // "go" with no sub-options at all -- an unbounded, infinite-style
+    // search that would never reach 'quit' on its own within this
+    // test's own timeout).
+    const std::string out =
+        run_uci({"position fen 7k/5K2/8/8/8/8/8/6Q1 w - - 0 1", "go mate 1", "quit"});
+    REQUIRE(contains(out, "score mate 1"));
+    REQUIRE(contains(out, "bestmove "));
+}
+
+TEST_CASE("uci: a 'position ... moves' list with an illegal move partway through reports an "
+          "'info string' diagnostic instead of failing silently -- ROADMAP.md Priority Fixes "
+          "(2026-09-22), item 5b (finding 9)",
+          "[uci][position]") {
+    init_all();
+    // e2e4 (legal), e7e5 (legal), then e2e4 again -- illegal the second
+    // time, since the e2 pawn already moved. apply_uci_moves() stops
+    // there (its own pre-existing, deliberate robustness behavior --
+    // this test isn't about changing that), so the position ends up
+    // exactly as it did before this fix: after 1.e4 e5. What's new is
+    // the diagnostic.
+    const std::string out = run_uci(
+        {"position startpos moves e2e4 e7e5 e2e4", "go depth 1", "quit"});
+    REQUIRE(contains(out, "info string position: stopped after 2 of 3 moves"));
+    REQUIRE(contains(out, "e2e4"));
+    // The position itself is still usable afterward -- a real search
+    // still runs and reports a legal bestmove, not a crash or an empty
+    // response.
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
+TEST_CASE("uci: a 'position ... moves' list with every move legal reports NO 'info string' "
+          "diagnostic -- the new reporting in the previous test doesn't fire on ordinary input",
+          "[uci][position]") {
+    init_all();
+    const std::string out =
+        run_uci({"position startpos moves e2e4 e7e5", "go depth 1", "quit"});
+    REQUIRE_FALSE(contains(out, "info string position:"));
 }
 
