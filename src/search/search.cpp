@@ -148,6 +148,60 @@ constexpr std::size_t kDefaultEvalCacheSizeKB = 2048;
 
 namespace {
 
+/// Bundles the per-search-invariant pieces negamax()/search_root() both
+/// need at every node/recursive call -- the tables, weights, limits,
+/// and tie-break/contempt config that stay the SAME object across an
+/// entire negamax()/search_root() call tree, as opposed to the
+/// per-node-varying arguments (pos, depth, alpha, beta, ply, nodes,
+/// prev_piece/prev_to/prev_was_capture, path, static_eval_history,
+/// mat_psqt, exclude_move) that genuinely change at every recursive
+/// step and stay as explicit parameters below. ROADMAP.md Priority
+/// Fixes (2026-09-22), item 6, finding 10: negamax() was a real 27
+/// parameters, the same long list repeated at every one of its own
+/// recursive call sites (and at search_root()'s calls into it) --
+/// this struct is that finding's own suggested fix, a
+/// `SearchContext`-style bundle, built and construction-verified this
+/// session against the real project toolchain (see docs/DECISIONS.md).
+///
+/// Every member is a reference or a plain value/pointer, exactly
+/// mirroring what the pre-refactor parameter list passed (by
+/// reference for the mutable tables, by pointer for the nullable
+/// weight/limits overrides, by value for the two small ints) -- this
+/// struct changes WHERE those pieces are threaded through, not their
+/// own types, ownership, or mutability. Constructed once per
+/// top-level search call (search_fixed_depth()/
+/// search_iterative_deepening(), and once per Lazy SMP helper thread
+/// in run_lazy_smp_helper() -- see each site's own local `ctx`) and
+/// passed down by reference (`SearchContext&`) through every
+/// recursive negamax()/search_root() call from there -- never copied,
+/// since it holds live references into tables/state whose identity
+/// (which specific TranspositionTable, which specific killer-table
+/// instance, etc.) matters, not just their current contents.
+///
+/// This is NOT the `const_cast<std::atomic<bool>*>(&stop)` fix the
+/// same finding also floated for run_lazy_smp_helper()'s own `stop`
+/// parameter (that const_cast is on a parameter OF
+/// run_lazy_smp_helper() itself, not of negamax()/search_root(), and
+/// remains unchanged by this session -- a separate follow-up, not
+/// folded in here to keep this change to exactly what its own finding
+/// asked for first).
+struct SearchContext {
+    TranspositionTable& tt;
+    KillerTable& killers;
+    HistoryTable& history;
+    ContinuationHistoryTable& cont_history;
+    CaptureHistoryTable& capture_history;
+    CorrectionHistoryTable& correction_history;
+    std::span<const std::uint64_t> game_history;
+    eval::PawnHashTable& pawn_tt;
+    eval::EvalCache& eval_cache;
+    const eval::MaterialWeights* material_weights;
+    const eval::EvalWeightsOverride* eval_weights = nullptr;
+    SearchLimits* limits = nullptr;
+    int contempt_white_pov = 0;
+    int tie_break_variant = 0;
+};
+
 /// Fills `opt` with a TranspositionTable sized to `requested_mb`, using
 /// the exact same graceful, halve-and-retry std::bad_alloc fallback as
 /// make_transposition_table() (search.h/.cpp, above) -- but by calling
@@ -1602,18 +1656,38 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
 /// `Move()` (null), meaning "no exclusion" -- every existing call site
 /// is entirely unaffected.
 int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_t& nodes,
-            TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
-            ContinuationHistoryTable& cont_history, CaptureHistoryTable& capture_history,
-            CorrectionHistoryTable& correction_history, board::PieceType prev_piece,
+            SearchContext& ctx, board::PieceType prev_piece,
             board::Square prev_to, bool prev_was_capture,
-            std::span<const std::uint64_t> game_history,
             std::array<std::uint64_t, kMaxPly>& path,
-            std::array<int, kMaxPly>& static_eval_history, eval::PawnHashTable& pawn_tt,
-            eval::EvalCache& eval_cache, const eval::MaterialWeights* material_weights,
-            const eval::EvalWeightsOverride* eval_weights = nullptr,
-            bool allow_null_move = true, SearchLimits* limits = nullptr,
-            int contempt_white_pov = 0, int tie_break_variant = 0,
+            std::array<int, kMaxPly>& static_eval_history,
+            bool allow_null_move = true,
             const eval::Score* mat_psqt = nullptr, Move exclude_move = Move()) {
+    // ROADMAP.md Priority Fixes (2026-09-22), item 6, finding 10:
+    // every per-search-invariant piece this function needs (tables,
+    // weights, limits, tie-break/contempt config) now arrives bundled
+    // in `ctx` (SearchContext, defined just above this function) rather
+    // than as 14 separate parameters -- this local alias block is the
+    // ENTIRE extent of that change's effect on this function's own
+    // body: every name below is exactly the same name the pre-refactor
+    // parameter list used, so nothing past this block was touched at
+    // all. `tt`/`killers`/etc. are references INTO `ctx`'s own
+    // reference members, not copies -- identical aliasing to what a
+    // by-reference parameter already gave this function before.
+    TranspositionTable& tt = ctx.tt;
+    KillerTable& killers = ctx.killers;
+    HistoryTable& history = ctx.history;
+    ContinuationHistoryTable& cont_history = ctx.cont_history;
+    CaptureHistoryTable& capture_history = ctx.capture_history;
+    CorrectionHistoryTable& correction_history = ctx.correction_history;
+    std::span<const std::uint64_t> game_history = ctx.game_history;
+    eval::PawnHashTable& pawn_tt = ctx.pawn_tt;
+    eval::EvalCache& eval_cache = ctx.eval_cache;
+    const eval::MaterialWeights* material_weights = ctx.material_weights;
+    const eval::EvalWeightsOverride* eval_weights = ctx.eval_weights;
+    SearchLimits* limits = ctx.limits;
+    int contempt_white_pov = ctx.contempt_white_pov;
+    int tie_break_variant = ctx.tie_break_variant;
+
     // Mid-search time-budget interruption fast path (search.h's
     // SearchLimits doc comment has the full contract): checked before
     // anything else, including the depth <= 0 quiescence delegation
@@ -1995,13 +2069,11 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         UndoInfo null_undo;
         board::make_null_move(pos, null_undo);
         const int null_score = -negamax(pos, depth - 1 - reduction, -beta, -beta + 1, ply + 1, nodes,
-                                         tt, killers, history, cont_history, capture_history,
-                                         correction_history,
+                                         ctx,
                                          /*prev_piece=*/board::PieceType::None, /*prev_to=*/0,
-                                         /*prev_was_capture=*/false, game_history, path,
-                                         static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
-                                         /*allow_null_move=*/false, limits, contempt_white_pov,
-                                         tie_break_variant, mat_psqt);
+                                         /*prev_was_capture=*/false, path,
+                                         static_eval_history,
+                                         /*allow_null_move=*/false, mat_psqt);
         board::unmake_null_move(pos, null_undo);
         // A probe interrupted mid-search (limits->stopped) returns a
         // meaningless, truncated-subtree score (SearchLimits' own doc
@@ -2159,10 +2231,10 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             board::make_move(pos, probcut_move, probcut_undo);
             const int probcut_score =
                 -negamax(pos, depth - kProbCutReduction, -probcut_beta, -probcut_beta + 1, ply + 1,
-                         nodes, tt, killers, history, cont_history, capture_history, correction_history,
-                         probcut_moved_piece, probcut_move.to(), probcut_move.is_capture(), game_history,
-                         path, static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
-                         /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant);
+                         nodes, ctx,
+                         probcut_moved_piece, probcut_move.to(), probcut_move.is_capture(),
+                         path, static_eval_history,
+                         /*allow_null_move=*/true);
             board::unmake_move(pos, probcut_move, probcut_undo);
             if (limits != nullptr && limits->stopped) {
                 // Truncated subtree (SearchLimits' own doc comment) --
@@ -2372,11 +2444,10 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // `moves` list just to feed an alternative-move scan the
             // way the old, one-search-per-alternative version required.
             const int singular_score =
-                negamax(pos, singular_depth, singular_beta - 1, singular_beta, ply, nodes, tt,
-                        killers, history, cont_history, capture_history, correction_history,
-                        prev_piece, prev_to, prev_was_capture, game_history, path,
-                        static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
-                        /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant,
+                negamax(pos, singular_depth, singular_beta - 1, singular_beta, ply, nodes, ctx,
+                        prev_piece, prev_to, prev_was_capture, path,
+                        static_eval_history,
+                        /*allow_null_move=*/true,
                         mat_psqt, /*exclude_move=*/move);
             // A truncated subtree (SearchLimits' own doc comment) makes
             // `singular_score` meaningless -- same reasoning as NMP's/
@@ -2514,11 +2585,9 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // even to this first move -- a checking or singular move
             // deserves the extra ply regardless of its position in the
             // ordering.
-            score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt, killers,
-                              history, cont_history, capture_history, correction_history, moved_piece,
-                              move.to(), move.is_capture(), game_history, path, static_eval_history,
-                              pawn_tt, eval_cache, material_weights, eval_weights, /*allow_null_move=*/true, limits,
-                              contempt_white_pov, tie_break_variant, child_mat_psqt);
+            score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, ctx,
+                              moved_piece, move.to(), move.is_capture(), path, static_eval_history,
+                              /*allow_null_move=*/true, child_mat_psqt);
         } else {
             // Futility pruning (CPW "Futility Pruning", this function's
             // header comment): a node-level condition -- computed once,
@@ -2634,11 +2703,9 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // see it for how that interacts with the two fallback steps
             // below.
             score = -negamax(pos, depth - 1 + extension - reduction, -alpha - 1, -alpha, ply + 1,
-                              nodes, tt, killers, history, cont_history, capture_history,
-                              correction_history, moved_piece, move.to(), move.is_capture(),
-                              game_history, path, static_eval_history, pawn_tt, eval_cache,
-                              material_weights, eval_weights, /*allow_null_move=*/true, limits, contempt_white_pov,
-                              tie_break_variant, child_mat_psqt);
+                              nodes, ctx, moved_piece, move.to(), move.is_capture(),
+                              path, static_eval_history,
+                              /*allow_null_move=*/true, child_mat_psqt);
             if ((limits == nullptr || !limits->stopped) && reduction > 0 && score > alpha) {
                 // The reduced probe suggested this move might actually
                 // be good -- not trustworthy on its own (a shallower
@@ -2657,20 +2724,16 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 // kPassedPawnExtensionMinRank can still be BOTH LMR-
                 // eligible AND separately qualify for
                 // `passed_pawn_extension`.
-                score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, ply + 1, nodes, tt,
-                                  killers, history, cont_history, capture_history, correction_history,
-                                  moved_piece, move.to(), move.is_capture(), game_history, path,
-                                  static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
-                                  /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant,
-                                  child_mat_psqt);
+                score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, ply + 1, nodes, ctx,
+                                  moved_piece, move.to(), move.is_capture(), path,
+                                  static_eval_history,
+                                  /*allow_null_move=*/true, child_mat_psqt);
             }
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
-                score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, tt,
-                                  killers, history, cont_history, capture_history, correction_history,
-                                  moved_piece, move.to(), move.is_capture(), game_history, path,
-                                  static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
-                                  /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant,
-                                  child_mat_psqt);
+                score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, ctx,
+                                  moved_piece, move.to(), move.is_capture(), path,
+                                  static_eval_history,
+                                  /*allow_null_move=*/true, child_mat_psqt);
             }
         }
 
@@ -3056,18 +3119,30 @@ std::vector<Move> extract_pv(Position pos, const TranspositionTable& tt, Move ro
 /// function itself makes below. Defaults to 0, meaning "no contempt
 /// adjustment": every existing call site is unaffected.
 SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int aspiration_beta,
-                          TranspositionTable& tt, KillerTable& killers, HistoryTable& history,
-                          ContinuationHistoryTable& cont_history, CaptureHistoryTable& capture_history,
-                          CorrectionHistoryTable& correction_history,
-                          std::span<const std::uint64_t> game_history,
+                          SearchContext& ctx,
                           std::array<std::uint64_t, kMaxPly>& path,
-                          std::array<int, kMaxPly>& static_eval_history, eval::PawnHashTable& pawn_tt,
-                          eval::EvalCache& eval_cache, const eval::MaterialWeights* material_weights,
-                          const eval::EvalWeightsOverride* eval_weights = nullptr,
-                          SearchLimits* limits = nullptr,
-                          std::span<const Move> excluded_moves = {}, int contempt_white_pov = 0,
-                          int tie_break_variant = 0,
+                          std::array<int, kMaxPly>& static_eval_history,
+                          std::span<const Move> excluded_moves = {},
                           std::span<const Move> searchmoves_filter = {}) {
+    // Same local-alias approach as negamax() itself just above (see its
+    // own top-of-body comment) -- ROADMAP.md Priority Fixes
+    // (2026-09-22), item 6, finding 10. Only the fields search_root()'s
+    // own body actually reads get an alias here; correction_history/
+    // pawn_tt/eval_cache/eval_weights are used only inside negamax()
+    // (forwarded to it via `ctx` at each call below), never directly in
+    // this function's own body, so no local alias is declared for them
+    // -- one would be dead code, flagged by -Wunused-variable.
+    TranspositionTable& tt = ctx.tt;
+    KillerTable& killers = ctx.killers;
+    HistoryTable& history = ctx.history;
+    ContinuationHistoryTable& cont_history = ctx.cont_history;
+    CaptureHistoryTable& capture_history = ctx.capture_history;
+    std::span<const std::uint64_t> game_history = ctx.game_history;
+    const eval::MaterialWeights* material_weights = ctx.material_weights;
+    SearchLimits* limits = ctx.limits;
+    int contempt_white_pov = ctx.contempt_white_pov;
+    int tie_break_variant = ctx.tie_break_variant;
+
     SearchResult result;
 
     MoveList moves;
@@ -3254,25 +3329,17 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         // already-infinite beta has nothing to gain from skipping to.
         int score;
         if (i == 0 || depth == 1) {
-            score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt, killers,
-                              history, cont_history, capture_history, correction_history, moved_piece,
-                              move.to(), move.is_capture(), game_history, path, static_eval_history,
-                              pawn_tt, eval_cache, material_weights, eval_weights, /*allow_null_move=*/true, limits,
-                              contempt_white_pov, tie_break_variant, child_mat_psqt);
+            score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, ctx,
+                              moved_piece, move.to(), move.is_capture(), path, static_eval_history,
+                              /*allow_null_move=*/true, child_mat_psqt);
         } else {
-            score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, 1, result.nodes, tt,
-                              killers, history, cont_history, capture_history, correction_history,
-                              moved_piece, move.to(), move.is_capture(), game_history, path,
-                              static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
-                              /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant,
-                              child_mat_psqt);
+            score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, 1, result.nodes, ctx,
+                              moved_piece, move.to(), move.is_capture(), path, static_eval_history,
+                              /*allow_null_move=*/true, child_mat_psqt);
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
-                score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, tt,
-                                  killers, history, cont_history, capture_history, correction_history,
-                                  moved_piece, move.to(), move.is_capture(), game_history, path,
-                                  static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
-                                  /*allow_null_move=*/true, limits, contempt_white_pov, tie_break_variant,
-                                  child_mat_psqt);
+                score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, ctx,
+                                  moved_piece, move.to(), move.is_capture(), path, static_eval_history,
+                                  /*allow_null_move=*/true, child_mat_psqt);
             }
         }
 
@@ -3484,11 +3551,25 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
 
     // No previous iteration's score to aspirate around (see
     // search_iterative_deepening() below and docs/DECISIONS.md's
-    // aspiration-windows entry) -- always the full window.
-    SearchResult result = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, history,
-                                       cont_history, capture_history, correction_history, game_history,
-                                       path, static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
-                                       /*limits=*/nullptr, /*excluded_moves=*/{}, contempt_white_pov);
+    // aspiration-windows entry) -- always the full window. `ctx` bundles
+    // the per-search-invariant pieces search_root()/negamax() both need
+    // (SearchContext's own doc comment, just above negamax() -- ROADMAP.md
+    // Priority Fixes (2026-09-22), item 6, finding 10).
+    SearchContext ctx{tt,
+                       killers,
+                       history,
+                       cont_history,
+                       capture_history,
+                       correction_history,
+                       game_history,
+                       pawn_tt,
+                       eval_cache,
+                       material_weights,
+                       eval_weights,
+                       /*limits=*/nullptr,
+                       contempt_white_pov,
+                       /*tie_break_variant=*/0};
+    SearchResult result = search_root(pos, depth, -kInfinity, kInfinity, ctx, path, static_eval_history);
 
     // Same stop/join/fold-in-node-counts pattern as
     // search_iterative_deepening()'s own below -- no-op (empty
@@ -3635,11 +3716,21 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
         // caller). Safe: no write ever happens through this pointer.
         limits.external_stop = const_cast<std::atomic<bool>*>(&stop);
 
-        const SearchResult r = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history,
-                                            *cont_history, *capture_history, *correction_history,
-                                            game_history, path, static_eval_history, pawn_tt, eval_cache,
-                                            material_weights, eval_weights, &limits, /*excluded_moves=*/{},
-                                            contempt_white_pov, tie_break_variant);
+        SearchContext ctx{tt,
+                           killers,
+                           *history,
+                           *cont_history,
+                           *capture_history,
+                           *correction_history,
+                           game_history,
+                           pawn_tt,
+                           eval_cache,
+                           material_weights,
+                           eval_weights,
+                           &limits,
+                           contempt_white_pov,
+                           tie_break_variant};
+        const SearchResult r = search_root(pos, depth, -kInfinity, kInfinity, ctx, path, static_eval_history);
         total_nodes += r.nodes;
 
         if (limits.stopped) {
@@ -3740,12 +3831,26 @@ SearchResult search_iterative_deepening_multipv(
     lines.reserve(static_cast<std::size_t>(max_lines));
     std::vector<Move> excluded;
     excluded.reserve(static_cast<std::size_t>(max_lines));
+    // `ctx` bundles the per-search-invariant pieces search_root() needs
+    // (SearchContext's own doc comment, just above negamax()) -- built
+    // once here since every depth-1 line below shares the same tables/
+    // weights and the same absent (`nullptr`) limits.
+    SearchContext ctx{tt,
+                       killers,
+                       *history,
+                       *cont_history,
+                       *capture_history,
+                       *correction_history,
+                       game_history,
+                       pawn_tt,
+                       eval_cache,
+                       material_weights,
+                       eval_weights,
+                       /*limits=*/nullptr,
+                       contempt_white_pov,
+                       /*tie_break_variant=*/0};
     for (int line = 1; line <= max_lines; ++line) {
-        SearchResult r =
-            search_root(pos, 1, -kInfinity, kInfinity, tt, killers, *history, *cont_history, *capture_history,
-                        *correction_history, game_history, path, static_eval_history, pawn_tt,
-                        eval_cache, material_weights, eval_weights, /*limits=*/nullptr, excluded,
-                        contempt_white_pov);
+        SearchResult r = search_root(pos, 1, -kInfinity, kInfinity, ctx, path, static_eval_history, excluded);
         total_nodes += r.nodes;
         r.multipv_index = line;
         excluded.push_back(r.best_move);
@@ -3820,11 +3925,23 @@ SearchResult search_iterative_deepening_multipv(
             }
             limits.external_stop = external_stop;
 
+            SearchContext depth_ctx{tt,
+                                     killers,
+                                     *history,
+                                     *cont_history,
+                                     *capture_history,
+                                     *correction_history,
+                                     game_history,
+                                     pawn_tt,
+                                     eval_cache,
+                                     material_weights,
+                                     eval_weights,
+                                     &limits,
+                                     contempt_white_pov,
+                                     /*tie_break_variant=*/0};
             SearchResult r =
-                search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history, *cont_history, *capture_history,
-                            *correction_history, game_history, path, static_eval_history, pawn_tt,
-                            eval_cache, material_weights, eval_weights, &limits, depth_excluded,
-                            contempt_white_pov);
+                search_root(pos, depth, -kInfinity, kInfinity, depth_ctx, path, static_eval_history,
+                            depth_excluded);
             depth_nodes += r.nodes;
             if (limits.stopped) {
                 interrupted = true;
@@ -4000,12 +4117,29 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // this); `searchmoves`, independent of `limits` entirely, still
     // applies from the very first iteration.
     tt.new_search();
-    SearchResult result = search_root(pos, 1, -kInfinity, kInfinity, tt, killers, *history,
-                                       *cont_history, *capture_history, *correction_history,
-                                       game_history, path, static_eval_history, pawn_tt, eval_cache,
-                                       material_weights, eval_weights, /*limits=*/nullptr,
-                                       /*excluded_moves=*/{}, contempt_white_pov,
-                                       /*tie_break_variant=*/0, searchmoves);
+    // `ctx` bundles the per-search-invariant pieces search_root() needs
+    // (SearchContext's own doc comment, just above negamax()); this one
+    // (limits=nullptr) covers only the unconditional depth-1 iteration
+    // just below -- the depth-2-onward loop builds its own per-iteration
+    // `ctx` once `limits` starts varying every iteration (its own SearchLimits
+    // is a fresh, per-iteration deadline/stop object -- see that loop).
+    SearchContext ctx{tt,
+                       killers,
+                       *history,
+                       *cont_history,
+                       *capture_history,
+                       *correction_history,
+                       game_history,
+                       pawn_tt,
+                       eval_cache,
+                       material_weights,
+                       eval_weights,
+                       /*limits=*/nullptr,
+                       contempt_white_pov,
+                       /*tie_break_variant=*/0};
+    SearchResult result =
+        search_root(pos, 1, -kInfinity, kInfinity, ctx, path, static_eval_history,
+                     /*excluded_moves=*/{}, searchmoves);
     result.seldepth = 1; // See SearchResult::seldepth's own doc comment on this fallback.
     result.elapsed_ms = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
@@ -4160,6 +4294,25 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
         int seldepth_this_iteration = depth;
         limits.seldepth = &seldepth_this_iteration;
 
+        // `ctx` bundles the per-search-invariant pieces search_root()
+        // needs (SearchContext's own doc comment, just above negamax());
+        // rebuilt fresh every depth iteration since `limits` above is a
+        // fresh, per-iteration deadline/stop/seldepth object each time.
+        SearchContext depth_ctx{tt,
+                                 killers,
+                                 *history,
+                                 *cont_history,
+                                 *capture_history,
+                                 *correction_history,
+                                 game_history,
+                                 pawn_tt,
+                                 eval_cache,
+                                 material_weights,
+                                 eval_weights,
+                                 &limits,
+                                 contempt_white_pov,
+                                 /*tie_break_variant=*/0};
+
         // Aspiration windows (CPW "Aspiration Windows"): the previous
         // iteration's score is usually a good estimate of this
         // iteration's score too (positions rarely swing wildly between
@@ -4186,11 +4339,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             }
 
             for (;;) {
-                next = search_root(pos, depth, window_alpha, window_beta, tt, killers, *history,
-                                    *cont_history, *capture_history, *correction_history, game_history,
-                                    path, static_eval_history, pawn_tt, eval_cache, material_weights, eval_weights,
-                                    &limits, /*excluded_moves=*/{}, contempt_white_pov,
-                                    /*tie_break_variant=*/0, searchmoves);
+                next = search_root(pos, depth, window_alpha, window_beta, depth_ctx, path,
+                                    static_eval_history, /*excluded_moves=*/{}, searchmoves);
                 next.seldepth = seldepth_this_iteration;
                 next.elapsed_ms = static_cast<std::uint64_t>(
                     std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -4237,10 +4387,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                 }
             }
         } else {
-            next = search_root(pos, depth, -kInfinity, kInfinity, tt, killers, *history, *cont_history, *capture_history,
-                                *correction_history, game_history, path, static_eval_history, pawn_tt,
-                                eval_cache, material_weights, eval_weights, &limits, /*excluded_moves=*/{},
-                                contempt_white_pov, /*tie_break_variant=*/0, searchmoves);
+            next = search_root(pos, depth, -kInfinity, kInfinity, depth_ctx, path, static_eval_history,
+                                /*excluded_moves=*/{}, searchmoves);
             next.seldepth = seldepth_this_iteration;
             next.elapsed_ms = static_cast<std::uint64_t>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
