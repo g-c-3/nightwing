@@ -88,6 +88,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 #include "bench_positions.h"
@@ -128,6 +129,16 @@ using board::Position;
 /// — a GUI or script sending a slightly malformed move list shouldn't
 /// crash the engine, per the UCI spec's general robustness expectation.
 ///
+/// Returns the number of tokens actually applied (ROADMAP.md Priority
+/// Fixes, 2026-09-22, finding 9) — `move_tokens.size()` on full success,
+/// less than that iff a token failed to match, so a caller with a real
+/// `info string` diagnostic to send (handle_position(), below) can tell
+/// the two cases apart without this function itself needing to know
+/// about `std::ostream` or UCI output formatting at all: it stays a
+/// pure position-mutating function, same as before this return value
+/// existed, just no longer silently discarding the "how far did this
+/// get" information every caller of it now has for free.
+///
 /// `history` receives `pos.zobrist_hash` immediately before each
 /// successfully-applied move — i.e. on return, `history` holds every
 /// ancestor position's hash strictly before the final `pos`, oldest to
@@ -138,8 +149,9 @@ using board::Position;
 /// tree. Caller is responsible for clearing `history` first when a
 /// `position` command should start a fresh line rather than extend the
 /// previous one (see handle_position() below).
-void apply_uci_moves(Position& pos, const std::vector<std::string>& move_tokens,
-                      std::vector<std::uint64_t>& history) {
+std::size_t apply_uci_moves(Position& pos, const std::vector<std::string>& move_tokens,
+                             std::vector<std::uint64_t>& history) {
+    std::size_t applied = 0;
     for (const std::string& token : move_tokens) {
         MoveList legal;
         board::generate_legal_moves(pos, legal);
@@ -151,6 +163,7 @@ void apply_uci_moves(Position& pos, const std::vector<std::string>& move_tokens,
                 board::UndoInfo undo; // discarded — the position isn't unwound afterward.
                 board::make_move(pos, legal[i], undo);
                 matched = true;
+                ++applied;
                 break;
             }
         }
@@ -158,6 +171,7 @@ void apply_uci_moves(Position& pos, const std::vector<std::string>& move_tokens,
             break;
         }
     }
+    return applied;
 }
 
 /// Handles `position [startpos | fen <fen>] [moves <m1> <m2> ...]`.
@@ -172,8 +186,20 @@ void apply_uci_moves(Position& pos, const std::vector<std::string>& move_tokens,
 /// move list on every `position` command, so accumulating history
 /// across calls instead of rebuilding it here would double-count moves
 /// already reflected in the resent list.
+///
+/// `out` (ROADMAP.md Priority Fixes, 2026-09-22, finding 9): used ONLY
+/// to emit a single `info string` line if apply_uci_moves() reports it
+/// applied fewer tokens than were given — i.e. a `moves` list with an
+/// illegal or malformed entry partway through. `info string` is the
+/// standard UCI channel for exactly this ("a message that will be
+/// displayed by the engine", per the UCI spec — no GUI is expected to
+/// parse or act on its contents, only show it) rather than inventing a
+/// new one; the position itself still ends up exactly where
+/// apply_uci_moves() already left it (everything up to, not including,
+/// the bad token) — this is a diagnostic, not a behavior change, from
+/// the silent version this replaces.
 void handle_position(Position& pos, std::vector<std::uint64_t>& history,
-                      const std::vector<std::string>& tokens) {
+                      const std::vector<std::string>& tokens, std::ostream& out) {
     if (tokens.size() < 2) {
         return;
     }
@@ -207,7 +233,13 @@ void handle_position(Position& pos, std::vector<std::uint64_t>& history,
         ++idx;
         const std::vector<std::string> move_tokens(tokens.begin() + static_cast<long>(idx),
                                                      tokens.end());
-        apply_uci_moves(pos, move_tokens, history);
+        const std::size_t applied = apply_uci_moves(pos, move_tokens, history);
+        if (applied < move_tokens.size()) {
+            out << "info string position: stopped after " << applied << " of "
+                << move_tokens.size() << " moves -- '" << move_tokens[applied]
+                << "' did not match a legal move in the resulting position\n";
+            out.flush();
+        }
     }
 }
 
@@ -503,7 +535,44 @@ struct SearchBudget {
     /// GoState::unbounded, which this field exists specifically to
     /// drive — see that field's own doc comment.
     bool unbounded = false;
+
+    /// UCI `go nodes <n>` (ROADMAP.md Priority Fixes, 2026-09-22,
+    /// finding 9) — passed straight through as search_iterative_
+    /// deepening()'s own `max_nodes` parameter (that parameter's doc
+    /// comment, search.h, has the full contract: a soft target checked
+    /// periodically, not a hard node-exact stop). `has_node_limit`
+    /// stays false (the default) for every `go` without a `nodes`
+    /// token, identical to this field not existing at all.
+    bool has_node_limit = false;
+    std::uint64_t max_nodes = 0;
+
+    /// UCI `searchmoves <m1> <m2> ...` (ROADMAP.md Priority Fixes,
+    /// 2026-09-22, finding 9) — already-resolved, already-confirmed-
+    /// legal board::Move values (resolved against the position this
+    /// budget was computed for, the same `legal[i].to_uci() == token`
+    /// matching apply_uci_moves() below uses), passed straight through
+    /// as search_iterative_deepening()'s own `searchmoves` parameter.
+    /// Empty (the default) means "no restriction," identical to this
+    /// field not existing at all.
+    std::vector<board::Move> searchmoves;
 };
+
+/// The set of `go` sub-option keywords compute_search_budget()'s own
+/// token loop below recognizes — used ONLY to know where a
+/// `searchmoves` move list ends (the UCI spec places `searchmoves` last
+/// among `go`'s sub-options, but doesn't forbid something else
+/// following it, and this engine has never required strict token
+/// ordering for any other `go` sub-option either, so `searchmoves`
+/// shouldn't be the one exception that silently swallows a keyword
+/// typed after it by mistake into what looks like an extra, nonsense
+/// "move").
+[[nodiscard]] bool is_go_keyword(const std::string& tok) {
+    static const std::unordered_set<std::string> kKeywords{
+        "depth",     "movetime", "wtime", "btime",     "winc",
+        "binc",      "movestogo", "nodes", "mate",     "infinite",
+        "ponder",    "searchmoves"};
+    return kKeywords.contains(tok);
+}
 
 /// Parses `go`'s own `[depth N] [movetime N] [wtime W btime B [winc I]
 /// [binc I] [movestogo N]]` tokens (any combination; `movestogo` feeds
@@ -572,6 +641,71 @@ struct SearchBudget {
             binc = next_int();
         } else if (tok == "movestogo") {
             movestogo = next_int();
+        } else if (tok == "nodes") {
+            // std::stoi, not next_int() (which returns a signed int) --
+            // a node count can genuinely exceed INT_MAX on a long think,
+            // and max_nodes is std::uint64_t (search.h's own
+            // SearchLimits::max_nodes doc comment) specifically so it
+            // doesn't silently wrap for exactly this reason.
+            if (i + 1 < tokens.size()) {
+                try {
+                    const long long parsed = std::stoll(tokens[++i]);
+                    if (parsed > 0) {
+                        budget.max_nodes = static_cast<std::uint64_t>(parsed);
+                        budget.has_node_limit = true;
+                    }
+                } catch (const std::exception&) {
+                    // Malformed value: same "just ignore it" tolerance
+                    // next_int() already gives every other numeric
+                    // sub-option (this function's own header comment on
+                    // "a GUI or script sending a slightly malformed ...
+                    // shouldn't crash the engine").
+                }
+            }
+        } else if (tok == "mate") {
+            // `go mate <n>`: no dedicated mate-search mode (ROADMAP.md
+            // item 5b's own scoping note on this exact design
+            // question) -- treated as a depth ceiling of 2*n plies,
+            // enough for iterative deepening's own existing mate-
+            // distance handling (kMateThreshold/kMateScore, search.h)
+            // to find and report a mate in `n` moves if one exists at
+            // that depth, the same minimal treatment most classical
+            // engines give this option rather than a dedicated search
+            // mode. Combining `mate` with `wtime`/`btime` behaves
+            // exactly like combining `depth` with them already does
+            // (the `have_depth` branch immediately below takes
+            // priority, ignoring wtime/btime's own time budget
+            // entirely) -- consistent with, not a new exception to,
+            // that existing precedent.
+            const int mate_in_n = next_int();
+            if (mate_in_n > 0) {
+                budget.max_depth = 2 * mate_in_n;
+                have_depth = true;
+            }
+        } else if (tok == "searchmoves") {
+            // Consumes every following token up to the next recognized
+            // `go` keyword or the end of the command (is_go_keyword()'s
+            // own doc comment above) -- each one resolved against `pos`
+            // the same way apply_uci_moves() resolves a `position ...
+            // moves` token: matched by Move::to_uci() against the
+            // position's own legal move list, generated once before
+            // this inner loop rather than once per token. A token that
+            // doesn't match any legal move is silently skipped (same
+            // per-token tolerance apply_uci_moves() itself uses for a
+            // malformed move list, this function's own header comment)
+            // rather than aborting the rest of the `searchmoves` list
+            // over one bad entry.
+            board::MoveList legal;
+            board::generate_legal_moves(pos, legal);
+            while (i + 1 < tokens.size() && !is_go_keyword(tokens[i + 1])) {
+                ++i;
+                for (const board::Move& m : legal) {
+                    if (m.to_uci() == tokens[i]) {
+                        budget.searchmoves.push_back(m);
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -674,9 +808,33 @@ struct SearchBudget {
 /// -- this function itself needs no MultiPV-specific branching at all,
 /// since every field it reads already carries the right per-line
 /// values regardless of which path produced them.
-void emit_info(const search::SearchResult& result, std::ostream& out) {
-    out << "info depth " << result.depth_completed << " multipv " << result.multipv_index
-        << " score ";
+/// `seldepth`/`time`/`nps`/`hashfull` (ROADMAP.md Priority Fixes,
+/// 2026-09-22, finding 9): added alongside the fields above, in the
+/// same relative position Stockfish and most other UCI engines place
+/// them (`depth seldepth ... time ... nodes ... nps ... hashfull ...
+/// pv`), since a GUI's own `info`-line parser is generally tolerant of
+/// field order but real tooling (cutechess and similar) that greps for
+/// a specific field by name benefits from a conventional layout, not a
+/// novel one. `seldepth` falls back to `result.depth_completed` for a
+/// SearchResult produced without seldepth tracking
+/// (SearchResult::seldepth's own doc comment covers exactly when that
+/// happens: only the mandatory depth-1 iteration today), rather than
+/// emitting a misleading `seldepth 0`. `nps` is derived here, not
+/// stored on SearchResult itself, from `nodes`/`elapsed_ms` --
+/// `elapsed_ms == 0` (possible for a depth-1 result that completes
+/// within the same millisecond it started, on a fast position) omits
+/// `nps` entirely rather than dividing by zero or reporting a
+/// meaningless value. `tt`: `nullptr` (the default) omits `hashfull`
+/// entirely rather than reporting a meaningless 0 -- every real call
+/// site in this file has a live TranspositionTable to pass; the
+/// default only exists so test code calling this function directly
+/// (tests/uci_tests.cpp) isn't forced to construct one just to check
+/// the other fields.
+void emit_info(const search::SearchResult& result, std::ostream& out,
+               const search::TranspositionTable* tt = nullptr) {
+    const int seldepth = result.seldepth > 0 ? result.seldepth : result.depth_completed;
+    out << "info depth " << result.depth_completed << " seldepth " << seldepth << " multipv "
+        << result.multipv_index << " score ";
     if (result.score >= search::kMateThreshold) {
         const int plies_to_mate = search::kMateScore - result.score;
         out << "mate " << (plies_to_mate + 1) / 2;
@@ -686,7 +844,15 @@ void emit_info(const search::SearchResult& result, std::ostream& out) {
     } else {
         out << "cp " << result.score;
     }
-    out << " nodes " << result.nodes << " pv";
+    out << " nodes " << result.nodes;
+    if (result.elapsed_ms > 0) {
+        out << " nps " << (result.nodes * 1000ULL) / result.elapsed_ms;
+    }
+    out << " time " << result.elapsed_ms;
+    if (tt != nullptr) {
+        out << " hashfull " << tt->hashfull();
+    }
+    out << " pv";
     if (result.pv.empty()) {
         out << ' ' << result.best_move.to_uci();
     } else {
@@ -1187,7 +1353,7 @@ void start_go(Position& pos, const std::vector<std::uint64_t>& game_history,
         // -- see GoState::stop's own doc comment above.
         const search::SearchResult result = search::search_iterative_deepening(
             go_pos, budget.max_depth, budget.time_limit_ms, go_history,
-            [&out, out_mutex_ptr, suppress_ptr](const search::SearchResult& iteration_result) {
+            [&out, out_mutex_ptr, suppress_ptr, tt_ptr](const search::SearchResult& iteration_result) {
                 // Skip a stale `info` line for a search abandon_go()
                 // already discarded -- the same suppression
                 // start_pondering()'s own lambda applies to its final
@@ -1198,10 +1364,11 @@ void start_go(Position& pos, const std::vector<std::uint64_t>& game_history,
                     return;
                 }
                 std::lock_guard<std::mutex> lock(*out_mutex_ptr);
-                emit_info(iteration_result, out);
+                emit_info(iteration_result, out, tt_ptr);
             },
             /*material_weights=*/nullptr, /*eval_weights=*/nullptr, num_threads, stop_ptr,
-            hash_size_mb, search_multi_pv, budget.soft_time_limit_ms, contempt_cp, tt_ptr);
+            hash_size_mb, search_multi_pv, budget.soft_time_limit_ms, contempt_cp, tt_ptr,
+            budget.has_node_limit ? budget.max_nodes : 0, budget.searchmoves);
 
         if (suppress_ptr->load(std::memory_order_relaxed)) {
             return;
@@ -1496,6 +1663,16 @@ void start_pondering(Position& pos, const std::vector<std::uint64_t>& game_histo
 
     ponder.thread = std::thread([&out, out_mutex_ptr, num_threads, hash_size_mb, ponder_pos,
                                   ponder_history, stop_ptr, suppress_ptr, tt_ptr]() mutable {
+        // `budget`'s own `has_node_limit`/`max_nodes`/`searchmoves`
+        // (ROADMAP.md Priority Fixes, 2026-09-22, finding 9) are NOT
+        // forwarded to this background search -- pondering already
+        // deliberately ignores `budget.max_depth`/`time_limit_ms` too
+        // (kTimedSearchMaxDepth/0 just below, genuinely unbounded by
+        // design until `ponderhit` applies the SAVED budget -- this
+        // function's own header comment), and no test or real GUI usage
+        // combines `go ponder` with `nodes`/`searchmoves` today; a
+        // deliberate scope limit, matching search_iterative_deepening()'s
+        // own MultiPV one, not an oversight.
         const search::SearchResult result = search::search_iterative_deepening(
             ponder_pos, kTimedSearchMaxDepth, /*time_limit_ms=*/0, ponder_history,
             /*on_iteration=*/nullptr, /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
@@ -1946,7 +2123,7 @@ void run(std::istream& in, std::ostream& out) {
         } else if (cmd == "position") {
             abandon_go(go);         // Same rationale as ucinewgame above.
             abandon_pondering(ponder);
-            handle_position(pos, game_history, tokens);
+            handle_position(pos, game_history, tokens, out);
         } else if (cmd == "setoption") {
             const std::size_t previous_hash_size_mb = hash_size_mb;
             handle_setoption(num_threads, hash_size_mb, move_overhead_ms, multi_pv, skill_level,
