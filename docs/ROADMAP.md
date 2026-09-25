@@ -2091,40 +2091,57 @@ it either way.
    one new regression test,
    `tests/search_tests.cpp`'s `[fifty-move][mate]`-tagged case built
    from this exact FEN) confirmed green.
-5b. [ ] **Tighten UCI parsing** (finding 9) — `go nodes`/`go mate`/
-   `searchmoves` are parsed nowhere in `uci.cpp`'s `go`-token loop and
-   are silently dropped; `apply_uci_moves()` silently `break`s on the
+5b. [x] **Tighten UCI parsing** (finding 9) — `go nodes`/`go mate`/
+   `searchmoves` were parsed nowhere in `uci.cpp`'s `go`-token loop and
+   were silently dropped; `apply_uci_moves()` silently `break`s on the
    first unmatched move token in `position ... moves`, discarding the
-   rest of the list rather than reporting anything; `emit_info()`
-   writes only `depth`/`multipv`/`score`/`nodes`/`pv` — no `nps`,
-   `time`, `seldepth`, or `hashfull`, all of which real tooling
-   (cutechess and similar) consumes. NOT started this session —
-   deliberately split out from 5a (finding 8, above) rather than rushed
-   in alongside it: unlike 5a's single, cleanly-isolable function,
-   this is four genuinely separate additions spread across
-   `search.h`/`search.cpp`/`uci.cpp` (`SearchLimits`/`SearchResult`
-   both already 150+/80-line structs with an established
-   "new optional parameter, default to prior behavior" convention that
-   should be followed, not shortcut) — a node-count search limit (new
-   `SearchLimits` field, checked in the same periodic block as
-   `deadline`/`external_stop`), a `searchmoves` root-move restriction
-   (threaded into `search_iterative_deepening()`'s root move loop), a
-   `seldepth` tracker (new `SearchResult` field, updated from the
-   deepest `ply` any `negamax()`/`quiescence()` call actually reached),
-   and a `TranspositionTable` hashfull query (permille of slots
-   occupied) — each is small individually but genuinely separate
-   plumbing, not one shared change; budget it as such next session, per
-   this project's own established "a substantial change gets its own
-   session, not a rushed aside" convention (see item 6's own note
-   below). `go mate <n>` needs a design decision first (minimal
-   treatment: most engines just search to a depth sufficient to find a
-   mate in `n` and let ordinary mate-distance pruning/scoring do the
-   rest, rather than a dedicated mate-search mode — worth confirming
-   against CPW's own "go mate" convention before implementing, not
-   assuming). Read `src/uci/uci.cpp`'s `go`-token loop and
-   `apply_uci_moves()`, and `src/search/search.h`'s `SearchLimits`/
-   `SearchResult`/`search_iterative_deepening()` doc comments, in full
-   before writing anything.
+   rest of the list rather than reporting anything; `emit_info()` wrote
+   only `depth`/`multipv`/`score`/`nodes`/`pv` — no `nps`, `time`,
+   `seldepth`, or `hashfull`, all of which real tooling (cutechess and
+   similar) consumes. DONE (this session): all four pieces implemented,
+   verified against a real compiled build, and covered by new tests at
+   both the search layer and the UCI layer — see docs/DECISIONS.md,
+   2026-09-24 (3), for the full writeup. Summary: `go nodes <n>` (a new
+   `SearchLimits::has_node_limit`/`max_nodes`, checked in the same
+   periodic block as `deadline`/`external_stop` in both `negamax()` and
+   `quiescence_impl()`); `go searchmoves <m1> ...` (a new
+   `search_root()` `searchmoves_filter` inclusion parameter, the mirror
+   of the existing `excluded_moves` exclusion filter, threaded through
+   both the mandatory depth-1 call and every depth-2-onward iteration of
+   `search_iterative_deepening()`); `go mate <n>` (parsed as a depth
+   ceiling of `2n` plies — the minimal, no-dedicated-mode treatment this
+   item's own earlier note flagged as the design question to settle,
+   settled that way); `TranspositionTable::hashfull()` (a new method,
+   Stockfish's own 1000-entry-sample technique, credited); `SearchResult::
+   seldepth`/`elapsed_ms` (new fields, the former updated from the
+   deepest `ply` any `negamax()`/`quiescence_impl()` call reached, the
+   latter wall-clock since `search_iterative_deepening()` was called);
+   `emit_info()` now writes `seldepth`/`time`/`nps`/`hashfull` alongside
+   the existing fields; `apply_uci_moves()` now returns how many tokens
+   it actually applied, and `handle_position()` emits one `info string`
+   diagnostic when that's fewer than were given, rather than staying
+   silent. Full `ctest`: 692/692 (680 carried over from item 5a + 12 new
+   this leg: 4 `TranspositionTable::hashfull()` tests, 2 search-layer
+   tests for `max_nodes`/`searchmoves`, and 6 end-to-end UCI-layer tests
+   covering the new `info` fields, `go nodes`, `go searchmoves`, `go
+   mate`, and the `apply_uci_moves()` diagnostic both firing and NOT
+   firing) confirmed green.
+   Deliberately deferred, not bundled in: MultiPV combined with `go
+   nodes`/`searchmoves`, and pondering's background search combined
+   with either — filed as a new low-priority item below, not blocking
+   this one.
+- [ ] **Thread `go nodes`/`searchmoves` through MultiPV and pondering**
+      (filed 2026-09-24, from item 5b's own deliberate scope limit
+      above) — `search_iterative_deepening_multipv()` and
+      `start_pondering()`'s own background search neither accept nor
+      forward `max_nodes`/`searchmoves` today; a `go` combining `setoption
+      name MultiPV value N>1` with `nodes`/`searchmoves`, or `go ponder`
+      with either, silently ignores those two options rather than
+      erroring OR honoring them — no test or real GUI usage was found
+      combining them during this session's own work, so this is a real
+      but currently-unexercised gap, not a confirmed bug affecting
+      anyone yet. Not blocking; pick up when either combination is
+      actually needed.
 6. **Refactor `negamax`'s parameter list; prune stale docs** (finding 10,
    and part of 11) — `negamax()` (`src/search/search.cpp`) is a real 27
    parameters (not the report's own stated 22 — re-verify this count
