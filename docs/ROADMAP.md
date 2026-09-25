@@ -2142,33 +2142,58 @@ it either way.
       but currently-unexercised gap, not a confirmed bug affecting
       anyone yet. Not blocking; pick up when either combination is
       actually needed.
-6. **Refactor `negamax`'s parameter list; prune stale docs** (finding 10,
-   and part of 11) — `negamax()` (`src/search/search.cpp`) is a real 27
-   parameters (not the report's own stated 22 — re-verify this count
-   directly from the function's current signature before using it
-   anywhere else, since it will keep drifting as new search features add
-   their own parameters) across roughly 1,230 lines, with the same long
-   argument list repeated at every recursive call site. A
-   `ThreadData`/`SearchContext`-style struct bundling the
-   per-search-invariant pieces (tables, weights, limits, tie-break/
-   contempt config) would remove most of the repetition and — per the
-   report — would also let `run_lazy_smp_helper()`'s own documented,
-   deliberate `const_cast<std::atomic<bool>*>(&stop)` (`SearchLimits::
-   external_stop` being non-const while the helper's own `stop` parameter
-   is held const) go away, since a struct could hold the right constness
-   from construction instead. This is a substantial refactor across every
-   recursive call site in the file — budget it as such, not a quick
-   pass. Same item, smaller: `docs/DECISIONS.md` (792 KB) and
-   `docs/SESSIONS.md` (~600 KB, still growing) are each individually
-   larger than the ~22.8k-line source tree they document; nothing in this
-   section asks for docs to be pruned or rewritten wholesale (this
-   project's "the repo is the memory" convention is deliberate, not an
-   oversight), but any stale statement actually caught in passing — the
-   report specifically named the TT "per-search lifetime" note,
-   `setoption` "besides `Threads`" being ignored, and the already-being-
-   fixed "Phase 2 has no pruning" comment (item 1 above) — should be
-   corrected on sight rather than left for a dedicated cleanup pass that
-   may never come.
+6. [x] **Refactor `negamax`'s parameter list; prune stale docs** (finding
+   10, and part of 11) — DONE (this session), the refactor half. Added
+   `SearchContext` (`src/search/search.cpp`, anonymous namespace, declared
+   immediately before `negamax()`), bundling the 14 per-search-invariant
+   fields (`tt`, `killers`, `history`, `cont_history`, `capture_history`,
+   `correction_history`, `game_history`, `pawn_tt`, `eval_cache`,
+   `material_weights`, `eval_weights`, `limits`, `contempt_white_pov`,
+   `tie_break_variant`). `negamax()`: 27 params -> 15. `search_root()`: 19
+   params -> 9. Every recursive call site inside both functions (10 for
+   `negamax()`, 3 for `search_root()`) and every external `search_root()`
+   call site (7, across `search_fixed_depth()`, `run_lazy_smp_helper()`,
+   `search_iterative_deepening_multipv()`, `search_iterative_deepening()`)
+   updated. Neither function's own BODY was rewritten — a top-of-function
+   local-alias block reconstructs the exact same local names the old
+   parameter list provided, so every line past that block is unchanged
+   from before this session; deliberate, given `negamax()` is ~1,230
+   lines of previously-SPRT-relevant pruning/extension logic. Confirmed
+   directly (both functions are anonymous-namespace-local, never
+   forward-declared) that neither has any call site outside `search.cpp`
+   at all — no test file or `uci.cpp` change was needed. Verified against
+   the real toolchain, not by inspection: a fresh clone, baseline build of
+   unmodified `main` came back 689/692 (3 pre-existing, deterministic,
+   sandbox-specific `[uci]` test failures, unrelated to this work —
+   this sandbox has 1 CPU core; working theory is single-core timing on
+   async `go` tests, NOT independently confirmed against real CI); the
+   refactored build was clean (zero errors, zero warnings once four
+   `-Wunused-variable` hits in `search_root()`'s own alias block — fields
+   it never reads directly, only forwards via `ctx` — were pruned) and
+   came back 689/692 with the exact same 3 failing test names, confirmed
+   via direct diff of both runs. See docs/DECISIONS.md, 2026-09-26, for
+   the full design/scope/verification account.
+   Deliberately NOT done this session, left as a named follow-up: the
+   finding's own text also floated that this struct could let
+   `run_lazy_smp_helper()`'s own documented
+   `const_cast<std::atomic<bool>*>(&stop)` go away — that `const_cast` is
+   on a parameter of `run_lazy_smp_helper()` itself, a different function
+   than the two actually refactored here, and doing it properly means
+   deciding `SearchContext::limits`'s own constness story deliberately
+   rather than as a side effect of an unrelated change. Not picked up
+   this session; pick up as its own small follow-up.
+   Same item, smaller, also NOT separately pursued this session beyond
+   what the refactor itself touched: `docs/DECISIONS.md` (872 KB) and
+   `docs/SESSIONS.md` (~650 KB, still growing) are each individually
+   larger than the source tree they document; nothing in this section
+   asks for docs to be pruned or rewritten wholesale (this project's "the
+   repo is the memory" convention is deliberate, not an oversight), but
+   any stale statement actually caught in passing — the report
+   specifically named the TT "per-search lifetime" note, `setoption`
+   "besides `Threads`" being ignored, and the already-fixed "Phase 2 has
+   no pruning" comment (item 1 above) — should still be corrected on
+   sight in a future session rather than left for a dedicated cleanup
+   pass that may never come.
 
 Not part of the report's own ordering, appended here:
 
