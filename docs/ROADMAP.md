@@ -2362,6 +2362,41 @@ it either way.
    no pruning" comment (item 1 above) — should still be corrected on
    sight in a future session rather than left for a dedicated cleanup
    pass that may never come. Still open, still un-picked-up.
+   DONE (the "stale statement caught on sight" part, not a wholesale
+   rewrite — never asked for), Session 139: swept `docs/ARCHITECTURE.md`
+   and the two source-file header comments it and `docs/ROADMAP.md`
+   both point readers to for authoritative detail
+   (`src/search/tt.h`'s LIFETIME NOTE, `src/uci/uci.h`'s own top-of-file
+   comment) for exactly the two statements this item's own text named
+   plus one more found the same way: (1) `src/search/tt.h`'s LIFETIME
+   NOTE and `ARCHITECTURE.md`'s Transposition Table row both still
+   described the pre-Session-96 "one private TT per top-level search
+   call" state as current, when Session 96 made the real UCI binary's
+   own TT persistent via `external_tt` — both corrected to describe
+   BOTH lifetimes (private-per-call default, persistent-via-external_tt)
+   as the real, permanent, current design, not one interim placeholder
+   waiting on the other; (2) `ARCHITECTURE.md`'s Multithreading row
+   claimed the UCI `Threads` option was "still an open, separate Phase 7
+   item," when it's been implemented since Session 74 — corrected; (3)
+   found the same way, not separately named by this item's own original
+   text: `src/uci/uci.h`'s own top-of-file header comment still
+   described the file as Phase 2's original "basic" loop with
+   setoption/Hash/Threads, asynchronous `go infinite`/`stop`, and
+   pondering all listed as "out of scope this phase," directly
+   contradicting `uci.cpp`'s own header comment (already accurate,
+   listing each as implemented with its own session number) one file
+   away — corrected to point to `uci.cpp`'s own account rather than
+   duplicate or re-drift from it. Also reworded `ARCHITECTURE.md`'s own
+   sandbox-toolchain note to stop naming a specific test-suite total (a
+   number guaranteed to go stale again the next session that adds a
+   test) in favor of pointing to `docs/SESSIONS.md`'s own latest entry
+   for the current count. See docs/DECISIONS.md, 2026-09-26 (7), for the
+   full account of how each was found and why the fix was scoped the
+   way it was. NOT exhaustive — this was a scan of the two files this
+   item's own text and the ones it named point to, not a full line-by-
+   line audit of every doc/comment in the repository; further stale
+   statements caught in passing should keep being corrected on sight,
+   same standing instruction as before.
 
 Not part of the report's own ordering, appended here:
 

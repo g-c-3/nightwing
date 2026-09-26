@@ -4,7 +4,28 @@ Newest entry at top.
 
 ---
 
-### Session 138 — 2026-09-26 — `run_lazy_smp_helper()`'s `const_cast<std::atomic<bool>*>(&stop)` removed (Session 133's own first deferred follow-up)
+### Session 139 — 2026-09-26 — real CI confirmed green for Sessions 137/138's own fixes (no log file this time, verbal confirmation only); the docs stale-statement sweep (Session 133's own last deferred follow-up) picked up and closed
+
+Triggered by "Continue" after the person reported "Everything green" (no CI log bundle uploaded this time, unlike Sessions 135/136 — treated as informal, verbal confirmation that Session 137's `nps`-test/MultiPV `elapsed_ms` fixes and Session 138's `const_cast` removal all landed clean on real CI, not independently re-verified against raw logs the way every prior CI-triage session in this log was). With no log file to triage and no macOS build available for the still-open CTest-registration gap, picked up the last remaining item from Session 133's own original handoff: the docs stale-statement sweep.
+
+**Scope of the sweep:** not a line-by-line audit of every doc/comment in the repository (never asked for, and this project's own "the repo is the memory" convention treats the existing docs as deliberately comprehensive, not something to prune or rewrite wholesale) — instead, followed the specific pointers Session 133's own report and the docs already contain: `docs/ARCHITECTURE.md` (the summary table most likely to drift silently, since nothing forces it to be touched when a ROADMAP.md item completes) and the two source-file header comments it and `docs/ROADMAP.md` both cite as "see here for the authoritative detail" (`src/search/tt.h`'s LIFETIME NOTE, `src/uci/uci.h`'s own top-of-file comment).
+
+**Found and fixed, 3 total (2 named by Session 133's own report, 1 more found the same way):**
+1. `src/search/tt.h`'s own LIFETIME NOTE and `ARCHITECTURE.md`'s Transposition Table row both still described the pre-Session-96 "one private TT per top-level search call, not yet a persistent global" state as CURRENT — checked directly against `docs/ROADMAP.md`'s own Session 96 entry, which confirms `uci.cpp`'s `run()` has owned one persistent, engine-lifetime table (via a new `external_tt` parameter) for many sessions now. Corrected both to describe the two lifetimes (fresh-private-per-call default, persistent-via-`external_tt`) as the real, PERMANENT design — both are genuinely still exercised today (tests and the standalone `bench`/`selfplay`/`sprt`/`match` binaries use the default; the real UCI engine binary always uses `external_tt`), not one interim placeholder waiting on the other the way the old wording implied.
+2. `ARCHITECTURE.md`'s Multithreading row claimed the UCI `Threads` option was "still an open, separate Phase 7 item" — checked against `docs/ROADMAP.md`'s own Session 74 entry, which shows it was implemented long ago. Corrected.
+3. Found while checking `uci.h`/`uci.cpp` for the `Threads` claim above, not separately named by Session 133's own report: `src/uci/uci.h`'s own top-of-file header comment still described the file as Phase 2's original minimal loop, listing setoption/Hash/Threads, asynchronous `go infinite`/`stop`, and pondering as ALL "out of scope this phase" — directly contradicted by `uci.cpp`'s own header comment one file away, which was ALREADY accurate and well-maintained (each item listed as implemented, with its own session number). `uci.h`'s comment had simply never been updated to match once `uci.cpp`'s own had been kept current across many later sessions — a case of one of two related files drifting while its sibling didn't, not a case of neither ever being touched. Corrected `uci.h` to summarize the current state in a few lines and point to `uci.cpp`'s own account for detail, rather than re-duplicating (and risking re-drifting from) it.
+
+**Also, a minor durability fix, not a correctness bug:** `ARCHITECTURE.md`'s own "Development Environment (assistant sandbox)" note named a specific test-suite total ("all 679 tests") as of when the sandbox toolchain was first confirmed working (2026-09-23) — accurate at the time, but a number guaranteed to go stale again the very next session that adds a test (this repo is now at 697). Reworded to point to `docs/SESSIONS.md`'s own latest entry for the current count instead of repeating a number that can't stay correct.
+
+**Verification:** rebuilt Release (GCC, this sandbox) after both `tt.h` and `uci.h` changes — these are doc-comment-only edits to real header files, not logic changes, but rebuilt anyway rather than assuming a comment-only diff is risk-free. Zero errors, zero warnings. Full suite: 695/697, the identical 2 pre-existing sandbox-specific failures documented since Session 133, confirming zero behavioral impact, exactly as expected for a comment-only change.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-26 (7).
+
+**Next session start point:** Session 133's own original handoff (both deferred follow-ups) is now fully closed. Remaining open items, in the order they were filed: the macOS CTest-registration gap (Session 135, needs a real macOS build — cannot progress from this Linux sandbox); independently re-confirming Sessions 137/138's own fixes against a REAL CI log bundle, not just this session's verbal "everything green" (if one is uploaded, triage it properly — read the actual pass/fail/warning output, the way Sessions 135/136 did, rather than treating a verbal report as equivalent); and whatever ROADMAP.md's own next unchecked item is after that, if nothing else is queued.
+
+---
+
+
 
 Triggered by "Continue" — no new CI logs pending, so picked up the smaller of Session 133's own two long-deferred follow-ups (the docs stale-statement sweep, the other one, remains open and larger/open-ended).
 
