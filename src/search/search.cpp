@@ -3785,11 +3785,39 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
 /// be that rank's best move at the next depth, exactly as the ordinary
 /// single-line path never assumes a shallower depth's single best move
 /// is still correct at the next depth either.
+///
+/// `max_nodes`/`searchmoves` (ROADMAP.md Priority Fixes, 2026-09-22,
+/// finding 9, filed 2026-09-24 as "Thread `go nodes`/`searchmoves`
+/// through MultiPV and pondering" once search_iterative_deepening()'s
+/// own single-line path already had both): same meaning and defaults
+/// (0 / empty) as search_iterative_deepening()'s own identically-named
+/// parameters -- mirrors that function's own per-parameter treatment
+/// exactly, not a new design: `searchmoves`, independent of any
+/// SearchLimits, is forwarded as `search_root()`'s own
+/// `searchmoves_filter` argument on EVERY call this function makes,
+/// including the unconditional depth-1 block (matching the single-line
+/// path's own depth-1 `search_root()` call, which already does the
+/// same); `max_nodes` only feeds the depth-2-onward loop's own
+/// per-iteration SearchLimits (`limits.has_node_limit`/`limits.max_nodes`
+/// below), NOT the depth-1 block, for the identical "always have a
+/// legal move" reason SearchLimits::has_deadline's own doc comment
+/// already gives, and identical to `max_nodes`' own single-line-path
+/// treatment. A single depth iteration's node budget is shared across
+/// every one of that depth's `max_lines` lines via the SAME `limits`
+/// instance (declared once per depth, reused across the inner
+/// `line` loop below) rather than each line getting its own separate
+/// `max_nodes` budget -- `go nodes` is a whole-search budget, not a
+/// per-line one, so once it's reached mid-line, every remaining line
+/// at that depth is interrupted too and the whole depth is discarded,
+/// the same "an incomplete depth is discarded wholesale" convention
+/// this function's own header comment already describes for any other
+/// interruption reason.
 SearchResult search_iterative_deepening_multipv(
     Position& pos, int max_depth, int time_limit_ms, std::span<const std::uint64_t> game_history,
     const IterationCallback& on_iteration, const eval::MaterialWeights* material_weights,
     const eval::EvalWeightsOverride* eval_weights, int max_lines, std::atomic<bool>* external_stop,
-    std::size_t hash_size_mb, int contempt_white_pov, TranspositionTable* external_tt) {
+    std::size_t hash_size_mb, int contempt_white_pov, TranspositionTable* external_tt,
+    std::uint64_t max_nodes, std::span<const Move> searchmoves) {
     const auto start_time = std::chrono::steady_clock::now();
 
     // Same table set, same lifetime rationale, as the single-line path
@@ -3850,7 +3878,8 @@ SearchResult search_iterative_deepening_multipv(
                        contempt_white_pov,
                        /*tie_break_variant=*/0};
     for (int line = 1; line <= max_lines; ++line) {
-        SearchResult r = search_root(pos, 1, -kInfinity, kInfinity, ctx, path, static_eval_history, excluded);
+        SearchResult r = search_root(pos, 1, -kInfinity, kInfinity, ctx, path, static_eval_history,
+                                       excluded, searchmoves);
         total_nodes += r.nodes;
         r.multipv_index = line;
         excluded.push_back(r.best_move);
@@ -3924,6 +3953,12 @@ SearchResult search_iterative_deepening_multipv(
                 limits.deadline = start_time + std::chrono::milliseconds(time_limit_ms);
             }
             limits.external_stop = external_stop;
+            // UCI `go nodes` (this function's own doc comment above) --
+            // a no-op (has_node_limit stays false) when `max_nodes == 0`,
+            // the default, identical to the single-line path's own
+            // treatment of this same parameter.
+            limits.has_node_limit = max_nodes > 0;
+            limits.max_nodes = max_nodes;
 
             SearchContext depth_ctx{tt,
                                      killers,
@@ -3941,7 +3976,7 @@ SearchResult search_iterative_deepening_multipv(
                                      /*tie_break_variant=*/0};
             SearchResult r =
                 search_root(pos, depth, -kInfinity, kInfinity, depth_ctx, path, static_eval_history,
-                            depth_excluded);
+                            depth_excluded, searchmoves);
             depth_nodes += r.nodes;
             if (limits.stopped) {
                 interrupted = true;
@@ -4033,7 +4068,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             return search_iterative_deepening_multipv(pos, max_depth, time_limit_ms, game_history,
                                                         on_iteration, material_weights, eval_weights,
                                                         max_lines, external_stop, hash_size_mb,
-                                                        contempt_white_pov, external_tt);
+                                                        contempt_white_pov, external_tt, max_nodes,
+                                                        searchmoves);
         }
         // max_lines <= 1 (0 or 1 legal root moves): nothing extra to
         // show regardless of what `multi_pv` requested -- fall through

@@ -701,12 +701,16 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// `time_limit_ms` itself already has against wall-clock time). NOT
 /// threaded into the mandatory depth-1 iteration (which always passes
 /// `limits=nullptr` -- see SearchLimits::has_deadline's own doc
-/// comment for why) nor into search_iterative_deepening_multipv() --
-/// both deliberate scope limits, not bugs, matching `soft_time_limit_ms`'s
-/// own precedent just above for the exact same reason: a genuinely new
-/// UCI feature gets the single-line, non-MultiPV path first, with
-/// MultiPV composition as explicit future work rather than rushed in
-/// alongside.
+/// comment for why), whether the single-line path or MultiPV
+/// (search_iterative_deepening_multipv(), internal to search.cpp) is
+/// the one actually running -- both share this same depth-1 exception
+/// for the identical reason. ALSO threaded into
+/// search_iterative_deepening_multipv() whenever `multi_pv` genuinely
+/// takes effect (filed 2026-09-24, "Thread `go nodes`/`searchmoves`
+/// through MultiPV and pondering" -- that internal function's own doc
+/// comment, search.cpp, has the full per-depth-iteration accounting:
+/// one shared node budget per depth across every one of that depth's
+/// requested lines, not a separate budget per line).
 ///
 /// `searchmoves` (ROADMAP.md Priority Fixes, 2026-09-22, finding 9 --
 /// UCI `searchmoves <m1> <m2> ...`): empty (the default) means "every
@@ -721,9 +725,15 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// -- not duplicating -- the legality check uci.cpp's own `go`-token
 /// parser already has to do to convert the UCI move strings into
 /// board::Move values in the first place; this parameter only ever
-/// receives moves already confirmed legal by that caller). NOT threaded
-/// into search_iterative_deepening_multipv() -- same deliberate scope
-/// limit as `max_nodes` just above, for the same reason.
+/// receives moves already confirmed legal by that caller). ALSO
+/// threaded into search_iterative_deepening_multipv() whenever
+/// `multi_pv` genuinely takes effect (filed 2026-09-24, same item as
+/// `max_nodes` just above) -- restricts every line's own root-move
+/// candidate set at every depth, composing correctly with that
+/// function's own root-move-exclusion mechanism (search_root()'s
+/// `excluded_moves`, a completely separate parameter for a completely
+/// separate purpose -- MultiPV's own doc comment on `multi_pv` below
+/// has the full account of how the two compose).
 [[nodiscard]] SearchResult search_iterative_deepening(
     board::Position& pos, int max_depth, int time_limit_ms = 0,
     std::span<const std::uint64_t> game_history = {}, IterationCallback on_iteration = nullptr,
