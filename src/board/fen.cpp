@@ -130,7 +130,15 @@ Position parse_fen(const std::string& fen) {
         if (ep_str.size() != 2 || ep_str[0] < 'a' || ep_str[0] > 'h' || ep_str[1] < '1' || ep_str[1] > '8') {
             throw std::invalid_argument("parse_fen: malformed en passant square: " + fen);
         }
-        pos.en_passant_square = make_square(ep_str[0] - 'a', ep_str[1] - '1');
+        // See board.cpp's own identical fix (docs/DECISIONS.md,
+        // 2026-09-26 (4)) for why this needs an explicit
+        // `static_cast<std::int8_t>` around `make_square()`'s own
+        // `Square` (== `int`) return value -- `en_passant_square`'s own
+        // declared field type is `std::int8_t`, matching this same
+        // file's own `halfmove_clock`/`fullmove_number` assignments
+        // just below, which already cast explicitly for the identical
+        // reason.
+        pos.en_passant_square = static_cast<std::int8_t>(make_square(ep_str[0] - 'a', ep_str[1] - '1'));
     }
 
     pos.halfmove_clock = static_cast<std::uint8_t>(halfmove);

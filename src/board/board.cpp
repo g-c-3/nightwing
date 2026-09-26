@@ -94,7 +94,26 @@ void make_move(Position& pos, const Move& move, UndoInfo& undo) noexcept {
     }
 
     if (flag == MoveFlag::DoublePawnPush) {
-        pos.en_passant_square = static_cast<Square>((from + to) / 2);
+        // `en_passant_square` is `std::int8_t` (board.h's own comment on
+        // that field -- a compact-storage choice, not a semantic
+        // change: every valid `Square` value fits in an `int8_t`
+        // comfortably), while `Square` itself is a plain `int`
+        // (bitboard.h) -- an explicit `static_cast<std::int8_t>` here
+        // (replacing the strictly redundant `static_cast<Square>` this
+        // line used to have, which cast an `int` expression to
+        // `Square`, itself just `int` again, doing nothing) is what
+        // MSVC's own `-W4`/`/W4`-class `C4244` narrowing-conversion
+        // warning wants to see at the actual point of narrowing --
+        // GCC/Clang's `-Wall -Wextra -Wpedantic` (this project's own
+        // configured flags, CMakeLists.txt) don't warn on this same
+        // implicit int-to-int8_t narrowing by default (that needs the
+        // separate, unenabled `-Wconversion`), which is why this,
+        // fen.cpp's own identical assignment, and three test files'
+        // worth of directly-constructed `Position`s in test setup code
+        // all went unflagged by every session's own Linux-sandbox
+        // verification until a real Windows/MSVC CI run caught all 8
+        // sites at once (docs/DECISIONS.md, 2026-09-26 (4)).
+        pos.en_passant_square = static_cast<std::int8_t>((from + to) / 2);
         hash ^= en_passant_file_key(file_of(pos.en_passant_square));
     }
 
