@@ -689,6 +689,34 @@ TEST_CASE("uci: 'setoption name MultiPV value N' followed by 'go' emits N distin
     REQUIRE(count_occurrences(out, "multipv 4") == 0);
 }
 
+TEST_CASE("uci: MultiPV 'info' lines report a genuine, nonzero 'time'/'nps' -- filed and fixed "
+          "2026-09-24, \"search_iterative_deepening_multipv() never set elapsed_ms on any line's "
+          "own SearchResult\" (docs/DECISIONS.md, 2026-09-26 (5))",
+          "[uci][multipv][info]") {
+    init_all();
+    // `go movetime 100`, not a fixed depth -- same hardware-speed
+    // independence rationale as this file's own single-line `nps` test
+    // above, which flaked on real CI for the identical reason before
+    // being fixed the same way.
+    const std::string out = run_uci({"setoption name MultiPV value 2",
+                                      "position startpos moves g1h3", "go movetime 100", "quit"});
+    REQUIRE(contains(out, "multipv 1"));
+    REQUIRE(contains(out, "multipv 2"));
+    // Before this fix, every MultiPV line's own `elapsed_ms` stayed at
+    // its default-constructed 0 forever -- `nps` never appearing at
+    // all, no matter how long the search ran overall. `nps` appearing
+    // ANYWHERE in a 100ms-movetime run's output is enough to confirm
+    // the fix: SOME later depth necessarily accumulates enough
+    // cumulative elapsed time to clear the `elapsed_ms > 0` bar
+    // (emit_info()'s own doc comment) before the movetime deadline is
+    // reached, even though an early, still-sub-millisecond depth can
+    // legitimately show `time 0`/no `nps` too, same as the single-line
+    // path's own documented behavior -- this test isn't asserting every
+    // line clears that bar, only that the fix makes it POSSIBLE for any
+    // MultiPV line to.
+    REQUIRE(contains(out, "nps "));
+}
+
 TEST_CASE("uci: an out-of-range 'setoption name MultiPV value ...' is clamped, not rejected -- "
           "'go' still returns a legal bestmove",
           "[uci][multipv]") {
@@ -1113,15 +1141,30 @@ TEST_CASE("uci: 'info' lines include 'seldepth', 'time', 'nps', and 'hashfull' -
           "Priority Fixes (2026-09-22), item 5b (finding 9)",
           "[uci][info]") {
     init_all();
-    const std::string out = run_uci({"position startpos moves g1h3", "go depth 3", "quit"});
+    // `go movetime <n>` (this test file's own `movetime` tests below
+    // already exercise the same option), NOT `go depth 3` -- filed and
+    // fixed 2026-09-26 (docs/DECISIONS.md, 2026-09-26 (5)) after this
+    // exact test flaked on real CI (both macOS Release and, separately,
+    // Windows Release): `go depth 3` from the startpos is fast enough
+    // on sufficiently quick hardware to legitimately complete within
+    // the same millisecond it started, at which point `nps` (needing
+    // `elapsed_ms > 0` to avoid a divide-by-zero -- emit_info()'s own
+    // doc comment) is correctly, deliberately omitted -- a real,
+    // intentional design point, not a bug, that made the FIXED depth
+    // this test used to request an unreliable way to test it. `go
+    // movetime 100` instead keeps the search running (checking its own
+    // deadline between iterations, same iterative-deepening loop every
+    // other `go`-with-a-time-budget already uses) until approximately
+    // 100ms of wall-clock time has actually elapsed, independent of how
+    // fast the hardware is -- the only way this could still legitimately
+    // omit `nps` is a position where even the mandatory depth-1
+    // iteration alone already exceeds the deadline before any depth-2
+    // check ever happens, which a normal, non-terminal opening position
+    // (this test's own `startpos moves g1h3`) is nowhere close to.
+    const std::string out = run_uci({"position startpos moves g1h3", "go movetime 100", "quit"});
     REQUIRE(contains(out, "seldepth "));
     REQUIRE(contains(out, " time "));
     REQUIRE(contains(out, "hashfull "));
-    // `nps` needs elapsed_ms > 0 to appear at all (emit_info()'s own doc
-    // comment on why a same-millisecond depth-1 result can legitimately
-    // omit it) -- depth 3 on an opening position is comfortably past
-    // that, so this should be present, unlike a bare depth-1 test which
-    // couldn't safely assert this either way.
     REQUIRE(contains(out, "nps "));
 }
 
