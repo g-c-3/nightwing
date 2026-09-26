@@ -4,7 +4,28 @@ Newest entry at top.
 
 ---
 
-### Session 136 — 2026-09-26 — CI-log triage of Session 135's push: the macOS-Clang fix confirmed working on real hardware; the `nps` flake confirmed cross-platform; a second, previously-missed real warning class (8 sites) found and fixed
+### Session 137 — 2026-09-26 — `nps`-flake root cause confirmed and fixed (a test bug, not a production bug); a real, separate, previously-untested MultiPV timing bug found and fixed along the way
+
+Triggered by "Continue," no new CI logs this time — picked up the highest-priority item from Session 136's own handoff note that didn't require a real macOS build: investigating the `nps`-omission flake.
+
+**Root cause investigation:** read `emit_info()` in full (`uci.cpp`) — confirmed its own doc comment already documents the exact mechanism: `nps` is only emitted when `result.elapsed_ms > 0`, deliberately, to avoid a divide-by-zero or a meaningless value. Then read every `elapsed_ms` assignment site in `search.cpp` — all derived via `std::chrono::duration_cast<milliseconds>`, meaning any search finishing inside its own start millisecond legitimately reports `elapsed_ms == 0`. Checked against this project's own `bench` numbers (`kiwipete` depth 6 is under 14000 nodes) to confirm a `startpos` depth-3 search finishing in under 1ms on fast real CI hardware is entirely plausible, not far-fetched. Conclusion: the flaky test's own assumption — a FIXED `go depth 3` is "comfortably past" the sub-millisecond risk zone — was simply wrong on sufficiently fast hardware; `emit_info()`'s own omission logic is correct, documented, intentional behavior, not a bug.
+
+**Real, separate bug found while tracing every `elapsed_ms` assignment site, not sought out deliberately:** `search_iterative_deepening_multipv()` (internal to `search.cpp`) never sets `elapsed_ms` on ANY line's own `SearchResult`, in either its depth-1 block or its depth-2-onward loop — meaning every MultiPV `info` line has ALWAYS reported `time 0` and NEVER shown `nps`, for as long as MultiPV has existed, completely unnoticed because no existing test ever asserted those two fields for a MultiPV `go` (only `multipv N` token counts and score contents, confirmed by reading every `[uci][multipv]`-tagged test in `uci_tests.cpp`). This is a genuine, previously-invisible UCI-output correctness gap for any real GUI using MultiPV — not merely a cosmetic omission, since a GUI displaying "0 nodes/sec" or nothing at all for `nps` during a MultiPV analysis session is directly misleading, unlike the single-line path's own genuinely-rare sub-millisecond omission.
+
+**What was fixed:**
+1. `search_iterative_deepening_multipv()`: added a once-per-depth `elapsed_ms` computation (cumulative since the function's own `start_time`, matching `nodes`' own already-established "one cumulative value applied to every line at that depth" convention), assigned to every line's own `SearchResult` in both the depth-1 block and the depth-2-onward loop.
+2. `tests/uci_tests.cpp`'s own `nps`-omission test: switched from `go depth 3` to `go movetime 100` — a wall-clock-time budget the iterative-deepening loop actually waits out (checking its own deadline between depths), independent of hardware speed, unlike a fixed depth which a fast enough machine can always outrun.
+3. Added a new end-to-end test (`[uci][multipv][info]`) confirming a `go movetime 100` MultiPV search now reports `nps` — this test initially over-asserted (`REQUIRE_FALSE(contains(out, "time 0 "))`, checking that NO reported depth anywhere in the output showed a zero elapsed time), caught by this session's own test run: an EARLY depth in the same multi-depth output can still legitimately show `time 0` before enough cumulative wall time has passed, exactly the same "early iterations can be sub-millisecond" phenomenon as the single-line path — corrected to only require `nps` appearing SOMEWHERE in the output (proof the fix makes it possible at all), not that every line clears the bar.
+
+**Verification:** rebuilt both Release and Debug/ASan+UBSan (GCC, this sandbox) — zero errors, zero warnings, both configs. Full suite: 695/697 (Release) and 695/697 (Debug) — 697, not 696, from the one new test added; the 2 remaining failures in both configs are the same pre-existing sandbox-specific ones (`go nodes`/`go searchmoves`) documented since Session 133 — the `nps` test itself now passes reliably (re-ran it standalone and as part of the full suite; no flake observed in either). `bench` totals unchanged (`36154` overall, same per-position breakdown as every prior session).
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-26 (5) — covers both the "fix the test, not `emit_info()`" call and the MultiPV `elapsed_ms` fix's own design (why cumulative-per-depth, matching `nodes`, rather than some other scheme).
+
+**Next session start point:** this session's own MultiPV `elapsed_ms` fix and the `nps`-test fix are both sandbox-verified but NOT yet independently re-confirmed on real CI (same "awaiting the next push" pattern as Sessions 135/136's own fixes) — if a new CI log bundle arrives, checking both of those first is the priority. Absent a new bundle, the remaining open items are: the macOS CTest-registration gap (Session 135, needs a real macOS build), and Session 133's own two long-deferred follow-ups (`run_lazy_smp_helper()`'s `const_cast` removal; the docs stale-statement sweep).
+
+---
+
+
 
 Triggered the same way as Session 135 — the person uploaded the real CI log bundle for Session 135's own push, no further instruction.
 

@@ -2160,29 +2160,58 @@ it either way.
       two files' own established convention elsewhere (`fen.cpp`'s
       `halfmove_clock`/`fullmove_number` assignments already did this).
       See docs/DECISIONS.md, 2026-09-26 (4).
-- [ ] **Investigate: the `nps`-omission `uci` test (`uci_tests.cpp:1125`,
-      Priority Fixes 2026-09-22 finding 9) is a genuine, reproducible
-      flake on real CI, not a sandbox-only artifact** — failed on
-      macOS Release in BOTH real CI runs triaged so far (2026-09-26,
-      Sessions 135 and 136), and additionally on Windows Release in the
-      second of those two runs; never failed on Linux (either config)
-      or on the config it hasn't yet failed on for a given OS across
-      both runs. Most likely cause, not yet confirmed by direct
-      reproduction: `emit_info()`'s own documented condition for
-      omitting `nps` (elapsed time must be nonzero to divide by) is
-      occasionally hit legitimately on a fast enough Release binary
-      finishing depth 1 in under 1ms of wall-clock resolution, not a
-      logic bug — but this hasn't been directly confirmed by
-      reproducing it in a real debugger/timer trace, only inferred from
-      the pattern of which platforms/configs it hits (Release, not
-      Debug, consistent with "fast enough to finish in <1ms" but not
-      proof). First step: either raise `emit_info()`'s own timer
-      resolution/rounding so a sub-millisecond depth-1 iteration still
-      reports a (possibly huge but nonzero) `nps` figure rather than
-      omitting the field entirely, or make the test itself tolerant of
-      a legitimately-omitted `nps` field on a fast enough run — pick
-      one only after confirming which of the two the actual root cause
-      calls for.
+- [x] **Fix: MultiPV's own per-line `SearchResult`s never had `elapsed_ms`
+      set anywhere in `search_iterative_deepening_multipv()`** —
+      discovered, not guessed, while investigating the `nps`-flake item
+      just below: every MultiPV `info` line's own `time` field was
+      always `0` and `nps` never appeared at all, regardless of how long
+      the search actually ran, for as long as MultiPV has existed —
+      completely untested until now (no existing test asserted `time`/
+      `nps` for a MultiPV `go`, only `multipv N` token counts and score
+      contents). DONE, Session 137. Fixed by computing `elapsed_ms` once
+      per depth (cumulative since that function's own `start_time`,
+      matching `nodes`' own already-established "same cumulative value
+      applied to every line at that depth" convention) and assigning it
+      to every line's own `SearchResult`, in both the depth-1 block and
+      the depth-2-onward loop. New end-to-end UCI test
+      (`tests/uci_tests.cpp`, `[uci][multipv][info]`) confirms `nps`
+      now appears in MultiPV output; the search-layer callback test
+      added the same session `MultiPV's on_iteration callback fires...`
+      wasn't extended to check timing, since a `time_limit_ms=0` search
+      (that test's own setup) can legitimately never accumulate enough
+      wall-clock time to show `nps` either way, at any depth, on any
+      hardware — the new UCI-layer test's own `go movetime 100` is the
+      right level to confirm this at. See docs/DECISIONS.md,
+      2026-09-26 (5).
+- [x] **Fix: the `nps`-omission `uci` test (`uci_tests.cpp`, was flaky
+      on real CI — filed the previous session, above) — root cause
+      confirmed by direct investigation, not assumed: `go depth 3`'s own
+      fixed depth, not `emit_info()`'s documented `elapsed_ms == 0`
+      omission logic itself, was the actual bug.** `SearchResult::
+      elapsed_ms` is derived via `std::chrono::duration_cast<milliseconds>`
+      at every assignment site in `search.cpp` — a genuinely fast enough
+      Release binary CAN legitimately finish `startpos`'s own depth-3
+      search inside the same millisecond it started (this project's own
+      `bench` shows depth 6 on `kiwipete` alone takes under 14000 nodes
+      — depth 3 from `startpos` is a small fraction of that), at which
+      point omitting `nps` is correct, documented behavior, not a bug —
+      so the test's own assumption that a FIXED depth of 3 was "safely
+      past" that threshold was simply wrong on sufficiently fast real
+      CI hardware, independent of anything about `emit_info()` itself.
+      DONE, Session 137 — switched the test from `go depth 3` to `go
+      movetime 100`, which keeps the iterative-deepening loop running
+      (checking its own deadline between depths, like every other
+      time-budgeted `go`) until roughly 100ms of REAL wall-clock time
+      has elapsed, independent of hardware speed — the only way this
+      could still legitimately omit `nps` is a position where even the
+      mandatory depth-1 iteration alone exceeds the deadline before any
+      depth-2 check happens, nowhere close to true for this test's own
+      ordinary opening position. `emit_info()`/`SearchResult::elapsed_ms`
+      themselves were deliberately left untouched — raising internal
+      timer resolution to microseconds was considered and rejected as
+      disproportionate to what was actually broken (see
+      docs/DECISIONS.md, 2026-09-26 (5), for the full alternatives
+      analysis).
 - [ ] **Investigate: real macOS CI registers only 694 of 696 CTest
       tests, missing exactly `eval_tests.cpp`'s two `taper: phase ...`
       tests (`kMaxPhase`/`0`)** — discovered during Session 135's own CI
