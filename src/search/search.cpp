@@ -3926,10 +3926,29 @@ SearchResult search_iterative_deepening_multipv(
 
     SearchResult result = lines[0];
     result.multipv_lines = lines;
+    // `elapsed_ms` (like `nodes`, immediately above/below): cumulative
+    // since `start_time` (the top of this whole function), the SAME
+    // value applied to every line at this depth, not a per-line
+    // timing -- matching this function's own already-established
+    // "every reported line at a given depth shares one cumulative
+    // total" convention for `nodes`. Filed 2026-09-26 as a real,
+    // previously-untested gap (docs/DECISIONS.md, 2026-09-26 (5)):
+    // every MultiPV line's own SearchResult was left at its
+    // default-constructed `elapsed_ms` (0) prior to this fix, since
+    // nothing in this function ever set it -- meaning every MultiPV
+    // `info` line's own `time`/`nps` UCI fields (emit_info(),
+    // uci.cpp) were always `time 0` and never showed `nps` at all,
+    // regardless of how long the search actually took.
+    const auto elapsed_ms = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                 start_time)
+            .count());
     for (SearchResult& l : result.multipv_lines) {
         l.nodes = total_nodes;
+        l.elapsed_ms = elapsed_ms;
     }
     result.nodes = total_nodes;
+    result.elapsed_ms = elapsed_ms;
 
     if (on_iteration) {
         for (const SearchResult& l : result.multipv_lines) {
@@ -4023,10 +4042,22 @@ SearchResult search_iterative_deepening_multipv(
         lines = std::move(depth_lines);
         result = lines[0];
         result.multipv_lines = lines;
+        // Same cumulative-since-start_time treatment as the depth-1
+        // block above (this function's own comment there has the full
+        // rationale) -- reusing `elapsed_ms` would shadow the depth-1
+        // block's own local of the same name were it still in scope,
+        // but it isn't (that block's `elapsed_ms` is scoped to the
+        // depth-1 block only), so this is a fresh local, not a bug.
+        const auto elapsed_ms = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start_time)
+                .count());
         for (SearchResult& l : result.multipv_lines) {
             l.nodes = total_nodes;
+            l.elapsed_ms = elapsed_ms;
         }
         result.nodes = total_nodes;
+        result.elapsed_ms = elapsed_ms;
 
         if (on_iteration) {
             for (const SearchResult& l : result.multipv_lines) {
