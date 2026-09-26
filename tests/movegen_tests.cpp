@@ -166,7 +166,7 @@ TEST_CASE("en passant capture is illegal when it exposes a horizontal discovered
     pos.place_piece(make_square(3, 3), Piece::WhitePawn);  // d4
     pos.place_piece(make_square(7, 3), Piece::WhiteQueen); // h4
     pos.place_piece(make_square(6, 0), Piece::WhiteKing);  // g1
-    pos.en_passant_square = make_square(3, 2);              // d3
+    pos.en_passant_square = static_cast<std::int8_t>(make_square(3, 2)); // d3
 
     MoveList moves;
     generate_legal_moves(pos, moves);
@@ -184,7 +184,7 @@ TEST_CASE("en passant capture is legal when it doesn't expose a discovered check
     pos.place_piece(make_square(3, 3), Piece::WhitePawn);  // d4
     pos.place_piece(make_square(7, 3), Piece::WhiteQueen); // h4
     pos.place_piece(make_square(6, 0), Piece::WhiteKing);  // g1
-    pos.en_passant_square = make_square(3, 2);              // d3
+    pos.en_passant_square = static_cast<std::int8_t>(make_square(3, 2)); // d3
 
     MoveList moves;
     generate_legal_moves(pos, moves);

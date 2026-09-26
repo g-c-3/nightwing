@@ -135,7 +135,7 @@ TEST_CASE("en passant capture removes the correct pawn and unmake restores both 
     pos.place_piece(make_square(4, 4), Piece::WhitePawn); // e5
     pos.place_piece(make_square(3, 4), Piece::BlackPawn); // d5
     pos.place_piece(make_square(7, 7), Piece::BlackKing); // h8
-    pos.en_passant_square = make_square(3, 5);             // d6
+    pos.en_passant_square = static_cast<std::int8_t>(make_square(3, 5));             // d6
     init_zobrist_keys();
     pos.zobrist_hash = compute_hash(pos);
     const Position original = pos;

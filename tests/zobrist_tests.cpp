@@ -81,7 +81,7 @@ TEST_CASE("hash changes with en passant target square", "[zobrist]") {
     Position pos = start_position();
     const std::uint64_t no_ep_hash = compute_hash(pos);
 
-    pos.en_passant_square = make_square(4, 2); // arbitrary target square, e3
+    pos.en_passant_square = static_cast<std::int8_t>(make_square(4, 2)); // arbitrary target square, e3
     const std::uint64_t with_ep_hash = compute_hash(pos);
 
     REQUIRE(with_ep_hash != no_ep_hash);
@@ -95,10 +95,10 @@ TEST_CASE("en passant hash depends only on file, not rank", "[zobrist]") {
     // keyed by file only, regardless of which rank the target square is on.
     init_zobrist_keys();
     Position pos_rank3 = start_position();
-    pos_rank3.en_passant_square = make_square(4, 2); // e3
+    pos_rank3.en_passant_square = static_cast<std::int8_t>(make_square(4, 2)); // e3
 
     Position pos_rank6 = start_position();
-    pos_rank6.en_passant_square = make_square(4, 5); // e6
+    pos_rank6.en_passant_square = static_cast<std::int8_t>(make_square(4, 5)); // e6
 
     REQUIRE(compute_hash(pos_rank3) == compute_hash(pos_rank6));
 }
