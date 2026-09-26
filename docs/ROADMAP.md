@@ -2130,6 +2130,40 @@ it either way.
    nodes`/`searchmoves`, and pondering's background search combined
    with either — filed as a new low-priority item below, not blocking
    this one.
+- [x] **Fix: `search_root()`'s own `game_history` local alias was genuinely
+      unused, dead code missed by both Session 133's original refactor
+      and Session 134's own subsequent MultiPV/pondering work** — caught
+      by real macOS CI (Apple Clang's own `-Wunused-variable`, not
+      reproducible under this project's Linux CI compiler, GCC, which
+      does not flag an unused CLASS-typed local — `std::span` here — the
+      same way it flags an unused reference/pointer/scalar one), on the
+      first macOS CI run after either session's changes to this
+      function. DONE, Session 135 — CI-log triage session, immediately
+      after the push. Removed the dead alias; `game_history` remains
+      correctly aliased and used inside `negamax()` itself, a separate
+      function this bug never touched. See docs/DECISIONS.md, 2026-09-26
+      (3), for the full account of why GCC never caught this.
+- [ ] **Investigate: real macOS CI registers only 694 of 696 CTest
+      tests, missing exactly `eval_tests.cpp`'s two `taper: phase ...`
+      tests (`kMaxPhase`/`0`)** — discovered during Session 135's own CI
+      triage of Session 134's push (docs/SESSIONS.md has the full
+      account); Linux and Windows (both Debug and Release, all 4 jobs)
+      register all 696 and pass all 696; macOS Debug registers 694 and
+      passes all 694 (no failures, just missing 2); macOS Release
+      registers the same 694 with 1 genuine failure (the pre-existing
+      `nps` flake, a separate, already-tracked item — see this section's
+      2026-09-22-filed entries above). Not a skip directive found
+      anywhere in `tests/CMakeLists.txt` or either test's own source
+      (`eval_tests.cpp`, plain unconditional `TEST_CASE`s, no `#ifdef
+      __APPLE__` or Catch2 tag exclusion) — genuinely unexplained by
+      inspection alone; first observed on this exact CI run, not
+      confirmed present on any earlier push (no prior session appears to
+      have diffed exact per-platform CTest totals this precisely).
+      First step: reproduce directly (a real macOS build, not more log
+      reading) and determine whether this is a `ctest_discover_tests()`
+      registration quirk (e.g., a name-collision or truncation specific
+      to Apple's linker/discovery mechanism) versus something more
+      structural, before deciding on a fix.
 - [x] **Thread `go nodes`/`searchmoves` through MultiPV and pondering**
       (filed 2026-09-24, from item 5b's own deliberate scope limit
       above) — DONE, Session 134. `search_iterative_deepening_multipv()`
