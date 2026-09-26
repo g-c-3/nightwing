@@ -3937,29 +3937,45 @@ SearchResult search_iterative_deepening_multipv(
 
     SearchResult result = lines[0];
     result.multipv_lines = lines;
-    // `elapsed_ms` (like `nodes`, immediately above/below): cumulative
-    // since `start_time` (the top of this whole function), the SAME
-    // value applied to every line at this depth, not a per-line
-    // timing -- matching this function's own already-established
-    // "every reported line at a given depth shares one cumulative
-    // total" convention for `nodes`. Filed 2026-09-26 as a real,
-    // previously-untested gap (docs/DECISIONS.md, 2026-09-26 (5)):
-    // every MultiPV line's own SearchResult was left at its
+    // `line1_elapsed_ms` (like `nodes`, immediately above/below):
+    // cumulative since `start_time` (the top of this whole function),
+    // the SAME value applied to every line at this depth, not a
+    // per-line timing -- matching this function's own
+    // already-established "every reported line at a given depth shares
+    // one cumulative total" convention for `nodes`. Filed 2026-09-26 as
+    // a real, previously-untested gap (docs/DECISIONS.md, 2026-09-26
+    // (5)): every MultiPV line's own SearchResult was left at its
     // default-constructed `elapsed_ms` (0) prior to this fix, since
     // nothing in this function ever set it -- meaning every MultiPV
-    // `info` line's own `time`/`nps` UCI fields (emit_info(),
-    // uci.cpp) were always `time 0` and never showed `nps` at all,
-    // regardless of how long the search actually took.
-    const auto elapsed_ms = static_cast<std::uint64_t>(
+    // `info` line's own `time`/`nps` UCI fields (emit_info(), uci.cpp)
+    // were always `time 0` and never showed `nps` at all, regardless of
+    // how long the search actually took. Named `line1_elapsed_ms`, not
+    // the more obvious `elapsed_ms`, because this variable is declared
+    // directly in the function body (not inside a nested block), so its
+    // scope runs to the END of the function, not just "the depth-1
+    // section" -- a plain `elapsed_ms` here would shadow the
+    // depth-2-onward loop's own PRE-EXISTING, unrelated `elapsed_ms`
+    // locals (its own deadline checks, below) for the rest of the
+    // function. Originally named `elapsed_ms` when this fix first
+    // landed (Session 137); real Windows/MSVC CI caught the resulting
+    // shadowing (`C4456`, not reproducible under this project's own
+    // GCC/Clang flags -- `-Wall -Wextra -Wpedantic` doesn't include
+    // `-Wshadow`) and this rename fixed it (Session 140,
+    // docs/DECISIONS.md, 2026-09-26 (8)) -- an incorrect assumption in
+    // Session 137's own reasoning (recorded, then corrected, in
+    // DECISIONS.md rather than silently overwritten) that this
+    // variable's own scope was already confined to "the depth-1 block,"
+    // when no such block actually exists here.
+    const auto line1_elapsed_ms = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
                                                                  start_time)
             .count());
     for (SearchResult& l : result.multipv_lines) {
         l.nodes = total_nodes;
-        l.elapsed_ms = elapsed_ms;
+        l.elapsed_ms = line1_elapsed_ms;
     }
     result.nodes = total_nodes;
-    result.elapsed_ms = elapsed_ms;
+    result.elapsed_ms = line1_elapsed_ms;
 
     if (on_iteration) {
         for (const SearchResult& l : result.multipv_lines) {
@@ -4055,20 +4071,26 @@ SearchResult search_iterative_deepening_multipv(
         result.multipv_lines = lines;
         // Same cumulative-since-start_time treatment as the depth-1
         // block above (this function's own comment there has the full
-        // rationale) -- reusing `elapsed_ms` would shadow the depth-1
-        // block's own local of the same name were it still in scope,
-        // but it isn't (that block's `elapsed_ms` is scoped to the
-        // depth-1 block only), so this is a fresh local, not a bug.
-        const auto elapsed_ms = static_cast<std::uint64_t>(
+        // rationale) -- named `depth_elapsed_ms`, not `elapsed_ms`, for
+        // the identical reason that comment gives: this `for (depth =
+        // 2; ...)` loop already has its own PRE-EXISTING, unrelated
+        // `elapsed_ms` locals (its own deadline checks, above), each
+        // scoped to their own nested `if` block, but a same-named local
+        // declared here, directly in the loop body, would still shadow
+        // the depth-1 block's own local of that name (real Windows/MSVC
+        // CI's `C4456`, Session 140, docs/DECISIONS.md, 2026-09-26 (8),
+        // catching the same mistake at this second call site as the
+        // first).
+        const auto depth_elapsed_ms = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - start_time)
                 .count());
         for (SearchResult& l : result.multipv_lines) {
             l.nodes = total_nodes;
-            l.elapsed_ms = elapsed_ms;
+            l.elapsed_ms = depth_elapsed_ms;
         }
         result.nodes = total_nodes;
-        result.elapsed_ms = elapsed_ms;
+        result.elapsed_ms = depth_elapsed_ms;
 
         if (on_iteration) {
             for (const SearchResult& l : result.multipv_lines) {
