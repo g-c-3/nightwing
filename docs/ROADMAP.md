@@ -2182,7 +2182,32 @@ it either way.
       wall-clock time to show `nps` either way, at any depth, on any
       hardware — the new UCI-layer test's own `go movetime 100` is the
       right level to confirm this at. See docs/DECISIONS.md,
-      2026-09-26 (5).
+      2026-09-26 (5). Introduced a real MSVC-only warning of its own
+      (`C4456`, "declaration ... hides previous local declaration"),
+      caught on the very next real Windows CI run and fixed the
+      following session — see the new item below.
+- [x] **Fix: the two `elapsed_ms` locals added to
+      `search_iterative_deepening_multipv()` the previous session
+      (immediately above) shadowed that function's own PRE-EXISTING,
+      unrelated `elapsed_ms` deadline-check locals** — caught by real
+      Windows/MSVC CI's own `C4456` warning at both new call sites, not
+      reproducible under this project's own GCC/Clang flags (`-Wall
+      -Wextra -Wpedantic` doesn't include the separate `-Wshadow`).
+      Root cause: the first new `elapsed_ms` (the depth-1 block's own)
+      was declared directly in the function body, not inside any nested
+      block, so its scope actually ran to the END of the function —
+      Session 137's own reasoning had incorrectly assumed it was
+      confined to "the depth-1 block," when no such block exists there;
+      that mistaken assumption, recorded verbatim in the previous
+      item's own doc comment at the time, directly caused this bug.
+      DONE, Session 140 — renamed both new locals to distinct names
+      (`line1_elapsed_ms`, `depth_elapsed_ms`), leaving every
+      PRE-EXISTING `elapsed_ms` local (the deadline checks in this
+      function and in the separate single-line
+      `search_iterative_deepening()`) completely untouched, and
+      corrected the doc comments that had recorded the wrong reasoning
+      rather than silently overwriting them. See docs/DECISIONS.md,
+      2026-09-26 (8).
 - [x] **Fix: the `nps`-omission `uci` test (`uci_tests.cpp`, was flaky
       on real CI — filed the previous session, above) — root cause
       confirmed by direct investigation, not assumed: `go depth 3`'s own
@@ -2233,6 +2258,32 @@ it either way.
       registration quirk (e.g., a name-collision or truncation specific
       to Apple's linker/discovery mechanism) versus something more
       structural, before deciding on a fix.
+      STATUS UPDATE, Session 140: still open, unchanged — the suite has
+      grown since this was filed (697 total as of Session 140, not 696),
+      and macOS now registers 695, not 694, but the actual gap (exactly
+      those same 2 `taper:` tests, still the only ones missing) is
+      identical; the absolute numbers moving is just the suite growing
+      around an unchanged gap, not new information about the gap itself.
+- [ ] **Investigate enabling `-Wshadow`/`-Wconversion` on this project's
+      own GCC/Clang builds** — filed Session 140, after real CI logs
+      produced a THIRD distinct compiler-specific-only warning class in
+      as many triage sessions that this project's own GCC-based sandbox
+      verification could never have caught: a Clang-only unused-
+      class-typed-variable warning (Session 135), an MSVC-only `C4244`
+      narrowing warning (Session 136), and now an MSVC-only `C4456`
+      shadowing warning (this session) that `-Wshadow` would have caught
+      on GCC/Clang too, had it been enabled — this project's own
+      `CMakeLists.txt` currently only turns on `-Wall -Wextra
+      -Wpedantic`. Not enabled this session (docs/DECISIONS.md,
+      2026-09-26 (8), has the full reasoning): both flags are known to
+      be noisy on a mature, already-large codebase, and evaluating
+      whatever they surface is real, separate work from whichever bug
+      happened to prompt filing this item, not something to bundle into
+      an unrelated fix. First step: enable one flag at a time in a
+      scratch local build (not committed), triage what it surfaces, and
+      decide per-finding whether to fix, suppress with a documented
+      reason, or leave the flag off entirely if the signal-to-noise
+      ratio turns out too low to justify enabling it project-wide.
 - [x] **Thread `go nodes`/`searchmoves` through MultiPV and pondering**
       (filed 2026-09-24, from item 5b's own deliberate scope limit
       above) — DONE, Session 134. `search_iterative_deepening_multipv()`
