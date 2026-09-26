@@ -1469,6 +1469,68 @@ TEST_CASE("search_iterative_deepening: multi_pv's on_iteration callback fires on
     }
 }
 
+TEST_CASE("search_iterative_deepening: multi_pv > 1 combined with searchmoves restricts every "
+          "line's own root-move candidate set to the listed moves -- filed 2026-09-24, \"Thread "
+          "go nodes/searchmoves through MultiPV and pondering\"",
+          "[search][multipv][searchmoves]") {
+    init_all();
+    Position pos = start_position();
+    MoveList legal;
+    generate_legal_moves(pos, legal);
+    // Two deliberately weak, unusual opening moves (mirroring this
+    // file's own single-line searchmoves test's own "least ambiguous
+    // way to confirm the filter is actually applied" rationale, above)
+    // -- an unrestricted MultiPV search would essentially never rank
+    // either near the top of 2 requested lines on its own merits, so
+    // BOTH reported lines coming from this exact 2-move set is the
+    // strongest available confirmation that `searchmoves` (not
+    // coincidence) is why.
+    std::vector<Move> allowed;
+    for (const Move& m : legal) {
+        if (m.to_uci() == "g1h3" || m.to_uci() == "a2a3") {
+            allowed.push_back(m);
+        }
+    }
+    REQUIRE(allowed.size() == 2);
+
+    const SearchResult result = search_iterative_deepening(
+        pos, /*max_depth=*/3, /*time_limit_ms=*/0, /*game_history=*/{}, /*on_iteration=*/nullptr,
+        /*material_weights=*/nullptr, /*eval_weights=*/nullptr, /*num_threads=*/1,
+        /*external_stop=*/nullptr, /*hash_size_mb=*/kDefaultTTSizeMB, /*multi_pv=*/2,
+        /*soft_time_limit_ms=*/0, /*contempt_cp=*/0, /*external_tt=*/nullptr, /*max_nodes=*/0,
+        /*searchmoves=*/allowed);
+
+    REQUIRE(result.multipv_lines.size() == 2);
+    for (const SearchResult& line : result.multipv_lines) {
+        REQUIRE((line.best_move == allowed[0] || line.best_move == allowed[1]));
+    }
+    REQUIRE(result.multipv_lines[0].best_move != result.multipv_lines[1].best_move);
+}
+
+TEST_CASE("search_iterative_deepening: multi_pv > 1 combined with max_nodes stops well short of "
+          "an unbounded max_depth, same node budget shared across every requested line at a "
+          "given depth -- filed 2026-09-24, \"Thread go nodes/searchmoves through MultiPV and "
+          "pondering\"",
+          "[search][multipv][nodes]") {
+    init_all();
+    // Same real middlegame-ish FEN and rationale as this file's own
+    // single-line max_nodes test above -- a position where depth 15
+    // unbounded would take many tens of thousands of nodes per line,
+    // let alone across 2.
+    Position pos = parse_fen("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3");
+    const SearchResult result = search_iterative_deepening(
+        pos, /*max_depth=*/15, /*time_limit_ms=*/0, /*game_history=*/{}, /*on_iteration=*/nullptr,
+        /*material_weights=*/nullptr, /*eval_weights=*/nullptr, /*num_threads=*/1,
+        /*external_stop=*/nullptr, /*hash_size_mb=*/kDefaultTTSizeMB, /*multi_pv=*/2,
+        /*soft_time_limit_ms=*/0, /*contempt_cp=*/0, /*external_tt=*/nullptr,
+        /*max_nodes=*/1000);
+    // Same "not an exact bound, but well below unbounded" tolerance as
+    // this file's own single-line max_nodes test.
+    REQUIRE(result.nodes < 10000);
+    REQUIRE(result.multipv_lines.size() == 2);
+    REQUIRE_FALSE(result.best_move.is_null());
+}
+
 // --- Time management: best-move-stability-based early stop (ROADMAP.md
 // Phase 8, "Time management"; search.h's own `soft_time_limit_ms`
 // parameter doc comment on search_iterative_deepening() has the full

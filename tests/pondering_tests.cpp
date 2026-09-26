@@ -170,6 +170,34 @@ TEST_CASE("uci: 'go ponder' followed directly by 'stop' (no 'ponderhit' -- the o
     REQUIRE_FALSE(contains(out, "bestmove 0000"));
 }
 
+TEST_CASE("uci: 'go ponder' with 'searchmoves <m>' restricts the background ponder search's own "
+          "bestmove to the listed move -- filed 2026-09-24, \"Thread go nodes/searchmoves "
+          "through MultiPV and pondering\"",
+          "[uci][pondering][searchmoves]") {
+    init_all();
+    // g1h3 (Nh3) is the same deliberately weak, unusual choice this
+    // project's own non-ponder `go searchmoves` UCI test (uci_tests.cpp)
+    // already uses -- an unrestricted ponder search would essentially
+    // never pick it on its own merits, so seeing it anyway is the
+    // strongest confirmation `searchmoves` reached this background
+    // search, not just the ordinary `go` path it was already wired into.
+    const std::string out =
+        run_uci({"position startpos", "go ponder searchmoves g1h3", "stop", "quit"});
+    REQUIRE(contains(out, "bestmove g1h3"));
+}
+
+TEST_CASE("uci: 'go ponder' with 'nodes <n>' is accepted and forwarded without crashing or "
+          "hanging, composing correctly with a subsequent 'ponderhit' -- filed 2026-09-24, "
+          "\"Thread go nodes/searchmoves through MultiPV and pondering\"",
+          "[uci][pondering][nodes]") {
+    init_all();
+    const std::string out =
+        run_uci({"position startpos moves g1h3",
+                  "go ponder nodes 1000 wtime 1000 btime 1000 winc 0 binc 0", "ponderhit", "quit"});
+    REQUIRE(contains(out, "bestmove "));
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
 TEST_CASE("uci: 'go ponder' abandoned by 'quit' with neither 'ponderhit' nor 'stop' ever "
           "arriving produces NO bestmove -- the defensive abandon_pondering() path, not the "
           "UCI-spec-required stop/ponderhit response",
