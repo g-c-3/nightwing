@@ -16,19 +16,36 @@
 // age + depth replacement, explicit prefetch on probe.
 //
 // LIFETIME NOTE (see docs/DECISIONS.md, 2026-08-15 "Transposition table
-// lifetime scoped per top-level search call, not a persistent global"):
-// despite ARCHITECTURE.md's eventual "single global TT" target, for now
-// each top-level search_fixed_depth()/search_iterative_deepening() call
-// constructs its own fresh, private TranspositionTable rather than
-// sharing one process-lifetime global instance. Making it a real
-// persistent global belongs with the UCI `Hash` option and a
-// `ucinewgame`-triggered clear (ROADMAP.md Phase 8) -- without that
-// lifecycle management, a persistent global now would be untested and
-// would make tests/search_tests.cpp's cross-call node-count/result
-// comparisons silently depend on unrelated earlier calls within the
-// same test process. The class itself is already built to the final
-// spec (sizing, replacement scheme, cache layout) -- only its lifetime
-// is the interim simplification.
+// lifetime scoped per top-level search call, not a persistent global",
+// superseded by docs/DECISIONS.md, 2026-09-09 (1), once a real caller
+// existed to own one -- corrected here, 2026-09-26, after this comment
+// itself was found still describing the pre-Session-96 state):
+// `search_fixed_depth()`/`search_iterative_deepening()` (and the
+// internal MultiPV path) each still default to constructing their own
+// fresh, private `TranspositionTable` when called with no explicit
+// table of their own (an `external_tt` parameter left at its default
+// `nullptr`) -- exactly the standalone, per-call behavior this note
+// used to describe as the ONLY behavior, which is why the class still
+// needs to support it (every existing test relying on an isolated,
+// unshared table per call, e.g. tests/search_tests.cpp's cross-call
+// node-count/result comparisons, still does). Since Session 96, an
+// `external_tt` argument lets a caller supply its OWN
+// already-constructed table instead, which is used for exactly the
+// "single persistent global" case this note used to describe as future
+// work: `src/uci/uci.cpp`'s `run()` now owns one `TranspositionTable`
+// for its entire session, passed as `external_tt` to every ordinary
+// `go`/`go ponder` call, rebuilt only when `setoption name Hash`
+// genuinely changes its own size, and `clear()`-ed (not rebuilt) on
+// `ucinewgame` -- the real, currently-running UCI engine binary always
+// takes this path; only direct, external-tt-less calls into the search
+// layer (chiefly this project's own tests, and `nightwing_bench`/
+// `nightwing_selfplay`/`nightwing_sprt`, none of which need cross-call
+// persistence) still exercise the private-per-call default. The class
+// itself was already built to the final spec (sizing, replacement
+// scheme, cache layout) before this lifetime question was even settled
+// -- only which of the two lifetimes a given call gets was ever in
+// question, and both are now real, intentional, permanent options, not
+// one interim placeholder waiting on the other.
 //
 // THREAD-SAFETY NOTE (see docs/DECISIONS.md, 2026-09-03 (2), and
 // ROADMAP.md Phase 7's "Lock-free TT for concurrent access" item): one
