@@ -2130,18 +2130,66 @@ it either way.
    nodes`/`searchmoves`, and pondering's background search combined
    with either — filed as a new low-priority item below, not blocking
    this one.
-- [ ] **Thread `go nodes`/`searchmoves` through MultiPV and pondering**
+- [x] **Thread `go nodes`/`searchmoves` through MultiPV and pondering**
       (filed 2026-09-24, from item 5b's own deliberate scope limit
-      above) — `search_iterative_deepening_multipv()` and
-      `start_pondering()`'s own background search neither accept nor
-      forward `max_nodes`/`searchmoves` today; a `go` combining `setoption
-      name MultiPV value N>1` with `nodes`/`searchmoves`, or `go ponder`
-      with either, silently ignores those two options rather than
-      erroring OR honoring them — no test or real GUI usage was found
-      combining them during this session's own work, so this is a real
-      but currently-unexercised gap, not a confirmed bug affecting
-      anyone yet. Not blocking; pick up when either combination is
-      actually needed.
+      above) — DONE, Session 134. `search_iterative_deepening_multipv()`
+      (internal to `search.cpp`) gained the same `max_nodes`
+      (`std::uint64_t`, default 0)/`searchmoves`
+      (`std::span<const Move>`, default empty) parameters
+      `search_iterative_deepening()`'s single-line path already had,
+      forwarded from that function's own delegation call site whenever
+      `multi_pv` genuinely takes effect. `searchmoves` is threaded as
+      `search_root()`'s own `searchmoves_filter` argument on EVERY
+      `search_root()` call this function makes, including the
+      unconditional depth-1 block, mirroring the single-line path's own
+      depth-1 treatment of the same parameter. `max_nodes` only feeds
+      the depth-2-onward loop's own per-depth `SearchLimits`
+      (`limits.has_node_limit`/`limits.max_nodes`) — NOT the depth-1
+      block — for the identical "always have a legal move" reason
+      `SearchLimits::has_deadline`'s own doc comment already gives for
+      the single-line path; one shared node budget per depth across
+      every one of that depth's requested lines (the same `limits`
+      instance is reused across the inner per-line loop), not a
+      separate budget per line — reaching it mid-line discards that
+      whole depth, same "an incomplete depth is discarded wholesale"
+      convention this function already applied to every other
+      interruption reason. `start_pondering()` (`src/uci/uci.cpp`) now
+      forwards `budget.has_node_limit ? budget.max_nodes : 0` and
+      `budget.searchmoves` to its own background
+      `search_iterative_deepening()` call (previously hardcoded to
+      neither) — `budget` (the whole `SearchBudget` struct, by value)
+      is captured into the pondering thread's closure, mirroring
+      `start_go()`'s own established capture pattern, rather than just
+      the two new fields. At the default values (no `nodes`/
+      `searchmoves` token on either `go` variant), both changes are
+      completely behavior-preserving: `bench`'s own per-position node
+      counts (`startpos`/`kiwipete`/`quiet_middlegame`/
+      `endgame_mate_in_3`, all 4 positions) were confirmed
+      byte-for-byte unchanged under both Release and Debug/ASan+UBSan
+      before and after this session's changes. `search.h`'s own
+      `max_nodes`/`searchmoves` doc comments on
+      `search_iterative_deepening()` updated to drop the now-stale "NOT
+      threaded into search_iterative_deepening_multipv()" language and
+      describe the new behavior instead. Verified against a real
+      fresh-clone `cmake`+`ctest` build, not inspection: a pre-change
+      baseline (both Release and Debug/ASan+UBSan) came back 689/692
+      (Release) and 690/692 (Debug) — 3 and 2 pre-existing,
+      sandbox-specific `[uci]` failures respectively, the same ones
+      Session 133 already documented (this sandbox's 1-CPU-core timing
+      theory, not independently confirmed against real CI) — and the
+      post-change build, with 4 new tests added (2 in
+      `tests/search_tests.cpp` covering `multi_pv` combined with each of
+      `searchmoves`/`max_nodes` directly at the search layer, 2 in
+      `tests/pondering_tests.cpp` covering `go ponder searchmoves`/`go
+      ponder nodes` at the UCI layer), came back 693/696 (Release) and
+      694/696 (Debug) — the exact same pre-existing failure set,
+      confirmed by direct comparison of both runs' failing test names,
+      plus all 4 new tests passing. Debug/ASan+UBSan surfaced 4
+      pre-existing `eval/score.h` signed-integer-overflow warnings
+      during `bench` on both the baseline and modified builds
+      identically — confirmed NOT introduced by this session's changes
+      (present in the unmodified baseline too), not investigated
+      further as out of this item's own scope.
 6. [x] **Refactor `negamax`'s parameter list; prune stale docs** (finding
    10, and part of 11) — DONE (this session), the refactor half. Added
    `SearchContext` (`src/search/search.cpp`, anonymous namespace, declared
