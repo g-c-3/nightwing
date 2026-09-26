@@ -1,15 +1,20 @@
 #pragma once
 // src/uci/uci.h
 //
-// Minimal UCI (Universal Chess Interface) loop — Phase 2's fourth
-// ROADMAP.md item. Reads commands from an input stream and writes
-// responses to an output stream, per the UCI protocol. This is
-// deliberately a "basic" loop: enough to be driven by a GUI or a
-// self-play script (the very next ROADMAP.md item — "engine can play a
-// full legal game against itself via UCI"), not the full protocol —
-// see uci.cpp's header comment and DECISIONS.md for what's out of scope
-// this phase (setoption/Hash/Threads, true asynchronous `go
-// infinite`/`stop`, pondering) and why.
+// UCI (Universal Chess Interface) loop. Reads commands from an input
+// stream and writes responses to an output stream, per the UCI
+// protocol. Started as Phase 2's deliberately minimal "basic" loop
+// (enough to be driven by a GUI or a self-play script, not the full
+// protocol); every gap that intro described has since been closed --
+// setoption/Hash/Threads/MultiPV/Move Overhead/Skill Level/Contempt,
+// true asynchronous `go infinite`/`stop`, and pondering are all
+// implemented (see uci.cpp's own header comment, kept current, for
+// which session added each one and how, and docs/DECISIONS.md for the
+// full design of each). This comment itself was found still describing
+// that original Phase-2-only feature set during a 2026-09-26
+// stale-statement sweep (docs/DECISIONS.md, 2026-09-26 (7)) and
+// corrected here rather than left to keep contradicting uci.cpp's own
+// already-accurate account.
 
 #include <iosfwd>
 
