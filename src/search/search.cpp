@@ -178,13 +178,17 @@ namespace {
 /// (which specific TranspositionTable, which specific killer-table
 /// instance, etc.) matters, not just their current contents.
 ///
-/// This is NOT the `const_cast<std::atomic<bool>*>(&stop)` fix the
-/// same finding also floated for run_lazy_smp_helper()'s own `stop`
-/// parameter (that const_cast is on a parameter OF
-/// run_lazy_smp_helper() itself, not of negamax()/search_root(), and
-/// remains unchanged by this session -- a separate follow-up, not
-/// folded in here to keep this change to exactly what its own finding
-/// asked for first).
+/// The `const_cast<std::atomic<bool>*>(&stop)` the same finding also
+/// floated for run_lazy_smp_helper()'s own `stop` parameter (a
+/// SEPARATE thing from this struct -- that const_cast was on a
+/// parameter OF run_lazy_smp_helper() itself, not of negamax()/
+/// search_root()) was deliberately left as its own follow-up rather
+/// than folded into this same-session change -- since removed,
+/// Session 138 (docs/DECISIONS.md, 2026-09-26 (6)): run_lazy_smp_helper()'s
+/// `stop` parameter is `std::atomic<bool>&` now, not `const
+/// std::atomic<bool>&`, so `SearchLimits::external_stop` (a non-const
+/// pointer, this struct's own member below) can just take `&stop`
+/// directly.
 struct SearchContext {
     TranspositionTable& tt;
     KillerTable& killers;
@@ -3450,7 +3454,7 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
                           std::span<const std::uint64_t> game_history,
                           const eval::MaterialWeights* material_weights,
                           const eval::EvalWeightsOverride* eval_weights,
-                          const std::atomic<bool>& stop, std::uint64_t& nodes_out,
+                          std::atomic<bool>& stop, std::uint64_t& nodes_out,
                           int contempt_white_pov = 0, int helper_id = 0);
 } // namespace
 
@@ -3556,7 +3560,7 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
                                         // ordering rationale as search_iterative_deepening()'s
                                         // own identical comment below.
             helpers.emplace_back(run_lazy_smp_helper, std::move(helper_pos), depth, std::ref(tt),
-                                  game_history, material_weights, eval_weights, std::cref(smp_stop),
+                                  game_history, material_weights, eval_weights, std::ref(smp_stop),
                                   std::ref(helper_nodes[i]), contempt_white_pov, static_cast<int>(i));
         }
     }
@@ -3652,7 +3656,7 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
                           std::span<const std::uint64_t> game_history,
                           const eval::MaterialWeights* material_weights,
                           const eval::EvalWeightsOverride* eval_weights,
-                          const std::atomic<bool>& stop, std::uint64_t& nodes_out,
+                          std::atomic<bool>& stop, std::uint64_t& nodes_out,
                           int contempt_white_pov, int helper_id) {
     KillerTable killers;
     // Heap-allocated, not stack locals: HistoryTable and
@@ -3721,12 +3725,19 @@ void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
         // half of current_age_'s thread-safety story (search/tt.h).
         SearchLimits limits;
         limits.has_deadline = false;
-        // const_cast: SearchLimits::external_stop is a non-const
-        // pointer (negamax()/quiescence() only ever read through it),
-        // but `stop` itself is held const here since this function
-        // never writes it -- only the main thread does (see the
-        // caller). Safe: no write ever happens through this pointer.
-        limits.external_stop = const_cast<std::atomic<bool>*>(&stop);
+        // No const_cast needed: `stop` is `std::atomic<bool>&` (not
+        // `const std::atomic<bool>&`) specifically so this assignment
+        // can take its address directly -- this function still never
+        // WRITES through `stop` itself (only `.load()`s it; the main
+        // thread, via the caller's own `smp_stop`, is the only writer),
+        // so removing `const` from the parameter's own declared type
+        // doesn't change this function's actual behavior, only what it
+        // takes to satisfy `SearchLimits::external_stop`'s own
+        // non-const pointer type. Previously a
+        // `const_cast<std::atomic<bool>*>(&stop)` here, removed
+        // Session 138 (docs/DECISIONS.md, 2026-09-26 (6)) once filed as
+        // its own follow-up by the session that added this struct.
+        limits.external_stop = &stop;
 
         SearchContext ctx{tt,
                            killers,
@@ -4285,7 +4296,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             Position helper_pos = pos; // synchronous copy on the calling thread -- see above
             helpers.emplace_back(run_lazy_smp_helper, std::move(helper_pos), max_depth,
                                   std::ref(tt), game_history, material_weights, eval_weights,
-                                  std::cref(smp_stop), std::ref(helper_nodes[i]), contempt_white_pov,
+                                  std::ref(smp_stop), std::ref(helper_nodes[i]), contempt_white_pov,
                                   static_cast<int>(i));
         }
     }
