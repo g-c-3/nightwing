@@ -4,7 +4,29 @@ Newest entry at top.
 
 ---
 
-### Session 135 — 2026-09-26 — CI-log triage of Session 134's push: a real, previously-latent macOS-Clang unused-variable warning found and fixed; the `nps` flake confirmed reproducible on real CI hardware; a new, unexplained macOS CTest-registration gap discovered and filed
+### Session 136 — 2026-09-26 — CI-log triage of Session 135's push: the macOS-Clang fix confirmed working on real hardware; the `nps` flake confirmed cross-platform; a second, previously-missed real warning class (8 sites) found and fixed
+
+Triggered the same way as Session 135 — the person uploaded the real CI log bundle for Session 135's own push, no further instruction.
+
+**Confirms Session 135's own fix worked:** neither macOS Debug's nor macOS Release's `6_Build.txt` shows the `game_history` unused-variable warning this run — gone, on the first real macOS build to compile the fix. This is the independent re-confirmation Session 135's own account flagged as missing at the time.
+
+**The macOS 694/696 CTest-registration gap (filed Session 135) persists unchanged** — same 694 registered on both macOS jobs, same two `eval_tests.cpp` `taper:` tests absent. No progress possible from this Linux sandbox; remains filed, waiting on a real macOS build to investigate directly.
+
+**The `nps` flake (`uci_tests.cpp:1125`) is now confirmed cross-platform, not macOS-specific:** it failed on macOS Release again (both runs now), AND on Windows Release this run (which was fully green last run) — Linux (both configs) and the OS/config pairs it hasn't hit yet stayed clean both times. Filed as its own new ROADMAP item (previously only described inline in Session 135's own narrative, not tracked as a standalone item) with a concrete first-step hypothesis: a sub-millisecond depth-1 iteration on a fast enough Release binary may be legitimately hitting `emit_info()`'s own documented "only report `nps` when elapsed time is nonzero" condition, not a logic bug — unconfirmed by direct reproduction, only inferred from the Release-only, cross-platform pattern.
+
+**Second real warning class found — a genuine miss in Session 135's own triage, corrected here:** re-reviewing this run's Windows Debug/Release `6_Build.txt` logs (prompted by noticing Windows Release had gone from 0 failures to 1 this run, which warranted a closer look than a quick pass/fail grep) surfaced 8 occurrences of `warning C4244: '=': conversion from 'nightwing::board::Square' to 'int8_t', possible loss of data`, split across `src/board/board.cpp:97`, `src/board/fen.cpp:133`, and three test files (`zobrist_tests.cpp` x3, `movegen_tests.cpp` x2, `makemove_tests.cpp` x1). Checked directly against Session 135's own log bundle (still available in this session's own sandbox) and confirmed present there too, byte-for-byte identical count and locations — meaning this warning predates BOTH of the last two sessions' own changes and was simply never caught by any Linux/macOS-only sandbox verification, since `Square` is a plain `int` (`bitboard.h`) while `Position::en_passant_square` is `std::int8_t` (a compact-storage field, `board.h`), and GCC/Clang's `-Wall -Wextra -Wpedantic` (this project's own configured flags) don't flag this class of implicit narrowing by default — only MSVC's own always-on `C4244` does, and only a real Windows CI run can produce it. This is an honest process gap in Session 135's own triage, not a new regression from that session's own change (`game_history` and `en_passant_square` are unrelated fields in unrelated functions) — noted plainly here rather than glossed over, per this project's own "own its mistakes" standard.
+
+**Fixed:** all 8 sites now wrap the `Square`-typed right-hand side (`make_square(...)` or the one `static_cast<Square>(...)` in `board.cpp`, itself now simplified to cast directly to `std::int8_t` instead of redundantly through `Square` first) in an explicit `static_cast<std::int8_t>(...)`, matching the same two production files' own pre-existing convention elsewhere (`fen.cpp`'s `halfmove_clock`/`fullmove_number` assignments, a few lines below the fixed one, already did this). See docs/DECISIONS.md, 2026-09-26 (4).
+
+**Verification:** rebuilt both Release and Debug/ASan+UBSan locally (GCC, this sandbox) after the fix — zero errors, zero warnings in both (GCC was never going to show `C4244` either way, so this confirms no breakage, not that the warning is gone — that confirmation, like Session 135's own `game_history` fix, awaits the next real CI run). Full suite: 693/696 (Release) and 694/696 (Debug) — identical to every prior run this session's own sandbox has produced, zero regressions. `bench` totals (`36154` overall) unchanged.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-26 (4).
+
+**Next session start point:** if a third CI-log bundle arrives, prioritize confirming this session's own `C4244` fix actually silenced the warning on real Windows CI (the same "awaiting independent re-confirmation" pattern as Session 135's own fix) before picking up anything else. Absent a new CI bundle, the next candidates are (in the order they were filed): the `nps`-flake investigation (this session, new), the macOS CTest-registration gap (Session 135, needs a real macOS build), or Session 133's own two long-deferred follow-ups (`run_lazy_smp_helper()`'s `const_cast` removal; the docs stale-statement sweep).
+
+---
+
+
 
 Triggered by the person uploading the real GitHub Actions CI log bundle (all 6 matrix jobs: Windows/Linux/macOS x Debug/Release) for Session 134's push, with no further instruction — treated as a CI-triage session, the same established pattern as the 2026-09-23 (3) DECISIONS.md entry.
 

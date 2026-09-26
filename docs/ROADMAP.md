@@ -2143,6 +2143,46 @@ it either way.
       correctly aliased and used inside `negamax()` itself, a separate
       function this bug never touched. See docs/DECISIONS.md, 2026-09-26
       (3), for the full account of why GCC never caught this.
+- [x] **Fix: 8 sites assigning a `Square` (`int`) into `Position::en_passant_square`
+      (`std::int8_t`) relied on implicit narrowing, flagged by real
+      Windows/MSVC CI's own `C4244` warning (`-Wall -Wextra -Wpedantic`,
+      this project's own GCC/Clang flags, don't cover this narrowing
+      class by default — would need `-Wconversion`, not enabled) —
+      2 in production code (`src/board/board.cpp:97`,
+      `src/board/fen.cpp:133`), 6 in test setup code (`zobrist_tests.cpp`
+      x3, `movegen_tests.cpp` x2, `makemove_tests.cpp` x1). Pre-existing
+      in BOTH of the two real-CI runs triaged so far (2026-09-26,
+      Sessions 135 and 136) — predates either of those sessions' own
+      changes, and was missed in Session 135's own triage of the first
+      of those two runs (an incomplete review of that run's own Windows
+      logs, corrected here). DONE, Session 136 — every site now casts
+      explicitly (`static_cast<std::int8_t>(...)`), matching this same
+      two files' own established convention elsewhere (`fen.cpp`'s
+      `halfmove_clock`/`fullmove_number` assignments already did this).
+      See docs/DECISIONS.md, 2026-09-26 (4).
+- [ ] **Investigate: the `nps`-omission `uci` test (`uci_tests.cpp:1125`,
+      Priority Fixes 2026-09-22 finding 9) is a genuine, reproducible
+      flake on real CI, not a sandbox-only artifact** — failed on
+      macOS Release in BOTH real CI runs triaged so far (2026-09-26,
+      Sessions 135 and 136), and additionally on Windows Release in the
+      second of those two runs; never failed on Linux (either config)
+      or on the config it hasn't yet failed on for a given OS across
+      both runs. Most likely cause, not yet confirmed by direct
+      reproduction: `emit_info()`'s own documented condition for
+      omitting `nps` (elapsed time must be nonzero to divide by) is
+      occasionally hit legitimately on a fast enough Release binary
+      finishing depth 1 in under 1ms of wall-clock resolution, not a
+      logic bug — but this hasn't been directly confirmed by
+      reproducing it in a real debugger/timer trace, only inferred from
+      the pattern of which platforms/configs it hits (Release, not
+      Debug, consistent with "fast enough to finish in <1ms" but not
+      proof). First step: either raise `emit_info()`'s own timer
+      resolution/rounding so a sub-millisecond depth-1 iteration still
+      reports a (possibly huge but nonzero) `nps` figure rather than
+      omitting the field entirely, or make the test itself tolerant of
+      a legitimately-omitted `nps` field on a fast enough run — pick
+      one only after confirming which of the two the actual root cause
+      calls for.
 - [ ] **Investigate: real macOS CI registers only 694 of 696 CTest
       tests, missing exactly `eval_tests.cpp`'s two `taper: phase ...`
       tests (`kMaxPhase`/`0`)** — discovered during Session 135's own CI
