@@ -3128,16 +3128,28 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
     // own top-of-body comment) -- ROADMAP.md Priority Fixes
     // (2026-09-22), item 6, finding 10. Only the fields search_root()'s
     // own body actually reads get an alias here; correction_history/
-    // pawn_tt/eval_cache/eval_weights are used only inside negamax()
-    // (forwarded to it via `ctx` at each call below), never directly in
-    // this function's own body, so no local alias is declared for them
-    // -- one would be dead code, flagged by -Wunused-variable.
+    // pawn_tt/eval_cache/eval_weights/game_history are used only inside
+    // negamax() (forwarded to it via `ctx` at each call below), never
+    // directly in this function's own body, so no local alias is
+    // declared for any of them -- one would be dead code, flagged by
+    // -Wunused-variable. `game_history` specifically was still aliased
+    // here through Session 133's own original refactor and Session
+    // 134's own subsequent MultiPV/pondering work -- both missed it,
+    // since GCC (this project's own Linux CI compiler) does not flag an
+    // unused CLASS-typed local the same way it flags an unused
+    // reference/pointer/scalar one (its own -Wunused-variable heuristic
+    // assumes a class constructor might have observable side effects,
+    // so declaring-but-never-reading a `std::span` doesn't trigger it
+    // the way it does for the reference aliases just below) -- only
+    // real macOS CI (Apple Clang, which has no such exemption) surfaced
+    // it, on the first macOS CI run after either of those two sessions'
+    // own changes to this function. Removed here, Session 135, once
+    // real macOS CI caught it -- see docs/DECISIONS.md, 2026-09-26 (3).
     TranspositionTable& tt = ctx.tt;
     KillerTable& killers = ctx.killers;
     HistoryTable& history = ctx.history;
     ContinuationHistoryTable& cont_history = ctx.cont_history;
     CaptureHistoryTable& capture_history = ctx.capture_history;
-    std::span<const std::uint64_t> game_history = ctx.game_history;
     const eval::MaterialWeights* material_weights = ctx.material_weights;
     SearchLimits* limits = ctx.limits;
     int contempt_white_pov = ctx.contempt_white_pov;
