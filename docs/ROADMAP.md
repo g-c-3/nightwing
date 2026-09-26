@@ -2333,6 +2333,23 @@ it either way.
    deciding `SearchContext::limits`'s own constness story deliberately
    rather than as a side effect of an unrelated change. Not picked up
    this session; pick up as its own small follow-up.
+   DONE, Session 138: `run_lazy_smp_helper()`'s own `stop` parameter
+   changed from `const std::atomic<bool>&` to `std::atomic<bool>&` —
+   the function only ever `.load()`s it (never writes; the main thread's
+   own `smp_stop.store()`, in the caller, is the only writer), so
+   dropping `const` from the parameter's own declared type doesn't
+   change this function's actual behavior, only what it takes to satisfy
+   `SearchLimits::external_stop`'s own non-const pointer type without a
+   cast. Both call sites (`search_fixed_depth()`,
+   `search_iterative_deepening()`) switched from `std::cref(smp_stop)`
+   to `std::ref(smp_stop)` to match — `smp_stop` itself was already a
+   plain, non-const local `std::atomic<bool>` at both sites; only the
+   binding at the call site, not the underlying object, was ever const.
+   `SearchContext::limits`'s own constness was deliberately NOT touched
+   (the concern this item's own text raised about doing this "properly")
+   — this fix only changes `run_lazy_smp_helper()`'s own parameter and
+   call sites, nothing about `SearchContext` itself. See
+   docs/DECISIONS.md, 2026-09-26 (6).
    Same item, smaller, also NOT separately pursued this session beyond
    what the refactor itself touched: `docs/DECISIONS.md` (872 KB) and
    `docs/SESSIONS.md` (~650 KB, still growing) are each individually
@@ -2344,7 +2361,7 @@ it either way.
    "besides `Threads`" being ignored, and the already-fixed "Phase 2 has
    no pruning" comment (item 1 above) — should still be corrected on
    sight in a future session rather than left for a dedicated cleanup
-   pass that may never come.
+   pass that may never come. Still open, still un-picked-up.
 
 Not part of the report's own ordering, appended here:
 

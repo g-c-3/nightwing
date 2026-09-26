@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-09-26 (6) — `run_lazy_smp_helper()`'s `stop` parameter: `std::atomic<bool>&`, not `const std::atomic<bool>&` — the `const_cast` was working around the parameter's own declared type, not a genuine constness requirement
+
+**Decision:** Changed `run_lazy_smp_helper()`'s `stop` parameter from `const std::atomic<bool>&` to `std::atomic<bool>&`, removing the `const_cast<std::atomic<bool>*>(&stop)` that had been needed to assign it into `SearchLimits::external_stop` (a non-const pointer). Both call sites' own `std::cref(smp_stop)` became `std::ref(smp_stop)` to match.
+
+**Rationale:** The `const` on `stop`'s own parameter type never reflected a genuine "this function must not be allowed to write here" requirement enforced against a caller that might otherwise pass something mutable-but-precious — it was simply documenting, accurately, that THIS function's own body never writes through it (only `.load()`s it), while `SearchLimits::external_stop`'s own declared type is non-const because OTHER code paths (the periodic check in `search.cpp`/`quiescence.cpp`) only read through it too, matching the same pattern. Once `SearchLimits::external_stop` needs a non-const pointer regardless, keeping `stop` itself const only forces a `const_cast` at the one place that pointer gets assigned — a cast whose own safety comment (removed along with the cast) had to separately re-derive "safe: no write ever happens through this pointer" by hand, the exact same fact the parameter's own type could have documented for free by simply not being `const` in the first place. Removing the `const` doesn't loosen any actual guarantee: `run_lazy_smp_helper()` still never writes to `stop` anywhere in its own body (a fact enforced by the function's own code, not by the parameter's type-level constness, which was never doing real work here).
+
+**Alternatives considered:**
+- Keeping `stop` as `const std::atomic<bool>&` and instead making `SearchLimits::external_stop` a pointer-to-const (`const std::atomic<bool>*`) — rejected: `external_stop` is shared infrastructure used by every caller of `SearchLimits`, not just `run_lazy_smp_helper()`'s own helper threads, and changing its own type to accommodate one caller's parameter constness, rather than the other way around, would be backwards — `run_lazy_smp_helper()`'s own parameter is the more local, easily-adjusted thing here, `SearchLimits`'s own field is the more broadly-depended-upon one.
+- Leaving the `const_cast` in place, since it was already accompanied by a correctness comment and wasn't causing any actual bug — rejected: this project's own "zero warnings, no unexplained casts where an honest type change would do instead" standard, already applied to Session 133's SearchContext refactor and to this project's other recent const-correctness cleanups, treats a `const_cast` whose only job is working around a parameter's own unnecessarily strict type as worth removing on sight once identified, the same standard already applied elsewhere.
+
+---
+
 ### 2026-09-26 (5) — `nps`-flake: fixed the test (`go movetime`, not a fixed depth), not `emit_info()`'s own documented omission logic; MultiPV's own missing `elapsed_ms` fixed as cumulative-per-depth, matching `nodes`
 
 **Decision (the flake):** Changed `tests/uci_tests.cpp`'s own `nps`-presence test from `go depth 3` to `go movetime 100`, leaving `emit_info()`'s `result.elapsed_ms > 0` omission condition, and `SearchResult::elapsed_ms`'s own millisecond-only granularity, completely unchanged.

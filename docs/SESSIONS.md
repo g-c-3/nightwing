@@ -4,7 +4,21 @@ Newest entry at top.
 
 ---
 
-### Session 137 — 2026-09-26 — `nps`-flake root cause confirmed and fixed (a test bug, not a production bug); a real, separate, previously-untested MultiPV timing bug found and fixed along the way
+### Session 138 — 2026-09-26 — `run_lazy_smp_helper()`'s `const_cast<std::atomic<bool>*>(&stop)` removed (Session 133's own first deferred follow-up)
+
+Triggered by "Continue" — no new CI logs pending, so picked up the smaller of Session 133's own two long-deferred follow-ups (the docs stale-statement sweep, the other one, remains open and larger/open-ended).
+
+**What was built:** `run_lazy_smp_helper()`'s own `stop` parameter changed from `const std::atomic<bool>&` to `std::atomic<bool>&`. The function itself only ever calls `.load()` on `stop` — never writes it (the main thread's own `smp_stop.store(true, ...)`, in each of the two callers, is the only writer) — so dropping `const` from the parameter's own declared type changes nothing about this function's actual behavior, only what's needed to assign `&stop` directly into `SearchLimits::external_stop` (itself a non-const pointer, since `negamax()`/`quiescence()` only ever read through it too) without a cast. Both call sites (`search_fixed_depth()`, `search_iterative_deepening()`) switched their own `std::cref(smp_stop)` to `std::ref(smp_stop)` to match the new parameter type — checked directly, not assumed, that `smp_stop` itself was already a plain, non-const local `std::atomic<bool>` at both sites, so only the call-site BINDING was ever const, not the underlying object. `SearchContext::limits`'s own constness — the thing this item's own original text flagged as needing a deliberate decision, not a side effect — was left completely untouched; this fix is scoped to exactly `run_lazy_smp_helper()`'s own parameter and its two call sites, nothing about `SearchContext` itself.
+
+**Verification:** rebuilt both Release and Debug/ASan+UBSan (GCC, this sandbox) — zero errors, zero warnings, both configs. Full suite: 695/697 in both, the identical 2 pre-existing sandbox-specific failures (`go nodes`/`go searchmoves`) every session since 133 has documented, zero regressions. `bench` totals unchanged (`36154` overall).
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-26 (6).
+
+**Next session start point:** the docs stale-statement sweep (Session 133's own second, larger, deferred follow-up) is the last item from that session's own original handoff still open. Beyond that: the macOS CTest-registration gap (Session 135, needs a real macOS build) and re-confirming Session 137's two fixes (`nps`-flake test, MultiPV `elapsed_ms`) on real CI both still await a new CI-log bundle. If one arrives, triage it first, same standing priority as every session since 135.
+
+---
+
+
 
 Triggered by "Continue," no new CI logs this time — picked up the highest-priority item from Session 136's own handoff note that didn't require a real macOS build: investigating the `nps`-omission flake.
 
