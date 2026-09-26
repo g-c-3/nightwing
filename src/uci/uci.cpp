@@ -1662,22 +1662,38 @@ void start_pondering(Position& pos, const std::vector<std::uint64_t>& game_histo
     std::mutex* out_mutex_ptr = &out_mutex;
 
     ponder.thread = std::thread([&out, out_mutex_ptr, num_threads, hash_size_mb, ponder_pos,
-                                  ponder_history, stop_ptr, suppress_ptr, tt_ptr]() mutable {
+                                  ponder_history, stop_ptr, suppress_ptr, tt_ptr, budget]() mutable {
         // `budget`'s own `has_node_limit`/`max_nodes`/`searchmoves`
-        // (ROADMAP.md Priority Fixes, 2026-09-22, finding 9) are NOT
-        // forwarded to this background search -- pondering already
-        // deliberately ignores `budget.max_depth`/`time_limit_ms` too
-        // (kTimedSearchMaxDepth/0 just below, genuinely unbounded by
-        // design until `ponderhit` applies the SAVED budget -- this
-        // function's own header comment), and no test or real GUI usage
-        // combines `go ponder` with `nodes`/`searchmoves` today; a
-        // deliberate scope limit, matching search_iterative_deepening()'s
-        // own MultiPV one, not an oversight.
+        // (ROADMAP.md Priority Fixes, 2026-09-22, finding 9) ARE now
+        // forwarded to this background search (filed 2026-09-24,
+        // "Thread `go nodes`/`searchmoves` through MultiPV and
+        // pondering") -- pondering still deliberately ignores
+        // `budget.max_depth`/`time_limit_ms` (kTimedSearchMaxDepth/0
+        // just below, genuinely unbounded by design until `ponderhit`
+        // applies the SAVED budget -- this function's own header
+        // comment is unchanged on that point), but a `go ponder`
+        // combined with `nodes`/`searchmoves` is real UCI syntax a
+        // strict GUI/test harness could still send even though no real
+        // GUI usage combining them was observed when this scope limit
+        // was first filed -- honoring it costs nothing extra here,
+        // since `search_iterative_deepening()`'s own `max_nodes`/
+        // `searchmoves` parameters already default to the exact
+        // "ignore this" values (0 / empty) whenever `budget` doesn't
+        // carry either, so an ordinary `go ponder` with neither is
+        // completely unaffected by this change. `budget` (the whole
+        // struct, by value) is captured into this closure rather than
+        // just the two new fields, matching start_go()'s own
+        // established "capture the budget, not its individual fields"
+        // pattern for the identical reason: `budget` is a local in the
+        // OUTER (start_pondering()) scope, which a reference capture
+        // would leave dangling once this background thread outlives
+        // that scope.
         const search::SearchResult result = search::search_iterative_deepening(
             ponder_pos, kTimedSearchMaxDepth, /*time_limit_ms=*/0, ponder_history,
             /*on_iteration=*/nullptr, /*material_weights=*/nullptr, /*eval_weights=*/nullptr,
             num_threads, stop_ptr, hash_size_mb, /*multi_pv=*/1, /*soft_time_limit_ms=*/0,
-            /*contempt_cp=*/0, tt_ptr);
+            /*contempt_cp=*/0, tt_ptr, budget.has_node_limit ? budget.max_nodes : 0,
+            budget.searchmoves);
         if (suppress_ptr->load(std::memory_order_relaxed)) {
             return;
         }
