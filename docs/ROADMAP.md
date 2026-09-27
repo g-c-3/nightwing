@@ -2237,7 +2237,63 @@ it either way.
       disproportionate to what was actually broken (see
       docs/DECISIONS.md, 2026-09-26 (5), for the full alternatives
       analysis).
-- [ ] **Investigate: real macOS CI registers only 694 of 696 CTest
+- [x] **RETRACTED, Session 142 — this was never a bug.** The item
+      below (filed Session 135, "real macOS CI registers only 694 of 696
+      CTest tests, missing exactly `eval_tests.cpp`'s two `taper: phase
+      ...` tests") misidentified WHICH 2 tests were actually missing on
+      macOS, and every session since (136, 139, 140, 141) inherited that
+      wrong identification without re-deriving it independently. The
+      REAL 2 tests macOS's own CTest run doesn't register are
+      `tests/attacks_tests.cpp`'s `"PEXT attack path matches brute
+      force, when the host CPU supports BMI2"` and `"PEXT and magic
+      paths agree with each other, when the host CPU supports BMI2"` —
+      both wrapped in `#if defined(NIGHTWING_ENABLE_BMI2)`, itself only
+      ever defined on x86/x86_64 targets (`CMakeLists.txt`), and BMI2 is
+      an x86-only instruction-set extension that genuinely does not
+      exist on the ARM64 (Apple Silicon) macOS GitHub Actions runners
+      this project's CI uses — the TEST_CASEs are correctly compiled
+      OUT of the macOS binary entirely, by design, exactly the same way
+      Linux/Windows' own x86_64 runners correctly compile them IN. This
+      is intentional, already-documented, correct cross-platform
+      behavior (`attacks.cpp`'s own header comment already explains the
+      BMI2/portable-fallback split in full) — there was never a
+      discovery bug, a linker issue, or anything else to fix.
+      Root cause of the misdiagnosis: Session 135's own ad-hoc Python
+      diffing script (used again, unquestioned, by every session since)
+      extracted test names from `ctest`'s human-readable console log via
+      a regex requiring exactly one space between "Test" and "#N" —
+      but `ctest` right-pads test numbers with EXTRA spaces so every
+      "#N" column-aligns to the width of the largest test number in that
+      run (e.g. `Test  #98` for a 2-digit number when the run's own max
+      is 3 digits, vs. `Test #100` with only one space for a 3-digit
+      number needing no padding). This regex silently failed to extract
+      any low-numbered (1-2 digit) test on EITHER platform — but because
+      Catch2's own test EXECUTION ORDER is not guaranteed identical
+      across platforms (static-initializer order across different
+      translation units is unspecified by the C++ standard, and can
+      genuinely differ by linker/platform), the SPECIFIC tests landing
+      in that "1-2 digit, silently dropped" range differed between
+      Linux and macOS THIS RUN — coincidentally, and consistently
+      enough across several actual pushes to look like a stable signal,
+      the two `taper:` tests happened to land in that dropped range on
+      macOS specifically, producing a spurious, repeatable "taper tests
+      missing" diff result that was never actually true. Caught,
+      Session 142, only by manually grepping a real CI log's own raw
+      text directly for "taper" (finding both tests present, numbered,
+      and PASSED) rather than trusting the diffing script's own output
+      again — the fixed regex, re-run against the same log, correctly
+      extracts all 697/695 names on both platforms and correctly
+      identifies the real 2 BMI2 tests as the only actual difference,
+      with zero unexplained entries either direction.
+      The macOS-only CI diagnostic step Session 141 added (querying the
+      compiled binary's own `--list-tests` output for "taper") has been
+      REMOVED, Session 142 — it was answering a question about a bug
+      that doesn't exist. See docs/DECISIONS.md, 2026-09-26 (10), for
+      the full retraction and what should be done differently: use
+      `ctest --show-only=json-v1` (structured, machine-readable output)
+      for any future cross-platform test-list comparison, not
+      regex-parsed human-readable console text.
+- [x] **Investigate: real macOS CI registers only 694 of 696 CTest
       tests, missing exactly `eval_tests.cpp`'s two `taper: phase ...`
       tests (`kMaxPhase`/`0`)** — discovered during Session 135's own CI
       triage of Session 134's push (docs/SESSIONS.md has the full
@@ -2295,6 +2351,15 @@ it either way.
       Linux sandbox could investigate the SCRIPT for but never actually
       answer for real macOS output. See docs/DECISIONS.md,
       2026-09-26 (9), for the full investigation account.
+      STATUS UPDATE, Session 142: RETRACTED — see the new item
+      immediately above. This item's own premise (that the `taper:`
+      tests were the ones missing) was wrong from the start; Sessions
+      136, 139, 140, and 141's own investigation of "why are the taper
+      tests missing" was real, careful work, honestly conducted, but
+      aimed at a target that was never actually missing. Kept here,
+      unedited below this update line, rather than deleted, per this
+      project's own "the repo is the memory" convention — the retraction
+      item above is the corrected, current understanding.
 - [ ] **Investigate enabling `-Wshadow`/`-Wconversion` on this project's
       own GCC/Clang builds** — filed Session 140, after real CI logs
       produced a THIRD distinct compiler-specific-only warning class in
