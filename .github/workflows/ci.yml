@@ -163,6 +163,54 @@ jobs:
       # than repeated six times: the bench numbers are read by a human
       # updating docs/SESSIONS.md, not asserted on by any test, so one
       # copy of them is all that's ever actually useful.
+      # Diagnostic for the still-open macOS CTest-registration gap
+      # (docs/ROADMAP.md, filed Session 135, 2026-09-26): real macOS CI
+      # has consistently registered exactly 2 fewer CTest tests than
+      # Linux/Windows for the identical commit -- specifically
+      # tests/eval_tests.cpp's two `taper: phase ...` TEST_CASEs, plain,
+      # unconditional, no skip logic anywhere. A from-scratch Linux
+      # sandbox investigation (docs/DECISIONS.md, 2026-09-26 (9)) ruled
+      # out the compiler (both GCC and Clang, built and run locally,
+      # correctly list both tests) and Catch2's own CMake discovery
+      # script (CatchAddTests.cmake parses `--list-tests --verbosity
+      # quiet` output one line per test, with no multi-line-merging logic
+      # that could plausibly drop exactly 2 adjacent entries) as the
+      # cause, without being able to rule out something macOS-runner- or
+      # linker-specific from a Linux-only sandbox. This step answers the
+      # one question that actually needs real macOS hardware: does the
+      # COMPILED BINARY ITSELF list both taper tests when asked directly
+      # (`--list-tests`, the exact command CatchAddTests.cmake also
+      # runs), on this real macOS runner? If yes, the gap is somewhere in
+      # CMake's own discovery/registration machinery on macOS
+      # specifically; if no (the binary itself already omits them), the
+      # gap is upstream of CMake entirely -- most plausibly something
+      # about static-initializer registration order or an
+      # identical-code-folding-style linker optimization on Apple's own
+      # linker collapsing two structurally-similar TEST_CASEs into one,
+      # given the two affected tests are short, adjacent in source order,
+      # and nearly identical in shape. Runs on every macOS leg (both
+      # Debug and Release) since a Debug-vs-Release difference here would
+      # itself be a meaningful data point (linker folding is far more
+      # characteristic of an optimizing Release build than Debug).
+      # Read-only and informational — never fails the job (a fresh
+      # finding to read from the log, not a new pass/fail gate; the
+      # existing ctest step above already gates on what's actually
+      # registered).
+      - name: Diagnose macOS CTest-registration gap (macOS only — see docs/ROADMAP.md)
+        if: matrix.os_name == 'macOS'
+        working-directory: build/tests
+        run: |
+          echo "== Raw binary's own --list-tests output (the exact command CatchAddTests.cmake runs) =="
+          ./nightwing_tests --list-tests --verbosity quiet | grep -c "^  " || true
+          echo "-- 'taper:' entries in the raw binary's own list --"
+          ./nightwing_tests --list-tests --verbosity quiet | grep "taper:" || echo "(none found in raw binary output)"
+          echo "== CMake's own generated discovery script (what actually became add_test() calls) =="
+          for f in nightwing_tests-*_tests.cmake; do
+            echo "-- $f --"
+            grep -c "^add_test" "$f" || true
+            grep "^add_test.*taper:" "$f" || echo "(none found in generated discovery script's own add_test calls)"
+          done
+
       - name: Print regression bench (Linux Release only — see comment above)
         if: matrix.os_name == 'Linux' && matrix.build_type == 'Release'
         working-directory: build
