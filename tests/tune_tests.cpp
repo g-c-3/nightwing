@@ -1560,3 +1560,52 @@ TEST_CASE("tune_mobility: a training signal that consistently disagrees with an 
     // material alone explains" label.
     REQUIRE(result.weights.knight_mg > initial.knight_mg);
 }
+
+// --- ROADMAP.md "Investigate regularization / per-term learning rates
+// for the sign-flip instability" (filed Session 122, closed this
+// session) -- tuner::kRecommendedTermL2Lambda's own doc comment
+// (tune.h) has the full measured account against a real self-play
+// corpus (sign flips are NOT corrected by L2 or by a different
+// learning rate, only bounded in magnitude -- a genuine local optimum
+// from tune_term()'s own single-term-isolation design, not a step-size
+// artifact). This test cannot reproduce a real corpus's isolation-
+// confounding sign flip deterministically in a small, fast, CI-safe
+// fixture -- what it CAN and does verify is the one property
+// kRecommendedTermL2Lambda actually claims: driven far by a strong,
+// consistent, one-sided training signal, the L2-regularized run still
+// moves in the SAME direction (never flips something the unregularized
+// run got right) but with visibly smaller final magnitude.
+TEST_CASE("tune_mobility: kRecommendedTermL2Lambda bounds a term's final magnitude under a "
+          "strong one-sided training signal without flipping its direction",
+          "[tuner][tune][l2]") {
+    init_all();
+    const std::string fen = "4k3/8/8/8/8/8/8/1N2K3 w - - 0 1";
+    std::vector<SelfPlayPosition> positions;
+    for (int i = 0; i < 8; ++i) {
+        positions.push_back(SelfPlayPosition{fen, 1.0});
+    }
+
+    const MaterialWeights material = default_material_weights();
+    const MobilityWeights initial = default_mobility_weights();
+
+    TuneConfig unregularized;
+    unregularized.iterations = 200;
+    const TermTuneResult<MobilityWeights> plain =
+        tune_mobility(positions, material, initial, unregularized);
+
+    TuneConfig regularized = unregularized;
+    regularized.l2_lambda = kRecommendedTermL2Lambda;
+    REQUIRE(l2_update_is_stable(regularized.learning_rate, regularized.l2_lambda));
+    const TermTuneResult<MobilityWeights> bounded =
+        tune_mobility(positions, material, initial, regularized);
+
+    // Same direction as the unregularized run (and as the shorter,
+    // 20-iteration version of this exact fixture above) -- L2 never
+    // flips a correctly-signed move, only damps it.
+    REQUIRE(bounded.weights.knight_mg > initial.knight_mg);
+    REQUIRE(plain.weights.knight_mg > initial.knight_mg);
+    // Strictly smaller magnitude than the unregularized run, over the
+    // same 200 iterations against the same one-sided signal -- the
+    // actual bounding property this constant exists to provide.
+    REQUIRE(bounded.weights.knight_mg < plain.weights.knight_mg);
+}
