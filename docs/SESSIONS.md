@@ -4,6 +4,44 @@ Newest entry at top.
 
 ---
 
+### Session 145 — 2026-09-27 — External verification report checked: KQK item closed, direct-binary test failures root-caused to book global state and fixed, TSan/non-isolated-CI items filed
+
+Triggered by an uploaded verification report (`report.md`), no further instruction; treated as an external review to verify, following the 2026-08-25 (8)/2026-09-22 (2) precedent.
+
+**Verified against a real build:** KQK FEN through the real UCI binary reproduced the report's numbers exactly (depth 10, 839,552 nodes, `cp 1034`, ~450 ms) — ROADMAP item closed, no defect. Running `nightwing_tests` directly reproduced the report's 2 failures; bisecting showed they occur within the `[uci]` tests alone, and both failing positions are opening-book positions. Root cause: `book::init_book()` populates a process-global table, so once an earlier test calls it, `start_go()` answers from book with no search. The report's join/flush race hypothesis is refuted (deterministic; thread path never reached). This also corrects the "2 pre-existing sandbox-specific failures" noted since Session 133 — they were these tests.
+
+**Fixed (tests only):** `tests/uci_tests.cpp` — `go nodes` uses Kiwipete; `go searchmoves` uses `startpos moves g1h3` + `searchmoves h7h5`. Direct binary: 698/698 pass; the two tests also pass under ctest. No `src/` change.
+
+**Filed, not built:** CI step running the raw test binary non-isolated; ThreadSanitizer option + CI leg (report finding 3d, accurate). Report's other checks (ASan/UBSan 697/697, python-chess perft cross-check, Lazy SMP smoke test) were clean and needed no action.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-27 (2).
+
+**Next session start point:** implement the ThreadSanitizer CMake option and CI leg (ROADMAP, newly filed), or the non-isolated CI step (smaller); otherwise ordinary CI-log triage.
+
+---
+
+### Session 144 — 2026-09-27 — Sign-flip instability investigation closed: neither L2 regularization nor per-term learning rates fix it; a magnitude-bounding `kRecommendedTermL2Lambda` shipped instead, real fix filed as a new item
+
+Triggered by "Go" — no CI log pending, so picked up ROADMAP.md's own next unchecked item: Session 122's filed "Investigate regularization / per-term learning rates for the sign-flip instability" (mobility/space/king-safety sub-terms flipping sign under `tune_term()`'s own isolated finite-difference tuning, first found 2026-09-22).
+
+**Real investigation, not a paper exercise.** A compiler toolchain and this repository's own build are both available in this sandbox (docs/ARCHITECTURE.md's Development Environment note) — used directly rather than reasoning from the existing docs alone. Installed `cmake` (`apt-get install -y cmake`, same allowlisted mirrors as before), built `nightwing_selfplay`/`nightwing_tune` in Release, and generated a fresh real self-play corpus (150 games, 4-ply search, 8 random opening plies → 6015 quiet positions in ~15s; a larger 800-game/32507-position corpus was also generated but proved too slow to sweep multiple configurations against within this session's own tool-call time budget, so the smaller corpus carried the actual sweeps).
+
+**Confirmed the sign flip reproduces at this much smaller scale** (mobility: `knight_mg=-21.1`, `bishop_eg=-50.5` against small positive defaults; space: `square_mg/eg` both flipped negative; king-safety: `semi_open_file_mg`/`attack_unit_mg` both flipped positive against negative-penalty defaults, while the dominant pawn-storm rank5/6 terms stayed correctly signed and stable — matching 2026-09-22's own original read exactly).
+
+**Swept both candidates directly, neither corrects the sign:** `l2_lambda` from 0 up to just under the stability ceiling shrinks flipped magnitudes toward zero without ever crossing back to the correct sign; `learning_rate` alone (2000/5000/20000) converges every rate to the SAME sign, just at different speeds. Both loss curves stayed smooth and monotonic at every configuration — ruling out optimizer instability a second time, from a different (smaller, fresh) corpus than the original finding. See docs/DECISIONS.md, 2026-09-27, for the full swept tables.
+
+**What shipped:** `tuner::kRecommendedTermL2Lambda` (`tune.h`, = 1e-5) — a documented, magnitude-bounding (explicitly NOT sign-correcting) value for the five term-tuning CLI modes to opt into, guarding against a runaway value like -50.5 being hand-transcribed without a safety margin. `TuneConfig::l2_lambda`'s own default is unchanged (0.0) — no pre-existing tuning call or test is affected. `tune_main.cpp`'s header comment updated to point at it and to record the per-term-learning-rate re-verification (closing 2026-09-21 (3)'s open caveat with a real, adequate-as-is answer). New regression test, `tests/tune_tests.cpp`'s `[l2]`-tagged `TEST_CASE`, verifies the magnitude-bounding property against a deterministic toy fixture (200-iteration run: unregularized `knight_mg` reaches 20.4, regularized reaches 4.1, both correctly signed) — the sign-flip finding itself remains real-corpus-only and documented rather than unit-tested, since a small deterministic fixture structurally cannot reproduce the isolation-confounding mechanism that produces it.
+
+**The actual fix was NOT attempted** — filed as a new, separate, not-yet-scoped ROADMAP item (co-tuning correlated terms together, or a confound-reducing sampling change; both need real design work and a real corpus, not a config knob).
+
+**Verification:** full local build + `ctest` (GCC, Release, this sandbox) — 698/698 passing (697 + 1 new), zero regressions, zero new warnings.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-27.
+
+**Next session start point:** no items are currently queued beyond ordinary CI-log triage (if/when the next log arrives) or `docs/ROADMAP.md`'s own next unchecked item, which is now the newly-filed "The actual fix for the sign flip" item directly below the one closed this session — real design work (co-tuning vs. sampling change), not a quick follow-up.
+
+---
+
 ### Session 143 — 2026-09-26 — `-Wshadow`/`-Wconversion` enabled project-wide, after direct investigation found the expected noise didn't materialize
 
 Triggered by "Continue" — no new CI logs pending, so picked up the last remaining open item: Session 140's own filed "investigate enabling `-Wshadow`/`-Wconversion`," deferred at the time on the assumption both would be noisy on a mature codebase.

@@ -1446,24 +1446,68 @@ Priority Fixes section above).
           rate" regime, closing the test-coverage gap this item's own
           note already flagged. See docs/DECISIONS.md, this session's
           own dated entry, for the full measured account.
-    - [ ] **Investigate regularization / per-term learning rates for
+    - [x] **Investigate regularization / per-term learning rates for
           the sign-flip instability** found in mobility/space/some
-          king-safety sub-terms (item above) — `TuneConfig::l2_lambda`
-          already exists and is plumbed through `tune_term()` (Session
-          120) but was left at 0.0 (no regularization) for this run;
-          likely candidates, neither attempted yet: (a) a nonzero
-          `l2_lambda` pulling each term back toward its own starting
-          value, reducing the incentive to chase a spurious correlation
-          far from a sensible default; (b) per-term learning rates
-          instead of borrowing material's own 20000.0 uniformly across
-          all 5 finite-difference terms (docs/DECISIONS.md, 2026-09-21
-          (3), already flagged this as "not independently re-verified
-          for these five terms' own real production data" — this is
-          that re-verification, and it suggests the borrowed value may
-          be too aggressive for smaller-magnitude terms specifically).
-          NOT the same problem as `threats`' near-zero movement (a
-          sampling-methodology gap, not a tuning-stability one) — keep
-          these two findings' own follow-up work separate.
+          king-safety sub-terms (item above) — CLOSED (Session 144),
+          with a measured answer, not a silent fix: both candidates
+          were tested directly against a real self-play corpus (150
+          games / 6015 quiet positions, generated fresh this session)
+          and NEITHER corrects the sign flip itself. (a) Sweeping
+          `l2_lambda` from 0.0 up to just under `l2_update_is_stable()`'s
+          own ceiling at the default `learning_rate` (20000.0) shrinks
+          every flipped parameter's magnitude monotonically toward zero
+          (mobility's `knight_mg`: -21.1 at l2=0 → -8.5 at 5e-6 → -5.4
+          at 1e-5 → -3.1 at 2e-5) but the sign never crosses back at any
+          stable value — regularization pulls a spurious optimum
+          TOWARD the starting point, it does not relocate it to a
+          different, correct one. (b) Sweeping `learning_rate` alone
+          (2000/5000/20000, l2=0, fixed 150 iterations) confirmed the
+          same thing a different way: every rate converges the SAME
+          sign, just at different speeds (`bishop_eg`: -5.5 at lr=2000
+          vs -50.5 at lr=20000 — same direction, further along) —
+          closing 2026-09-21 (3)'s "not independently re-verified for
+          these five terms" note with a real answer: the shared
+          20000.0 default is adequate for all five, no per-term
+          differentiation needed. Confirms docs/DECISIONS.md's own
+          2026-09-22 read: this is a genuine converged local optimum
+          from `tune_term()`'s single-term-isolation design (every
+          other eval term frozen), not a step-size/magnitude artifact
+          — the real fix is a different, larger-scope change (see the
+          new item directly below), not a tuning-config knob. What
+          shipped instead: `tuner::kRecommendedTermL2Lambda` (`tune.h`,
+          = 1e-5, well inside the stability ceiling), a concrete,
+          measured, magnitude-BOUNDING (not sign-correcting) value for
+          the five term-tuning modes to opt into, guarding against a
+          human hand-transcribing an obviously-runaway value like
+          -50.5 without a safety margin — `TuneConfig::l2_lambda`'s own
+          default stays 0.0 (every pre-existing tune()/tune_psqt()/
+          tune_term() call/test unaffected). New regression test
+          (`tests/tune_tests.cpp`, `[l2]` tag) verifies the bounding
+          property directly (200-iteration run: `knight_mg` reaches
+          20.4 unregularized vs. 4.1 with `kRecommendedTermL2Lambda`,
+          same direction as the unregularized run and as the
+          pre-existing 20-iteration version of this same fixture,
+          never flipped). Full swept tables and reasoning in
+          docs/DECISIONS.md, 2026-09-27.
+    - [ ] **The actual fix for the sign flip** (filed Session 144,
+          split out from the item above once regularization/learning-
+          rate were confirmed NOT to be it): `tune_term()`'s own
+          single-term-isolation design (material and every other eval
+          term frozen while one term tunes) lets a small-effect
+          parameter's finite-difference gradient get dominated by a
+          spurious correlation with the frozen rest of `evaluate()`,
+          rather than the parameter's own real causal effect. Two
+          directions neither attempted nor scoped in detail yet: (a)
+          co-tuning two or more correlated terms together in the same
+          run instead of freezing everything but one (a real change to
+          `tune_term()`'s own architecture, not just its config); (b) a
+          sampling change that reduces the confound directly (e.g.
+          stratifying or reweighting the training set so the frozen
+          terms' own values are more independent of the term being
+          tuned across the sample). Neither is a quick follow-up — both
+          need real design work and a real corpus to validate against,
+          the same honesty standard this file's other "not yet
+          attempted" items already hold to.
 
 ## Priority Fixes (external code review, 2026-09-17)
 
@@ -2613,19 +2657,46 @@ Not part of the report's own ordering, appended here:
       methodology and both binaries' build commits are recorded in
       docs/DECISIONS.md, 2026-09-24. Not blocking — no regression signal
       exists at any sample size tested.
-- [ ] **Investigate the KQ-vs-K "unresolved after ~13M nodes / 60s"
-      observation** — reported from `8/8/8/4k3/8/8/4K1Q1/8 w`, not yet
-      independently reproduced by this sandbox. `basic_mates.h`
-      (confirmed) only defines dedicated algorithmic terms for KRK and
-      KBNK — no KQK term exists — which is at least consistent with a
-      real gap, though KQK is conventionally one of the EASIEST won
-      endgames for any competent engine via plain material + mobility
-      eval alone, with no special technique needed, so a genuine
-      13M-node stall on it (if reproduced) would be a surprising,
-      worth-prioritizing finding rather than a minor gap. First step:
-      actually reproduce it (a real search run, not code reading) before
-      deciding whether this needs a fix or was a one-off
-      timeout/environment artifact in the original review.
+- [x] **Investigate the KQ-vs-K "unresolved after ~13M nodes / 60s"
+      observation** — CLOSED (Session 145), reproduced-and-not-a-defect.
+      Reproduced independently by both an external verification report
+      and this sandbox, through the real UCI binary, `position fen
+      8/8/8/4k3/8/8/4K1Q1/8 w - - 0 1` / `go depth 10`: depth 10
+      completed in ~450-470 ms, 839,552 nodes, `score cp 1034`, `bestmove
+      g2c6`, no stall at any depth 1-10 (this sandbox: depth 5 = 19,027
+      nodes, `cp 991`). No code change; the original observation is
+      treated as a one-off environment/timeout artifact of that earlier
+      review. `basic_mates.h`'s lack of a dedicated KQK term is
+      therefore confirmed non-blocking (plain material + mobility eval
+      resolves it, as expected). See docs/DECISIONS.md, 2026-09-27 (2).
+- [x] **`go nodes <n>` / `go searchmoves <m>` UCI tests fail when the
+      test binary is run directly** (external verification report,
+      Session 145) — FIXED. Root cause: NOT a background-thread
+      flush/join race (the report's own hypothesis, refuted), but
+      opening-book global state. `tests/uci_tests.cpp`'s two tests used
+      book-known positions (the 1.e4 e5 2.Nf3 Nc6 FEN; bare `position
+      startpos`); `book::init_book()` fills a process-global table once
+      any earlier test in the same process calls it, after which the
+      engine answers from book with no search and no `info` line.
+      Invisible under `ctest` (one process per test case). Fixed by
+      moving both tests to off-book positions (Kiwipete; `startpos moves
+      g1h3` + `searchmoves h7h5`). Direct-binary run now 698/698. These
+      were the "2 pre-existing sandbox-specific failures" recorded
+      since Session 133 — that attribution was wrong. See docs/
+      DECISIONS.md, 2026-09-27 (2).
+- [ ] **CI: also run the raw `nightwing_tests` binary once, non-isolated**
+      (report suggestion 2, filed Session 145) — catches cross-test
+      global-state contamination (the book bug above was exactly this
+      class) that `ctest`'s per-process isolation hides. Now feasible
+      since the direct run is green.
+- [ ] **ThreadSanitizer coverage** (report finding 3d, filed Session 145)
+      — `CMakeLists.txt` has no `-fsanitize=thread` option; the
+      sanitizer matrix is ASan/UBSan only, a gap docs/DECISIONS.md
+      already acknowledges. Proposed: a `NIGHTWING_ENABLE_TSAN` cache
+      option plus a dedicated CI leg running the Lazy SMP/TT-tagged
+      tests and a short multi-threaded `go`/`go ponder` session. Largest
+      remaining unverified area (Lazy SMP, lock-free TT, background
+      `go`/ponder threads). Not started.
 
 ## Phase 9 — Advanced / Stretch Goals (beyond great-engine baseline)
 - [ ] NUMA-aware thread/memory allocation (large multi-socket hardware only)

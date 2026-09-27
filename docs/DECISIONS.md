@@ -4,6 +4,63 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-09-27 (2) — External verification report: KQK item closed as non-reproducing; direct-binary UCI test failures root-caused to opening-book global state (report's thread-race hypothesis refuted); ThreadSanitizer gap and non-isolated CI run filed
+
+**Decision:** An externally supplied verification report (`report.md`) was checked against a real build rather than accepted or dismissed. (1) The "KQ-vs-K unresolved after ~13M nodes / 60s" ROADMAP item was closed as not reproducing. (2) The two UCI tests the report found failing under direct invocation were fixed at their real root cause, which differs from the report's. (3) Two report suggestions were filed as ROADMAP items, not built.
+
+**KQK evidence:** same FEN and command as the report, through the real UCI binary in this sandbox: depth 10 in ~450 ms, 839,552 nodes, `cp 1034`, `bestmove g2c6`; depth 5 = 19,027 nodes. Matches the report's figures (839,552 nodes identical). No code change.
+
+**Direct-binary failures — reproduced, then root-caused:** running `build/tests/nightwing_tests` directly failed exactly 2 test cases (`tests/uci_tests.cpp` `go nodes`, `go searchmoves`), reproducibly; each passed alone. Narrowing showed the failure occurs with only the `[uci]` tests running, and both failing positions are opening-book positions. `book::book_move()` is consulted synchronously in `start_go()` before any thread exists and answers `bestmove` with no search/`info` line; the book table (`book.cpp`) is a function-local static filled by `init_book()`, which two other tests in the same file call. So once those run earlier in the same process, these two tests hit the book. This exactly explains both symptoms (a `bestmove` present but no `nodes ` token; a book `bestmove` instead of `g1h3`). The file already documents this identical trap in its MultiPV test comment. The report's hypothesis — a `go.thread` join/flush race — is refuted: the failures are deterministic, need no load, and the thread path is never reached on a book hit. The report's suggestions 3-4 (instrumenting `finish_go()`) are therefore not pursued. Corollary: Sessions 133-143's "2 pre-existing sandbox-specific failures" (695/697) were these same two tests run non-isolated; that attribution was wrong.
+
+**Fix:** tests only. `go nodes` now uses Kiwipete (off-book, deep enough that depth 15 unbounded far exceeds the 10,000-node assertion); `go searchmoves` now uses `position startpos moves g1h3` + `searchmoves h7h5` (off-book; h7h5 a weak legal reply, preserving the original "restriction, not coincidence" strength argument). Comments record the trap. Verified: direct binary 698/698 (691,166 assertions), both tests still pass under `ctest`. No `src/` change.
+
+**Alternatives considered:** clearing the book table in test setup (would need a new production API purely for tests; off-book positions match the file's existing convention); documenting "use ctest only" (report's fix 1 — rejected as it leaves a latent bug); fixing `init_book()` to be per-`run()` (larger behavioral change, unwarranted for a test-only trap).
+
+**Filed, not built:** a CI step running the raw test binary non-isolated (would have caught this); a `NIGHTWING_ENABLE_TSAN` option and CI leg — the report's finding that only ASan/UBSan exist is accurate and matches earlier self-documented notes. Neither was scoped further this session.
+
+---
+
+### 2026-09-27 — Sign-flip instability (mobility/space/king-safety sub-terms): neither L2 regularization nor a per-term learning rate corrects it; a new `tuner::kRecommendedTermL2Lambda` bounds magnitude instead
+
+**Decision:** Closed ROADMAP.md's "Investigate regularization / per-term learning rates for the sign-flip instability" item (filed Session 122) with a measured, negative-but-useful answer rather than a claimed fix. Added `tuner::kRecommendedTermL2Lambda = 1e-5` (`tune.h`) — a concrete, stable value the five `tune_mobility()`/`tune_space()`/`tune_threats()`/`tune_king_safety()`/`tune_pawns()` callers may opt into — and left `TuneConfig::l2_lambda`'s own default at 0.0, unchanged, so no pre-existing `tune()`/`tune_psqt()`/`tune_term()` call or test is affected. Split the actual sign-flip fix out into its own, separate, not-yet-scoped ROADMAP item rather than closing it here.
+
+**Method:** generated a fresh, real self-play corpus in this sandbox (`nightwing_selfplay 150 1 4 8 200` → 6015 quiet positions in ~15s; a second, larger 800-game/32507-position corpus was also generated but proved too slow for a full multi-config sweep within this session's own tool-call time limits, so the 6015-position corpus was used for the actual sweeps) and ran `nightwing_tune` directly against it, not a toy fixture, for both investigations below.
+
+**Finding (a) — L2 regularization bounds magnitude, does not correct sign.** Swept `l2_lambda` for `--mobility` at the default `learning_rate` (20000.0), 150 iterations:
+
+| l2_lambda | knight_mg | bishop_eg |
+|---|---|---|
+| 0.0 | -21.1 | -50.5 |
+| 5e-6 | -8.5 | -3.4 |
+| 1e-5 | -5.4 | -1.7 |
+| 2e-5 (near the `l2_update_is_stable()` ceiling of 2.5e-5) | -3.1 | -0.9 |
+
+Every value shrinks monotonically toward zero as `l2_lambda` rises, but none crosses back to the expected positive sign (mobility bonuses should be non-negative) at any value that stays inside `l2_update_is_stable()`'s own stability bound. Regularization pulls a parameter toward its starting value; it cannot relocate a genuine local optimum to a different, correct one.
+
+**Finding (b) — a per-term learning rate doesn't correct it either, only changes convergence speed.** Swept `learning_rate` alone (l2=0, fixed 150 iterations) for `--mobility`:
+
+| learning_rate | knight_mg | bishop_eg |
+|---|---|---|
+| 2000 | -17.7 | -5.5 |
+| 5000 | -20.5 | -17.6 |
+| 20000 | -21.1 | -50.5 |
+
+Every rate converges the same sign; lower rates simply haven't traveled as far toward the same optimum within the same fixed iteration budget (`bishop_eg` moving from -5.5 → -17.6 → -50.5 as the rate rises is the same direction at increasing progress, not a different result). This closes 2026-09-21 (3)'s own "not independently re-verified for these five terms' own real production data" caveat on the shared 20000.0 default: it's confirmed adequate for all five terms — none of their own gradient scales calls for a term-specific rate the way PSQT's genuinely different analytic-gradient algorithm did (2026-09-22 (4)'s own 200000.0 calibration).
+
+**Interpretation, consistent with 2026-09-22's own read:** the sign flips are a genuine converged local optimum produced by `tune_term()`'s own single-term-isolation design (material and every other eval term frozen while the one being tuned moves), not a step-size or magnitude artifact of the optimizer. Both loss curves swept here were smooth and monotonically converged at every configuration tried (no oscillation at any point, matching 2026-09-22's own observation) — ruling out "the optimizer is unstable" as an explanation a second time, from a different angle (a fresh, smaller corpus) than the original finding used.
+
+**What shipped:** `tuner::kRecommendedTermL2Lambda` (`tune.h`), documented as magnitude-bounding, explicitly NOT sign-correcting, for exactly the reason above — a caller opting into it is protected against a human hand-transcribing an obviously-runaway tuned value (e.g. -50.5) into an `eval/*.h` constant without a safety margin, not given a false impression the underlying methodology gap is fixed. `tune_main.cpp`'s own header comment updated to point future term-tuning CLI runs at it. A new test, `tests/tune_tests.cpp`'s `[l2]`-tagged `TEST_CASE`, verifies the bounding property directly against a hand-built, deterministic fixture (the same one-sided lone-knight fixture the pre-existing "reduces loss" test above it already uses, run to 200 iterations): unregularized `knight_mg` reaches 20.4, `kRecommendedTermL2Lambda`-regularized reaches 4.1, both strictly greater than the 4.0 starting value (same direction, never flipped) — the toy fixture's own strong, uncontested, single-direction signal can't reproduce the real corpus's isolation-confounding sign flip deterministically (that needs real, varied game data, not a repeated single position), so this test verifies the magnitude-bounding claim specifically, not the sign-flip finding itself, which remains a real-corpus-only, documented-not-unit-tested result — the same honesty convention `tune_psqt()`'s own PSQT-tuning tests already follow for claims that need real production data to demonstrate.
+
+**Verified against a real compiled build, not inspection:** built and ran the full `ctest` suite after the change (GCC, this sandbox, Release config) — 698/698 passing (697 pre-existing + 1 new), zero regressions, zero new warnings.
+
+**Alternatives considered:**
+- *Raising `TuneConfig::l2_lambda`'s own default away from 0.0* — rejected: it would silently change every pre-existing `tune()` (material mode, already match-validated as a statistical wash, 2026-08-31 (3)) and `tune_psqt()` call's behavior for a fix that doesn't even correct the problem it's aimed at; a new, explicitly-named, opt-in constant for the five term modes specifically was judged strictly safer.
+- *Chasing a larger `l2_lambda` past the stability ceiling, on the theory that the magnitude-bounding trend might eventually cross zero if pushed far enough* — not attempted: `l2_update_is_stable()`'s own derivation (tune.h) shows the update diverges GEOMETRICALLY past that threshold, not just "more aggressively regularized" — there is no safe value past it to test, by construction.
+- *Trying to reproduce the real corpus's sign flip in a small, deterministic toy fixture for a stronger unit test* — considered and rejected: the sign flip is specifically a product of averaging a spurious correlation across many DIFFERENT, varied real games; a small, repeated, single-position fixture (this file's own existing convention for fast, deterministic tests) structurally cannot reproduce that mechanism, so a test claiming to would be testing something else while appearing to validate the real finding — the magnitude-bounding property is what a fast fixture actually CAN honestly demonstrate, and that's what was tested.
+- *Attempting the actual sign-flip fix (co-tuning correlated terms, or a confound-reducing sampling change) in this same session* — rejected as scope creep: both directions need real architectural design work and a real corpus to validate against, not a quick addition alongside closing out the regularization/learning-rate investigation; filed as its own, separate, explicitly not-yet-scoped ROADMAP item instead, the same splitting discipline 2026-09-22's own entry already used to keep the PSQT bug and this investigation as two separate items.
+
+---
+
 ### 2026-09-26 (11) — `-Wshadow`/`-Wconversion` enabled on GCC/Clang, scoped through `nightwing_warnings`, not `CMAKE_CXX_FLAGS`
 
 **Decision:** Added `-Wshadow -Wconversion` to the GCC/Clang branch of the `nightwing_warnings` INTERFACE target in `CMakeLists.txt`, alongside the existing `-Wall -Wextra -Wpedantic`. Left MSVC's own `/W4` branch unchanged.
