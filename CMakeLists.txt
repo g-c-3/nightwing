@@ -111,7 +111,27 @@ add_library(nightwing_warnings INTERFACE)
 if(MSVC)
     target_compile_options(nightwing_warnings INTERFACE /W4)
 else()
-    target_compile_options(nightwing_warnings INTERFACE -Wall -Wextra -Wpedantic)
+    # -Wshadow/-Wconversion added Session 143 (docs/DECISIONS.md,
+    # 2026-09-26 (11)), after being filed Session 140 as "investigate
+    # enabling, expect noise" and found, on direct investigation, to add
+    # ZERO warnings to this project's own code: -Wshadow found nothing
+    # at all across the whole first-party codebase, and -Wconversion's
+    # only 5 hits were all inside vendored Catch2 (a third-party
+    # dependency this target list never included until now, and still
+    # doesn't -- see below), none in nightwing's own code. Scoped to
+    # this INTERFACE target specifically, not CMAKE_CXX_FLAGS globally,
+    # so vendored FetchContent dependencies (Catch2) are NOT compiled
+    # with either flag and stay exactly as noisy or quiet as upstream
+    # left them -- this project has no business holding a third-party
+    # library to its own warning standard. MSVC's own /W4 above already
+    # covers the -Wshadow-equivalent class (its C4456 caught the exact
+    # bug -Wshadow would have caught immediately on GCC/Clang, had it
+    # been enabled at the time -- Session 140's own fix) and the
+    # -Wconversion-equivalent class (C4244, Session 136's own fix) under
+    # one flag already, which is why MSVC's own branch needed no change
+    # here.
+    target_compile_options(nightwing_warnings INTERFACE -Wall -Wextra -Wpedantic -Wshadow
+                                                          -Wconversion)
 endif()
 
 # --- Release: -O3 + LTO ---
