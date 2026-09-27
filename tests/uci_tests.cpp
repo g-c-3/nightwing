@@ -1172,14 +1172,22 @@ TEST_CASE("uci: 'go nodes <n>' caps the search well short of what an unbounded '
           "would take -- ROADMAP.md Priority Fixes (2026-09-22), item 5b (finding 9)",
           "[uci][go][nodes]") {
     init_all();
-    // Same real middlegame-ish FEN and rationale as this project's
+    // Kiwipete (a real, tactically rich middlegame position, and NOT an
+    // opening-book position -- a book-known position such as the
+    // 1.e4 e5 2.Nf3 Nc6 FEN this test previously used silently answers
+    // from book, with no search and no "info" line, once any earlier
+    // test in the SAME process has called book::init_book(): see this
+    // file's own MultiPV test comment on the identical trap; this test
+    // failed only when the test binary was run directly rather than
+    // via ctest's one-process-per-case isolation, verification report
+    // 2026-09-27). Same rationale as this project's
     // search-layer max_nodes test (tests/search_tests.cpp) -- a position
     // where depth 15 unbounded would take many tens of thousands of
     // nodes, so a small node cap actually being enforced is
     // demonstrated, not merely consistent with a trivially-short search
     // anyway.
     const std::string out =
-        run_uci({"position fen r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
+        run_uci({"position fen r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
                   "go depth 15 nodes 1000", "quit"});
     REQUIRE(contains(out, "bestmove "));
     REQUIRE_FALSE(contains(out, "bestmove 0000"));
@@ -1200,14 +1208,18 @@ TEST_CASE("uci: 'go searchmoves <m>' restricts 'bestmove' to the listed move -- 
           "Priority Fixes (2026-09-22), item 5b (finding 9)",
           "[uci][go][searchmoves]") {
     init_all();
-    // g1h3 (Nh3) is legal but a deliberately weak, unusual choice from
-    // the start position -- an unrestricted search would essentially
-    // never pick it on its own merits, making this the strongest
-    // possible confirmation that `searchmoves` is the reason it was
-    // played, not a coincidence.
+    // After 1.Nh3 (deliberately off-book -- a bare "position startpos"
+    // silently answers from book once any earlier test in the same
+    // process has called book::init_book(), skipping search entirely;
+    // this test failed only under direct-binary runs for exactly that
+    // reason, verification report 2026-09-27), h7h5 is legal but a
+    // deliberately weak, unusual reply -- an unrestricted search would
+    // essentially never pick it on its own merits, making this the
+    // strongest possible confirmation that `searchmoves` is the reason
+    // it was played, not a coincidence.
     const std::string out =
-        run_uci({"position startpos", "go depth 4 searchmoves g1h3", "quit"});
-    REQUIRE(contains(out, "bestmove g1h3"));
+        run_uci({"position startpos moves g1h3", "go depth 4 searchmoves h7h5", "quit"});
+    REQUIRE(contains(out, "bestmove h7h5"));
 }
 
 TEST_CASE("uci: 'go mate <n>' is accepted and parsed, not silently dropped -- ROADMAP.md "
