@@ -2264,6 +2264,37 @@ it either way.
       those same 2 `taper:` tests, still the only ones missing) is
       identical; the absolute numbers moving is just the suite growing
       around an unchanged gap, not new information about the gap itself.
+      STATUS UPDATE, Session 141: real progress, still open. A
+      from-scratch Linux-sandbox investigation ruled out two of the
+      three layers this bug could live in, with direct evidence, not
+      assumption: (1) the COMPILER is not the cause — both GCC and a
+      freshly-installed Clang 18, built and run locally in this sandbox,
+      produce IDENTICAL, complete 697-entry `--list-tests` output,
+      including both taper tests; (2) Catch2's own CMake discovery
+      script (`CatchAddTests.cmake`) is not the cause either — read in
+      full; it parses `--list-tests --verbosity quiet` output strictly
+      one line per test, with no multi-line-merging logic that could
+      plausibly explain losing exactly 2 adjacent entries, and a local
+      run of that exact parsing logic against this project's own real
+      build reproduces all 697 correctly. This narrows the remaining
+      candidates to something specific to the macOS RUNNER/TOOLCHAIN
+      itself that a Linux sandbox cannot reproduce — the leading
+      hypothesis (unconfirmed): a static-initializer registration-order
+      issue, or an identical-code-folding-style linker optimization on
+      Apple's own linker collapsing two structurally near-identical
+      TEST_CASEs (the two affected tests are short, adjacent in source
+      order, and nearly identical in shape) into one. A macOS-only
+      diagnostic step was added to `.github/workflows/ci.yml` (runs on
+      both Debug and Release) that queries the raw compiled binary's own
+      `--list-tests` output AND the actually-generated CMake discovery
+      script directly, side by side — the next real CI run will show
+      definitively whether the binary itself already omits the two
+      tests (pointing to a runtime/linker cause) or whether the binary
+      lists both correctly and something later in the pipeline drops
+      them (pointing to a CMake/CTest-on-macOS cause) — a question this
+      Linux sandbox could investigate the SCRIPT for but never actually
+      answer for real macOS output. See docs/DECISIONS.md,
+      2026-09-26 (9), for the full investigation account.
 - [ ] **Investigate enabling `-Wshadow`/`-Wconversion` on this project's
       own GCC/Clang builds** — filed Session 140, after real CI logs
       produced a THIRD distinct compiler-specific-only warning class in

@@ -4,7 +4,27 @@ Newest entry at top.
 
 ---
 
-### Session 140 — 2026-09-26 — CI-log triage: first fully-green run across all 6 jobs (confirming Sessions 137/138's fixes on real hardware) — plus one new MSVC-only warning, introduced by Session 137's own fix, found and fixed
+### Session 141 — 2026-09-26 — macOS CTest-registration gap: real investigation from the Linux sandbox, two of three candidate layers ruled out with direct evidence, a targeted diagnostic step added to the next real CI run
+
+Triggered by "Continue macOS test gap" after the person reported CI green (verbal, no log this time). Since the gap itself needs real macOS hardware this sandbox doesn't have, focused on what a Linux sandbox actually CAN determine: ruling candidate causes in or out with direct evidence, rather than guessing.
+
+**Compiler ruled out.** Installed Clang 18 in this sandbox (`apt-get install clang-18` — the earlier Session 140-adjacent attempt had failed on an unrelated broken package dependency; a more targeted `--no-install-recommends` install succeeded this time). Hit one unrelated, genuine Clang-18-vs-mainline-GCC portability wrinkle building this project (`src/board/attacks.cpp`'s `NIGHTWING_BMI2_TARGET` GNU attribute placed on the line before `[[nodiscard]]` parses fine under GCC but not Clang 18) — worked around it LOCALLY, in the sandbox copy only, purely to unblock this investigation; NOT part of this session's shipped changes, since real macOS CI already builds this exact code cleanly with Apple Clang, meaning this specific issue doesn't reproduce there (flagged here for the record in case it ever does on a different Clang version, not filed as a ROADMAP item since there's no confirmed real-world impact). With that unblocked, both the GCC build (already existing) and the fresh Clang build's own `--list-tests --verbosity quiet` output were checked directly: BOTH list all 697 tests, including both `taper:` tests, byte-for-byte identical counts. The compiler is not the cause.
+
+**Catch2's own CMake discovery script ruled out.** Read `CatchAddTests.cmake` (the actual script `catch_discover_tests()` runs, vendored via this project's own Catch2 FetchContent) in full. It invokes the compiled binary with exactly `--list-tests --verbosity quiet`, captures stdout, and parses it as ONE TEST PER LINE with no multi-line-reassembly logic of any kind — ruling out an earlier hypothesis (word-wrapping of long test names merging two entries) structurally, not just empirically: the parsing code has nothing that COULD merge two lines even if wrapping occurred. Directly inspected this project's own generated `nightwing_tests-*_tests.cmake` output (both the GCC and Clang builds) and confirmed 697 `add_test()` calls in both, including both taper tests, with the exact same `SKIP_RETURN_CODE 4` property CatchAddTests.cmake always sets — the script itself, run against this project's own real build, works correctly.
+
+**Narrowed to the macOS runner/toolchain itself** — something a Linux sandbox cannot directly reproduce or rule in/out further. Leading hypothesis, explicitly UNCONFIRMED: a static-initializer registration-order issue, or an identical-code-folding-style linker optimization on Apple's own linker collapsing the two affected TEST_CASEs (short, adjacent in source order, structurally near-identical to each other) into one. Not chased further without real hardware to test it against.
+
+**What was built, to make progress despite the hardware gap:** a new macOS-only diagnostic step in `.github/workflows/ci.yml` (runs on both Debug and Release matrix legs), placed right after the Build step. It runs the compiled binary's own `--list-tests --verbosity quiet` directly and greps for `taper:`, AND separately inspects the actually-generated CMake discovery script's own `add_test()` calls for the same — side by side, in the same log. This answers, from the next real CI run alone, the one question this sandbox genuinely cannot: does the COMPILED BINARY ITSELF already omit the two tests on real macOS (pointing to a runtime/linker-level cause), or does the binary list both correctly while something later in CMake's own macOS-specific pipeline drops them (pointing to a different, CMake/CTest-level cause)? Read-only and purely informational — doesn't gate the job, doesn't change what passes or fails, just surfaces a diagnostic a future session (or this one, once results are back) can act on.
+
+**Verification:** the new workflow step was validated for YAML syntax (parses cleanly) and its exact shell commands were dry-run locally against this project's own real Linux build (both GCC and Clang), confirming the commands themselves are correct and produce the expected output shape — the one thing that could NOT be verified from this sandbox is what they'll actually show on real macOS, which is the entire point of adding them.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-26 (9).
+
+**Next session start point:** if a new CI log arrives, read the new macOS diagnostic step's own output FIRST — it should immediately answer "binary-level or CMake-level" and point the next investigation step at the right layer instead of guessing. Absent that, the other open items are unchanged: independently re-confirming Session 140's `C4456` fix, and whatever `docs/ROADMAP.md`'s own next unchecked item is otherwise.
+
+---
+
+
 
 Triggered by the person uploading a real CI log bundle, no further instruction — the proper triage this project's own standard calls for, superseding Session 139's own verbal "everything green" report with an actual log read.
 
