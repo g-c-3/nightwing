@@ -4,7 +4,23 @@ Newest entry at top.
 
 ---
 
-### Session 142 — 2026-09-26 — CORRECTION: the "macOS CTest-registration gap" (Sessions 135, 136, 139, 140, 141) was never a bug — a regex bug in this log's own ad-hoc diffing script misidentified which 2 tests were actually missing, for 5 sessions running
+### Session 143 — 2026-09-26 — `-Wshadow`/`-Wconversion` enabled project-wide, after direct investigation found the expected noise didn't materialize
+
+Triggered by "Continue" — no new CI logs pending, so picked up the last remaining open item: Session 140's own filed "investigate enabling `-Wshadow`/`-Wconversion`," deferred at the time on the assumption both would be noisy on a mature codebase.
+
+**Investigation, not assumption:** built this project locally (GCC, this sandbox) with each flag added, first via a blanket `CMAKE_CXX_FLAGS` addition to see the raw signal, then properly scoped through the real `nightwing_warnings` INTERFACE target to confirm vendored dependencies wouldn't be affected. `-Wshadow`: zero warnings anywhere in the entire first-party codebase. `-Wconversion`: exactly 5 warnings, ALL inside vendored Catch2 (`catch_stats.cpp`, `catch_timer.cpp`, `catch_random_number_generator.cpp`) — zero in any of this project's own `src/` or `tests/` files. The noise Session 140 expected, based on this being "a mature, already-large codebase," simply wasn't there — worth noting as a data point against assuming a flag will be noisy without checking.
+
+**What was built:** both flags added to `nightwing_warnings`'s GCC/Clang branch in `CMakeLists.txt`, alongside the existing `-Wall -Wextra -Wpedantic`. Deliberately scoped to this INTERFACE target (which only first-party targets link against) rather than a global `CMAKE_CXX_FLAGS` addition — confirmed this matters in practice, not just in principle: the blanket-flags experiment DID pick up Catch2's own 5 `-Wconversion` warnings, while the properly-scoped INTERFACE-target version compiled Catch2 completely unaffected, as intended. MSVC's own `/W4` branch needed no change, since `/W4` already covers both warning classes (already demonstrated concretely by real CI: its `C4456` caught the exact shadowing bug `-Wshadow` would have caught immediately on GCC/Clang had it been enabled before Session 137 introduced it — Session 140's own fix — and its `C4244` likewise for the narrowing class `-Wconversion` covers — Session 136's own fix).
+
+**Verification:** rebuilt both Release and Debug/ASan+UBSan from a clean configure (GCC, this sandbox) with the real `CMakeLists.txt` change — zero warnings in either (confirming the interface-target scoping works as intended, not just the blanket-flags experiment). Full suite: 695/697 in both configs, the identical 2 pre-existing sandbox-specific failures documented since Session 133, zero regressions. `bench` totals unchanged (`36154` overall).
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-26 (11).
+
+**Next session start point:** no items are currently queued beyond ordinary CI-log triage (if/when the next log arrives, confirm this session's own `-Wshadow`/`-Wconversion` addition doesn't surface anything new on real macOS CI specifically — Apple Clang is a different Clang build than the mainline Clang 18 tested in this sandbox, so it's the one platform this session's own local verification couldn't directly confirm; Windows/MSVC is already covered, per its own `/W4` already having caught both warning classes' real-world instances before this session even started) or whatever `docs/ROADMAP.md`'s own next unchecked item is.
+
+---
+
+
 
 Triggered by the person uploading the real CI log bundle for Session 141's own push, containing the new macOS diagnostic step's own output. Reading that output directly is what caught this.
 

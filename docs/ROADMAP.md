@@ -2360,7 +2360,7 @@ it either way.
       unedited below this update line, rather than deleted, per this
       project's own "the repo is the memory" convention — the retraction
       item above is the corrected, current understanding.
-- [ ] **Investigate enabling `-Wshadow`/`-Wconversion` on this project's
+- [x] **Investigate enabling `-Wshadow`/`-Wconversion` on this project's
       own GCC/Clang builds** — filed Session 140, after real CI logs
       produced a THIRD distinct compiler-specific-only warning class in
       as many triage sessions that this project's own GCC-based sandbox
@@ -2380,6 +2380,23 @@ it either way.
       decide per-finding whether to fix, suppress with a documented
       reason, or leave the flag off entirely if the signal-to-noise
       ratio turns out too low to justify enabling it project-wide.
+      DONE, Session 143 — the expected noise didn't materialize:
+      `-Wshadow` found ZERO issues anywhere in this project's own
+      first-party code, and `-Wconversion`'s only 5 hits were all inside
+      vendored Catch2 (a third-party dependency), none in nightwing's
+      own code. Both enabled permanently on the GCC/Clang branch of the
+      `nightwing_warnings` INTERFACE target (scoped there, not via
+      global `CMAKE_CXX_FLAGS`, so FetchContent dependencies like Catch2
+      stay unaffected and are not held to this project's own warning
+      standard). MSVC's own `/W4` needed no change — it already covers
+      both classes under one flag (its `C4456` already caught the exact
+      bug `-Wshadow` would have caught on GCC/Clang immediately, had it
+      been enabled at the time — Session 140's own fix; its `C4244`
+      likewise for `-Wconversion` — Session 136's own fix). Verified
+      clean (zero warnings, zero regressions, 695/697 in both Release
+      and Debug/ASan+UBSan, the same 2 pre-existing sandbox-specific
+      failures, `bench` totals unchanged) before shipping. See
+      docs/DECISIONS.md, 2026-09-26 (11).
 - [x] **Thread `go nodes`/`searchmoves` through MultiPV and pondering**
       (filed 2026-09-24, from item 5b's own deliberate scope limit
       above) — DONE, Session 134. `search_iterative_deepening_multipv()`
