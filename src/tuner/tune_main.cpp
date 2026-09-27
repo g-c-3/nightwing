@@ -255,13 +255,25 @@ int main(int argc, char** argv) {
     // finite_diff_epsilon default) tune()'s own material mode does, so
     // TuneConfig's own default learning_rate (20000.0) is the same
     // starting point that's already known to work for a finite-
-    // difference gradient at this general centipawn scale -- not a
-    // guess, but also not independently re-measured against these five
-    // terms' own real production data yet (this session's own scope:
-    // make the run possible and correct, not claim its hyperparameters
-    // are already tuned for a real corpus -- same honesty convention
-    // --psqt's own introducing session already established, tune.h's
-    // TuneConfig::iterations/learning_rate doc comments).
+    // difference gradient at this general centipawn scale. This WAS
+    // flagged as "not independently re-measured against these five
+    // terms' own real production data yet" (docs/DECISIONS.md,
+    // 2026-09-21 (3)) -- re-verified directly this session (ROADMAP.md
+    // "Investigate regularization / per-term learning rates for the
+    // sign-flip instability," ), sweeping 2000/5000/20000 against a
+    // real self-play corpus: all three converge every mobility
+    // parameter to the SAME sign, just at different speeds (docs/
+    // DECISIONS.md has the full swept table) -- confirming a single
+    // shared rate is adequate for all five terms, not a gap.
+    //
+    // `l2_lambda` (the 5th positional argument below) similarly
+    // defaults to TuneConfig's own 0.0 for these five modes, unchanged
+    // -- but see tuner::kRecommendedTermL2Lambda (tune.h) for a
+    // measured, stable, magnitude-bounding value worth opting into for
+    // a real term-tuning run specifically (it does NOT correct a
+    // sign-flipped parameter, only its magnitude -- that doc comment
+    // has the full account, and the true fix is a separate, filed
+    // ROADMAP item, not this CLI's job).
 
     if (argc > arg_offset) {
         config.iterations = std::atoi(argv[arg_offset]);

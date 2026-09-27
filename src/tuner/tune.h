@@ -765,6 +765,22 @@ struct TuneConfig {
     /// CLI) does check, printing a warning (not refusing to run — a
     /// caller may have their own reasons, e.g. deliberately probing this
     /// exact boundary) whenever it doesn't hold.
+    ///
+    /// DOES NOT FIX A SIGN-FLIPPED PARAMETER, only bounds its magnitude
+    /// — confirmed by direct measurement (ROADMAP.md "Investigate
+    /// regularization / per-term learning rates for the sign-flip
+    /// instability," closed this session; full sweep in docs/
+    /// DECISIONS.md). A parameter that finite-difference gradient
+    /// descent converges to with the "wrong" sign (docs/DECISIONS.md,
+    /// 2026-09-22 — a real, if unwelcome, local optimum from
+    /// `tune_term()`'s own single-term-isolation design, not noise)
+    /// stays that sign at every `l2_lambda` tested up to
+    /// `l2_update_is_stable()`'s own ceiling — regularization shrinks
+    /// it toward zero, it does not relocate it to a different, correct
+    /// optimum. See `kRecommendedTermL2Lambda` below for a concrete,
+    /// stable, magnitude-bounding (not sign-correcting) value for the
+    /// five tune_mobility()/tune_space()/tune_threats()/
+    /// tune_king_safety()/tune_pawns() term modes specifically.
     double l2_lambda = 0.0;
 };
 
@@ -785,6 +801,67 @@ struct TuneConfig {
                                                    double l2_lambda) noexcept {
     return l2_lambda == 0.0 || (2.0 * learning_rate * l2_lambda) < 1.0;
 }
+
+/// A conservative, empirically-checked `l2_lambda` for the five
+/// tune_mobility()/tune_space()/tune_threats()/tune_king_safety()/
+/// tune_pawns() term modes specifically (ROADMAP.md "Investigate
+/// regularization / per-term learning rates for the sign-flip
+/// instability", filed Session 122, closed this session) — NOT the
+/// default `TuneConfig::l2_lambda` (still 0.0, unchanged, so every
+/// pre-existing tune()/tune_psqt()/tune_term() call and test keeps its
+/// exact prior behavior), a value a CALLER of one of the five term
+/// functions may opt into.
+///
+/// WHAT THIS DOES AND DOES NOT FIX, confirmed by direct measurement
+/// against a real 6015-position self-play corpus (docs/DECISIONS.md,
+/// this constant's own dated entry, has the full swept table): the
+/// sign flips docs/DECISIONS.md's 2026-09-22 entry found in mobility/
+/// space/king-safety's weaker sub-terms are a genuine converged local
+/// optimum from tune_term()'s own single-term-isolation design (every
+/// OTHER eval term frozen at its current default while this one moves)
+/// — NOT a step-size or magnitude artifact. Sweeping `l2_lambda` from
+/// 0.0 up to just under the `l2_update_is_stable()` ceiling at this
+/// file's own default `learning_rate` (20000.0) shrinks every flipped
+/// parameter's magnitude monotonically toward zero (e.g. mobility's
+/// own `knight_mg`: -21.1 at l2=0 -> -8.5 at 5e-6 -> -5.4 at 1e-5 ->
+/// -3.1 at 2e-5) but never crosses back to the expected sign at any
+/// value that stays stable — regularization pulls a spurious optimum
+/// TOWARD the starting point, it does not relocate it to a different,
+/// correct one. A separate sweep of `learning_rate` alone (2000/5000/
+/// 20000, l2=0, fixed iteration count) confirmed the same thing a
+/// different way: every rate converges the same sign, just at
+/// different speeds (mobility's `bishop_eg`: -5.5 at lr=2000 vs -50.5
+/// at lr=20000 after the same 150 iterations — same direction, further
+/// along) — so a per-term learning rate is not a fix for the sign flip
+/// either, and TuneConfig's shared default (originally flagged as "not
+/// independently re-verified for these five terms," docs/DECISIONS.md,
+/// 2026-09-21 (3)) is hereby confirmed adequate for all five: nothing
+/// about their own gradient scale calls for a term-specific rate the
+/// way PSQT's genuinely different (analytic-gradient) algorithm did.
+///
+/// What THIS value legitimately buys: bounding a term-tuning run's
+/// worst-case output magnitude (an extreme, obviously-wrong value like
+/// -50.5 is a real risk to a human hand-transcribing "tuned" values
+/// into an eval/*.h constant without noticing it's a runaway artifact,
+/// not a real signal) without materially changing a well-behaved
+/// term's own converged value — `pawns`/king-safety's dominant terms
+/// (docs/DECISIONS.md, 2026-09-22) are large-effect and well-
+/// represented enough that a lambda this small barely moves them.
+/// 1e-5 sits comfortably inside `l2_update_is_stable()`'s own ceiling
+/// at learning_rate=20000.0 (1/(2*20000) = 2.5e-5) with real headroom,
+/// while still producing the meaningful magnitude reduction measured
+/// above — not the largest stable value, deliberately, since staying
+/// well clear of a stability boundary that itself depends on
+/// `learning_rate` (a caller-suppliable value, not fixed) is safer
+/// than hugging it.
+///
+/// The actual fix for the sign flip itself — co-tuning correlated
+/// terms together rather than freezing them, or a sampling change that
+/// reduces the spurious correlation tune_term()'s own isolation
+/// design creates — is explicitly OUT of this constant's scope and
+/// filed as its own, separate, not-yet-scoped ROADMAP item (see
+/// ROADMAP.md, filed this session) rather than claimed as solved here.
+inline constexpr double kRecommendedTermL2Lambda = 1e-5;
 
 /// One entry in TuneResult::history below — a single iteration's
 /// resulting loss, for plotting/logging a tuning run's own convergence
