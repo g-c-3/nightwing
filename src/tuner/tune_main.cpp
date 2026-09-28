@@ -24,6 +24,23 @@
 //   nightwing_tune --threats < training_data.txt
 //   nightwing_tune --king-safety < training_data.txt
 //   nightwing_tune --pawns < training_data.txt
+//   nightwing_tune --fit-k < training_data.txt
+//
+// K-FITTING (Session 149, docs/DECISIONS.md 2026-09-27 (5)/(6)): Texel's
+// sigmoid scale K was a fixed 400 in every mode until now, found
+// miscalibrated ~3-5x on real corpora. `--fit-k` is a standalone mode:
+// it evaluates the corpus once at default weights, fits K
+// (tuner::fit_sigmoid_scale(), tune.h), prints `sigmoid_scale=<K>` to
+// stdout (diagnostics to stderr) and exits without tuning anything.
+// Every other mode's sigmoid_scale positional slot also accepts the
+// literal `fit` (or any value <= 0): K is then fitted from the corpus
+// first and used for the run. When K is fitted and learning_rate was
+// NOT given explicitly, the mode's default learning_rate is scaled by
+// fitted_K/400 (the gradient shrinks ~1/K; Session 148 needed x3.75 at
+// K=1500) -- a first-order heuristic, not a re-measured optimum, so
+// an explicit learning_rate always wins. A blank positional argument
+// ("" or "-") keeps that slot's default, e.g.
+//   nightwing_tune --mobility 100 "" "" fit < training_data.txt
 //
 // The five new "--term" modes (ROADMAP.md's "Generalize tune() to the 5
 // remaining 'beyond PSQT' tables" item — docs/DECISIONS.md, 2026-09-21
@@ -145,6 +162,15 @@ void print_term_weights(const std::array<nightwing::tuner::ParameterRef<Weights>
     }
 }
 
+/// True when positional argument `arg` was left blank (an empty string
+/// or a lone "-"), meaning "keep this slot's default" -- lets a caller
+/// reach a later slot (e.g. `fit` in the sigmoid_scale position)
+/// without restating earlier defaults. Without this, strtod("") == 0
+/// silently zeroed learning_rate/epsilon and produced NaN weights.
+bool is_blank_arg(const char* arg) {
+    return arg[0] == '\0' || (arg[0] == '-' && arg[1] == '\0');
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -158,7 +184,7 @@ int main(int argc, char** argv) {
     // exact same slot it has in material mode, so switching modes
     // never requires renumbering the rest of the command line (this
     // file's own header comment).
-    enum class Mode { Material, Psqt, Mobility, Space, Threats, KingSafety, Pawns };
+    enum class Mode { Material, Psqt, Mobility, Space, Threats, KingSafety, Pawns, FitK };
     Mode mode = Mode::Material;
     int arg_offset = 1;
     if (argc > 1 && std::strcmp(argv[1], "--psqt") == 0) {
@@ -178,6 +204,9 @@ int main(int argc, char** argv) {
         arg_offset = 2;
     } else if (argc > 1 && std::strcmp(argv[1], "--pawns") == 0) {
         mode = Mode::Pawns;
+        arg_offset = 2;
+    } else if (argc > 1 && std::strcmp(argv[1], "--fit-k") == 0) {
+        mode = Mode::FitK;
         arg_offset = 2;
     }
     const bool psqt_mode = (mode == Mode::Psqt);
@@ -275,13 +304,13 @@ int main(int argc, char** argv) {
     // has the full account, and the true fix is a separate, filed
     // ROADMAP item, not this CLI's job).
 
-    if (argc > arg_offset) {
+    if (argc > arg_offset && !is_blank_arg(argv[arg_offset])) {
         config.iterations = std::atoi(argv[arg_offset]);
     }
-    if (argc > arg_offset + 1) {
+    if (argc > arg_offset + 1 && !is_blank_arg(argv[arg_offset + 1])) {
         config.learning_rate = std::strtod(argv[arg_offset + 1], nullptr);
     }
-    if (argc > arg_offset + 2) {
+    if (argc > arg_offset + 2 && !is_blank_arg(argv[arg_offset + 2])) {
         // Parsed in both modes (keeps every later positional argument's
         // own slot number identical between modes -- this file's own
         // header comment), but only actually consulted by material
@@ -289,10 +318,19 @@ int main(int argc, char** argv) {
         // tune_psqt() has no use for it at all.
         config.finite_diff_epsilon = std::strtod(argv[arg_offset + 2], nullptr);
     }
-    if (argc > arg_offset + 3) {
+    // `fit` (or any non-positive value) in the sigmoid_scale slot asks
+    // for K to be fitted from the corpus; see this file's header comment.
+    bool fit_k_requested = false;
+    if (argc > arg_offset + 3 && !is_blank_arg(argv[arg_offset + 3])) {
         config.sigmoid_scale = std::strtod(argv[arg_offset + 3], nullptr);
+        if (std::strcmp(argv[arg_offset + 3], "fit") == 0 || !(config.sigmoid_scale > 0.0)) {
+            fit_k_requested = true;
+            config.sigmoid_scale = 400.0;
+        }
     }
-    if (argc > arg_offset + 4) {
+    const bool learning_rate_explicit =
+        (argc > arg_offset + 1 && !is_blank_arg(argv[arg_offset + 1]));
+    if (argc > arg_offset + 4 && !is_blank_arg(argv[arg_offset + 4])) {
         config.l2_lambda = std::strtod(argv[arg_offset + 4], nullptr);
     }
 
@@ -317,6 +355,7 @@ int main(int argc, char** argv) {
         case Mode::Threats: mode_name = "threats"; break;
         case Mode::KingSafety: mode_name = "king-safety"; break;
         case Mode::Pawns: mode_name = "pawns"; break;
+        case Mode::FitK: mode_name = "fit-k"; break;
     }
 
     const std::vector<nightwing::tuner::SelfPlayPosition> positions =
@@ -337,7 +376,7 @@ int main(int argc, char** argv) {
                       "Material held fixed at eval::default_material_weights() for this whole "
                       "run (tune_psqt() does not co-tune material -- tune.h's own doc comment). "
                       "No PsqtWeights field is anchored.\n");
-    } else {
+    } else if (mode != Mode::FitK) {
         // The five term modes (mobility/space/threats/king-safety/pawns)
         // all share this same convention -- see tune.h's own
         // "Generalize tune()" section header comment for why none of
@@ -355,6 +394,33 @@ int main(int argc, char** argv) {
                       "nightwing_selfplay's output in, e.g.:\n"
                       "  nightwing_selfplay 200 1 4 8 200 | nightwing_tune\n");
         return 1;
+    }
+
+    if (mode == Mode::FitK || fit_k_requested) {
+        const nightwing::tuner::SigmoidScaleFit fit =
+            nightwing::tuner::fit_sigmoid_scale(positions);
+        std::fprintf(stderr,
+                      "K-fit: sigmoid_scale=%.2f loss=%.6f (loss at fixed 400: %.6f), %d loss "
+                      "evaluations%s\n",
+                      fit.sigmoid_scale, fit.loss, fit.loss_at_default_scale, fit.evaluations,
+                      fit.degenerate ? " -- DEGENERATE corpus (no eval signal), kept 400" : "");
+        if (fit.hit_bound) {
+            std::fprintf(stderr,
+                          "WARNING: fitted K is at the edge of the searched range [50, 10000] -- "
+                          "the true optimum may lie outside it; do not trust this value.\n");
+        }
+        if (mode == Mode::FitK) {
+            std::cout << "sigmoid_scale=" << fit.sigmoid_scale << "\n";
+            return 0;
+        }
+        config.sigmoid_scale = fit.sigmoid_scale;
+        if (!learning_rate_explicit) {
+            config.learning_rate *= fit.sigmoid_scale / 400.0;
+            std::fprintf(stderr, "learning_rate scaled by K/400 -> %g (not given explicitly)\n",
+                          config.learning_rate);
+        }
+        std::fprintf(stderr, "Using fitted sigmoid_scale=%g for this run.\n",
+                      config.sigmoid_scale);
     }
 
     if (psqt_mode) {

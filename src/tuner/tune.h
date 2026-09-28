@@ -992,6 +992,76 @@ struct TuneResult {
                                    const eval::KingSafetyWeights* king_safety_weights = nullptr,
                                    const eval::PawnsWeights* pawns_weights = nullptr) noexcept;
 
+/// The Texel loss (the same mean squared error compute_loss() above
+/// computes) evaluated from PRECOMPUTED white-relative scores instead
+/// of from positions: `white_relative_scores[i]` is
+/// eval::evaluate()'s own result for position i, `results[i]` its
+/// labeled result. Exists so fit_sigmoid_scale() below can probe many
+/// candidate `sigmoid_scale` values without re-evaluating every
+/// position for each one (evaluate() dominates compute_loss()'s cost,
+/// and it does not depend on `sigmoid_scale` at all). Returns 0.0 when
+/// the inputs are empty or their sizes differ (a defensive sentinel,
+/// matching compute_loss()'s own empty-input convention).
+[[nodiscard]] double compute_loss_from_scores(const std::vector<int>& white_relative_scores,
+                                               const std::vector<double>& results,
+                                               double sigmoid_scale) noexcept;
+
+/// Outcome of fit_sigmoid_scale() below.
+struct SigmoidScaleFit {
+    /// The fitted K (centipawns per logistic unit) — the value of
+    /// `sigmoid_scale` minimizing the Texel loss at the engine's
+    /// compiled-in default weights over the supplied corpus. Equals
+    /// 400.0 (TuneConfig's own default) when no fit was possible (see
+    /// `degenerate`).
+    double sigmoid_scale = 400.0;
+
+    /// Texel loss at the fitted `sigmoid_scale`.
+    double loss = 0.0;
+
+    /// Texel loss at the fixed 400.0 that every tuning run used
+    /// before K-fitting existed — kept alongside `loss` so a caller
+    /// can see how much the fixed value was costing on this corpus.
+    double loss_at_default_scale = 0.0;
+
+    /// Number of loss evaluations the search performed (each one
+    /// O(positions), no re-evaluation — see compute_loss_from_scores()).
+    int evaluations = 0;
+
+    /// True when the fitted value landed within one search-grid step of
+    /// `min_scale`/`max_scale` — the true optimum may lie outside the
+    /// searched range (or the corpus carries almost no signal), so
+    /// callers should treat the result with suspicion and warn.
+    bool hit_bound = false;
+
+    /// True when the corpus was empty or every position scored exactly
+    /// 0 at default weights: the loss is then flat in K and there is
+    /// nothing to fit, so `sigmoid_scale` is left at 400.0.
+    bool degenerate = false;
+};
+
+/// Texel's Tuning Method, step one (Chess Programming Wiki, "Texel's
+/// Tuning Method"): fits the sigmoid scale K from the data BEFORE any
+/// weight is tuned, instead of trusting a fixed constant. Every
+/// position is evaluated ONCE at the compiled-in default weights (all
+/// material/PSQT/term overrides null), then the loss is minimized over
+/// `sigmoid_scale` in [`min_scale`, `max_scale`]: a coarse log-spaced
+/// grid scan brackets the minimum (robust to any non-unimodality in the
+/// loss curve), then golden-section search on log(K) refines it to
+/// `relative_tolerance`. Filed Session 148 (docs/DECISIONS.md,
+/// 2026-09-27 (5)): the fixed 400 was found miscalibrated ~3-5x on real
+/// self-play corpora, which biased every isolated term-tuning run.
+///
+/// Note for callers: the gradient's scale moves roughly as 1/K, so a
+/// `TuneConfig::learning_rate` calibrated at K=400 should be scaled by
+/// roughly fitted_K/400 when the fitted K is used (nightwing_tune does
+/// this automatically when the learning rate was not given explicitly).
+///
+/// Precondition: same as compute_loss()'s own.
+[[nodiscard]] SigmoidScaleFit fit_sigmoid_scale(const std::vector<SelfPlayPosition>& positions,
+                                                 double min_scale = 50.0,
+                                                 double max_scale = 10000.0,
+                                                 double relative_tolerance = 1e-4) noexcept;
+
 /// Runs `config.iterations` steps of finite-difference gradient descent
 /// (this file's own header comment for the full algorithm) starting
 /// from `initial_weights` (defaults to eval::default_material_weights()

@@ -4,7 +4,10 @@
 
 #include "tuner/tune.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <vector>
 
 #include "board/fen.h"
 #include "eval/eval.h"
@@ -72,6 +75,107 @@ double compute_loss(const std::vector<SelfPlayPosition>& positions,
         sum_squared_error += error * error;
     }
     return sum_squared_error / static_cast<double>(positions.size());
+}
+
+double compute_loss_from_scores(const std::vector<int>& white_relative_scores,
+                                   const std::vector<double>& results,
+                                   double sigmoid_scale) noexcept {
+    if (white_relative_scores.empty() || white_relative_scores.size() != results.size()) {
+        return 0.0;
+    }
+    double sum_squared_error = 0.0;
+    for (std::size_t i = 0; i < white_relative_scores.size(); ++i) {
+        const double predicted =
+            sigmoid(static_cast<double>(white_relative_scores[i]) / sigmoid_scale);
+        const double error = predicted - results[i];
+        sum_squared_error += error * error;
+    }
+    return sum_squared_error / static_cast<double>(white_relative_scores.size());
+}
+
+SigmoidScaleFit fit_sigmoid_scale(const std::vector<SelfPlayPosition>& positions,
+                                   double min_scale, double max_scale,
+                                   double relative_tolerance) noexcept {
+    SigmoidScaleFit fit;
+    if (positions.empty() || !(min_scale > 0.0) || !(max_scale > min_scale)) {
+        fit.degenerate = true;
+        return fit;
+    }
+
+    // One evaluate() per position, at the compiled-in defaults -- the
+    // same evaluation compute_loss() performs with every override
+    // pointer null, minus the sigmoid, which is all K touches.
+    const eval::MaterialWeights material = eval::default_material_weights();
+    std::vector<int> scores;
+    std::vector<double> results;
+    scores.reserve(positions.size());
+    results.reserve(positions.size());
+    bool any_nonzero = false;
+    for (const SelfPlayPosition& position : positions) {
+        const board::Position pos = board::parse_fen(position.fen);
+        const int white_relative = eval::evaluate(pos, nullptr, nullptr, &material);
+        any_nonzero = any_nonzero || (white_relative != 0);
+        scores.push_back(white_relative);
+        results.push_back(position.result);
+    }
+
+    fit.loss_at_default_scale = compute_loss_from_scores(scores, results, 400.0);
+    if (!any_nonzero) {
+        // Loss is identical for every K: nothing to fit.
+        fit.degenerate = true;
+        fit.loss = fit.loss_at_default_scale;
+        return fit;
+    }
+
+    auto loss_at_log = [&](double log_k) {
+        ++fit.evaluations;
+        return compute_loss_from_scores(scores, results, std::exp(log_k));
+    };
+
+    // Coarse log-spaced grid to bracket the minimum.
+    constexpr int kGridPoints = 41;
+    const double log_min = std::log(min_scale);
+    const double log_max = std::log(max_scale);
+    const double step = (log_max - log_min) / static_cast<double>(kGridPoints - 1);
+    int best_index = 0;
+    double best_loss = loss_at_log(log_min);
+    for (int i = 1; i < kGridPoints; ++i) {
+        const double loss = loss_at_log(log_min + step * i);
+        if (loss < best_loss) {
+            best_loss = loss;
+            best_index = i;
+        }
+    }
+    fit.hit_bound = (best_index == 0 || best_index == kGridPoints - 1);
+
+    // Golden-section refinement inside the bracket around the best cell.
+    double lo = log_min + step * std::max(best_index - 1, 0);
+    double hi = log_min + step * std::min(best_index + 1, kGridPoints - 1);
+    constexpr double kInvPhi = 0.6180339887498949;
+    double x1 = hi - kInvPhi * (hi - lo);
+    double x2 = lo + kInvPhi * (hi - lo);
+    double f1 = loss_at_log(x1);
+    double f2 = loss_at_log(x2);
+    // Width in log space equals the relative width in K to first order.
+    while ((hi - lo) > relative_tolerance) {
+        if (f1 < f2) {
+            hi = x2;
+            x2 = x1;
+            f2 = f1;
+            x1 = hi - kInvPhi * (hi - lo);
+            f1 = loss_at_log(x1);
+        } else {
+            lo = x1;
+            x1 = x2;
+            f1 = f2;
+            x2 = lo + kInvPhi * (hi - lo);
+            f2 = loss_at_log(x2);
+        }
+    }
+
+    fit.sigmoid_scale = std::exp(0.5 * (lo + hi));
+    fit.loss = compute_loss_from_scores(scores, results, fit.sigmoid_scale);
+    return fit;
 }
 
 TuneResult tune(const std::vector<SelfPlayPosition>& positions,
