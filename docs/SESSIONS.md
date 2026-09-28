@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 148 — 2026-09-27 — Sign-flip investigation, third experiment ("Continue"; no code shipped): fixed sigmoid_scale=400 found miscalibrated ~3-5x
+
+Diagnosed the reproducible mobility bias by correlating default-mobility differential with the result residual: strongly negative at K=400 on all three corpora, sign-flipping at K>=1600; loss-optimal K is ~1200-2000 (loss 0.0407 -> 0.0285 on corpus 1). Not a side-to-move artifact. Re-running isolated mobility tuning at K=1500 still left `knight_mg` negative and EG unstable, so K is a large contributor, not the whole story. Also caught and documented a harness trap (`MobilityWeights z{}` yields defaults, not zeros). Filed a new ROADMAP item: fit K from data before tuning. See docs/DECISIONS.md, 2026-09-27 (5). No `src/` or test changes.
+
+**Next session start point:** implement the K-fit step in `nightwing_tune` (with a synthetic recover-known-K test), then re-run the term sweeps and revisit the sign-flip item.
+
+---
+
+### Session 147 — 2026-09-27 — Sign-flip fix, second experiment ("Psqt"; no code shipped): PSQT co-tuning does not fix it; cross-corpus runs split the problem in two
+
+Joint mobility+PSQT run (all 768 PSQT cells, analytic gradient at the current mobility vector) still produced `knight_mg=-27.6`, `bishop_eg=-49.3`. Two further isolated mobility runs on independent corpora showed knight/bishop MG negative every time (reproducible) but EG values changing sign and size between corpora (unidentified). Candidates now: corpus labeling bias (MG), EG data volume, frozen threats/pawns/material. See docs/DECISIONS.md, 2026-09-27 (4). ROADMAP item annotated, still open.
+
+**Next session start point:** state which — (1) investigate the MG negative bias via the corpus generator (e.g. relabel with a deeper search score instead of game result, or compare to a pure-material baseline), (2) EG identifiability (larger/EG-stratified corpus), or (3) the smaller filed CI items (non-isolated run, ThreadSanitizer).
+
+---
+
 ### Session 146 — 2026-09-27 — Sign-flip fix, first experiment (no code shipped): joint co-tuning of mobility/space/king-safety does not remove the flips
 
 Triggered by "Next" (treated as advance-to-next-item; the top unchecked actionable item is the sign-flip fix filed in Session 144; the newer TSan and non-isolated-CI items were not skipped past deliberately but left for after this experiment).

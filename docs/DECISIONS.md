@@ -4,6 +4,48 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-09-27 (5) — Sign-flip investigation, third experiment: the fixed `sigmoid_scale=400` is miscalibrated ~3-5x; it explains much, not all, of the "mobility hurts" signal. K-fitting filed
+
+**Decision:** No code shipped. A new ROADMAP item (fit K from data before tuning) was filed; the sign-flip item stays open.
+
+**Harness correction (important for reading earlier throwaway results):** `eval::MobilityWeights z{}` is NOT zero — the struct has default member initializers, so `{}` yields the compiled-in defaults. A first diagnostic comparing "zero" vs default mobility therefore showed zero difference everywhere and was discarded; `evaluate()` is correct (checked directly: mobility weights of 500 change the score by ~6,400). Experiments 1-2 in entries (3)/(4) used `default_*_weights()` and were not affected.
+
+**Diagnostic:** per position, residual = result - sigmoid(e0/K) with e0 = eval at zero mobility weights (set explicitly); m = default-mobility contribution. corr(m, residual): K=200/400/800/1600/3200 -> -0.28/-0.22/-0.06/+0.08/+0.15 (corpus 1), -0.32/-0.26/-0.12/+0.05/+0.17 (corpus 2). At K=400 it is -0.22/-0.26/-0.23 on three corpora, and the same for either side to move (-0.21..-0.26), ruling out a side-to-move artifact.
+
+**K fit (default weights, loss vs K):** corpus 1: 400 -> 0.0407, 800 -> 0.0291, 1200 -> 0.0285 (min), 1600 -> 0.0293; corpus 2: 400 -> 0.0554, 2000 -> 0.0240 (min). Loss-optimal K is ~1200-2000 vs the fixed 400.
+
+**Mechanism (hypothesis consistent with data):** at K=400 the eval is overconfident relative to noisy depth-4 self-play results; the residual correlates negatively with material advantage, and mobility differential correlates with material, so gradient descent on mobility acts as a partial "shrink the eval" correction, driving weights negative.
+
+**Limits:** isolated `--mobility` at K=1500 (lr 75000, 150 iterations) still gave negative `knight_mg` on all three corpora (-25.2/-14.1/-9.6) and unstable EG values (e.g. `bishop_eg` -70/+8/+119), so K explains a part, not the whole. Small corpora; single harness.
+
+**Why K-fitting now:** deferred in DECISIONS 2026-08-30/31 explicitly "until PSQT/mobility terms are added"; that condition holds. **Alternatives considered:** anchoring/scale tricks (rejected earlier, still not addressing a mis-specified K); simply raising the default K to 1500 (rejected: the optimum is corpus-dependent — 1200 vs 2000 here — so it should be fit, not hardcoded).
+
+---
+
+### 2026-09-27 (4) — Sign-flip fix, second experiment: joint mobility+PSQT co-tuning does not remove the flips; cross-corpus runs separate a reproducible MG bias from unstable EG estimates
+
+**Decision:** No code shipped; ROADMAP item stays open with narrowed candidates.
+
+**Experiment 1 — mobility + PSQT jointly.** Throwaway harness: mobility's 8 parameters by finite difference against `compute_loss()` with both overrides; PSQT's 768 cells by an analytic gradient (same derivation as `compute_psqt_gradient()`) but evaluated at the CURRENT mobility vector — the correctness gap 2026-09-27 (3) flagged, solved here by copying the derivation into the harness rather than changing the library API. 6015-position corpus, lr 20000 (mobility)/200000 (PSQT), 100 iterations, loss 0.0486 → 0.0269 (PSQT absorbs real signal). Result: `knight_mg=-27.6`, `knight_eg=+7.6`, `bishop_eg=-49.3`, `rook_mg=-15.1`, `queen_eg=+25.4` — flips persist. PSQT collinearity is ruled out as the cause (for this corpus/setup).
+
+**Experiment 2 — replication across corpora (isolated `--mobility`, lr 20000, l2=0, 150 iterations):**
+
+| corpus | knight_mg | bishop_mg | bishop_eg | queen_eg |
+|---|---|---|---|---|
+| seed 1, depth 4 (6015) | -21.1 | -2.7 | -50.5 | +45.3 |
+| seed 777, depth 4 (6667) | -18.5 | -6.4 | -20.1 | -77.2 |
+| seed 5, depth 2 (fresh) | -14.6 | -11.6 | +65.8 | -39.7 |
+
+Interpretation: knight/bishop MG values are negative in all three corpora — reproducible, so not sampling noise; EG values swing in sign and magnitude across corpora — poorly identified (too few/too noisy endgame-phase positions), so any single-corpus EG "optimum" is not trustworthy regardless of regularization. These are two different problems and may need different fixes.
+
+**Caveats:** small corpora; the harness was not committed and not covered by tests; conclusions are about this setup only.
+
+**Open candidates:** frozen threats/pawns/material; the corpus generator's labels (depth-4 self-play outcomes, quiet filter — a systematic labeling bias would produce a reproducible MG effect); EG needing much larger corpora or EG-weighted sampling.
+
+**Alternatives considered:** changing the library's `compute_psqt_gradient()` API to accept other-term overrides — deferred, since the experiment did not need it and the result (negative) does not justify the change yet.
+
+---
+
 ### 2026-09-27 (3) — Sign-flip fix, first experiment: co-tuning mobility + space + king-safety jointly does not remove the flips; PSQT collinearity is the next suspect
 
 **Decision:** No code shipped. ROADMAP.md's "actual fix for the sign flip" item stays open, with this experiment recorded and its next step narrowed.

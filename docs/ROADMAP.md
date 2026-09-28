@@ -1527,6 +1527,52 @@ Priority Fixes section above).
           at DEFAULT other-term weights, so it cannot be combined
           correctly with a moving mobility vector without change). See
           docs/DECISIONS.md, 2026-09-27 (3).
+          SECOND EXPERIMENT (Session 147, "Psqt"): mobility co-tuned
+          jointly with ALL 768 PSQT cells (mobility by finite
+          difference, PSQT by an analytic gradient recomputed each
+          iteration AT the current mobility vector, in a throwaway
+          harness; lr 20000/200000, 100 iterations; loss fell to
+          0.0269) — sign flips PERSIST (`knight_mg=-27.6`,
+          `bishop_eg=-49.3`, `rook_mg=-15.1`), so PSQT collinearity is
+          NOT the cause either. Two further isolated mobility runs on
+          independent corpora (seed 777 depth 4: 6667 positions; seed
+          5 depth 2) split the phenomenon in two: the MG values for
+          knight/bishop are reproducibly negative across all corpora
+          (`knight_mg` -21/-18/-15) — a real, systematic effect — while
+          the EG values are unstable in both sign and size across
+          corpora (`queen_eg` +45/-77/-40, `bishop_eg` -50/-20/+66) —
+          an identifiability/variance problem, not a stable optimum.
+          Direction (a) (co-tuning) is now exhausted for the terms
+          testable this way; remaining candidates: threats/pawns/
+          material still frozen, the corpus generator's labeling
+          (depth-4 self-play results, quiet filter), and EG parameters
+          simply needing far more endgame-phase data. See
+          docs/DECISIONS.md, 2026-09-27 (4).
+          THIRD FINDING (Session 148, "Continue"): the tuner's fixed
+          `sigmoid_scale=400` is badly miscalibrated to the self-play
+          labels. Loss with default weights: K=400 -> 0.0407, K=1200 ->
+          0.0285 (corpus 1); K=400 -> 0.0554, K=2000 -> 0.0240 (corpus
+          2) — the optimum sits ~3-5x higher. The correlation between
+          default-mobility differential and the result residual is
+          -0.22/-0.26/-0.23 at K=400 on three corpora but flips
+          positive (+0.05..+0.17) at K>=1600, so a large part of the
+          "mobility hurts" signal is the eval being overconfident,
+          absorbed by mobility through its correlation with material.
+          NOT a complete explanation: re-running isolated `--mobility`
+          at K=1500 (lr scaled to 75000) still gave `knight_mg` negative
+          on all three corpora (-25/-14/-10) and EG values still
+          unstable. K-fitting was deferred in three earlier entries
+          "until PSQT/mobility terms are added" (DECISIONS 2026-08-31,
+          2026-08-30) — that condition now holds.
+    - [ ] **Fit `sigmoid_scale` (Texel K) from the data before any
+          tuning run** (filed Session 148; CPW's two-step Texel recipe):
+          add a K-fit step (1-D search minimizing `compute_loss()` at
+          default weights) to `nightwing_tune`, use the fitted K in all
+          modes, re-run the mobility/space/king-safety/PSQT sweeps, and
+          re-evaluate the sign-flip item against the new results.
+          Needs tests (K-fit recovers a known K on a synthetic set) and
+          a re-check of learning-rate defaults, since gradient scale
+          moves ~1/K.
 
 ## Priority Fixes (external code review, 2026-09-17)
 
