@@ -5,11 +5,13 @@
 // comment for the full design; tuner/selfplay.h, the "self-play data
 // generation" half, has its own dedicated tests/selfplay_tests.cpp).
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
 #include <cstddef>
 #include <string>
+#include <vector>
 
 #include "board/attacks.h"
 #include "board/board.h"
@@ -1608,4 +1610,122 @@ TEST_CASE("tune_mobility: kRecommendedTermL2Lambda bounds a term's final magnitu
     // same 200 iterations against the same one-sided signal -- the
     // actual bounding property this constant exists to provide.
     REQUIRE(bounded.weights.knight_mg < plain.weights.knight_mg);
+}
+
+// ---------------------------------------------------------------------
+// K-fitting (Session 149): fit_sigmoid_scale() / compute_loss_from_scores().
+// ---------------------------------------------------------------------
+
+namespace {
+
+/// A small set of legal positions whose default-weight evaluations
+/// differ from each other and from 0 (pawn up, queen up, rook up,
+/// Black pawns up, Black queen up, an opening with a missing black
+/// rook) -- enough spread for the loss to have a well-defined K optimum.
+std::vector<std::string> k_fit_fens() {
+    return {"4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
+            "4k3/8/8/8/8/8/8/3QK3 w - - 0 1",
+            "r3k3/8/8/8/8/8/8/R3K2R w - - 0 1",
+            "4k3/pp6/8/8/8/8/8/4K3 w - - 0 1",
+            "3qk3/8/8/8/8/8/8/4K3 w - - 0 1",
+            "1nbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQk - 0 1",
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "4k3/8/8/8/8/8/4PP2/4K3 w - - 0 1"};
+}
+
+/// Builds a corpus whose labeled result for each FEN is EXACTLY
+/// sigmoid(default_eval / true_k), so the Texel loss is 0 at true_k and
+/// strictly positive elsewhere -- a fit that recovers true_k is
+/// therefore a deterministic, noise-free check of the K-fit step.
+std::vector<SelfPlayPosition> k_fit_corpus(double true_k) {
+    const MaterialWeights material = default_material_weights();
+    std::vector<SelfPlayPosition> positions;
+    for (const std::string& fen : k_fit_fens()) {
+        const Position pos = parse_fen(fen);
+        const int score = evaluate(pos, nullptr, nullptr, &material);
+        SelfPlayPosition entry;
+        entry.fen = fen;
+        entry.result = sigmoid(static_cast<double>(score) / true_k);
+        positions.push_back(entry);
+    }
+    return positions;
+}
+
+} // namespace
+
+TEST_CASE("fit_sigmoid_scale: recovers a known K from a noise-free synthetic corpus",
+          "[tuner][tune][kfit]") {
+    init_all();
+    for (const double true_k : {250.0, 400.0, 1500.0}) {
+        const std::vector<SelfPlayPosition> corpus = k_fit_corpus(true_k);
+        const SigmoidScaleFit fit = fit_sigmoid_scale(corpus);
+        REQUIRE_FALSE(fit.degenerate);
+        REQUIRE_FALSE(fit.hit_bound);
+        REQUIRE(fit.sigmoid_scale == Catch::Approx(true_k).epsilon(0.01));
+        REQUIRE(fit.loss < 1e-8);
+        REQUIRE(fit.evaluations > 0);
+    }
+}
+
+TEST_CASE("fit_sigmoid_scale: reported loss matches compute_loss() at the fitted K and never "
+          "exceeds the loss at the fixed 400",
+          "[tuner][tune][kfit]") {
+    init_all();
+    // Labels generated at K=1200, so 400 is genuinely miscalibrated.
+    const std::vector<SelfPlayPosition> corpus = k_fit_corpus(1200.0);
+    const SigmoidScaleFit fit = fit_sigmoid_scale(corpus);
+    const double direct = compute_loss(corpus, default_material_weights(), fit.sigmoid_scale);
+    REQUIRE(fit.loss == Catch::Approx(direct).margin(1e-12));
+    REQUIRE(fit.loss_at_default_scale ==
+            Catch::Approx(compute_loss(corpus, default_material_weights(), 400.0)).margin(1e-12));
+    REQUIRE(fit.loss <= fit.loss_at_default_scale);
+    REQUIRE(fit.loss_at_default_scale > fit.loss); // miscalibration is visible in the loss
+}
+
+TEST_CASE("fit_sigmoid_scale: empty corpus is degenerate (K=400); a no-signal corpus is flagged "
+          "rather than silently trusted",
+          "[tuner][tune][kfit]") {
+    init_all();
+    const SigmoidScaleFit empty_fit = fit_sigmoid_scale({});
+    REQUIRE(empty_fit.degenerate);
+    REQUIRE(empty_fit.sigmoid_scale == 400.0);
+
+    // Bare kings with a 0.5 result carry no real signal, but they do NOT
+    // evaluate to exactly 0 (the tempo bonus makes them +10 for the side
+    // to move), so the exactly-flat `degenerate` path is not what fires:
+    // the loss just keeps falling as K grows, and the fit must report
+    // that via hit_bound instead of returning a confident-looking K.
+    std::vector<SelfPlayPosition> neutral(3);
+    for (SelfPlayPosition& entry : neutral) {
+        entry.fen = "4k3/8/8/8/8/8/8/4K3 w - - 0 1";
+        entry.result = 0.5;
+    }
+    const SigmoidScaleFit neutral_fit = fit_sigmoid_scale(neutral);
+    REQUIRE((neutral_fit.degenerate || neutral_fit.hit_bound));
+}
+
+TEST_CASE("fit_sigmoid_scale: a corpus needing K beyond the searched range reports hit_bound",
+          "[tuner][tune][kfit]") {
+    init_all();
+    // True K far above the default max (10000): the best grid point is the upper edge.
+    const std::vector<SelfPlayPosition> corpus = k_fit_corpus(200000.0);
+    const SigmoidScaleFit fit = fit_sigmoid_scale(corpus);
+    REQUIRE(fit.hit_bound);
+}
+
+TEST_CASE("compute_loss_from_scores: matches compute_loss() and tolerates bad inputs",
+          "[tuner][tune][kfit]") {
+    init_all();
+    const std::vector<SelfPlayPosition> corpus = k_fit_corpus(600.0);
+    const MaterialWeights material = default_material_weights();
+    std::vector<int> scores;
+    std::vector<double> results;
+    for (const SelfPlayPosition& entry : corpus) {
+        scores.push_back(evaluate(parse_fen(entry.fen), nullptr, nullptr, &material));
+        results.push_back(entry.result);
+    }
+    REQUIRE(compute_loss_from_scores(scores, results, 400.0) ==
+            Catch::Approx(compute_loss(corpus, material, 400.0)).margin(1e-12));
+    REQUIRE(compute_loss_from_scores({}, {}, 400.0) == 0.0);
+    REQUIRE(compute_loss_from_scores(scores, {0.5}, 400.0) == 0.0); // size mismatch
 }
