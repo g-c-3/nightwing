@@ -4,6 +4,16 @@ Newest entry at top.
 
 ---
 
+### Session 146 — 2026-09-27 — Sign-flip fix, first experiment (no code shipped): joint co-tuning of mobility/space/king-safety does not remove the flips
+
+Triggered by "Next" (treated as advance-to-next-item; the top unchecked actionable item is the sign-flip fix filed in Session 144; the newer TSan and non-isolated-CI items were not skipped past deliberately but left for after this experiment).
+
+A throwaway harness co-tuned all 32 mobility/space/king-safety parameters in one loop on the Session 144 corpus (6015 positions, lr=20000, l2=0, 100 iterations). Sign flips persisted at the same magnitudes as the isolated runs (`knight_mg=-19.6`, `bishop_eg=-41.8`, `semi_open_file_mg=+9.8`, `attack_unit_mg=+11.3`), so isolation among these three terms is not the confound. Next suspect: PSQT collinearity, which needs a joint-gradient API before it can be tested correctly. No `src/` or test changes; ROADMAP.md item annotated, not closed. See docs/DECISIONS.md, 2026-09-27 (3).
+
+**Next session start point:** either design the joint-gradient API for a mobility+PSQT test (continues the sign-flip item), or the smaller filed items (non-isolated CI step, ThreadSanitizer option) — state which in the trigger.
+
+---
+
 ### Session 145 — 2026-09-27 — External verification report checked: KQK item closed, direct-binary test failures root-caused to book global state and fixed, TSan/non-isolated-CI items filed
 
 Triggered by an uploaded verification report (`report.md`), no further instruction; treated as an external review to verify, following the 2026-08-25 (8)/2026-09-22 (2) precedent.

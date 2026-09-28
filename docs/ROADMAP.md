@@ -1508,6 +1508,25 @@ Priority Fixes section above).
           need real design work and a real corpus to validate against,
           the same honesty standard this file's other "not yet
           attempted" items already hold to.
+          FIRST EXPERIMENT, direction (a) partially tested (Session
+          146, throwaway harness, not shipped): jointly co-tuning
+          mobility + space + king-safety (32 parameters, one shared
+          finite-difference loop, same 6015-position corpus, lr=20000,
+          l2=0, 100 iterations) did NOT remove the sign flips —
+          `knight_mg=-19.6`, `bishop_eg=-41.8`, `square_mg=-11.3`,
+          `semi_open_file_mg=+9.8`, `attack_unit_mg=+11.3`, essentially
+          the same values as the isolated runs (-21.1/-50.5/-19.5/
+          +10.3/+23.6 at 150 iterations). So freezing THESE three terms
+          against each other is not the confound. Remaining untested
+          suspects, all still frozen in every run so far: PSQT (768
+          cells, classically collinear with mobility via
+          centralization), threats, pawns, and material itself; or the
+          corpus (depth-4 self-play, quiet-filtered, small). Next
+          concrete step: a joint mobility+PSQT run, which needs a
+          joint-gradient API (`compute_psqt_gradient()` today evaluates
+          at DEFAULT other-term weights, so it cannot be combined
+          correctly with a moving mobility vector without change). See
+          docs/DECISIONS.md, 2026-09-27 (3).
 
 ## Priority Fixes (external code review, 2026-09-17)
 

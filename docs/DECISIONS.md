@@ -4,6 +4,20 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-09-27 (3) — Sign-flip fix, first experiment: co-tuning mobility + space + king-safety jointly does not remove the flips; PSQT collinearity is the next suspect
+
+**Decision:** No code shipped. ROADMAP.md's "actual fix for the sign flip" item stays open, with this experiment recorded and its next step narrowed.
+
+**Experiment:** a throwaway harness (not committed) linked against `libnightwing_lib.a` ran one shared finite-difference gradient-descent loop over all 32 parameters of `kMobilityParameters` + `kSpaceParameters` + `kKingSafetyParameters` at once, via `compute_loss()`'s existing optional per-term overrides (material frozen at defaults), on the 6015-position corpus generated in Session 144, lr=20000, l2=0, 100 iterations; loss fell smoothly from ~0.0486 to 0.03500. Result: `knight_mg=-19.6`, `bishop_eg=-41.8`, `queen_eg=+32.8`, `square_mg=-11.3`, `semi_open_file_mg=+9.8`, `attack_unit_mg=+11.3`; dominant pawn-storm ranks 5/6 stayed stable (-28.8/-31.9). These match the isolated runs (Session 144: -21.1/-50.5/+45.3/-19.5/+10.3/+23.6). Direction (a) as scoped — releasing the freeze among these three terms — is therefore not the fix.
+
+**Interpretation (hypothesis, not tested):** the remaining frozen terms are the likelier confounds — chiefly PSQT, whose centralization component is classically collinear with mobility — plus threats, pawns and material; corpus quality (small, depth-4, quiet-filtered) is the other candidate. Caveat: 100 iterations on one small corpus; conclusions apply to this setup only.
+
+**Why the PSQT joint test was not run this session:** `compute_psqt_gradient()` evaluates at default weights for every other term, so combining it with a moving mobility vector would compute a gradient at the wrong point and muddy the result; a correct test needs a joint-gradient API (a real change, needs its own design and tests).
+
+**Alternatives considered:** running PSQT via finite differences (768 parameters x 2 loss evaluations per iteration, infeasible in-session); combining the inconsistent analytic gradient anyway (rejected: would produce an untrustworthy conclusion).
+
+---
+
 ### 2026-09-27 (2) — External verification report: KQK item closed as non-reproducing; direct-binary UCI test failures root-caused to opening-book global state (report's thread-race hypothesis refuted); ThreadSanitizer gap and non-isolated CI run filed
 
 **Decision:** An externally supplied verification report (`report.md`) was checked against a real build rather than accepted or dismissed. (1) The "KQ-vs-K unresolved after ~13M nodes / 60s" ROADMAP item was closed as not reproducing. (2) The two UCI tests the report found failing under direct invocation were fixed at their real root cause, which differs from the report's. (3) Two report suggestions were filed as ROADMAP items, not built.
