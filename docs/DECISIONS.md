@@ -4,6 +4,22 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-09-28 — Texel K-fit implemented as a standalone pre-step; grid scan plus golden section; learning rate scaled by K/400 only when not given explicitly
+
+**Decision:** The sigmoid scale K is now fitted from the corpus before tuning (CPW two-step recipe) instead of being fixed at 400. `fit_sigmoid_scale()` evaluates every position once at compiled-in default weights and minimizes the Texel loss over K in [50, 10000] using a 41-point log-spaced grid scan (bracketing, robust to any non-unimodality) followed by golden-section refinement in log(K). `nightwing_tune --fit-k` prints the fitted value; the sigmoid_scale slot of any mode accepts `fit`. When K is fitted and the learning rate is not given explicitly, the mode's default learning rate is multiplied by K/400.
+
+**Rationale:** Session 148 showed the fixed 400 was miscalibrated ~3-5x and biased isolated term tuning. Evaluation dominates loss cost and does not depend on K, so scores are cached and only the sigmoid is recomputed per candidate K (about 60 cheap evaluations). The learning-rate scaling follows the gradient's ~1/K dependence; it is a first-order heuristic, not a re-measured optimum, so an explicit value always wins. Blank positional arguments were added so `fit` can be reached without restating earlier defaults (an empty string previously parsed as 0 and produced NaN weights).
+
+**Results:** corpus of 6015 positions: K=1069, loss 0.0407 -> 0.0284. At the fitted K, king-safety `semi_open_file_mg`/`attack_unit_mg` flips resolved; mobility `knight_mg` and space `square_mg/eg` remained negative. K is a partial cause of the sign flips, not the whole cause.
+
+**Alternatives considered:**
+- Fitting K jointly with the weights each iteration — rejected: reintroduces a flat scaling direction of the kind the pawn anchor exists to remove.
+- Golden-section only, no grid — rejected: the loss curve is not guaranteed unimodal on small corpora.
+- Fitting K after tuning at the old fixed value — rejected: the CPW recipe fits K first because tuned weights depend on it.
+- Failing on an out-of-range optimum — rejected in favor of a `hit_bound` flag and a stderr warning, so the value is reported but not trusted.
+
+---
+
 ### 2026-09-27 (5) — Sign-flip investigation, third experiment: the fixed `sigmoid_scale=400` is miscalibrated ~3-5x; it explains much, not all, of the "mobility hurts" signal. K-fitting filed
 
 **Decision:** No code shipped. A new ROADMAP item (fit K from data before tuning) was filed; the sign-flip item stays open.

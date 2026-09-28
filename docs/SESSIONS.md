@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 149 — 2026-09-28 — Texel K-fit step implemented (`fit_sigmoid_scale()`, `nightwing_tune --fit-k` / `fit`); sign flips only partly resolved at fitted K
+
+Triggered by "Go" (fresh session, full docs read). The top open ROADMAP item was the K-fit step filed in Session 148.
+
+**Built:** `tuner::compute_loss_from_scores()` and `tuner::fit_sigmoid_scale()` (`src/tuner/tune.h`/`.cpp`): each position is evaluated once at default weights, then K is minimized over [50, 10000] by a 41-point log-spaced grid scan followed by golden-section refinement; the result reports the fitted K, its loss, the loss at the former fixed 400, and `hit_bound`/`degenerate` flags. `src/tuner/tune_main.cpp`: new `--fit-k` mode, a `fit` value for the sigmoid_scale slot of every mode (learning-rate default scaled by K/400 unless given explicitly), and blank positional arguments (`""` or `-`) keeping a slot's default. The blank-argument handling was added after a first fitted-K run produced NaN weights because an empty string parsed as a zero learning rate. `tests/tune_tests.cpp`: five `[kfit]` tests (known-K recovery at 250/400/1500, loss consistency with `compute_loss()`, empty/no-signal corpus handling, out-of-range K reporting `hit_bound`, size-mismatch tolerance). One test assumption was corrected during the session: a bare-kings position evaluates to +10 (tempo), not 0, so the no-signal case is flagged via `hit_bound` rather than `degenerate`.
+
+**Findings:** On a fresh 6015-position corpus the fitted K was 1069 (loss 0.0407 -> 0.0284). Mobility/space/king-safety sweeps at the fitted K (100 iterations, lr ~53000): king-safety `semi_open_file_mg` and `attack_unit_mg` now carry the expected negative sign; mobility `knight_mg` (-23.5) and space `square_mg`/`square_eg` (-22.5/-15.7) remain negative, and mobility EG values remain large (`bishop_eg=-52`, `queen_eg=+66`). The sign-flip item therefore stays open.
+
+**Verification:** full local Release build with zero warnings; `[tune]` and `[kfit]` tests pass; full `ctest` 703/703 before the final blank-argument change to `tune_main.cpp` (that change touches only the CLI, which no test exercises; `[tune]` tests re-run after it and pass).
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-28.
+
+**Next session start point:** run the `--psqt` sweep at the fitted K on a larger corpus and re-evaluate the remaining mobility/space sign flips (candidates: EG identifiability, corpus labeling bias, frozen threats/pawns/material); alternatively the non-isolated CI step or the ThreadSanitizer option.
+
+---
+
 ### Session 148 — 2026-09-27 — Sign-flip investigation, third experiment ("Continue"; no code shipped): fixed sigmoid_scale=400 found miscalibrated ~3-5x
 
 Diagnosed the reproducible mobility bias by correlating default-mobility differential with the result residual: strongly negative at K=400 on all three corpora, sign-flipping at K>=1600; loss-optimal K is ~1200-2000 (loss 0.0407 -> 0.0285 on corpus 1). Not a side-to-move artifact. Re-running isolated mobility tuning at K=1500 still left `knight_mg` negative and EG unstable, so K is a large contributor, not the whole story. Also caught and documented a harness trap (`MobilityWeights z{}` yields defaults, not zeros). Filed a new ROADMAP item: fit K from data before tuning. See docs/DECISIONS.md, 2026-09-27 (5). No `src/` or test changes.

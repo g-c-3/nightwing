@@ -1564,7 +1564,7 @@ Priority Fixes section above).
           unstable. K-fitting was deferred in three earlier entries
           "until PSQT/mobility terms are added" (DECISIONS 2026-08-31,
           2026-08-30) — that condition now holds.
-    - [ ] **Fit `sigmoid_scale` (Texel K) from the data before any
+    - [x] **Fit `sigmoid_scale` (Texel K) from the data before any
           tuning run** (filed Session 148; CPW's two-step Texel recipe):
           add a K-fit step (1-D search minimizing `compute_loss()` at
           default weights) to `nightwing_tune`, use the fitted K in all
@@ -1573,6 +1573,27 @@ Priority Fixes section above).
           Needs tests (K-fit recovers a known K on a synthetic set) and
           a re-check of learning-rate defaults, since gradient scale
           moves ~1/K.
+          DONE (Session 149, K-fit step only; the re-evaluation of the
+          sign-flip item is recorded below, not closed): `tuner::
+          fit_sigmoid_scale()` / `compute_loss_from_scores()` (tune.h/
+          .cpp) fit K by a log-spaced grid scan plus golden-section
+          refinement over [50, 10000], evaluating each position once at
+          default weights. `nightwing_tune --fit-k` prints the fitted K;
+          the sigmoid_scale slot of every mode accepts `fit`, and the
+          learning rate default is then scaled by K/400 unless given
+          explicitly (a blank positional argument, "" or "-", keeps a
+          slot's default). Five new `[kfit]` tests, including recovery of
+          known K values (250/400/1500) from a noise-free synthetic
+          corpus. On the Session 144 corpus (6015 positions) the fitted
+          K was 1069 (loss 0.0407 -> 0.0284). Re-run at the fitted K
+          (100 iterations, lr scaled to ~53000): king-safety flips
+          largely resolved (`semi_open_file_mg`, `attack_unit_mg` now
+          negative as expected) but `knight_mg` (-23.5 mobility, and
+          `square_mg`/`square_eg` in space) remained negative and
+          mobility EG values remained large (`bishop_eg=-52`,
+          `queen_eg=+66`). K was therefore a real, partial contributor.
+          Remaining: PSQT sweep at fitted K, larger/EG-stratified corpus,
+          and the sign-flip item above stays open.
 
 ## Priority Fixes (external code review, 2026-09-17)
 
