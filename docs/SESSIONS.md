@@ -1,3083 +1,1530 @@
-# Nightwing — Sessions
+# Sessions
+
+Most recent first. Numbered, no dates (see TRACK.md).
 
-Newest entry at top.
-
----
-
-### Session 148 — 2026-09-27 — Sign-flip investigation, third experiment ("Continue"; no code shipped): fixed sigmoid_scale=400 found miscalibrated ~3-5x
-
-Diagnosed the reproducible mobility bias by correlating default-mobility differential with the result residual: strongly negative at K=400 on all three corpora, sign-flipping at K>=1600; loss-optimal K is ~1200-2000 (loss 0.0407 -> 0.0285 on corpus 1). Not a side-to-move artifact. Re-running isolated mobility tuning at K=1500 still left `knight_mg` negative and EG unstable, so K is a large contributor, not the whole story. Also caught and documented a harness trap (`MobilityWeights z{}` yields defaults, not zeros). Filed a new ROADMAP item: fit K from data before tuning. See docs/DECISIONS.md, 2026-09-27 (5). No `src/` or test changes.
-
-**Next session start point:** implement the K-fit step in `nightwing_tune` (with a synthetic recover-known-K test), then re-run the term sweeps and revisit the sign-flip item.
-
----
-
-### Session 147 — 2026-09-27 — Sign-flip fix, second experiment ("Psqt"; no code shipped): PSQT co-tuning does not fix it; cross-corpus runs split the problem in two
-
-Joint mobility+PSQT run (all 768 PSQT cells, analytic gradient at the current mobility vector) still produced `knight_mg=-27.6`, `bishop_eg=-49.3`. Two further isolated mobility runs on independent corpora showed knight/bishop MG negative every time (reproducible) but EG values changing sign and size between corpora (unidentified). Candidates now: corpus labeling bias (MG), EG data volume, frozen threats/pawns/material. See docs/DECISIONS.md, 2026-09-27 (4). ROADMAP item annotated, still open.
-
-**Next session start point:** state which — (1) investigate the MG negative bias via the corpus generator (e.g. relabel with a deeper search score instead of game result, or compare to a pure-material baseline), (2) EG identifiability (larger/EG-stratified corpus), or (3) the smaller filed CI items (non-isolated run, ThreadSanitizer).
-
----
-
-### Session 146 — 2026-09-27 — Sign-flip fix, first experiment (no code shipped): joint co-tuning of mobility/space/king-safety does not remove the flips
-
-Triggered by "Next" (treated as advance-to-next-item; the top unchecked actionable item is the sign-flip fix filed in Session 144; the newer TSan and non-isolated-CI items were not skipped past deliberately but left for after this experiment).
-
-A throwaway harness co-tuned all 32 mobility/space/king-safety parameters in one loop on the Session 144 corpus (6015 positions, lr=20000, l2=0, 100 iterations). Sign flips persisted at the same magnitudes as the isolated runs (`knight_mg=-19.6`, `bishop_eg=-41.8`, `semi_open_file_mg=+9.8`, `attack_unit_mg=+11.3`), so isolation among these three terms is not the confound. Next suspect: PSQT collinearity, which needs a joint-gradient API before it can be tested correctly. No `src/` or test changes; ROADMAP.md item annotated, not closed. See docs/DECISIONS.md, 2026-09-27 (3).
-
-**Next session start point:** either design the joint-gradient API for a mobility+PSQT test (continues the sign-flip item), or the smaller filed items (non-isolated CI step, ThreadSanitizer option) — state which in the trigger.
-
----
-
-### Session 145 — 2026-09-27 — External verification report checked: KQK item closed, direct-binary test failures root-caused to book global state and fixed, TSan/non-isolated-CI items filed
-
-Triggered by an uploaded verification report (`report.md`), no further instruction; treated as an external review to verify, following the 2026-08-25 (8)/2026-09-22 (2) precedent.
-
-**Verified against a real build:** KQK FEN through the real UCI binary reproduced the report's numbers exactly (depth 10, 839,552 nodes, `cp 1034`, ~450 ms) — ROADMAP item closed, no defect. Running `nightwing_tests` directly reproduced the report's 2 failures; bisecting showed they occur within the `[uci]` tests alone, and both failing positions are opening-book positions. Root cause: `book::init_book()` populates a process-global table, so once an earlier test calls it, `start_go()` answers from book with no search. The report's join/flush race hypothesis is refuted (deterministic; thread path never reached). This also corrects the "2 pre-existing sandbox-specific failures" noted since Session 133 — they were these tests.
-
-**Fixed (tests only):** `tests/uci_tests.cpp` — `go nodes` uses Kiwipete; `go searchmoves` uses `startpos moves g1h3` + `searchmoves h7h5`. Direct binary: 698/698 pass; the two tests also pass under ctest. No `src/` change.
-
-**Filed, not built:** CI step running the raw test binary non-isolated; ThreadSanitizer option + CI leg (report finding 3d, accurate). Report's other checks (ASan/UBSan 697/697, python-chess perft cross-check, Lazy SMP smoke test) were clean and needed no action.
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-27 (2).
-
-**Next session start point:** implement the ThreadSanitizer CMake option and CI leg (ROADMAP, newly filed), or the non-isolated CI step (smaller); otherwise ordinary CI-log triage.
-
----
-
-### Session 144 — 2026-09-27 — Sign-flip instability investigation closed: neither L2 regularization nor per-term learning rates fix it; a magnitude-bounding `kRecommendedTermL2Lambda` shipped instead, real fix filed as a new item
-
-Triggered by "Go" — no CI log pending, so picked up ROADMAP.md's own next unchecked item: Session 122's filed "Investigate regularization / per-term learning rates for the sign-flip instability" (mobility/space/king-safety sub-terms flipping sign under `tune_term()`'s own isolated finite-difference tuning, first found 2026-09-22).
-
-**Real investigation, not a paper exercise.** A compiler toolchain and this repository's own build are both available in this sandbox (docs/ARCHITECTURE.md's Development Environment note) — used directly rather than reasoning from the existing docs alone. Installed `cmake` (`apt-get install -y cmake`, same allowlisted mirrors as before), built `nightwing_selfplay`/`nightwing_tune` in Release, and generated a fresh real self-play corpus (150 games, 4-ply search, 8 random opening plies → 6015 quiet positions in ~15s; a larger 800-game/32507-position corpus was also generated but proved too slow to sweep multiple configurations against within this session's own tool-call time budget, so the smaller corpus carried the actual sweeps).
-
-**Confirmed the sign flip reproduces at this much smaller scale** (mobility: `knight_mg=-21.1`, `bishop_eg=-50.5` against small positive defaults; space: `square_mg/eg` both flipped negative; king-safety: `semi_open_file_mg`/`attack_unit_mg` both flipped positive against negative-penalty defaults, while the dominant pawn-storm rank5/6 terms stayed correctly signed and stable — matching 2026-09-22's own original read exactly).
-
-**Swept both candidates directly, neither corrects the sign:** `l2_lambda` from 0 up to just under the stability ceiling shrinks flipped magnitudes toward zero without ever crossing back to the correct sign; `learning_rate` alone (2000/5000/20000) converges every rate to the SAME sign, just at different speeds. Both loss curves stayed smooth and monotonic at every configuration — ruling out optimizer instability a second time, from a different (smaller, fresh) corpus than the original finding. See docs/DECISIONS.md, 2026-09-27, for the full swept tables.
-
-**What shipped:** `tuner::kRecommendedTermL2Lambda` (`tune.h`, = 1e-5) — a documented, magnitude-bounding (explicitly NOT sign-correcting) value for the five term-tuning CLI modes to opt into, guarding against a runaway value like -50.5 being hand-transcribed without a safety margin. `TuneConfig::l2_lambda`'s own default is unchanged (0.0) — no pre-existing tuning call or test is affected. `tune_main.cpp`'s header comment updated to point at it and to record the per-term-learning-rate re-verification (closing 2026-09-21 (3)'s open caveat with a real, adequate-as-is answer). New regression test, `tests/tune_tests.cpp`'s `[l2]`-tagged `TEST_CASE`, verifies the magnitude-bounding property against a deterministic toy fixture (200-iteration run: unregularized `knight_mg` reaches 20.4, regularized reaches 4.1, both correctly signed) — the sign-flip finding itself remains real-corpus-only and documented rather than unit-tested, since a small deterministic fixture structurally cannot reproduce the isolation-confounding mechanism that produces it.
-
-**The actual fix was NOT attempted** — filed as a new, separate, not-yet-scoped ROADMAP item (co-tuning correlated terms together, or a confound-reducing sampling change; both need real design work and a real corpus, not a config knob).
-
-**Verification:** full local build + `ctest` (GCC, Release, this sandbox) — 698/698 passing (697 + 1 new), zero regressions, zero new warnings.
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-27.
-
-**Next session start point:** no items are currently queued beyond ordinary CI-log triage (if/when the next log arrives) or `docs/ROADMAP.md`'s own next unchecked item, which is now the newly-filed "The actual fix for the sign flip" item directly below the one closed this session — real design work (co-tuning vs. sampling change), not a quick follow-up.
-
----
-
-### Session 143 — 2026-09-26 — `-Wshadow`/`-Wconversion` enabled project-wide, after direct investigation found the expected noise didn't materialize
-
-Triggered by "Continue" — no new CI logs pending, so picked up the last remaining open item: Session 140's own filed "investigate enabling `-Wshadow`/`-Wconversion`," deferred at the time on the assumption both would be noisy on a mature codebase.
-
-**Investigation, not assumption:** built this project locally (GCC, this sandbox) with each flag added, first via a blanket `CMAKE_CXX_FLAGS` addition to see the raw signal, then properly scoped through the real `nightwing_warnings` INTERFACE target to confirm vendored dependencies wouldn't be affected. `-Wshadow`: zero warnings anywhere in the entire first-party codebase. `-Wconversion`: exactly 5 warnings, ALL inside vendored Catch2 (`catch_stats.cpp`, `catch_timer.cpp`, `catch_random_number_generator.cpp`) — zero in any of this project's own `src/` or `tests/` files. The noise Session 140 expected, based on this being "a mature, already-large codebase," simply wasn't there — worth noting as a data point against assuming a flag will be noisy without checking.
-
-**What was built:** both flags added to `nightwing_warnings`'s GCC/Clang branch in `CMakeLists.txt`, alongside the existing `-Wall -Wextra -Wpedantic`. Deliberately scoped to this INTERFACE target (which only first-party targets link against) rather than a global `CMAKE_CXX_FLAGS` addition — confirmed this matters in practice, not just in principle: the blanket-flags experiment DID pick up Catch2's own 5 `-Wconversion` warnings, while the properly-scoped INTERFACE-target version compiled Catch2 completely unaffected, as intended. MSVC's own `/W4` branch needed no change, since `/W4` already covers both warning classes (already demonstrated concretely by real CI: its `C4456` caught the exact shadowing bug `-Wshadow` would have caught immediately on GCC/Clang had it been enabled before Session 137 introduced it — Session 140's own fix — and its `C4244` likewise for the narrowing class `-Wconversion` covers — Session 136's own fix).
-
-**Verification:** rebuilt both Release and Debug/ASan+UBSan from a clean configure (GCC, this sandbox) with the real `CMakeLists.txt` change — zero warnings in either (confirming the interface-target scoping works as intended, not just the blanket-flags experiment). Full suite: 695/697 in both configs, the identical 2 pre-existing sandbox-specific failures documented since Session 133, zero regressions. `bench` totals unchanged (`36154` overall).
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-26 (11).
-
-**Next session start point:** no items are currently queued beyond ordinary CI-log triage (if/when the next log arrives, confirm this session's own `-Wshadow`/`-Wconversion` addition doesn't surface anything new on real macOS CI specifically — Apple Clang is a different Clang build than the mainline Clang 18 tested in this sandbox, so it's the one platform this session's own local verification couldn't directly confirm; Windows/MSVC is already covered, per its own `/W4` already having caught both warning classes' real-world instances before this session even started) or whatever `docs/ROADMAP.md`'s own next unchecked item is.
-
----
-
-
-
-Triggered by the person uploading the real CI log bundle for Session 141's own push, containing the new macOS diagnostic step's own output. Reading that output directly is what caught this.
-
-**What the new diagnostic showed:** the raw compiled binary's own `--list-tests --verbosity quiet` output, queried directly on real macOS CI, listed BOTH `taper:` tests — the two tests every prior session in this log had concluded were missing. That's a direct contradiction of 5 sessions' own working assumption, and it was checked immediately rather than dismissed as a fluke: grepped the SAME run's own `7_Test.txt` (the actual `ctest` execution log, not the discovery diagnostic) directly for "taper" and found both tests registered, numbered (`Test #98`, `Test #99` on this run), and reported `Passed`. The tests were never missing from macOS at all.
-
-**Root cause of 5 sessions' own misdiagnosis, found by re-examining the exact diffing script first used in Session 135 and reused unquestioned ever since:** a Python regex (`r"Test #(\d+): (.*?)\.{3,}"`) used to extract test names from `ctest`'s own human-readable console log required EXACTLY one space between the literal text "Test" and "#N". But `ctest` right-pads test numbers so every "#N" column-aligns to the width of the run's own largest test number — a 2-digit test number in a run whose max is 3 digits prints as `Test  #98` (two spaces), while a 3-digit number prints as `Test #100` (one space). The regex silently failed to extract ANY 1-2-digit-numbered test on EITHER platform. This alone wouldn't necessarily produce a wrong diff, if the same physical tests always landed in the affected number range on both platforms — but Catch2's own test EXECUTION ORDER is not guaranteed identical across platforms (static-initializer order across different translation units is unspecified by the C++ standard and genuinely can differ by linker/platform), so a DIFFERENT set of tests ended up numbered 1-99 on macOS than on Linux for this exact build. The two `taper:` tests happened to land in that "low-numbered, silently dropped by the regex" range on macOS across the several actual pushes this was checked on, producing a consistent, repeatable, but entirely spurious "present on Linux, missing on macOS" diff result — consistent enough, across enough separate real CI runs, to look exactly like a stable, real platform difference, which is why it survived unquestioned for 5 sessions.
-
-**The real difference, found once the regex was fixed** (allowing any whitespace before `#N`, and requiring the trailing dot-separator to be preceded by a space to bound the name correctly): exactly 2 tests genuinely differ between platforms, and they were never the taper tests — `tests/attacks_tests.cpp`'s `"PEXT attack path matches brute force, when the host CPU supports BMI2"` and `"PEXT and magic paths agree with each other, when the host CPU supports BMI2"`, both wrapped in `#if defined(NIGHTWING_ENABLE_BMI2)`. Checked directly: `NIGHTWING_ENABLE_BMI2` is only ever defined on x86/x86_64 targets (`CMakeLists.txt`), and BMI2 is an x86-only instruction-set extension — GitHub Actions' macOS runners are ARM64 (Apple Silicon), which has no BMI2 instructions at all, so these two TEST_CASEs are correctly compiled out of the macOS binary entirely, by design. `attacks.cpp`'s own header comment already documents this exact BMI2/portable-fallback architecture split in full — this was never an undocumented or accidental behavior, just never checked against by name until this session. The corrected regex, re-run against the same log, extracts all 697 names on Linux and all 695 on macOS, exactly matching `ctest`'s own official summary totals, with zero unexplained names in either direction — a clean, fully-reconciled result, unlike the previous regex's own partial, coincidentally-plausible-looking output.
-
-**What this means for Sessions 136/139/140/141's own work:** their own investigative STEPS were real, careful, honestly conducted work — Session 136's original discovery, Session 141's compiler/CMake-script elimination in particular involved genuine, correct, verifiable findings (both GCC and Clang really do correctly list all tests; Catch2's own discovery script really does have no multi-line-merging bug) — but all of it was aimed at explaining why the `taper:` tests were missing, when they never were. None of that work was wasted in the sense of being wrong on its own terms (the compiler and CMake-script eliminations remain true statements), but the premise motivating it was false, so the overall conclusion each session built toward was too.
-
-**What was done about it:** the ROADMAP.md item is marked RETRACTED, with the corrected finding filed as its own new item and the original left in place below it (unedited) per this project's own "the repo is the memory" convention, rather than deleted or rewritten to look as though this was known from the start. The macOS-only diagnostic step Session 141 added to `.github/workflows/ci.yml` (which is precisely what surfaced this correction — read as intended, just not with the answer expected) has been removed, since the question it was asking no longer has a bug behind it to diagnose.
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-26 (10) — includes what should be done differently for any future cross-platform test-list comparison (`ctest --show-only=json-v1`'s structured, machine-readable output, not regex-parsed human console text).
-
-**Next session start point:** the macOS CTest gap is now fully closed, correctly. Remaining open items: the `-Wshadow`/`-Wconversion` investigation (Session 140), independently re-confirming Session 140's own `C4456` fix (now confirmed clean on this same log — see below), and whatever `docs/ROADMAP.md`'s own next unchecked item is otherwise. This session's own experience is itself worth remembering: when a diffing/analysis SCRIPT'S OWN output disagrees with a NEW, more direct piece of evidence (here, the diagnostic step's raw grep), re-derive from the primary source rather than assuming the long-trusted script is still right.
-
-**Also confirmed from this same log, in passing:** Session 140's `C4456` shadow-warning fix is clean — no `C4456` (or any other) warning in either Windows job's own `6_Build.txt` this run, and all 6 jobs show 100% passing (697/697 Linux/Windows, 695/695 macOS — now correctly understood as the true, expected totals rather than "695, 2 short of where it should be").
-
----
-
-
-
-Triggered by "Continue macOS test gap" after the person reported CI green (verbal, no log this time). Since the gap itself needs real macOS hardware this sandbox doesn't have, focused on what a Linux sandbox actually CAN determine: ruling candidate causes in or out with direct evidence, rather than guessing.
-
-**Compiler ruled out.** Installed Clang 18 in this sandbox (`apt-get install clang-18` — the earlier Session 140-adjacent attempt had failed on an unrelated broken package dependency; a more targeted `--no-install-recommends` install succeeded this time). Hit one unrelated, genuine Clang-18-vs-mainline-GCC portability wrinkle building this project (`src/board/attacks.cpp`'s `NIGHTWING_BMI2_TARGET` GNU attribute placed on the line before `[[nodiscard]]` parses fine under GCC but not Clang 18) — worked around it LOCALLY, in the sandbox copy only, purely to unblock this investigation; NOT part of this session's shipped changes, since real macOS CI already builds this exact code cleanly with Apple Clang, meaning this specific issue doesn't reproduce there (flagged here for the record in case it ever does on a different Clang version, not filed as a ROADMAP item since there's no confirmed real-world impact). With that unblocked, both the GCC build (already existing) and the fresh Clang build's own `--list-tests --verbosity quiet` output were checked directly: BOTH list all 697 tests, including both `taper:` tests, byte-for-byte identical counts. The compiler is not the cause.
-
-**Catch2's own CMake discovery script ruled out.** Read `CatchAddTests.cmake` (the actual script `catch_discover_tests()` runs, vendored via this project's own Catch2 FetchContent) in full. It invokes the compiled binary with exactly `--list-tests --verbosity quiet`, captures stdout, and parses it as ONE TEST PER LINE with no multi-line-reassembly logic of any kind — ruling out an earlier hypothesis (word-wrapping of long test names merging two entries) structurally, not just empirically: the parsing code has nothing that COULD merge two lines even if wrapping occurred. Directly inspected this project's own generated `nightwing_tests-*_tests.cmake` output (both the GCC and Clang builds) and confirmed 697 `add_test()` calls in both, including both taper tests, with the exact same `SKIP_RETURN_CODE 4` property CatchAddTests.cmake always sets — the script itself, run against this project's own real build, works correctly.
-
-**Narrowed to the macOS runner/toolchain itself** — something a Linux sandbox cannot directly reproduce or rule in/out further. Leading hypothesis, explicitly UNCONFIRMED: a static-initializer registration-order issue, or an identical-code-folding-style linker optimization on Apple's own linker collapsing the two affected TEST_CASEs (short, adjacent in source order, structurally near-identical to each other) into one. Not chased further without real hardware to test it against.
-
-**What was built, to make progress despite the hardware gap:** a new macOS-only diagnostic step in `.github/workflows/ci.yml` (runs on both Debug and Release matrix legs), placed right after the Build step. It runs the compiled binary's own `--list-tests --verbosity quiet` directly and greps for `taper:`, AND separately inspects the actually-generated CMake discovery script's own `add_test()` calls for the same — side by side, in the same log. This answers, from the next real CI run alone, the one question this sandbox genuinely cannot: does the COMPILED BINARY ITSELF already omit the two tests on real macOS (pointing to a runtime/linker-level cause), or does the binary list both correctly while something later in CMake's own macOS-specific pipeline drops them (pointing to a different, CMake/CTest-level cause)? Read-only and purely informational — doesn't gate the job, doesn't change what passes or fails, just surfaces a diagnostic a future session (or this one, once results are back) can act on.
-
-**Verification:** the new workflow step was validated for YAML syntax (parses cleanly) and its exact shell commands were dry-run locally against this project's own real Linux build (both GCC and Clang), confirming the commands themselves are correct and produce the expected output shape — the one thing that could NOT be verified from this sandbox is what they'll actually show on real macOS, which is the entire point of adding them.
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-26 (9).
-
-**Next session start point:** if a new CI log arrives, read the new macOS diagnostic step's own output FIRST — it should immediately answer "binary-level or CMake-level" and point the next investigation step at the right layer instead of guessing. Absent that, the other open items are unchanged: independently re-confirming Session 140's `C4456` fix, and whatever `docs/ROADMAP.md`'s own next unchecked item is otherwise.
-
----
-
-
-
-Triggered by the person uploading a real CI log bundle, no further instruction — the proper triage this project's own standard calls for, superseding Session 139's own verbal "everything green" report with an actual log read.
-
-**Headline result: all 6 jobs 100% green for the first time since CI-log triage began.** Linux Debug/Release and Windows Debug/Release: 697/697. macOS Debug/Release: 695/695 (695, not 694 — the CTest-registration gap from Session 135 is STILL present, consistently 2 short of the other platforms' own total, just arithmetically invisible this run since 697 total minus the same 2 missing equals 695, not the "694" it was compared against a 696-test baseline two sessions ago — the gap itself is unchanged and still open, only the absolute numbers moved because the suite grew). Confirms Session 137's `nps`-test fix (no longer flaking on macOS Release OR Windows Release, both clean this run) and Session 138's `const_cast` removal both landed correctly on real hardware, closing out the "awaiting independent re-confirmation" note both of those sessions' own accounts left open.
-
-**One new warning found, introduced by Session 137's own fix, not present before it:** Windows Debug and Windows Release both showed `search.cpp(3972)`/`search.cpp(4062): warning C4456: declaration of 'elapsed_ms' hides previous local declaration` — absent on every other platform (GCC/Clang's own `-Wall -Wextra -Wpedantic`, this project's configured flags, don't include the separate `-Wshadow`, so this class of warning is MSVC-only, same pattern as the two previous MSVC-only findings this log has already produced: the `C4244` narrowing fix and, before that, the Clang-only `game_history` unused-variable fix). Root cause, confirmed by reading the actual code rather than assumed: Session 137's own two new `elapsed_ms` locals (added to `search_iterative_deepening_multipv()` to fix the MultiPV timing bug) — the first one, in the depth-1 block, was declared directly in the function body rather than inside any nested compound statement, so its scope genuinely extends to the end of the whole function, not just "the depth-1 section" the way Session 137's own doc comment had assumed; that incorrect assumption was written down verbatim in the code at the time ("this block's `elapsed_ms` is scoped to the depth-1 block only... so this is a fresh local, not a bug") and is exactly what caused the second `elapsed_ms` (added later, in the depth-2-onward loop) to genuinely shadow it, plus separately shadowing that same loop's own PRE-EXISTING, unrelated deadline-check `elapsed_ms` locals that were already there before Session 137 touched this function at all.
-
-**Fixed:** renamed both of Session 137's own new locals to distinct, non-colliding names — `line1_elapsed_ms` (depth-1 block) and `depth_elapsed_ms` (depth-2-onward loop) — leaving every pre-existing `elapsed_ms` local in this file (this function's own deadline checks, and the completely separate single-line `search_iterative_deepening()`'s own three) untouched. The doc comments that had recorded Session 137's own incorrect scoping assumption were corrected in place (not silently overwritten) to explain the actual scope and name the mistake, consistent with this project's own practice of recording what went wrong and why, not just quietly fixing it.
-
-**Verification:** rebuilt both Release and Debug/ASan+UBSan (GCC, this sandbox) — zero errors, zero warnings in both (GCC was never going to reproduce `C4456` either way, so this confirms no breakage, not that the warning itself is gone — same "awaiting the next real CI run" caveat as every MSVC/Clang-only fix this log has already produced). Full suite: 695/697 in both configs, the identical 2 pre-existing sandbox-specific failures documented since Session 133, zero regressions. `bench` totals unchanged (`36154` overall).
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-26 (8).
-
-**Next session start point:** this session's own `C4456` fix is sandbox-verified only — if a new CI log arrives, confirm it first. The macOS CTest-registration gap (Session 135) remains open and unchanged by this run (still exactly 2 tests short on both macOS jobs) — still needs a real macOS build this sandbox cannot provide. No other items are currently queued; absent a new CI log or the macOS gap becoming actionable, the next step is whatever `docs/ROADMAP.md`'s own next unchecked item is.
-
----
-
-
-
-Triggered by "Continue" after the person reported "Everything green" (no CI log bundle uploaded this time, unlike Sessions 135/136 — treated as informal, verbal confirmation that Session 137's `nps`-test/MultiPV `elapsed_ms` fixes and Session 138's `const_cast` removal all landed clean on real CI, not independently re-verified against raw logs the way every prior CI-triage session in this log was). With no log file to triage and no macOS build available for the still-open CTest-registration gap, picked up the last remaining item from Session 133's own original handoff: the docs stale-statement sweep.
-
-**Scope of the sweep:** not a line-by-line audit of every doc/comment in the repository (never asked for, and this project's own "the repo is the memory" convention treats the existing docs as deliberately comprehensive, not something to prune or rewrite wholesale) — instead, followed the specific pointers Session 133's own report and the docs already contain: `docs/ARCHITECTURE.md` (the summary table most likely to drift silently, since nothing forces it to be touched when a ROADMAP.md item completes) and the two source-file header comments it and `docs/ROADMAP.md` both cite as "see here for the authoritative detail" (`src/search/tt.h`'s LIFETIME NOTE, `src/uci/uci.h`'s own top-of-file comment).
-
-**Found and fixed, 3 total (2 named by Session 133's own report, 1 more found the same way):**
-1. `src/search/tt.h`'s own LIFETIME NOTE and `ARCHITECTURE.md`'s Transposition Table row both still described the pre-Session-96 "one private TT per top-level search call, not yet a persistent global" state as CURRENT — checked directly against `docs/ROADMAP.md`'s own Session 96 entry, which confirms `uci.cpp`'s `run()` has owned one persistent, engine-lifetime table (via a new `external_tt` parameter) for many sessions now. Corrected both to describe the two lifetimes (fresh-private-per-call default, persistent-via-`external_tt`) as the real, PERMANENT design — both are genuinely still exercised today (tests and the standalone `bench`/`selfplay`/`sprt`/`match` binaries use the default; the real UCI engine binary always uses `external_tt`), not one interim placeholder waiting on the other the way the old wording implied.
-2. `ARCHITECTURE.md`'s Multithreading row claimed the UCI `Threads` option was "still an open, separate Phase 7 item" — checked against `docs/ROADMAP.md`'s own Session 74 entry, which shows it was implemented long ago. Corrected.
-3. Found while checking `uci.h`/`uci.cpp` for the `Threads` claim above, not separately named by Session 133's own report: `src/uci/uci.h`'s own top-of-file header comment still described the file as Phase 2's original minimal loop, listing setoption/Hash/Threads, asynchronous `go infinite`/`stop`, and pondering as ALL "out of scope this phase" — directly contradicted by `uci.cpp`'s own header comment one file away, which was ALREADY accurate and well-maintained (each item listed as implemented, with its own session number). `uci.h`'s comment had simply never been updated to match once `uci.cpp`'s own had been kept current across many later sessions — a case of one of two related files drifting while its sibling didn't, not a case of neither ever being touched. Corrected `uci.h` to summarize the current state in a few lines and point to `uci.cpp`'s own account for detail, rather than re-duplicating (and risking re-drifting from) it.
-
-**Also, a minor durability fix, not a correctness bug:** `ARCHITECTURE.md`'s own "Development Environment (assistant sandbox)" note named a specific test-suite total ("all 679 tests") as of when the sandbox toolchain was first confirmed working (2026-09-23) — accurate at the time, but a number guaranteed to go stale again the very next session that adds a test (this repo is now at 697). Reworded to point to `docs/SESSIONS.md`'s own latest entry for the current count instead of repeating a number that can't stay correct.
-
-**Verification:** rebuilt Release (GCC, this sandbox) after both `tt.h` and `uci.h` changes — these are doc-comment-only edits to real header files, not logic changes, but rebuilt anyway rather than assuming a comment-only diff is risk-free. Zero errors, zero warnings. Full suite: 695/697, the identical 2 pre-existing sandbox-specific failures documented since Session 133, confirming zero behavioral impact, exactly as expected for a comment-only change.
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-26 (7).
-
-**Next session start point:** Session 133's own original handoff (both deferred follow-ups) is now fully closed. Remaining open items, in the order they were filed: the macOS CTest-registration gap (Session 135, needs a real macOS build — cannot progress from this Linux sandbox); independently re-confirming Sessions 137/138's own fixes against a REAL CI log bundle, not just this session's verbal "everything green" (if one is uploaded, triage it properly — read the actual pass/fail/warning output, the way Sessions 135/136 did, rather than treating a verbal report as equivalent); and whatever ROADMAP.md's own next unchecked item is after that, if nothing else is queued.
-
----
-
-
-
-Triggered by "Continue" — no new CI logs pending, so picked up the smaller of Session 133's own two long-deferred follow-ups (the docs stale-statement sweep, the other one, remains open and larger/open-ended).
-
-**What was built:** `run_lazy_smp_helper()`'s own `stop` parameter changed from `const std::atomic<bool>&` to `std::atomic<bool>&`. The function itself only ever calls `.load()` on `stop` — never writes it (the main thread's own `smp_stop.store(true, ...)`, in each of the two callers, is the only writer) — so dropping `const` from the parameter's own declared type changes nothing about this function's actual behavior, only what's needed to assign `&stop` directly into `SearchLimits::external_stop` (itself a non-const pointer, since `negamax()`/`quiescence()` only ever read through it too) without a cast. Both call sites (`search_fixed_depth()`, `search_iterative_deepening()`) switched their own `std::cref(smp_stop)` to `std::ref(smp_stop)` to match the new parameter type — checked directly, not assumed, that `smp_stop` itself was already a plain, non-const local `std::atomic<bool>` at both sites, so only the call-site BINDING was ever const, not the underlying object. `SearchContext::limits`'s own constness — the thing this item's own original text flagged as needing a deliberate decision, not a side effect — was left completely untouched; this fix is scoped to exactly `run_lazy_smp_helper()`'s own parameter and its two call sites, nothing about `SearchContext` itself.
-
-**Verification:** rebuilt both Release and Debug/ASan+UBSan (GCC, this sandbox) — zero errors, zero warnings, both configs. Full suite: 695/697 in both, the identical 2 pre-existing sandbox-specific failures (`go nodes`/`go searchmoves`) every session since 133 has documented, zero regressions. `bench` totals unchanged (`36154` overall).
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-26 (6).
-
-**Next session start point:** the docs stale-statement sweep (Session 133's own second, larger, deferred follow-up) is the last item from that session's own original handoff still open. Beyond that: the macOS CTest-registration gap (Session 135, needs a real macOS build) and re-confirming Session 137's two fixes (`nps`-flake test, MultiPV `elapsed_ms`) on real CI both still await a new CI-log bundle. If one arrives, triage it first, same standing priority as every session since 135.
-
----
-
-
-
-Triggered by "Continue," no new CI logs this time — picked up the highest-priority item from Session 136's own handoff note that didn't require a real macOS build: investigating the `nps`-omission flake.
-
-**Root cause investigation:** read `emit_info()` in full (`uci.cpp`) — confirmed its own doc comment already documents the exact mechanism: `nps` is only emitted when `result.elapsed_ms > 0`, deliberately, to avoid a divide-by-zero or a meaningless value. Then read every `elapsed_ms` assignment site in `search.cpp` — all derived via `std::chrono::duration_cast<milliseconds>`, meaning any search finishing inside its own start millisecond legitimately reports `elapsed_ms == 0`. Checked against this project's own `bench` numbers (`kiwipete` depth 6 is under 14000 nodes) to confirm a `startpos` depth-3 search finishing in under 1ms on fast real CI hardware is entirely plausible, not far-fetched. Conclusion: the flaky test's own assumption — a FIXED `go depth 3` is "comfortably past" the sub-millisecond risk zone — was simply wrong on sufficiently fast hardware; `emit_info()`'s own omission logic is correct, documented, intentional behavior, not a bug.
-
-**Real, separate bug found while tracing every `elapsed_ms` assignment site, not sought out deliberately:** `search_iterative_deepening_multipv()` (internal to `search.cpp`) never sets `elapsed_ms` on ANY line's own `SearchResult`, in either its depth-1 block or its depth-2-onward loop — meaning every MultiPV `info` line has ALWAYS reported `time 0` and NEVER shown `nps`, for as long as MultiPV has existed, completely unnoticed because no existing test ever asserted those two fields for a MultiPV `go` (only `multipv N` token counts and score contents, confirmed by reading every `[uci][multipv]`-tagged test in `uci_tests.cpp`). This is a genuine, previously-invisible UCI-output correctness gap for any real GUI using MultiPV — not merely a cosmetic omission, since a GUI displaying "0 nodes/sec" or nothing at all for `nps` during a MultiPV analysis session is directly misleading, unlike the single-line path's own genuinely-rare sub-millisecond omission.
-
-**What was fixed:**
-1. `search_iterative_deepening_multipv()`: added a once-per-depth `elapsed_ms` computation (cumulative since the function's own `start_time`, matching `nodes`' own already-established "one cumulative value applied to every line at that depth" convention), assigned to every line's own `SearchResult` in both the depth-1 block and the depth-2-onward loop.
-2. `tests/uci_tests.cpp`'s own `nps`-omission test: switched from `go depth 3` to `go movetime 100` — a wall-clock-time budget the iterative-deepening loop actually waits out (checking its own deadline between depths), independent of hardware speed, unlike a fixed depth which a fast enough machine can always outrun.
-3. Added a new end-to-end test (`[uci][multipv][info]`) confirming a `go movetime 100` MultiPV search now reports `nps` — this test initially over-asserted (`REQUIRE_FALSE(contains(out, "time 0 "))`, checking that NO reported depth anywhere in the output showed a zero elapsed time), caught by this session's own test run: an EARLY depth in the same multi-depth output can still legitimately show `time 0` before enough cumulative wall time has passed, exactly the same "early iterations can be sub-millisecond" phenomenon as the single-line path — corrected to only require `nps` appearing SOMEWHERE in the output (proof the fix makes it possible at all), not that every line clears the bar.
-
-**Verification:** rebuilt both Release and Debug/ASan+UBSan (GCC, this sandbox) — zero errors, zero warnings, both configs. Full suite: 695/697 (Release) and 695/697 (Debug) — 697, not 696, from the one new test added; the 2 remaining failures in both configs are the same pre-existing sandbox-specific ones (`go nodes`/`go searchmoves`) documented since Session 133 — the `nps` test itself now passes reliably (re-ran it standalone and as part of the full suite; no flake observed in either). `bench` totals unchanged (`36154` overall, same per-position breakdown as every prior session).
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-26 (5) — covers both the "fix the test, not `emit_info()`" call and the MultiPV `elapsed_ms` fix's own design (why cumulative-per-depth, matching `nodes`, rather than some other scheme).
-
-**Next session start point:** this session's own MultiPV `elapsed_ms` fix and the `nps`-test fix are both sandbox-verified but NOT yet independently re-confirmed on real CI (same "awaiting the next push" pattern as Sessions 135/136's own fixes) — if a new CI log bundle arrives, checking both of those first is the priority. Absent a new bundle, the remaining open items are: the macOS CTest-registration gap (Session 135, needs a real macOS build), and Session 133's own two long-deferred follow-ups (`run_lazy_smp_helper()`'s `const_cast` removal; the docs stale-statement sweep).
-
----
-
-
-
-Triggered the same way as Session 135 — the person uploaded the real CI log bundle for Session 135's own push, no further instruction.
-
-**Confirms Session 135's own fix worked:** neither macOS Debug's nor macOS Release's `6_Build.txt` shows the `game_history` unused-variable warning this run — gone, on the first real macOS build to compile the fix. This is the independent re-confirmation Session 135's own account flagged as missing at the time.
-
-**The macOS 694/696 CTest-registration gap (filed Session 135) persists unchanged** — same 694 registered on both macOS jobs, same two `eval_tests.cpp` `taper:` tests absent. No progress possible from this Linux sandbox; remains filed, waiting on a real macOS build to investigate directly.
-
-**The `nps` flake (`uci_tests.cpp:1125`) is now confirmed cross-platform, not macOS-specific:** it failed on macOS Release again (both runs now), AND on Windows Release this run (which was fully green last run) — Linux (both configs) and the OS/config pairs it hasn't hit yet stayed clean both times. Filed as its own new ROADMAP item (previously only described inline in Session 135's own narrative, not tracked as a standalone item) with a concrete first-step hypothesis: a sub-millisecond depth-1 iteration on a fast enough Release binary may be legitimately hitting `emit_info()`'s own documented "only report `nps` when elapsed time is nonzero" condition, not a logic bug — unconfirmed by direct reproduction, only inferred from the Release-only, cross-platform pattern.
-
-**Second real warning class found — a genuine miss in Session 135's own triage, corrected here:** re-reviewing this run's Windows Debug/Release `6_Build.txt` logs (prompted by noticing Windows Release had gone from 0 failures to 1 this run, which warranted a closer look than a quick pass/fail grep) surfaced 8 occurrences of `warning C4244: '=': conversion from 'nightwing::board::Square' to 'int8_t', possible loss of data`, split across `src/board/board.cpp:97`, `src/board/fen.cpp:133`, and three test files (`zobrist_tests.cpp` x3, `movegen_tests.cpp` x2, `makemove_tests.cpp` x1). Checked directly against Session 135's own log bundle (still available in this session's own sandbox) and confirmed present there too, byte-for-byte identical count and locations — meaning this warning predates BOTH of the last two sessions' own changes and was simply never caught by any Linux/macOS-only sandbox verification, since `Square` is a plain `int` (`bitboard.h`) while `Position::en_passant_square` is `std::int8_t` (a compact-storage field, `board.h`), and GCC/Clang's `-Wall -Wextra -Wpedantic` (this project's own configured flags) don't flag this class of implicit narrowing by default — only MSVC's own always-on `C4244` does, and only a real Windows CI run can produce it. This is an honest process gap in Session 135's own triage, not a new regression from that session's own change (`game_history` and `en_passant_square` are unrelated fields in unrelated functions) — noted plainly here rather than glossed over, per this project's own "own its mistakes" standard.
-
-**Fixed:** all 8 sites now wrap the `Square`-typed right-hand side (`make_square(...)` or the one `static_cast<Square>(...)` in `board.cpp`, itself now simplified to cast directly to `std::int8_t` instead of redundantly through `Square` first) in an explicit `static_cast<std::int8_t>(...)`, matching the same two production files' own pre-existing convention elsewhere (`fen.cpp`'s `halfmove_clock`/`fullmove_number` assignments, a few lines below the fixed one, already did this). See docs/DECISIONS.md, 2026-09-26 (4).
-
-**Verification:** rebuilt both Release and Debug/ASan+UBSan locally (GCC, this sandbox) after the fix — zero errors, zero warnings in both (GCC was never going to show `C4244` either way, so this confirms no breakage, not that the warning is gone — that confirmation, like Session 135's own `game_history` fix, awaits the next real CI run). Full suite: 693/696 (Release) and 694/696 (Debug) — identical to every prior run this session's own sandbox has produced, zero regressions. `bench` totals (`36154` overall) unchanged.
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-26 (4).
-
-**Next session start point:** if a third CI-log bundle arrives, prioritize confirming this session's own `C4244` fix actually silenced the warning on real Windows CI (the same "awaiting independent re-confirmation" pattern as Session 135's own fix) before picking up anything else. Absent a new CI bundle, the next candidates are (in the order they were filed): the `nps`-flake investigation (this session, new), the macOS CTest-registration gap (Session 135, needs a real macOS build), or Session 133's own two long-deferred follow-ups (`run_lazy_smp_helper()`'s `const_cast` removal; the docs stale-statement sweep).
-
----
-
-
-
-Triggered by the person uploading the real GitHub Actions CI log bundle (all 6 matrix jobs: Windows/Linux/macOS x Debug/Release) for Session 134's push, with no further instruction — treated as a CI-triage session, the same established pattern as the 2026-09-23 (3) DECISIONS.md entry.
-
-**Overall result: 5 of 6 jobs fully green, 1 with a single known flake.** Linux Debug, Linux Release, Windows Debug, and Windows Release all reported "100% tests passed, 0 tests failed out of 696." macOS Debug reported "100% tests passed out of 694" (694, not 696 — see the new open item below). macOS Release reported "99% tests passed, 1 tests failed out of 694" — the failing test was `uci_tests.cpp:1125`, the pre-existing `'info' lines include ... 'nps' ...` test, the exact same one that already flaked in this sandbox's own Session 134 verification. This is genuinely new information: Session 133's own working theory ("this sandbox has 1 CPU core... NOT independently confirmed against real CI") is now PARTIALLY confirmed and partially refined by real hardware — the `nps` test's own flake IS reproducible on real CI (macOS Release specifically), while the other two UCI tests that failed in this sandbox (`go nodes`/`go searchmoves` restriction) did NOT fail on any of the 6 real CI jobs, suggesting those two specifically may indeed be this sandbox's own 1-core artifact, while `nps` is a separate, genuinely flaky test on real hardware too (most likely a timing race: on a fast enough run, depth 1 can complete inside the same millisecond it started, per `emit_info()`'s own documented `nps`-omission condition — consistent with a fast macOS Release binary occasionally finishing the requested depth in under 1ms).
-
-**Regression bench cross-checked against this session's own sandbox numbers:** Linux Release's own `8_Print regression bench` step (and the raw `BENCH ...` lines inside its own `2_Linux Release.txt` log) reported `startpos=2199, kiwipete=13849, quiet_middlegame=3991, endgame_mate_in_3=16115, TOTAL=36154` — byte-for-byte identical to what Session 134's own sandbox verification already reported, confirming the "zero behavior change at the compiled-in defaults" claim against real CI hardware, not just this sandbox.
-
-**Real bug found and fixed:** macOS Debug and macOS Release's own `6_Build.txt` logs both showed one identical warning, absent from every other platform's build log: `src/search/search.cpp:3140:36: warning: unused variable 'game_history' [-Wunused-variable]`. Investigated directly, not assumed: `search_root()`'s own local-alias block (Session 133's `SearchContext` refactor) declared `std::span<const std::uint64_t> game_history = ctx.game_history;`, genuinely unused anywhere else in that function's body — confirmed by grepping every `game_history` occurrence in `search.cpp` and checking each one's enclosing function; the only OTHER `game_history` alias in this file lives inside `negamax()` itself (a separate function), where it IS used (`is_draw_by_rule()`'s own call, that function's body). This is the exact same class of bug Session 133 already caught and fixed for `search_root()`'s other four now-removed aliases (`correction_history`/`pawn_tt`/`eval_cache`/`eval_weights`) — Session 133 simply missed this fifth one, and Session 134's own subsequent edits to this same function (threading `searchmoves`/`max_nodes` through, this session's own prior work) didn't touch this specific alias either, so it persisted uncaught through two sessions. Root cause of why NEITHER session's own sandbox verification (both used GCC on Linux) ever caught it: GCC's `-Wunused-variable` does not flag an unused local of CLASS type (`std::span` here) the same aggressive way it flags an unused reference/pointer/scalar — its own heuristic assumes a class constructor might have observable side effects, so a declared-but-never-read `std::span` local doesn't trigger the warning, whereas the four reference-typed aliases Session 133 already removed WOULD (and, per that session's own account, DID) trigger it. Only Apple Clang, which has no such class-type exemption, caught this — and only because this was the FIRST real macOS CI run since Session 133's refactor landed. Fixed: removed the dead alias; updated the block's own doc comment to name `game_history` alongside the other four already-excluded fields and to record why GCC never caught it, for whichever future session next touches this block. See docs/DECISIONS.md, 2026-09-26 (3).
-
-**Verification:** rebuilt Release locally (GCC, this sandbox) after the fix — zero errors, zero warnings (as before; GCC was never going to show this specific warning either way, so a clean GCC build isn't independent confirmation the fix is correct, only that it doesn't break anything — the real confirmation is that the exact reported line/column no longer exists). Full suite re-run: 693/696, the identical pre-existing 3-failure set this session's own bench/test comparison above already established for this sandbox, confirming the removal didn't change behavior. Real Apple-Clang re-verification of the fix itself (confirming the warning is actually gone, not just plausibly-should-be) is NOT available in this sandbox — flagged as an honest gap, same category as this project's own pre-existing "real-GUI pondering interop" and "real fishtest/OpenBench interop" gaps (ROADMAP.md, Phase 8) — the fix should be treated as strongly-argued-correct-by-direct-code-inspection-plus-the-exact-reported-line/column, not yet independently re-confirmed on real macOS hardware; the NEXT push's own CI run will provide that confirmation for free.
-
-**New, unexplained finding filed, not resolved this session:** macOS (both Debug and Release) registers only 694 CTest tests, not 696 — confirmed by diffing the full per-platform test-name sets (Linux's 696 names vs. macOS's 694): the two tests missing on macOS are `eval_tests.cpp`'s `"taper: phase kMaxPhase selects the mg term exactly"` and `"taper: phase 0 selects the eg term exactly"` — plain, unconditional `TEST_CASE`s, no `#ifdef __APPLE__`, no Catch2 tag exclusion, no skip logic found anywhere in `tests/CMakeLists.txt` either. Genuinely unexplained by inspection alone in this session's own available time — filed as a new ROADMAP.md item (this section, above) rather than guessed at. Notably NOT a new regression introduced by Session 134's own changes (neither touched `eval_tests.cpp`) — first observed on this exact CI run only because this may be the first time any session has diffed exact per-platform CTest totals this precisely, not necessarily the first time it's happened.
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-26 (3), for the `game_history` fix's own full rationale, including why this specific class-vs-reference GCC/Clang divergence is worth documenting for future alias-block work in this file.
-
-**Next session start point:** the newly-filed macOS CTest-registration gap (this section's own new item) is the natural next thing to investigate, given it's fresh and this session already did the diffing legwork — but it requires a real macOS build to make progress on (this sandbox is Linux-only), so it may need to wait for another real-CI-log-triage session rather than being resolvable from a Linux sandbox alone. Failing that, the two follow-ups Session 133 deliberately deferred (`run_lazy_smp_helper()`'s own `const_cast` removal; the docs stale-statement sweep) remain open and still un-picked-up by either Session 134 or this one.
-
----
-
-
-
-Started via "Go" — read ROADMAP.md, SESSIONS.md's last entry (Session 133), and both Tier-2 docs (DECISIONS.md, ARCHITECTURE.md) in full per that trigger's own contract. Session 133's own handoff named two possible next steps (this item, or its own two smaller deferred follow-ups); picked up this item specifically, as the primary next unchecked item in ROADMAP.md's own top-to-bottom order within the Priority Fixes (2026-09-22) section.
-
-**Real toolchain, not inspection, used throughout, matching Session 133's own established workflow:** cloned the actual repository fresh into the sandbox, installed `cmake` (not preinstalled this session either), configured both Release and Debug/ASan+UBSan, and built unmodified `main` in both configs first to establish a baseline before touching anything. Release baseline: 689/692 (3 `[uci]` failures — the same ones Session 133 documented). Debug/ASan+UBSan baseline: 690/692 (2 failures — a subset of Release's 3; the `nps`-line test evidently doesn't fail under this config, an existing, unexplained difference not investigated further as out of this session's own scope) plus 4 pre-existing `eval/score.h` signed-integer-overflow UBSan warnings during `bench`, confirmed present on this unmodified baseline too before assuming they were this session's own fault.
-
-**Scoping:** read `search.h` in full (all `max_nodes`/`searchmoves` doc comments on `search_iterative_deepening()`), then `search_iterative_deepening_multipv()`'s own definition and its caller's delegation site in `search.cpp`, then `start_pondering()`/`SearchBudget` in `uci.cpp` — confirmed directly (not assumed from ROADMAP wording) that `search_root()` already had a working `searchmoves_filter` parameter, unused by both of this item's two target call sites, and that the single-line path's own `max_nodes`/`searchmoves` treatment (depth-1 gets `searchmoves` only; depth-2-onward gets both, via a fresh per-depth `SearchLimits`) was the pattern to mirror, not a new design.
-
-**What was built:** `search_iterative_deepening_multipv()` gained `max_nodes`/`searchmoves` parameters (same types/defaults as the single-line path's own), forwarded from `search_iterative_deepening()`'s own delegation call site. `searchmoves` is passed as `searchmoves_filter` to every `search_root()` call this function makes (the depth-1 loop and the depth-2-onward loop alike); `max_nodes` only feeds the depth-2-onward loop's own per-depth `SearchLimits` (`has_node_limit`/`max_nodes`), never the depth-1 block, mirroring the single-line path's own "depth 1 is unconditional" precedent exactly. One design point resolved that the single-line path's own precedent didn't directly answer: MultiPV searches `max_lines` separate lines per depth, each via its own `search_root()` call — the same `limits` instance (and hence the same node budget) is deliberately shared across all of them within one depth, not given a fresh per-line budget, since `go nodes` is a whole-search budget; reaching it mid-line discards that entire depth, consistent with this function's own pre-existing "an incomplete depth is discarded wholesale" convention for every other interruption reason. `start_pondering()` (`uci.cpp`) now forwards `budget.has_node_limit ? budget.max_nodes : 0`/`budget.searchmoves` to its own background search (previously hardcoded to neither) — `budget` itself (not just the two new fields) is captured by value into the pondering thread's closure, matching `start_go()`'s own established capture-the-whole-struct pattern for the identical dangling-reference reason.
-
-**Tests added:** 2 in `tests/search_tests.cpp` (`[search][multipv][searchmoves]`, `[search][multipv][nodes]`) confirming `multi_pv > 1` combined with each of the two parameters directly at the search layer — the `searchmoves` test restricts a 2-line MultiPV search to 2 deliberately weak, unusual moves and confirms both reported lines come from exactly that set; the `max_nodes` test confirms a 2-line MultiPV search on a real middlegame position stops in the low thousands of nodes rather than the tens of thousands an unbounded depth-15 search would need. 2 in `tests/pondering_tests.cpp` (`[uci][pondering][searchmoves]`, `[uci][pondering][nodes]`) confirming the same two parameters reach `go ponder` at the UCI layer — the `searchmoves` test confirms `go ponder searchmoves g1h3` followed by `stop` reports exactly that move; the `nodes` test confirms `go ponder nodes 1000` composes correctly with a subsequent `ponderhit` without crashing or hanging (a precise node-count assertion isn't observable at the UCI layer for pondering, which emits no `info` lines — `on_iteration=nullptr` — so this test's own scope is deliberately narrower than the search-layer one, matching what's actually checkable here).
-
-**Verification:** rebuilt both configs clean (zero errors, zero warnings) with these changes plus the 4 new tests. Release: 693/696 (689 carried over + 4 new), Debug/ASan+UBSan: 694/696 (690 carried over + 4 new) — both confirmed, by direct comparison of failing test names against each config's own pre-change baseline above, to be the EXACT SAME pre-existing failure set with zero regressions and zero incidental fixes; all 4 new tests passed in both configs. `bench`'s own per-position node counts (`startpos`/`kiwipete`/`quiet_middlegame`/`endgame_mate_in_3`) confirmed byte-for-byte identical before and after this session's changes, in both configs — the expected "zero behavior change at the compiled-in defaults" result for a change whose two new parameters both default to their existing no-op values (0/empty) everywhere. The same 4 pre-existing `eval/score.h` UBSan overflow warnings appeared in the modified Debug build too, confirmed not newly introduced.
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-26 (2), for the shared-per-depth-not-per-line node-budget design point above, and for why `budget` (the whole struct) rather than its two new fields alone is what gets captured into `start_pondering()`'s closure.
-
-**Next session start point:** pick up ROADMAP.md's next unchecked item after this one — the two follow-ups Session 133 deliberately deferred (`run_lazy_smp_helper()`'s own `const_cast<std::atomic<bool>*>(&stop)` removal, small and self-contained; or the `docs/DECISIONS.md`/`docs/SESSIONS.md` stale-statement sweep, larger and open-ended) remain open and un-picked-up by this session either, since this item was judged the primary next item rather than those two named alternatives. This session's real-toolchain workflow (fresh clone, cmake install if needed, baseline build+test in BOTH Release and Debug/ASan+UBSan before any change, diff the failure set after) continued Session 133's own precedent and should keep being followed for any future change touching `search.cpp`/`uci.cpp`.
-
----
-
-
-
-Started via "Go" — read ROADMAP.md, SESSIONS.md's last entry (Session 132), and both Tier-2 docs (DECISIONS.md, ARCHITECTURE.md) in full per that trigger's own contract. Next incomplete item was item 6, whose own text explicitly warned "budget it as such, not a quick pass" — read `src/search/search.h` and `negamax()`'s actual current signature/doc comment in full before scoping anything, per Session 132's own handoff instruction.
-
-**Real toolchain, not inspection, used throughout:** cloned the actual repository fresh into the sandbox, installed `cmake` (not preinstalled this session), configured, and built unmodified `main` first to establish a baseline. That baseline's own `./tests/nightwing_tests` run came back **689/692**, not 692/692 — 3 `[uci]`-tagged tests (`searchmoves`/`nps`/`hashfull`-adjacent) failing deterministically across 3 repeated runs, not flaky. This sandbox has exactly 1 CPU core; working theory is single-core timing sensitivity in these async-`go`/background-thread tests, NOT independently confirmed against the real multi-core CI runner this project's `ci.yml` actually uses — recorded as a working theory, not a proven root cause. This baseline became the control for everything that followed.
-
-**Scoping, before writing anything:** grepped every real (non-comment) `negamax(` and `search_root(` call site directly. Found `negamax()`/`search_root()` are both anonymous-namespace-local in `search.cpp` — never forward-declared in any header — so despite `tests/search_tests.cpp` showing 38 `negamax(` grep hits, every single one turned out to be a comment mentioning the function by name; zero are real invocations. This meant the refactor's actual blast radius was entirely contained to `search.cpp` itself — no test file, and nothing in `uci.cpp`, needed touching. Materially smaller than the item's own text implied at first read.
-
-**What was built:** a new `SearchContext` struct (declared immediately before `negamax()`, same anonymous namespace) bundling the 14 fields that stay the same object across an entire search — `tt`, `killers`, `history`, `cont_history`, `capture_history`, `correction_history`, `game_history`, `pawn_tt`, `eval_cache`, `material_weights`, `eval_weights`, `limits`, `contempt_white_pov`, `tie_break_variant` — leaving the genuinely per-node-varying arguments (`pos`, `depth`, `alpha`, `beta`, `ply`, `nodes`, `prev_piece`/`prev_to`/`prev_was_capture`, `path`, `static_eval_history`, `mat_psqt`, `exclude_move`) as explicit parameters. `negamax()`: 27 params -> 15. `search_root()`: 19 params -> 9. Deliberately did NOT rewrite either function's own body to reference `ctx.field` throughout — instead, a top-of-function local-alias block (`TranspositionTable& tt = ctx.tt;` etc.) reconstructs the exact same local names the old parameter list already provided, so every line past that block, in either function, is byte-for-byte identical to before this session. Chosen specifically because `negamax()` is ~1,230 lines of previously-SPRT-relevant pruning/extension/reduction logic — a mechanical rename across that many lines multiplies the chance of an actual logic-altering typo for zero behavioral benefit; the signature-and-call-sites-only diff is instead fully mechanically checkable. Updated all 10 of `negamax()`'s own recursive call sites, all 3 of `search_root()`'s own, and all 7 external `search_root()` call sites (`search_fixed_depth()`; `run_lazy_smp_helper()`'s per-depth-iteration loop, `ctx` rebuilt fresh each iteration since `limits` is itself fresh there; `search_iterative_deepening_multipv()`'s two call sites, one `ctx` built once outside its depth-1 loop, one rebuilt per-line in its depth-2-onward loop; `search_iterative_deepening()`'s two call sites, sharing one `depth_ctx` per depth iteration between the aspiration-window retry loop and the full-window fallback branch).
-
-**Bug caught and fixed before calling this done:** the first build attempt after the refactor was clean (zero errors) but produced 4 `-Wunused-variable` warnings, all inside `search_root()`'s own new alias block — `correction_history`, `pawn_tt`, `eval_cache`, `eval_weights`. Cause: `search_root()`'s own body never reads these four directly (confirmed by grepping the function body itself), only forwards them to `negamax()` via `ctx` at each call site — the alias block had declared local names for them out of habit, matching `negamax()`'s own block, without checking whether `search_root()` itself actually used them. Fix: removed those 4 unused aliases from `search_root()`'s block specifically (kept in `negamax()`'s own block, where all 14 genuinely are used). Why correct: a local reference alias that's never read is dead code by definition, and the compiler's own warning is the direct, mechanical confirmation, not a judgment call.
-
-**Final verification:** rebuilt clean (zero errors, zero warnings) and re-ran the full suite: **689/692, the exact same 3 failing test names as the pre-refactor baseline, confirmed via a direct `diff` of both runs' full failure lists** — not just an equal pass count, the identical set. Zero regressions, zero incidental fixes either; a neutral result on correctness by the only standard that actually matters for a pure refactor.
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-26, for the full design/scope/verification/alternatives-considered account (SearchContext's field list and constness choices, why the local-alias mechanism was chosen over a body rewrite, why the outer `search_fixed_depth()`/`search_iterative_deepening()`/`run_lazy_smp_helper()` signatures were left untouched, why `path`/`static_eval_history`/`nodes` were deliberately NOT folded into the struct despite also being threaded through every call).
-
-**Deliberately not done this session, left as named follow-ups (see ROADMAP.md item 6's own updated text):** `run_lazy_smp_helper()`'s own documented `const_cast<std::atomic<bool>*>(&stop)` was NOT removed — the finding floated that this struct could enable removing it, but that `const_cast` sits on a different function's own parameter, and doing it properly means a deliberate decision about `SearchContext::limits`'s own constness, not a side effect of this change. The item's own "prune stale docs" sub-task was not separately pursued beyond what the refactor itself touched — no dedicated stale-comment sweep was performed this session.
-
-**Next session start point:** pick up ROADMAP.md's next unchecked item after item 6 (currently the "Thread `go nodes`/`searchmoves` through MultiPV and pondering" item filed 2026-09-24, or re-sequence per that section's own "starting recommendation, not a commitment" framing) — or, if prioritizing the two follow-ups this session deliberately deferred, start with the `run_lazy_smp_helper()` `const_cast` removal (small, self-contained) before the docs-staleness sweep (larger, open-ended). Either way: this session's real-toolchain workflow (fresh clone, install cmake if needed, baseline build+test BEFORE any change, diff the failure set after) is now established and should be repeated, not skipped, for any future change touching `search.cpp`.
-
----
-
-### Session 132 — 2026-09-24 (3) — UCI parsing tightened: go nodes/mate/searchmoves, missing info fields, and the apply_uci_moves silent-discard all fixed (Priority Fixes item 5b, finding 9) — item 5 fully closed
-
-Continued in the same sandbox session as Sessions 130-131, via "Start" then "Continue" across several turns — item 5b, left open at the end of Session 131 specifically because it bundled four genuinely separate additions across `search.h`/`search.cpp`/`uci.cpp`. Read `src/uci/uci.cpp`'s `go`-token loop and `apply_uci_moves()`, and `src/search/search.h`'s `SearchLimits`/`SearchResult`/`search_iterative_deepening()` doc comments, in full before writing anything, per the prior session's own handoff.
-
-**Built and verified in dependency order, with a real `ctest` checkpoint after each layer** (not one pass at the very end): `TranspositionTable::hashfull()` first (self-contained, 4 new tests); then `SearchLimits::has_node_limit`/`max_nodes`/`seldepth` and `SearchResult::seldepth`/`elapsed_ms`, wired into `negamax()`'s and `quiescence_impl()`'s existing periodic deadline/external-stop check block as a third independent trigger condition; then `search_root()`'s new `searchmoves_filter` (an inclusion filter, mirroring the existing `excluded_moves` exclusion filter used for singular extension) and `search_iterative_deepening()`'s new `max_nodes`/`searchmoves` parameters, threaded through the mandatory depth-1 call and the depth-2-onward loop (2 new search-layer tests); then `uci.cpp` itself — `compute_search_budget()` now parses `go nodes <n>`, `go mate <n>` (settled as a depth-ceiling-of-2n minimal treatment, the design question left open last session), and `go searchmoves <m1> ...`; `emit_info()` now writes `seldepth`/`time`/`nps`/`hashfull`; `apply_uci_moves()` returns how many tokens it applied, and `handle_position()` emits one `info string` diagnostic when that's short of the full list (6 new end-to-end UCI-layer tests, run through the real UCI text protocol, not just the C++ API).
-
-**A real bug caught mid-session, not shipped:** a local copy of `search.h` was edited (adding the two new parameters to `search_iterative_deepening()`'s declaration) but not immediately copied back into the actual repo checkout before the next build — `search.cpp` compiled its own new 15-parameter definition against a header that still declared the old 13-parameter one, and `uci.cpp` (built against that stale header) called the now-nonexistent old overload. Surfaced immediately as a linker `undefined reference`, not a silent miscompile — fixed by syncing the header and rebuilding, with a full `ctest` pass afterward confirming nothing else was affected.
-
-**Fixed one pre-existing test** broken by the new `info` line format: `uci_tests.cpp`'s multipv-ordering test did an exact-substring match (`"info depth 1 multipv 1 score "`) that the new `seldepth` token, now inserted before `multipv`, broke — updated to match the new field order rather than removed.
-
-**Final state: full `ctest` 692/692** (680 carried over from Session 131's item 5a + 12 new this leg: 4 hashfull, 2 search-layer, 6 UCI-layer).
-
-**Bugs fixed:** none in the "existing behavior was wrong" sense — this was entirely new-feature work (finding 9 was about missing functionality, not incorrect functionality) plus the one mid-session signature-mismatch mistake described above, caught and fixed before ever reaching a green build.
-
-**Decisions made:** logged in full in docs/DECISIONS.md, 2026-09-24 (3), including the alternatives considered for `go mate`'s design and for where the `info string` diagnostic ownership belongs.
-
-**Files changed:** `src/search/tt.h`/`tt.cpp` (`hashfull()`), `src/search/search.h` (`SearchLimits`/`SearchResult` fields, `search_iterative_deepening()` signature), `src/search/search.cpp` (`negamax()`/`search_root()`/`search_iterative_deepening()`), `src/search/quiescence.cpp` (periodic check block), `src/uci/uci.cpp` (`compute_search_budget()`, `emit_info()`, `apply_uci_moves()`, `handle_position()`, both `search_iterative_deepening()` call sites), `tests/tt_tests.cpp` (4 new tests), `tests/search_tests.cpp` (2 new tests), `tests/uci_tests.cpp` (6 new tests, 1 existing test's assertions updated), `docs/ROADMAP.md` (item 5b checked off; a new low-priority item filed for MultiPV/pondering combined with `nodes`/`searchmoves`), `docs/DECISIONS.md` (new 2026-09-24 (3) entry), `docs/SESSIONS.md` (this entry).
-
-**Next session starts:** ROADMAP.md's Priority Fixes (2026-09-22) section is now fully closed except item 7 (low priority, per that section's own header) and the two backlog items filed alongside items 4 and 5b (widening the singular-extension isolation match's sample size; threading `nodes`/`searchmoves` through MultiPV/pondering) — neither blocking. Item 6, "Refactor `negamax`'s parameter list; prune stale docs," is the next real item in ordering, and is flagged in its own ROADMAP text as a substantial refactor deserving its own dedicated session, not a quick pass — read that item's full ROADMAP text and `negamax()`'s current signature/doc comment in full before scoping it, rather than starting to code immediately. Say "Continue" or "Start" to proceed.
-
----
-
-### Session 131 — 2026-09-24 (2) — Mate-vs-fifty-move-rule ordering fixed and verified against a real build (Priority Fixes item 5a, finding 8); item 5 split into 5a/5b
-
-Continued in the same sandbox session as Session 130, via "Start" — the next incomplete ROADMAP.md item after item 4 (closed last entry) is item 5, "Fix the mate-vs-fifty-move ordering; tighten UCI parsing" (findings 8 and 9). Read `src/search/search.cpp`'s `is_draw_by_rule()` and `negamax()`'s call-order around it, and `src/uci/uci.cpp`'s `go`-token loop and `apply_uci_moves()`, per the prior session's own handoff, before writing anything.
-
-**What was found:** `is_draw_by_rule()` returns `true` unconditionally on `pos.halfmove_clock >= 100`, called before any move generation in `negamax()` — confirmed directly by reading the function, not just trusting the report. A checkmate delivered by the very move that pushes the clock to 100 would be misscored as a draw.
-
-**Fix:** the `halfmove_clock >= 100` branch now only auto-returns a draw when the side to move isn't in check; when it is, `board::generate_legal_moves()` is called (paying real cost only in this rare branch) and a draw returns only if a legal reply actually exists — zero legal replies while in check falls through with an explicit `return false`, letting `negamax()`'s own move loop find the empty list and score a genuine mate. Same technique as Stockfish's own `Position::is_draw()`, credited per ARCHITECTURE.md's attribution policy.
-
-**Verified against a real compiled build, both directions:** a constructed FEN (`7k/5K2/8/8/8/8/8/6Q1 w - - 99 60`, halfmove_clock 99, any quiet queen move reaches 100) was run through the actual pre-fix binary first — `score cp 0`, `bestmove g1g5`, the search visibly dodging a mate it could see — then through the post-fix binary — `score mate 1`, `bestmove g1h1`. A new regression test built from this exact FEN was added to `tests/search_tests.cpp`. Full `ctest`: 680/680 green.
-
-**Scope decision:** item 5's other half (finding 9, UCI-parsing tightening — `go nodes`/`go mate`/`searchmoves`, `apply_uci_moves()`'s silent discard, `emit_info()`'s missing `nps`/`time`/`seldepth`/`hashfull`) was deliberately NOT started this session — four genuinely separate additions across `search.h`/`search.cpp`/`uci.cpp`, not a quick aside alongside 8's single-function fix. ROADMAP.md item 5 split into 5a (this entry, checked off) and 5b (left open, explicitly scoped for next session, including the `go mate` design question).
-
-**Bugs fixed:** the mate-vs-fifty-move-rule misscoring described above (finding 8) — cause: `is_draw_by_rule()`'s halfmove-clock branch ran before any legality/mate check; fix: gate that branch on `!in_check(pos) || <a legal reply exists>`; why correct: checkmate ends the game immediately and takes precedence over a 50-move-rule draw, and this now matches that rule exactly rather than only in the (overwhelmingly common) not-in-check case.
-
-**Decisions made:** logged in full in docs/DECISIONS.md, 2026-09-24 (2).
-
-**Files changed:** `src/search/search.cpp` (`is_draw_by_rule()` fix), `tests/search_tests.cpp` (one new regression test, `[fifty-move][mate]`-tagged), `docs/ROADMAP.md` (item 5 split into 5a checked off / 5b scoped and left open), `docs/DECISIONS.md` (new 2026-09-24 (2) entry), `docs/SESSIONS.md` (this entry). `src/uci/uci.cpp` was read in full but not modified — finding 9 (item 5b) touches it, not finding 8.
-
-**Next session starts:** ROADMAP.md item 5b — "Tighten UCI parsing" (finding 9). Read `src/uci/uci.cpp`'s `go`-token loop and `apply_uci_moves()`, and `src/search/search.h`'s `SearchLimits`/`SearchResult`/`search_iterative_deepening()` doc comments, in full first (not yet re-read this session beyond the `apply_uci_moves()`/`go`-loop skim already done). Four separate additions, per item 5b's own ROADMAP text: a `SearchLimits` node-count limit, a `searchmoves` root-move restriction, a `SearchResult` `seldepth` field, and a `TranspositionTable` hashfull query — plus `emit_info()` wiring all of them in, and an `apply_uci_moves()` reporting tweak for a discarded move-list remainder. Settle `go mate <n>`'s own interpretation (minimal depth-based treatment vs. a dedicated mode) before implementing it specifically. Say "Continue" or "Start" to proceed.
-
----
-
-### Session 130 — 2026-09-24 — Priority Fixes item 4 closed: real engine-vs-engine matches built and run to validate the null-move gate and singular-extension rewrite
-
-Picked up ROADMAP.md item 4, per Session 129's own handoff — the explicit next-session start point, now that a real compiler toolchain is confirmed available. Read `docs/ROADMAP.md` and the last `docs/SESSIONS.md` entry (Tier 1), then `docs/DECISIONS.md` and `docs/ARCHITECTURE.md` in full (Tier 2), per the "Go" trigger.
-
-**What was found before writing anything:** re-reading `src/tuner/match.h`/`sprt_main.cpp` in full confirmed `nightwing_sprt` cannot do this specific job — `play_match()` plays both sides with the SAME compiled binary, differing only by a `MaterialWeights` vector, and has no way to compare two different search-code versions. This exact gap was already on record (2026-09-18 (6)) but never acted on.
-
-**What was built (this session's own scratch tooling, not a repo file):** a two-process UCI-vs-UCI match referee (`python-chess` + `subprocess`, driving two persistent `nightwing` processes over stdin/stdout), playing paired, color-swapped games from random openings at a fixed depth, reporting `score_a()`/`elo_diff()` in the same style `tuner::MatchResult` already uses. Not added to the repository — it depends on this sandbox's own Python/compiler toolchain, which the person's mobile-only environment doesn't have, and isn't something CI would run either.
-
-**Binaries:** used a real `git clone` of the repository (confirmed to work in-sandbox) to check out `e2d0620` — the direct parent of the fix commit `687f2c7`, identified via `git log`/`git show --stat` rather than guessed — as the pre-fix baseline, built alongside `main`/HEAD as the candidate. A third variant, baseline plus ONLY the null-move gate's one-line addition (low-risk to isolate since `node_static_eval` was already in scope), was built to separate that fix's own effect from the singular-extension rewrite's — judged too deeply interleaved with the rest of that diff (a new `exclude_move` parameter threading through three separate call sites) to safely hand-isolate into its own clean variant this session.
-
-**Results — three real matches, all non-regressing:** combined (both fixes) vs. baseline, 200 games, depth 6: **elo_diff=+52.5, z=2.15** (statistically suggestive real gain). Null-move gate alone vs. baseline, 90 games: **elo_diff=+38.8, z≈1.06** (same direction, smaller sample). Singular-extension rewrite alone, isolated as null-move-only-vs-candidate: an exact 40-40-10 tie at depth 6 (fully explained — `kSingularMinDepth` is 8, so depth-6 games never reach the changed code, itself a useful behavioral-equivalence confirmation of the refactor below its trigger depth), then 4W/2L/6D favoring the rewrite at depth 9 (12 games only, wall-clock-limited — directional, not conclusive). No regression signal found anywhere. Full methodology, exact commit hashes, and the alternatives considered are in docs/DECISIONS.md, 2026-09-24.
-
-**Bugs fixed:** none — this was a validation session, no production code touched.
-
-**Decisions made:** logged in full in docs/DECISIONS.md, 2026-09-24.
-
-**Files changed:** `docs/ROADMAP.md` (item 4 checked off with the full match-results summary; new low-priority item filed to widen the singular-extension isolation match's sample size in a future session), `docs/DECISIONS.md` (new 2026-09-24 entry), `docs/SESSIONS.md` (this entry). No `src/` or `tests/` files touched.
-
-**Next session starts:** ROADMAP.md's Priority Fixes (2026-09-22) section — item 5, "Fix the mate-vs-fifty-move ordering; tighten UCI parsing" (findings 8 and 9): `is_draw_by_rule()` (`src/search/search.cpp`) returns a draw on `halfmove_clock >= 100` before any move-generation/legality check, so a checkmate delivered on exactly the 100th halfmove is misscored as a draw; same item, `go nodes`/`go mate`/`searchmoves` are parsed nowhere in `uci.cpp`'s `go`-token loop and silently dropped, `apply_uci_moves()` silently discards the remainder of a `position ... moves` list on the first unmatched token, and `emit_info()` omits `nps`/`time`/`seldepth`/`hashfull`. Read `src/search/search.cpp`'s `is_draw_by_rule()` and `negamax()`'s call-order around it, and `src/uci/uci.cpp`'s `go`-token loop and `apply_uci_moves()`, before writing anything. Say "Continue" or "Start" to proceed.
-
----
-
-### Session 129 — 2026-09-23 — CI logs triaged; a real compiler toolchain discovered available in this sandbox; a pre-existing OCB endgame-suite test flake found and fixed
-
-The person uploaded this project's own GitHub Actions CI logs (all 6 platform/config jobs: Windows/Linux/macOS × Debug/Release) for the push containing Session 128's own null-move-gate/singular-extension-rewrite and Session 127's ponder-move fix, with no accompanying message — read as an implicit "check these."
-
-**What the logs showed:** all 6 jobs built cleanly; all 6 agreed on exactly one failure, `endgame suite: opposite-colored bishops score lower (more drawish) than...` (`tests/endgame_suite_tests.cpp`), `REQUIRE( opposite_result.score < same_result.score )` failing with `305 < 303` on every platform.
-
-**The capability discovery this session led with:** rather than reasoning about the failure from logs alone (this project's own default for every prior session, absent a toolchain), `g++`/`cmake` were checked directly in this sandbox and found genuinely available — `g++` (GNU 13.3.0) preinstalled, `cmake` installable via `apt-get install -y cmake` against the sandbox's own already-allowlisted `archive.ubuntu.com`/`security.ubuntu.com` mirrors, and `github.com`/`codeload.github.com` already allowlisted too, meaning CMake's own `FetchContent` for Catch2 works. A full build of this actual repository (every target, `nightwing_sprt` included) and a full `ctest` run of all 679 tests both genuinely succeed in-sandbox. Documented prominently in a new "Development Environment" section in docs/ARCHITECTURE.md, since every prior session's own "no compiler toolchain available" caveat, scattered through this project's own docs/DECISIONS.md and docs/SESSIONS.md history, is now superseded — a session touching `src/` should build and `ctest` for real going forward, not default to "verified by inspection."
-
-**Root-causing the actual failure, using that toolchain:** built and ran the failing test against a freshly-fetched, completely UNMODIFIED copy of `search.cpp` from `main` (Session 128's own changes reverted out) and reproduced the identical `305`/`303` result — proving the failure predates, and is unrelated to, Session 128's own work, despite surfacing on the same push. A standalone probe calling `eval::evaluate()` directly on both FENs confirmed the underlying static-eval term is correct (208 vs. 256, matching `tests/minor_piece_endgame_tests.cpp`'s own already-passing isolated unit coverage of the same term). A further probe sweeping `search_fixed_depth()` across depths 4-10 (three repeated deterministic trials each) found the expected ordering holds cleanly at every depth tested EXCEPT depth 8 specifically (a 2-point flip) — the exact depth the test happened to use. Confirmed this is the same alpha-beta search-instability phenomenon docs/DECISIONS.md (2026-09-05 (2), MultiPV's own finding) already documents elsewhere in this project, not a logic bug in either the eval term or Session 128's search.cpp rewrite (the 305/303 result is bit-for-bit identical between the old, pre-rewrite singular-extension code and Session 128's new one, directly ruling that mechanism out as the cause).
-
-**Fix:** changed the test's own depth from 8 to 7 (94-point margin, reconfirmed deterministic against the real build) and rewrote its comment to document the investigation and point to the real unit-level test for the underlying term. No production code changed for this fix.
-
-**Verification, all against a real, actually-compiled build for the first time in this project's history (not inspection):** full `ctest` — 679/679 passing, with Session 128's own changes still applied on top. The real `nightwing` binary, driven directly over UCI: `position startpos moves g1h3` / `go depth 4` → `bestmove d7d5 ponder a2a3` (Session 127's ponder-move fix, confirmed end to end); Fool's Mate (`f2f3 e7e5 g2g4` / `go depth 3`) → `bestmove d8h4` with no `ponder` token, confirming the "no second PV move" path also works against the real binary.
-
-**Bugs fixed:** the OCB endgame-suite test's own depth-8 fragility (pre-existing, not introduced this session or last — see Root-causing above).
-
-**Decisions made:** logged in full in docs/DECISIONS.md, 2026-09-23 (3) — the investigation, the fix, and the toolchain-discovery writeup (also in docs/ARCHITECTURE.md's new section, since it's a standing capability note, not just a dated decision).
-
-**Files changed:** `tests/endgame_suite_tests.cpp` (the depth-7 fix and its comment), `docs/ARCHITECTURE.md` (new "Development Environment" section), `docs/ROADMAP.md` (item 4 updated with the stronger real-build verification note; new item 4b added and checked off for the test-flake fix), `docs/DECISIONS.md` (new 2026-09-23 (3) entry), `docs/SESSIONS.md` (this entry). `src/search/search.cpp` and `src/eval/` were NOT touched — this session's own root-causing confirmed neither needed to be.
-
-**Next session starts:** ROADMAP.md item 4 remains open for the `nightwing_sprt` statistical run itself — now genuinely runnable in this sandbox (unlike before this session), but budget real wall-clock time for it specifically; a bare `nightwing_sprt --help` invocation alone already ran long enough to hit this sandbox's own per-command time limit during this session, so a real run needs to be planned with that in mind (background execution, checkpointing, or a deliberately small game count first) rather than attempted as a quick aside. If time doesn't allow that next session either, "Start" moves on to item 5 instead, per Session 128's own handoff, and item 4 stays open. Say "Continue" or "Start" to proceed.
-
----
-
-### Session 128 — 2026-09-23 — Null-move `static_eval>=beta` gate added; singular extensions rewritten to a single excluded-move verification search (Priority Fixes item 4, findings 5 and 6)
-
-Picked up Priority Fixes (2026-09-22) item 4, per Session 127's own handoff — the next unchecked item in that section, immediately after item 3's ponder-move fix. Read `src/search/search.cpp` in full before writing anything, focusing on `negamax()`'s null-move condition and its header comment, and the singular-extension block (its own header comment above `kSingularMinDepth`, and the `for (int j = 0; j < moves.size() ...)` alternative-move loop itself) — per this session's own instructions, the current version of an existing file gets read before any edit, not retyped from memory.
-
-**What was built:** (1) `node_static_eval >= beta` added to `negamax()`'s existing null-move guard list — the codebase already computes `node_static_eval` unconditionally whenever `!in_check(pos)` (the "improving" flag's own computation, just above this block, under the identical condition), so this reuses that value rather than paying for a second `eval::evaluate()` call. (2) The singular-extension block's old `for (int j = 0; j < moves.size() ...)` loop — one full recursive `negamax()` call per alternative legal move, plus an unconditional `ensure_quiets()` to feed it — replaced with a single verification call at the SAME `ply` and the SAME side to move (no move made, so the returned score needs no negation either), with the TT move excluded from that call's own move loop via a new trailing parameter, `Move exclude_move = Move()`, defaulted so every existing call site is unaffected.
-
-**The subtler half of the fix:** `exclude_move` isn't just a move-loop skip. The excluded-move call probes the exact same zobrist key as the node under test — that position's own TT entry (`Bound::Lower`, score already known to be well above the verification window by construction) would otherwise satisfy the ordinary TT cutoff at the very top of that recursive call, handing back the stale score before the move loop (TT-move exclusion included) ever ran, silently disabling the entire technique rather than fixing its cost. Gated the cutoff on `exclude_move.is_null()`. Also skipped, for the same "this result reflects a narrowed search, not a genuine one" reason: the TT store and the correction-history update, both at the bottom of `negamax()`, whenever `exclude_move` is set. Gave ProbCut's own move-list walk the same one-line `move == exclude_move` skip as the main loop too, for consistency, though that one is a lower-probability hazard than the TT-cutoff gate.
-
-**Bugs fixed:** None in the "existing behavior was wrong" sense — both are ROADMAP-tracked deviations from standard technique (missing pruning gate; correct-but-expensive singular-extension shape), not confirmed regressions from prior work, so no cause/fix/why-correct triage applies the way a real bug would get.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md, 2026-09-23 (2) — both changes' design, the TT-cutoff hazard and why `exclude_move` had to touch three separate places (cutoff, store, correction history) rather than just the move loop, and three alternatives considered and rejected (threading `exclude_move` through NMP's own probe, an independently-computed static eval for the new null-move gate, capping recursive singular-extension depth).
-
-**Verification:** No compiler toolchain in this sandbox, same as every prior session. Brace/paren-balance swept on `search.cpp` (229/229 braces; the parens count is off-by-one both before and after this session's own edits, confirmed by diffing against a freshly-refetched, unmodified copy of the same file to be pre-existing prose-comment punctuation, not a code error introduced here). One new regression test added to `tests/search_tests.cpp` (`[nmp][singular_extension]`-tagged, 61 `TEST_CASE`s total, up from 60): the same forced mate-in-3 position this file's other Phase 4 tests already use, at depth 8 specifically — deep enough for internal nodes to actually reach `kSingularMinDepth` (8), which the file's existing depth-6 variants of the same test don't guarantee. Also corrected a now-stale comment in that same test file (the Step 2b staged-generation block comment previously claimed singular extensions still needed the outer node's own `moves` list widened to include quiets — no longer true after this session's rewrite, since the excluded-move call generates its own move list independently).
-
-**Files changed:** `src/search/search.cpp` (both fixes: the null-move gate, the `exclude_move` parameter and its three correctness-guard sites, the rewritten singular-extension block, and the associated header-comment updates for `kSingularMinDepth` and the null-move guard list), `tests/search_tests.cpp` (one new regression test; one stale comment corrected), `docs/ROADMAP.md` (item 4 annotated with what landed, left UNCHECKED pending `nightwing_sprt`), `docs/DECISIONS.md` (new 2026-09-23 (2) entry), `docs/SESSIONS.md` (this entry).
-
-**Next session starts:** ROADMAP.md item 4 remains open specifically for the `nightwing_sprt` run itself — this sandbox has no compiler/SPRT toolchain (GitHub Actions handles all building, per this project's core rules), so that validation has to happen once these changes are actually built on `main`. If a real SPRT result is available by the next session, bring it and this item gets checked off (or reverted, if it regresses) on that basis. If not, "Start" moves on to Priority Fixes item 5 — "Fix the mate-vs-fifty-move ordering; tighten UCI parsing" (findings 8 and 9) — instead, and item 4 stays open until an SPRT result exists. Say "Continue" or "Start" to proceed.
-
----
-
-### Session 127 — 2026-09-23 — Ponder move emitted in `bestmove` (Priority Fixes item 3, finding 4)
-
-Picked up Priority Fixes (2026-09-22) item 3, per Session 126's own handoff — the last item-1/2-adjacent gap in that section before it moves on to item 4 (SPRT validation of the null-move gate/singular-extension rewrite). Read `src/uci/uci.cpp` in full before writing anything, focusing on the two `bestmove` call sites (`start_go()`'s own worker thread and `start_pondering()`'s, the latter also serving a `ponderhit`-continued search per `handle_ponderhit()`'s own design) and `src/search/search.h`'s `SearchResult` for what PV data was already available to build a ponder move from.
-
-**What was built:** a new helper, `ponder_move_for(const search::SearchResult& result, const Move& move_to_play)` (`uci.cpp`, same anonymous namespace as `emit_info()`), placed immediately after `emit_info()`. Returns the second entry of whichever PV genuinely belongs to `move_to_play` — `result.pv` itself in the ordinary (`multi_pv == 1`, skill limiting off) case, or the matching entry's own `pv` from `result.multipv_lines` whenever `search::pick_skill_move()` picked a move belonging to a different MultiPV line — falling back to `result.pv` when `multipv_lines` is empty (every non-skill-limited call) or (defensively) no line matches. Returns a null move when the chosen PV has fewer than 2 entries. Both `bestmove` call sites now append `" ponder " + move.to_uci()` when the helper returns non-null, and write nothing extra otherwise.
-
-**Why not just `result.pv[1]` everywhere:** `start_go()`'s existing skill-limiting path can already report a `bestmove` different from `result.best_move` (that's the whole point of `pick_skill_move()`) — `result.pv[1]` in that case would name the reply to a move the engine didn't actually play, a *wrong* ponder suggestion rather than merely an absent one. Scanning `multipv_lines` for the actually-played line's own PV avoids that at negligible cost (at most 8 entries, `kSkillSearchMultiPv`). `start_pondering()`'s own search always runs at `multi_pv=1`, so its call into the same helper always takes the `result.pv` fallback path — still routed through the shared function rather than hand-inlined, so the two sites can't drift apart later.
-
-**Bugs fixed:** None — new functionality, not a fix to existing correctness (the missing `ponder` token was the reported gap itself, not a regression from prior work).
-
-**Decisions made:** Logged in full in docs/DECISIONS.md, 2026-09-23 — the helper's design, why it keys off `move_to_play`'s own line rather than a bare `result.pv[1]` read, why one shared helper rather than two inlined copies, and why a missing PV entry omits the token entirely rather than emitting `ponder 0000`.
-
-**Verification:** No compiler toolchain available in this environment, same as every session. Brace-balance and paren-balance swept on `uci.cpp` (167/167 braces, 904/904 parens) after both edits. Four new regression tests added to `tests/uci_tests.cpp` ([uci][ponder]-tagged, 61 `TEST_CASE` declarations total, up from 57): an ordinary `go depth 4` confirming a `ponder` token appears at all; a `go ponder wtime/btime ... ponderhit` sequence (reusing `tests/pondering_tests.cpp`'s own established 50ms-watchdog-delay timing convention) confirming the *second* `bestmove` site — the one `handle_ponderhit()`'s watchdog eventually triggers — also emits a ponder token, not just the first; a Fool's Mate line (`f2f3 e7e5 g2g4`, Black to deliver `Qh4#`) confirming the token is correctly OMITTED when the PV ends at the mating move itself. Brace-balance also swept on `tests/uci_tests.cpp` (158/158). A real `ctest` run against all 6 CI platforms is the necessary next step before trusting this beyond inspection, as with every other source change in this project's history.
-
-**Files changed:** `src/uci/uci.cpp` (the fix — `ponder_move_for()`, both `bestmove` call sites), `tests/uci_tests.cpp` (4 new regression tests), `docs/ROADMAP.md` (item 3 checked off with a completion summary), `docs/DECISIONS.md` (new 2026-09-23 entry), `docs/SESSIONS.md` (this entry).
-
-**Next session starts:** Priority Fixes (2026-09-22) item 4 — "Validate the null-move gate and the singular-extension rewrite with SPRT" (findings 5 and 6) — the next unchecked item in that section. Read `src/search/search.cpp`'s `negamax()` in full first, specifically the null-move block (its own `if (allow_null_move && depth >= kNullMoveMinDepth && ...)` condition, which needs a `static_eval >= beta` gate added) and the singular-extension alternative-move loop (which currently runs one full recursive `negamax()` call per alternative rather than a single TT-move-excluded search) — both are real algorithmic changes needing `nightwing_sprt` validation, not just a correctness argument, before being trusted as a strength gain. Say "Continue" or "Start" to proceed.
-
----
-
-### Session 126 — 2026-09-22 (6) — Real BMI2 portability fixed (Priority Fixes item 2, finding 3)
-
-Picked up Priority Fixes (2026-09-22) item 2, the last item left open from either of the two prior sessions' own starting options. `build_pext_table()` (`src/board/attacks.cpp`) called `_pext_u64` unconditionally inside `init_magic_bitboards()`'s per-square setup loop, gated only by the compile-time `#if defined(NIGHTWING_ENABLE_BMI2)` — which defaults ON — not by the runtime `support::cpu_has_bmi2()` check, which only decided `g_use_pext` at the very END of that function, well after the unconditional table build had already run. A default build would execute an illegal instruction at startup on any pre-Haswell x86 CPU.
-
-**Fix, part 1 (the actual reported bug):** moved the `support::cpu_has_bmi2()` check to the very start of `init_magic_bitboards()`, setting `g_use_pext` before the per-square loop runs, and gated each `build_pext_table()` call on that flag directly (`if (g_use_pext) { ... }`) instead of running unconditionally.
-
-**Fix, part 2 (deliberately deviated from the review's own literal suggestion, with reasoning worked through and verified, not just asserted):** the report's own recommended fix was to move the PEXT table-building code into a wholly separate translation unit compiled with `-mbmi2`, and build the rest of `nightwing_lib` without `-mbmi2`/`-mpopcnt`. Started down that path, then noticed a subtler problem it would introduce: `rook_attacks()`/`bishop_attacks()` themselves contain BOTH the PEXT fast path AND the portable magic-multiply fallback in the same function body — if either function needed to move to a `-mbmi2`-compiled TU (required, since they also call `_pext_u64` directly in their own runtime-dispatched branch), the compiler would be free to auto-generate BMI2 instructions into the *fallback* branch too, the exact branch meant to run safely on non-BMI2 hardware — reintroducing a subtler version of the identical bug, one level down. Alternatively, leaving `rook_attacks()`/`bishop_attacks()` in the main file while moving only `build_pext_table()` to a second TU would still require the main file to reference `_pext_u64` for its own dispatch, which doesn't compile without `-mbmi2` for that file too.
-
-Resolved by isolating down further than a whole translation unit: a single function, `pext_u64()`, wrapping only the bare intrinsic call, marked with a GCC/Clang `__attribute__((target("bmi2")))` (standard "function multiversioning" support) rather than any TU-wide flag. Every caller — `build_pext_table()`, `rook_attacks()`/`bishop_attacks()`'s own PEXT branch, and the test-only PEXT hooks — calls this as an ordinary function, imposing no target requirement on itself, and all of them stay in `attacks.cpp` together, preserving same-TU inlining for `rook_attacks()`/`bishop_attacks()` (a genuinely hot path, called on nearly every search node) rather than trading it for LTO's less certain cross-TU guarantee. **Verified this actually works as intended, not just assumed from documentation:** wrote a small standalone test snippet, compiled it both without any TU-wide `-mbmi2` flag (`-O2`) and under the project's own actual Release config (`-O3 -flto`), and disassembled the result both times — the `pext` instruction appeared ONLY inside the target-attributed wrapper function in both builds, confirming the isolation holds under LTO too, not just in a naive non-LTO build. Repeated the same check against the actual compiled `nightwing_tests` binary after applying the real fix: exactly one `pext` instruction in the entire linked binary, inside `pext_u64()` and nowhere else; grepped for every other BMI2-family instruction mnemonic (`pdep`, `bzhi`, `blsr`, `blsi`, `mulx`, `rorx`) across the whole binary and found none.
-
-**A second, closely related hazard closed in the same change:** `src/CMakeLists.txt` was applying `-mbmi2 -mpopcnt` to the WHOLE `nightwing_lib` target, not just `attacks.cpp` — meaning `-mpopcnt` affected every one of the library's ~40 other `.cpp` files too, including every ordinary `std::popcount()` call throughout eval/search (`board/bitboard.h`). That function's own doc comment promises a portable software fallback on CPUs without hardware POPCNT — a promise `-mpopcnt` applied library-wide silently broke, since `std::popcount()` then always lowers to the hardware instruction with no runtime check anywhere in the codebase (unlike the PEXT path, which at least HAD `g_use_pext`, however mistimed). Removing the library-wide flags (replaced by the single function-attribute above) restores that promised portable fallback for every ordinary `popcount()` call in the library, not just fixing the narrower PEXT-table-build bug the report explicitly named.
-
-**Verification:** two full Release builds from scratch — the default (`NIGHTWING_ENABLE_BMI2=ON`, this session's runner confirmed BMI2-capable via `/proc/cpuinfo`) and the explicit portable fallback (`NIGHTWING_ENABLE_BMI2=OFF`) — both compiled clean and passed their full test suites: 691,111 assertions/675 cases (BMI2 build, unchanged from Session 125's own count — no tests added or removed this session) and 665,383 assertions/673 cases (portable build; two fewer cases, the `#if defined(NIGHTWING_ENABLE_BMI2)`-gated PEXT-specific tests, which don't exist to run in that configuration at all).
-
-**Files changed:** `src/board/attacks.cpp` (the actual fix — `pext_u64()`'s isolation, `init_magic_bitboards()`'s reordered runtime check), `src/CMakeLists.txt` (library-wide `-mbmi2`/`-mpopcnt` removed), `docs/ROADMAP.md` (item checked off with the fix and the deviation reasoning), `docs/DECISIONS.md` (new entry — the full reasoning for the function-attribute approach over the report's own literal suggestion, and the disassembly-level verification), `docs/SESSIONS.md` (this entry). No test files needed changes — `tests/attacks_tests.cpp`'s existing PEXT-path tests already correctly guarded themselves with their own `cpu_has_bmi2()` check before calling the PEXT-only test hooks, so this file's own interface (`rook_attacks_pext_for_testing()`/`bishop_attacks_pext_for_testing()`) needed no changes at all.
-
-**Next session starts:** Priority Fixes (2026-09-22) item 3 — "Emit a ponder move in `bestmove`" (finding 4) — the next unchecked item in that section, now that items 1/2 and the separately-filed `tune_psqt()` bug are all closed.
-
----
-
-### Session 125 — 2026-09-22 (5) — `tune_psqt()`'s zero-movement bug fixed (root cause: mis-calibrated `--psqt` learning_rate, not a broken gradient)
-
-Picked up the open `tune_psqt()` zero-movement bug (found Session 122, filed as its own Phase 5 checklist item) instead of the Priority Fixes section's own item 2. Started from reading, not assuming: re-derived `compute_psqt_gradient()`'s/`tune_psqt()`'s/`compute_loss()`'s own parameter wiring line by line looking for a positional-argument mismatch or a stale finding like the ones this codebase's own history already has plenty of (MSVC parser workarounds, GCC false positives, etc.) — found nothing wrong structurally, and `tests/tune_tests.cpp`'s own existing "agrees with a hand-rolled finite-difference probe" test (an independent cross-check of the analytic derivation) still passed, meaning the gradient math itself was never the problem.
-
-**Moved to empirical investigation once reading stalled — reproduced the bug directly, not just trusted the report.** Built the actual `nightwing_selfplay`/`nightwing_tune` binaries in the sandbox, generated a real 8104-position self-play corpus (`nightwing_selfplay 200 1 4 8 200`), and ran `nightwing_tune --psqt 20` against it: loss came back EXACTLY flat (0.040473, every iteration) — the identical symptom, reproduced from scratch, not merely re-read from Session 122's own notes. Wrote a small standalone debug harness linking directly against `libnightwing_lib.a` to print `compute_psqt_gradient()`'s own raw (pre-rounding) output on that same corpus: average per-cell gradient magnitude ~1e-5 — genuinely nonzero, correctly signed, just roughly three orders of magnitude smaller than `tests/tune_tests.cpp`'s own toy scenario (one FEN repeated 8x, one knight, a maximally strong and uncontested training signal) that `tune_main.cpp`'s own `--psqt learning_rate = 100.0` default was calibrated against.
-
-**Root cause:** `psqt_value()` (`eval/psqt.cpp`) rounds every weight to the nearest int via `round_to_int()` when a caller-supplied `PsqtWeights` override is in play — so `compute_loss()`'s own reported loss, and the actual eval score any tuning run is fit against, only ever changes when a cell's underlying double value crosses a full integer boundary. At the old `learning_rate = 100.0`, real data's own ~1e-5 average gradient produces a per-iteration step of order 1e-3 — even 200 iterations, with every step agreeing in sign, would only accumulate ~0.2, well under the 0.5 needed to flip a single rounded integer. The underlying double weights WERE moving the whole time; nothing ever became visible in the rounded, printed output, which is indistinguishable from a genuinely dead gradient from the caller's side.
-
-**Fix:** raised `--psqt` mode's own `learning_rate` default (`tune_main.cpp`) from 100.0 to 200000.0 — chosen the same "measure, don't guess" way this codebase's own established discipline calls for, not picked by feel: tried directly against the same real 8104-position corpus at several candidate values (1000 through 2,000,000). Loss decreases smoothly and monotonically from 10000 up through at least 1,000,000 (200 iterations: 0.040473 → 0.025713 at 1,000,000); the first sign of instability (loss ticking back up late in a run) only appeared around 2,000,000. 200000.0 sits an order of magnitude below that observed threshold with real headroom, while still producing a substantial, genuine loss reduction (0.040473 → 0.029312 over 200 iterations on the same corpus) — spot-checked the resulting `king_mg`/`king_eg` tables directly: the five most-played back ranks converge close to the existing compiled-in defaults (real games broadly validating an already-reasonable table), while the less-visited back rank shows real, sane variation — the shape a healthy tuner run at this corpus size should produce, not garbage. No change needed to the five "beyond PSQT" `--term` modes (`--mobility`/`--space`/`--threats`/`--king-safety`/`--pawns`) — those use finite-difference gradients with `finite_diff_epsilon` deliberately set to 1.0 specifically to always cross the rounding boundary by construction (an existing test's own comment already documents this), so they were never exposed to this failure mode at all; confirmed by inspection, not re-tested from scratch.
-
-**Test-coverage gap closed, per the ROADMAP item's own note:** added a new `tests/tune_tests.cpp` case using a deliberately diluted, partly-contradicting 20-position training set (12 positions labeled a clear White win, 8 labeled a clear White disadvantage — net signal weak but real, the same regime that hid the original bug) run at the corrected `learning_rate = 200000.0`, asserting loss is NOT exactly flat between iterations 0 and 1 and that the affected cell's ROUNDED value genuinely changes — directly exercising the "small but genuine gradient, real learning rate" combination the toy tests' own unanimous-signal scenarios never touched. First attempt at this test picked label proportions (0.9/0.1) that, combined with this fixture's own material edge (a lone extra knight already predicts ~0.68 win probability from material alone, independent of any PSQT signal), produced a net signal BELOW that baseline — direction assertion failed with the cell moving down instead of up, caught immediately by actually running the test rather than assuming the fixture's intent matched its behavior. Fixed by measuring the fixture's own baseline predicted probability directly (a second small debug harness) and choosing labels (1.0/0.3) whose net average genuinely clears it.
-
-**Verified with the full suite, not just the new/changed tests:** 691,111 assertions, 675 test cases, all passing (up from Session 124's 691,106/674 — the one new test).
-
-**Files changed:** `src/tuner/tune_main.cpp` (the actual fix — `--psqt` `learning_rate` default and its own doc comment's full measured account), `tests/tune_tests.cpp` (new diluted-signal regression test), `docs/ROADMAP.md` (item checked off with root cause/fix summary; the Priority Fixes section's own sequencing note updated), `docs/DECISIONS.md` (new entry — the full measured learning-rate sweep and reasoning), `docs/SESSIONS.md` (this entry).
-
-**Next session starts:** Priority Fixes (2026-09-22) item 2 — real BMI2 portability (finding 3, `build_pext_table()`'s unconditional `_pext_u64` call in `init_magic_bitboards()`) — the only item left open from either of this session's or Session 124's own starting options.
-
----
-
-### Session 124 — 2026-09-22 (4) — Asynchronous `go` with working `stop`/`isready`/`quit` implemented (Priority Fixes item 1, findings 1/2)
-
-Picked up the new Priority Fixes section's own item 1, per the previous session's handoff. `handle_go()` (`src/uci/uci.cpp`) previously ran fully synchronously on the same thread that read UCI input — the exact gap findings 1/2 described: a `stop` sent while an ordinary `go` was in flight was parsed but never reached the search, `isready`/`quit` couldn't be processed until `go` finished on its own, and `go infinite`/a bare `go` fell back to a shallow fixed depth (`kNoTimeControlDepth = 5`) rather than running genuinely unbounded.
-
-**The fix mirrors the existing `start_pondering()`/`PonderState` pattern closely, as the ROADMAP item itself suggested, but as a deliberately separate `GoState` struct** rather than folding the two together — an ordinary `go` always emits `info` lines and consults the opening book first, neither of which pondering does, and unlike pondering it needed one genuinely new piece of state: `GoState::unbounded`/`SearchBudget::unbounded`, set only for a genuine `go infinite`/bare `go`, so `quit`/end-of-input could tell a bounded search (join — let it finish and print `bestmove`, exactly reproducing the old synchronous behavior) apart from a genuinely unbounded one (abandon, to avoid hanging forever) — the same two-case shape `finish_pondering()` already used, keyed off a different condition. `compute_search_budget()`'s own no-time-control branch now uses `kTimedSearchMaxDepth` instead of `kNoTimeControlDepth`, relying on the new real `stop`; `kNoTimeControlDepth`'s stale "Phase 2 has no pruning yet" doc comment (the actual justification for the old fallback) was corrected to describe its real, narrower remaining use (a malformed explicit `depth` token only).
-
-**A real concurrency hazard surfaced and was fixed in the same change, not left for later:** once an ordinary `go` writes `info`/`bestmove` lines from a background thread, those writes can race against the main thread's own writes (`readyok`, `uciok`, etc.) or against a concurrent pondering thread's own `bestmove` write. Added a single `out_mutex` (`run()`'s own local), threaded into `start_go()`/`start_pondering()` and every write site in `run()`'s dispatch loop, so no two writers can ever interleave mid-line. `abandon_go()` was also added at every existing `abandon_pondering()` call site (`position`, `ucinewgame`, `setoption name Hash` rebuild) plus one gap that predated this session but widened under it (`bench` previously didn't abandon an in-flight pondering search either — now abandons both).
-
-**Verified with a real build, not just read-through — caught and fixed two real bugs this way:** pulled the full repo tarball, installed `cmake` via `apt-get` (already-allowlisted `archive.ubuntu.com`), and built the actual `nightwing_tests` binary against the modified `uci.cpp`. First build: 15 of 69 `[uci]` test cases failed, one with a `SIGSEGV` — root cause was `run()`'s own tail-end cleanup unconditionally discarding (`abandon_go()`) any still-running `go` on `quit`/end-of-input, including plainly bounded ones (`go movetime 50`, `go wtime/btime`) that the old synchronous code would always have let finish. Fixed via the `unbounded`-flag/`finish_go()` design above. Re-ran: down to 2 failures, both `tests/uci_tests.cpp` cases that had encoded the OLD synchronous-`go` assumption as a correctness assertion rather than an implementation detail — a bare `go` immediately followed by `quit` with no `stop` (now genuinely unbounded, so correctly produces no `bestmove` without one), and two `go depth 1` calls with no `stop` between them (the second `position` now correctly abandons the first, out-of-protocol, still-running search). Both tests were updated to send the `stop` a real, compliant GUI would send in each case — not a workaround, the intentional, documented consequence of this fix. Full suite re-run clean: **691,106 assertions, 674 test cases, all passing**; `[uci]`/`[pondering]` (175 assertions, 71 cases) re-run 5x back-to-back with zero flakiness, checking for the exact kind of race this change could plausibly introduce.
-
-**Files changed:** `src/uci/uci.cpp` (the actual fix — `GoState`, `abandon_go()`, `start_go()`, `handle_go_stop()`, `finish_go()`, `out_mutex`, `compute_search_budget()`'s unbounded branch, `kNoTimeControlDepth`'s corrected doc comment, `run()`'s dispatch loop rewired for both `go` and `go ponder` to abandon each other defensively), `tests/uci_tests.cpp` (two tests updated per above), `docs/ROADMAP.md` (item 1 checked off with a completion note), `docs/DECISIONS.md` (new entry — design rationale for `GoState` as a separate struct, the `unbounded`/`finish_go()` two-case design, and the `out_mutex` addition), `docs/SESSIONS.md` (this entry).
-
-**Next session starts:** item 2 of the same Priority Fixes section (2026-09-22) — real BMI2 portability (finding 3, `build_pext_table()`'s unconditional `_pext_u64` call in `init_magic_bitboards()`) — or the still-open `tune_psqt()` zero-movement bug (Session 122), at whoever starts the next session's own discretion; both remain unrelated to this session's own change and to each other.
-
----
-
-### Session 123 — 2026-09-22 (3) — External code review (`report.md`) verified against `main`; filed as a new Priority Fixes section
-
-A `report.md` code-review document was supplied (GCC 13.3/CMake/Ninja build, 24 perft positions, a ThreadSanitizer concurrency pass, manual/scripted UCI sessions, and direct reading of `search.cpp`/`uci.cpp`/`attacks.cpp`/`cpu_features.cpp`/`ci.yml`), asserting 13 findings plus one runtime observation. Rather than take it at face value, every checkable claim was independently re-verified against a fresh clone of `main` — direct source reading, `grep`, exact line/parameter counts, `du`/`wc` on the docs and source trees — the same "verify before trusting" discipline this project already established for the 2026-09-17 external review.
-
-**Every finding held up.** Several to a striking degree of precision — `docs/DECISIONS.md` measured at exactly 792 KB against the report's own figure; total source line count measured at 22,825 against the report's "~22.8k"; comment-only-line ratios in `search.cpp`/`uci.cpp` within 1.2 percentage points of the report's own numbers. The most load-bearing findings were traced to exact source locations: `build_pext_table()` really does call `_pext_u64` unconditionally inside `init_magic_bitboards()`, gated only by a compile-time `#if` and never by the runtime `cpu_has_bmi2()` check the code advertises as protecting it (finding 3); `is_draw_by_rule()` really does return a draw before any checkmate detection can run (finding 8); the singular-extension loop really does launch one full recursive `negamax()` call per alternative move rather than a single TT-move-excluded search (finding 6).
-
-**One correction to the report itself:** finding 10 states `negamax()` has 22 parameters; direct counting of the actual current signature gives **27**. The qualitative point (a large, repeated argument list) holds regardless — if anything more strongly than stated.
-
-**One finding left unverified:** the KQ-vs-K "~13M nodes / 60s unresolved" observation would require an actual search run to reproduce, not code reading. `basic_mates.h` was confirmed to define dedicated algorithmic terms for KRK and KBNK only (no KQK term) — consistent with, but not proof of, the observed behavior. Filed as an item to reproduce first, not a confirmed bug.
-
-Filed all of this as a new `## Priority Fixes (external code review, 2026-09-22)` section in ROADMAP.md, positioned per this project's established convention (ahead of Phase 9, following the same "bugs before enhancements" placement the three prior Priority Fixes sections already used) — NOT folded into Phase 5/Phase 8/NPS-Raw-Speed's own existing item lists by topic, since scattering the findings across phase sections would lose the report's own coherent "Recommended Order of Work" sequencing (async `go` + real `stop`/`isready` → BMI2 portability → ponder move → null-move gate + singular-extension SPRT validation → mate-vs-fifty-move + UCI parsing → `negamax` refactor + doc pruning), which is itself worth preserving as a starting point. Four additional lower-priority items (repeated eval/pawn-hash cost, LICENSE/`.gitignore`, fixed-depth-vs-production test-coverage balance, the KQ-vs-K reproduction) were appended after the report's own ordering, not interleaved into it.
-
-Explicitly noted in both ROADMAP.md and this entry: this new section and the already-open `tune_psqt()` bug (Session 122, filed the same day) are unrelated systems (tuner vs. UCI/search proper) — neither blocks the other; picking which to start first is a scheduling call for whichever session goes next, not something decided here.
-
-**Files changed:** `docs/ROADMAP.md` (new Priority Fixes section, 13 findings + 4 appended items, all currently open), `docs/DECISIONS.md` (new entry with the full per-finding verification account and the parameter-count correction), `docs/SESSIONS.md` (this entry). No source files changed — this was a review-verification session, not a code-change one, same as Session 122.
-
-**Next session starts:** pick up either the new Priority Fixes section (2026-09-22) — item 1 (asynchronous `go`) is the report's own recommended starting point, since findings 1/2 block real GUI usability today — or the still-open `tune_psqt()` bug (Session 122), at whoever starts the next session's own discretion. If picking up item 1: re-read `start_pondering()`'s existing worker-thread/stop-flag pattern in `uci.cpp` first, since this item's own ROADMAP note already identifies it as the closest existing precedent to reuse rather than build from scratch.
-
----
-
-### Session 122 — 2026-09-22 (2) — Read back the real `tuning-pipeline` dispatch (5000 games): found the corpus-adequacy answer is NOT uniform across terms, and found `tune_psqt()` is silently broken
-
-Downloaded and read all 7 artifacts from the `tuning-pipeline`/`tuning-pipeline-term` dispatch this session's own earlier `ci.yml` changes made possible (material, PSQT, mobility, space, threats, king-safety, pawns — 208,360 quiet positions from 5000 real self-play games, 200 iterations each). This directly answers ROADMAP.md's "Actually run `tune_mobility()`/etc. against real self-play data ... decide whether the existing 5000-game corpus size is adequate" item — but the honest answer turned out to be far more nuanced than a single yes/no, and a real bug surfaced along the way.
-
-**Material:** near-identical outcome to Sessions 61/62 — pawn stayed anchored at 100/100, the other eight moved down 4-13%, match result `score_a=0.4950, elo_diff=-3.5` against the untuned defaults (400 games) — dead even, well inside this sample size's own noise band. Same conclusion as before: not adopted.
-
-**PSQT — a real, confirmed bug, not just a small effect:** loss stayed EXACTLY flat (0.050887) across all 200 iterations, and the "tuned" `king_mg`/`king_eg` tables (spot-checked directly against `kKingMgTable`/`kKingEgTable` in `psqt.cpp`) came back byte-for-byte identical to the compiled-in defaults — `tune_psqt()`'s analytic gradient did nothing at all, at full 208,360-position scale. The same flat-loss symptom was visible on this session's own small (732-position) local smoke test before dispatch and was wrongly written off there as "too little signal for this toy scale" rather than investigated — in hindsight, a real regression that should have been caught before shipping the workflow change, not after. Root cause not yet found. Filed as its own ROADMAP item (Tier 0), separate from and blocking any future PSQT-related work — `tune_psqt()`'s own existing tests (`tests/tune_tests.cpp`) apparently don't catch this, since they use a narrow, deliberately-engineered single-cell scenario rather than anything resembling real, natural training data; that test gap itself may need addressing alongside the fix.
-
-**The 5 beyond-material terms — smooth, well-converged loss curves (no oscillation, all plateaued by ~iteration 150-200), but two structurally different kinds of outcome:**
-
-- **pawns** (3.3% loss reduction, largest clean signal): passed-pawn bonuses came out cleanly monotonic by rank (mg: rank1 -0.7 → rank6 77.9) — exactly the shape a hand-designed table would have. The cleanest, most trustworthy result of the six.
-- **king-safety** (3.1%): the closest-to-king pawn-storm terms (rank5/rank6) stayed stable and correctly signed, close to their defaults (-24→-21, -36→-35).
-- **mobility** (7.0%, the largest loss reduction of the five, but NOT a good sign here): knight/bishop/queen mg AND eg mobility bonuses all flipped from small positive defaults to sizeable negative values — "more mobile is worse," chess-nonsensical.
-- **space** (0.7%): `square_mg` swung 2 → -16.5, an 8x move in magnitude for under 1% loss improvement.
-- **king-safety's weaker sub-terms** (within the same otherwise-good run): `attack_unit_mg` flipped -6→+27, `semi_open_file_mg` flipped -12→+15.5, several `pawn_storm_rank2-4` terms flipped sign too.
-- **threats** (0.026% — essentially flat): moved only a few percent, never enough to matter.
-
-**Interpretation, not just observation:** the sign flips (mobility, space, king-safety's weaker sub-terms) are NOT the same failure mode as threats' near-zero movement. Threats' flatness is a sampling-methodology problem — self-play's quiet-position filter structurally excludes tactical (hanging/overloaded-piece) positions by construction, so no amount of MORE games drawn the same way fixes it; the fix, if wanted, is a different sampling method, not a bigger corpus. The sign flips are the more interesting finding: loss curves for mobility/space/king-safety are smooth and genuinely converged (not diverging or oscillating), meaning the optimizer found a real local optimum in THIS data — just one where a term tuned in isolation, with every other correlated `evaluate()` term frozen at its default, picked up a spurious rather than causal correlation for its smaller-magnitude sub-parameters. Well-represented, large-effect parameters (pawns' whole table, king-safety's closest-to-king storm ranks) converge to sensible values regardless; weak/subtle ones don't. That's a real, term-varying answer to the ROADMAP question, not a single corpus-size verdict — filed as a new ROADMAP item (L2 regularization, and/or per-term learning-rate tuning instead of borrowing material's 20000.0 uniformly, are the two most likely fixes, neither attempted this session).
-
-**Files changed:** `docs/ROADMAP.md` (corpus-adequacy item closed with the nuanced per-term finding; two new items opened — the PSQT bug, and the sign-flip/weak-signal-instability follow-up), `docs/DECISIONS.md` (new entry with the full finding and rationale), `docs/SESSIONS.md` (this entry). No source files changed this session — this was a read-and-analyze session, not a code-change one.
-
-**Next session starts:** root-cause `tune_psqt()`'s zero-movement bug (`tune.cpp`'s analytic-gradient path, `compute_psqt_gradient()` or wherever the actual gradient computation lives) — the most urgent open item, since it silently produces a no-op that looks like a completed tuning run. Do NOT attempt the sign-flip/regularization follow-up first; the PSQT bug is a correctness issue, the sign-flip finding is a methodology-quality one.
-
----
-
-### Session 121 — 2026-09-22 (1) — Wired the 5 new beyond-material tune modes into `ci.yml`'s `tuning-pipeline` job
-
-Picked up ROADMAP.md's still-open "Actually run `tune_mobility()`/`tune_space()`/`tune_threats()`/`tune_king_safety()`/`tune_pawns()` against real self-play data" item (Session 120's own handoff). Found the existing `tuning-pipeline` job (`.github/workflows/ci.yml`) only ever exercises material tuning (`./src/nightwing_tune "${{ inputs.tune_iterations }}"`, no mode flag) — there was no way for a real CI dispatch to run any of the 5 new modes Session 120 built at all, despite `nightwing_tune` itself already supporting them.
-
-Added a new step, "Run the 5 beyond-material tune modes against the same training data", right after the existing material tune+match step, looping over `mobility`/`space`/`threats`/`king-safety`/`pawns` and running `./src/nightwing_tune "--$mode" "${{ inputs.tune_iterations }}"` against the SAME `training_data.txt` the material run already produced — one 5000-game self-play corpus, six tuning runs against it, so the corpus-adequacy question a future session needs to answer is judged from data material tuning already uses, not a separately-generated corpus. Each mode's stdout (tuned weights) and stderr (loss history) are captured to their own files and added to the job's existing `upload-artifact` step. Deliberately did NOT try to add a `nightwing_match` step for these five — `tuner::match.h` is scoped to `eval::MaterialWeights` only by its own header comment; generalizing it is a distinct, not-yet-scoped item, not something to fold into this change.
-
-Followed this project's own established "verify a CI YAML change locally before shipping it" discipline (the exact same approach Session 60 used when it first wrote this job): built the repo fresh, ran the new step's exact command sequence by hand against a small real self-play corpus (20 games, 5 iterations per mode) using `bash` specifically (GitHub Actions' own default shell on Linux/macOS runners) rather than the sandbox's default `/bin/sh`, since the `${mode//-/_}` parameter substitution used in the new step is a bash-ism `/bin/sh` (dash) doesn't support — caught this the first time by trying it under `/bin/sh` first and getting `Bad substitution`, not assumed. All 5 modes ran clean under bash, exit 0, with sensible-looking output (loss decreasing or flat depending on how much signal that tiny 20-game/732-position sample actually carried for each term — expected at this toy scale, not itself meaningful). YAML syntax separately validated with `python3 -c "import yaml; yaml.safe_load(...)"`.
-
-**Correction, same session:** asked directly whether the whole thing would finish inside GitHub Actions' 6-hour per-job ceiling before it was ever dispatched — a real, worth-answering question that hadn't been checked yet. Measured directly (this session's own build, the same 732-position corpus, 20 iterations, isolated per mode) rather than guessed: `compute_loss()`'s own cost is ~1.3-1.8ms per call at 732 positions regardless of which `Weights` type is being probed (it's a full pass over every training position), and each tuning iteration costs `2N+1` such calls for an `N`-parameter table. Scaled linearly to this workflow's own 5000-game/200-iteration defaults (~202,600 positions): `pawns` (59 parameters) alone comes out to roughly 2.7 hours; summing self-play + material tune + match + all 5 term modes SEQUENTIALLY in one job (the version built earlier in this same session) totals close to **5.8 hours** — inside 6 hours on paper by this estimate, but close enough, and built on enough uncertain assumptions (a throttled sandbox core standing in for a real runner, zero margin for checkout/build/upload overhead), that a real dispatch risked the job being killed by the platform's hard ceiling with NOTHING uploaded — including the four modes that would have finished with time to spare.
-
-Restructured before shipping rather than after a failed run: split the 5 term modes out of `tuning-pipeline` into a new, separate job, `tuning-pipeline-term`, using a `strategy.matrix` over `[mobility, space, threats, king-safety, pawns]` so each runs as its own independent job with its own full 6-hour ceiling and its own artifact upload — a failed or slow mode no longer costs the other four their results, and GitHub runs independent jobs concurrently, so total wall-clock time drops to roughly the slowest single mode (`pawns`, ~3 hours including its own self-play regeneration) instead of the sum of all five. Each matrix leg regenerates `training_data.txt` itself with the identical fixed `base_seed=1` and selfplay inputs `tuning-pipeline`'s own material run already uses — `nightwing_selfplay` is fully deterministic given identical inputs, so this reproduces the EXACT SAME corpus, not a separately-drawn one, without needing cross-job artifact hand-off for a regeneration this cheap (~6 minutes against each job's own multi-hour budget). This also incidentally removed the `${mode//-/_}` bash-ism entirely (each matrix leg's artifact is just `tuned_weights.txt`/`tune_stderr.txt`, no per-mode filename munging needed, since each mode already gets its own isolated job and its own isolated artifact name via `tuning-pipeline-${{ matrix.mode }}-results`). Re-verified the new job's exact command sequence locally the same way as before (`bash`, small real corpus, `--king-safety` mode specifically since its name has the hyphen that most needed checking) — clean, exit 0.
-
-**Files changed:** `.github/workflows/ci.yml` (REPLACE — `tuning-pipeline` job's earlier "5 beyond-material tune modes" step removed; new, separate `tuning-pipeline-term` job added with a 5-way matrix strategy), `docs/ROADMAP.md` (progress note added under the still-open item, not checked off), `docs/SESSIONS.md` (this entry).
-
-**Next session starts:** confirm with whoever operates the repository whether the `tuning-pipeline` workflow has been dispatched since this session (`pipeline: tuning`, default inputs — 5000 self-play games, 200 tune iterations). If yes: download the `tuning-pipeline-results` artifact (material) AND the 5 separate `tuning-pipeline-<mode>-results` artifacts (one per term), read every `tune_stderr.txt`/loss-history file, and use them to actually decide the corpus-adequacy question (is the loss curve for each of the 5 terms smooth and converging, or noisy/erratic in a way more positions would fix?) — that decision is this ROADMAP section's last open item. If not yet dispatched: no further code work is possible on this item without that data; say so plainly rather than guessing at an answer.
-
----
-
-### Session 120 — 2026-09-21 (3) — Generalized `tune()` to the 5 remaining "beyond PSQT" tables (mobility/space/threats/king-safety/pawns)
-
-Picked up Session 119's own handoff verbatim. Read `tune.h`/`tune.cpp`/`tune_main.cpp` in full before writing anything, confirming Session 119's own findings first-hand: `compute_loss()` already accepted all 7 `Weights` types as optional overrides, but `tune()`'s finite-difference loop only ever walked `kMaterialParameters`, and `tune_psqt()` was a structurally separate analytic-gradient path. Also read `eval/mobility.h`/`space.h`/`threats.h`/`king_safety.h`/`pawns.h` directly to confirm every field name and each term's own `default_XXX_weights()` signature before writing any call site against them.
-
-**Design choice (left open by Session 119):** a family of five named entry points (`tune_mobility()`/`tune_space()`/`tune_threats()`/`tune_king_safety()`/`tune_pawns()`), mirroring `tune_psqt()`'s own "one named function per term" precedent, rather than a single runtime-selectable `tune<Weights>()`. Internally all five are thin wrappers around one shared, generic `tune_term<Weights, N>()` finite-difference helper (`tune.cpp`, anonymous namespace) — the exact loop shape `tune()`'s own `kMaterialParameters` case already used, generalized via a small `compute_loss_for()` overload set (one per `Weights` type) that dispatches to `compute_loss()`'s correct trailing pointer slot through ordinary overload resolution, rather than `tune_term()` itself needing to know which of `compute_loss()`'s six optional parameters corresponds to a given `Weights` type. None of the 5 tables has an `anchored` entry today (each table's own doc comment already says so), so `tune_term()` does not special-case that field at all, unlike `tune()`'s own `kMaterialParameters` loop — documented as something a future anchored entry would need revisited, not silently assumed away.
-
-`tune_main.cpp` gained `--mobility`/`--space`/`--threats`/`--king-safety`/`--pawns` CLI modes alongside the existing `--psqt`, sharing the exact same positional-argument slots (iterations, learning_rate, ...) so switching modes never requires renumbering the rest of a command line. Output uses a new generic `print_term_weights()` (`name=value` per tunable field, read via each entry's own `get()`) rather than `--psqt` mode's own 8x8-grid printer, since none of these five tables has PSQT's per-square dimension. `learning_rate` is deliberately left at `TuneConfig`'s own default (20000.0, the same value material's finite-difference loop already uses) for all five new modes, rather than overridden the way `--psqt` mode overrides it to 100.0 — reasoning logged inline in `tune_main.cpp`: these five use the identical finite-difference algorithm (same `finite_diff_epsilon`) material tuning does, unlike PSQT's structurally different analytic gradient, so the same starting learning rate is the closest thing to a principled default available without a real corpus to measure against yet.
-
-`tests/tune_tests.cpp` gained 6 new tests: one "all-neutral" (bare kings only, every one of that term's own eval contributions identically 0 regardless of weights queried, so every gradient must come out bit-for-bit 0) regression test per new function — the direct counterpart of this file's own pre-existing material-side version of that same test — plus one "a consistent training signal reduces loss" test for `tune_mobility` specifically (a lone centralized White knight, labeled a clear win, material held fixed), modeled on the already-existing material- and PSQT-side versions of that same test pattern.
-
-**Verification (this session, continued):** a build-capable environment turned out to be available after all — downloaded the real repo tarball, installed `cmake` via `apt-get` (already-allowlisted `archive.ubuntu.com`), dropped in this session's 4 changed files, and ran a real `cmake`+`make`+`ctest`-equivalent build end to end. `nightwing_lib` (includes `tune.cpp`) and `nightwing_tune` (`tune_main.cpp`) both compiled and linked clean with zero warnings surfaced. CLI smoke tests of all five new modes against synthetic training data confirmed the exact behavior the new tests assert: `--mobility`/`--space`/`--threats`/`--king-safety`/`--pawns` all leave every weight bit-for-bit at its default on an all-neutral (bare-kings) input (initial loss == final loss == 0.000039 exactly, the same small tempo-bonus residual the pre-existing material-side test already notes), and `--mobility` against a consistently-disagreeing training signal (lone centralized White knight, labeled a win) drove `knight_mg` up from its default while every other field stayed fixed, with loss monotonically decreasing from iteration to iteration. Then built and ran the full `nightwing_tests` binary: **674 test cases, 691,106 assertions, all passed** (up from the pre-session count, with all 52 `[tuner][tune]`-tagged tests — including this session's 6 new ones — passing). The "real, unretired risk" flagged earlier in this same entry is now retired.
-
-**Files changed:** `src/tuner/tune.h` (REPLACE — `TermTuneResult<Weights>`, 5 new function declarations), `src/tuner/tune.cpp` (REPLACE — `compute_loss_for()` overloads, generic `tune_term<Weights, N>()`, 5 named wrappers), `src/tuner/tune_main.cpp` (REPLACE — 5 new CLI modes, generic `print_term_weights()`), `tests/tune_tests.cpp` (REPLACE — 6 new tests, all passing), `docs/ROADMAP.md` (item checked off with full implementation summary plus verification result, follow-on corpus-size item reworded to reference the now-completed work), `docs/DECISIONS.md` (new 2026-09-21 (3) entry, verification note added), `docs/SESSIONS.md` (this entry).
-
-**Next session starts:** run an actual self-play corpus through the 5 new `tune_*()` entry points (the ROADMAP item directly below the one just closed) and use that real run to decide whether the existing 5000-game corpus size is adequate for these smaller parameter tables, closing out the last open item in this ROADMAP section.
-
----
-
-### Session 119 — 2026-09-21 (2) — Correction: Session 118's "materially larger self-play corpus" framing was wrong — `tune()` doesn't consume 5 of the 7 tunable `Weights` tables at all yet
-
-Picked up Session 118's own handoff verbatim ("the corpus-size half of the item just closed... has no defined scope yet"). Before proposing a concrete corpus size, re-read `docs/DECISIONS.md` in full for prior self-play/tuning-pipeline history rather than assuming none existed — found that a real large-scale production run (5000 self-play games, 200 tune iterations, 400 match games) already happened twice (Sessions 61/62), for material weights only, with the tuned result coming out statistically indistinguishable from the hand-set defaults (Phase 5 closed keeping the defaults, docs/DECISIONS.md 2026-08-31 (1)/(2)/(3)) — directly contradicting the implicit premise that a fresh 5000-game run was needed.
-
-That finding by itself only showed the *proposed number* was redundant, not that the ROADMAP item itself was mis-scoped. Checked further, reading `tune.h`/`tune.cpp`/`tune_main.cpp` directly rather than trusting either file's own header comments in isolation: `tune()`'s finite-difference gradient-descent loop still only enumerates `kMaterialParameters` — none of `kMobilityParameters`/`kSpaceParameters`/`kThreatsParameters`/`kKingSafetyParameters`/`kPawnsParameters` (each independently built and tested across Tier 0 Steps 7/8a/8b) is ever walked by it, so no self-play corpus, of any size, could currently train any of those 5 terms. Separately confirmed PSQT is NOT in the same boat — Tier 0 Step 6's `tune_psqt()` (an analytic-gradient path, justified by PSQT's 768-parameter scale) is wired into `tune_main.cpp` via a `--psqt` flag, correcting an unrelated stale note elsewhere in DECISIONS.md claiming it wasn't referenced there.
-
-**Decision:** corrected ROADMAP.md's item in place — "A materially larger self-play corpus" replaced with the actual next task (generalizing `tune()`'s existing finite-difference loop, already generic over `ParameterRef<Weights>` as a template, to also drive the 5 non-PSQT tables), with corpus size re-added below it as an explicitly conditional, not-yet-relevant follow-up. Full reasoning, including why finite-difference (not a second analytic-gradient effort like PSQT's) is the right approach for these 5 smaller-parameter-count terms, logged in `docs/DECISIONS.md`, 2026-09-21 (2).
-
-**Files changed:** `docs/ROADMAP.md` (item corrected/rescoped, including fixing a stale forward-reference in the immediately-preceding checked item), `docs/DECISIONS.md` (new entry), `docs/SESSIONS.md` (this entry). No source or test files touched — this was a scoping correction only, following Session 117's own precedent of correcting a stale claim rather than rushing an implementation on top of a wrong premise. No build/test run was needed or performed.
-
-**Next session starts:** implement the actual generalization — extend `tune()` (or build table-specific entry points mirroring `tune_psqt()`'s own precedent, a real design choice not yet settled) to walk `kMobilityParameters`/`kSpaceParameters`/`kThreatsParameters`/`kKingSafetyParameters`/`kPawnsParameters`, wire each into `tune_main.cpp`, and only then revisit whether the existing 5000-game corpus size is adequate for these smaller parameter sets.
-
----
-
-### Session 118 — 2026-09-21 — `eval::EvalWeightsOverride`: closing the gap Session 117 found — all 6 "beyond PSQT" `Weights` types now reach a real played game through `search_fixed_depth()`/`quiescence()`/`play_match()`
-
-Picked up Session 117's own scoped handoff verbatim: thread the 6 non-material `Weights` types (mobility/space/threats/king-safety/pawns/PSQT) through `search_fixed_depth()`/`negamax()`/`quiescence()` down to `eval::evaluate()`, then `MatchConfig`/`play_match()`, mirroring `material_weights`'s own existing precedent. Session 117 had explicitly left the design choice open between "one parameter per `Weights` type" (six separate insertions) and "some more compact way of passing all six/seven at once."
-
-**Decision:** a single bundling struct, `eval::EvalWeightsOverride` (`eval/eval.h`), holding all 7 weight-override pointers (including `material`, for completeness/uniformity). One new parameter — `const EvalWeightsOverride* eval_weights = nullptr` — was threaded through `search_fixed_depth()`/`search_iterative_deepening()`/`search_iterative_deepening_multipv()`/`negamax()`/`search_root()`/`run_lazy_smp_helper()` (both spawn sites) in `search.cpp`, and `quiescence()`/`quiescence_impl()` in `quiescence.cpp`, unpacked into the 6 individual pointers (`psqt`/`mobility`/`space`/`threats`/`king_safety`/`pawns`) exactly at each function's own `eval::evaluate()` call site via local aliases computed once per function, rather than a ternary repeated at every call. Chosen over six separate parameters specifically because `MatchConfig`/`play_match()`'s own natural extension point is "one override struct per side," matching how a tuning/SPRT run would actually want to specify a candidate — six separate `_a`/`_b` pointer-pair fields would have been six times the boilerplate for the same information. `search.cpp`/`quiescence.cpp` deliberately do NOT read `EvalWeightsOverride::material` — `material_weights` keeps its own pre-existing, separately-threaded parameter completely unchanged, avoiding re-touching that parameter's own already-wired call sites (added across Sessions 104/114-116) for zero behavioral benefit; `evaluate()`'s own 7-parameter signature is likewise untouched, since changing it would break every one of its existing call sites a second time for the same reason.
-
-**Implementation order, each step recompiled before moving to the next (not written all at once and debugged at the end):** (1) `EvalWeightsOverride` added to `eval/eval.h`, recompiled `eval.cpp` clean. (2) `search.h`'s two public signatures updated. (3) `negamax()` updated first — signature, 6 local unpacked aliases, its own 4 `eval::evaluate()` call sites, its quiescence-delegation call, and all 9 of its own recursive-call sites — recompiled `search.cpp` alone, fixed each resulting error one at a time (`search_root()`, both `run_lazy_smp_helper()` sites, `search_fixed_depth()`, `search_iterative_deepening()`, `search_iterative_deepening_multipv()`) until `search.cpp` compiled standalone with zero errors. (4) `quiescence.h`/`quiescence.cpp` updated the same way (`quiescence()`, `quiescence_impl()`, both `evaluate()` calls, the self-recursive call) — compiled standalone clean. (5) `tuner/match.h`'s `MatchConfig` gained `eval_weights_a`/`eval_weights_b` (default `nullptr`); `match.cpp`'s `play_one_match_game()` and `play_match()` updated to derive and forward `eval_weights_white`/`eval_weights_black` from them, mirroring `threads_a`/`threads_b`'s own precedent exactly — compiled standalone clean.
-
-**Verification — a real `cmake`+`ctest` build, not compiled-in-isolation guesswork:** `cmake`/Catch2 (fetched from `github.com`, an allowed sandbox domain) confirmed a working build+test pipeline exists in this environment. Full project build against the new header initially failed on ~20 EXISTING test call sites and 2 `uci.cpp` call sites, all for the identical reason: a positional call site passing an argument at or past the position `eval_weights` now occupies (most commonly `num_threads`) without an explicit `nullptr` for the new parameter — exactly the same failure mode, and the same fix (`/*eval_weights=*/nullptr` inserted at the correct position), every prior "beyond PSQT" parameter insertion produced (Sessions 114-116's own precedent). Fixed across `tests/contempt_tests.cpp`, `tests/lazy_smp_tests.cpp`, `tests/pondering_tests.cpp`, `tests/persistent_tt_tests.cpp`, `tests/thread_regression_tests.cpp`, `tests/search_tests.cpp`, and `src/uci/uci.cpp` (2 call sites: the main search and the pondering background search). Two NEW tests added (`tests/match_tests.cpp`, `[eval_weights]` tag) confirm the fix reaches an actual played outcome, not just that it compiles: a direct `search_fixed_depth()` call with a 20x-boosted `MobilityWeights` override changes the returned score at real search depth (isolating the mobility term specifically, distinct from the file's existing `material_weights` test just above it), and a `play_match()` run giving one side (`eval_weights_b` only) a mobility PENALTY instead of a bonus loses every game rather than the ~50/50 result silent-ignoring would produce. Full existing suite plus the 2 new cases: **668 test cases, 691,052 assertions, 0 failures** (`ctest`/direct `nightwing_tests` run, both green).
-
-**Files changed:** `src/eval/eval.h` (new `EvalWeightsOverride` struct), `src/search/search.h`/`search.cpp` (new parameter threaded through every signature/call site listed above), `src/search/quiescence.h`/`quiescence.cpp` (same), `src/tuner/match.h`/`match.cpp` (`MatchConfig` fields + forwarding), `src/uci/uci.cpp` (2 call sites fixed for the new parameter), `tests/contempt_tests.cpp`/`lazy_smp_tests.cpp`/`pondering_tests.cpp`/`persistent_tt_tests.cpp`/`thread_regression_tests.cpp`/`search_tests.cpp` (existing call sites fixed for the new parameter, no test logic changed), `tests/match_tests.cpp` (2 new tests, `[eval_weights]`). `docs/ROADMAP.md` (this item marked done, corpus-size half split out as its own still-open item), `docs/SESSIONS.md` (this entry), `docs/DECISIONS.md` (new entry: the bundling-struct-vs-six-parameters decision and its rationale).
-
-**Next session starts:** the corpus-size half of the item just closed — "a materially larger self-play corpus" (ROADMAP.md, immediately below the now-checked-off SPRT-gating item) — has no defined scope yet beyond that original phrase; the first task is deciding what "materially larger" means concretely (target game count, position source, self-play time budget) before writing any code.
-
----
-
-### Session 117 — 2026-09-20 (2) — Correction: `play_match()`/`nightwing_sprt` do NOT yet support any of the 6 "beyond PSQT" Weights types, despite Session 113's/this roadmap item's own wording implying otherwise
-
-Picked up Session 116's own handoff item verbatim ("A materially larger self-play corpus" / "mandatory SPRT-gating"). Before writing any code, checked the specific claim that "mandatory SPRT-gating... specifically CAN actually be done with this repo's existing `nightwing_sprt`/`play_match()` tooling" (Session 113's own correction entry, repeated in ROADMAP.md's own item text) against the actual current code, rather than assuming it still held after Sessions 114-116 built 6 entirely new `Weights` types on top of the codebase that claim was originally written about.
-
-**Finding:** `tuner/match.h`/`match.cpp`'s `play_match()` takes exactly two `eval::MaterialWeights` parameters and nothing else — no `PsqtWeights`, `MobilityWeights`, `SpaceWeights`, `ThreatsWeights`, `KingSafetyWeights`, or `PawnsWeights` parameter exists anywhere in its signature or `MatchConfig`. Tracing further down, `search::search_fixed_depth()` and `search::quiescence()` (the functions `play_match()`'s own per-game loop calls) only thread a `material_weights` override through to `eval::evaluate()` — none of the other 6 `Weights` types Sessions 114-116 built has ANY path from a match/SPRT game into a real `evaluate()` call at all. They exist purely as `eval::evaluate()`/`tuner::compute_loss()` parameters, reachable today only from `tests/*_tests.cpp` and Texel-loss computation — never from an actual played game. Session 113's own correction (2026-09-18) was accurate when it was written (only material weights existed as an overridable vector at that point, and `play_match()` already supported exactly that one), but its conclusion ("no new infrastructure is needed for THIS specific follow-up") did not anticipate 6 more `Weights` types being added afterward with no corresponding `play_match()`/`search_fixed_depth()` support — so the claim, unchanged since 2026-09-18, silently went stale as Sessions 114-116's own work landed. Caught by literally re-reading `match.h`/`match.cpp`/`search.h` before writing anything, not by a failing test (no test exercises this path with a non-material `Weights` type, so nothing red would have flagged it).
-
-**Decision:** correct the claim in place, in ROADMAP.md, rather than either leaving it standing or attempting the real fix in this same short session. The real fix — threading all 6 new `Weights` types through `search_fixed_depth()`/`quiescence()` down to `evaluate()`, then `MatchConfig`/`play_match()`, mirroring `material_weights`'s own existing precedent exactly across every one of those functions — is comparable in scope to Sessions 114-116's own combined effort (multiple files, each needing its own careful signature threading, plus new tests confirming the override actually changes a played game's outcome the way it changes a static `evaluate()` call's result). Rushing that across search/quiescence/match/sprt in the remainder of this session, without the same build-and-test-after-every-file discipline Sessions 114-116 used throughout, risks exactly the kind of untested multi-file change this project's own "tests must stay green" rule exists to prevent. Scoped instead as its own explicit, not-yet-started ROADMAP.md item (updated in place) for a dedicated future session.
-
-**Files changed:** `docs/ROADMAP.md` only (the item's own bullet text, correcting the stale claim and scoping the concrete remaining work: which functions need a new parameter, mirroring which existing one). No source or test files touched this session — nothing here changes engine behavior, so no build/test run was needed or performed.
-
-**Next session starts:** implement the actual fix ROADMAP.md's own now-corrected item describes — starting with `search::search_fixed_depth()`, since `search_fixed_depth()` gaining new weight-override parameters is the same shape of change `material_weights` itself already went through there, so that function's own existing doc comment on `material_weights` is the direct template to follow for each of the 6 new types (or a single combined parameter bundling all 6/7, worth deciding explicitly before starting rather than repeating 6 near-identical signature insertions one at a time the way Sessions 114-116 did for `evaluate()` itself — a real design choice to make up front this time, given the lesson those sessions' own mid-signature-insertion call-site breakage already taught).
-
----
-
-### Session 116 — 2026-09-20 — Tier 0 tuner Step 8b: threats, king safety, and pawn structure become the tuner's third, fourth, and fifth "beyond PSQT" terms, closing out Step 8 entirely
-
-Continued in the same session as Session 115, advancing to Step 8b per that session's own handoff instruction: re-read `king_safety.h`, `pawns.h`, and `threats.h` in full before picking which to tackle first. `king_safety.h` turned out to have one 8-entry indexed array (`kPawnStormPenalty`) alongside 5 plain scalars, and `pawns.h` has FOUR separate 8-entry indexed arrays plus a plain `int` constant that isn't even a `Score` — both meaningfully more involved than `threats.h`'s 12 plain scalars (no array indexing anywhere), which is structurally identical in shape to mobility's own already-covered case, just with more fields (3 penalty categories x 4 piece types vs. mobility's 1 bonus x 4 piece types). Threats was picked as Step 8b's first sub-step on that basis — same "simplest remaining shape first" ordering principle Sessions 114 and 115 already established for mobility and space respectively. After threats was closed out and tested green, the same session continued straight into king safety as Step 8b's second sub-step (a `Next` continuation, not a fresh `Go`), since king safety's single 8-entry array was judged the smaller remaining lift compared to pawn structure's four arrays plus its stray non-`Score` `int` constant. After king safety was closed out and tested green, the session continued with a second `Next` straight into pawn structure — Step 8b's third and final sub-step, and the last remaining term in ROADMAP.md's entire "PSQT and beyond" tuner item.
-
-**Threats — what was built:** `eval/threats.h` gained `ThreatsWeights` (24 plain scalars: `knight_pawn_mg`/`_eg`, `bishop_pawn_mg`/`_eg`, `rook_pawn_mg`/`_eg`, `queen_pawn_mg`/`_eg`, and the same six-field pattern repeated for `_hanging` and `_overloaded`) and `default_threats_weights()`, both `constexpr`-constructible directly from the 12 existing `kXxxYyyPenalty` constants, the same `MaterialWeights`/`MobilityWeights`/`SpaceWeights` pattern. `threats_value()`'s three internal helper functions (`pawn_threat_penalty()`, `hanging_penalty()`, `overloaded_penalty()` — each a `switch` on `PieceType` returning the matching constant) each gained a `const ThreatsWeights*` parameter, threaded through `add_overloaded_penalty()` and `threats_value()` itself, exactly mirroring the override convention `mobility_value()`/`space_value()` already use. `eval::evaluate()` gained a matching `threats_weights` parameter, added to the same `eval_cache`-staleness condition the other four already trigger. `tuner/tune.h`/`tune.cpp` gained `ThreatsParameterRef`/`kThreatsParameters` (24 entries, all unanchored) and a matching optional `threats_weights` parameter on `compute_loss()`.
-
-**King safety — what was built:** `eval/king_safety.h` gained `KingSafetyWeights` (22 plain scalars: 5 plain `Score` constants x mg/eg — shield, open_file, semi_open_file, attack_unit, back_rank — plus `kPawnStormPenalty`'s 8-entry array FLATTENED into 6 individually-named scalar field pairs, `pawn_storm_rank1_mg`/`_eg` through `pawn_storm_rank6_mg`/`_eg`, covering only the runtime-reachable indices 1-6) and `default_king_safety_weights()`. `king_safety_value()` gained a new internal helper, `pawn_storm_penalty(relative_rank, weights)`, which switches on the storming pawn's relative rank to select the matching flattened field — threaded alongside per-term override logic for the other 5 plain-scalar constants directly inline in `king_safety_value()`'s own body. `eval::evaluate()` gained a matching `king_safety_weights` parameter, added to the same `eval_cache`-staleness condition. `tuner/tune.h`/`tune.cpp` gained `KingSafetyParameterRef`/`kKingSafetyParameters` (22 entries, every entry setting only `member`, never `array_member`) and a matching optional parameter on `compute_loss()`.
-
-**Pawn structure — what was built:** `eval/pawns.h` gained `PawnsWeights` (59 plain scalars: 4 plain `Score` constants x mg/eg — isolated, doubled, backward, connected — plus FOUR separate 8-entry arrays — `kPassedPawnBonus`, `kConnectedPassedPawnBonus`, `kOutsidePassedPawnBonus`, `kCandidatePassedPawnBonus` — each flattened into 6 named scalar field pairs the same way king safety's own `kPawnStormPenalty` already was, plus `kOutsidePassedPawnMinFileGap` represented as a single plain `double` field rather than an `int`, plus the island penalty x mg/eg) and `default_pawns_weights()`. `pawn_structure_value()` gained 4 new internal helper functions mirroring the switch-on-relative-rank pattern king safety's `pawn_storm_penalty()` already established, one per flattened array, plus an updated `is_outside_passed_pawn()` that now takes the min-file-gap threshold as a parameter. `eval::evaluate()` gained a matching `pawns_weights` parameter — and, uniquely among all six "beyond PSQT" terms, this one ALSO required updating `pawn_tt`'s own existing staleness-guard logic (`evaluate()`'s dedicated pawn-hash-table cache, separate from `eval_cache`): the same `pawns_weights != nullptr` condition that disables `eval_cache` now also disables `pawn_tt`, for the identical staleness reason, closing a real gap this session found and fixed before it could ship — a pawn-structure-override call would otherwise have silently read from or poisoned the shared pawn hash table. `tuner/tune.h`/`tune.cpp` gained `PawnsParameterRef`/`kPawnsParameters` (59 entries, all unanchored) and a matching optional `pawns_weights` parameter on `compute_loss()`.
-
-**Design decisions — resolving both of Session 115's own open questions for pawn structure, and one new decision for king safety:** (1) `tuner::ParameterRef::array_member`'s type is hardcoded to `std::array<double, 64> Weights::*`, built specifically for PSQT's own 64-square case (Tier 0 Step 3). Generalizing it to an arbitrary size just to accommodate a much-smaller 8-entry array was judged not worth the risk to PsqtWeights' own already-working, already-tested wiring, so king safety's `kPawnStormPenalty` was flattened into 6 named scalar fields instead — a genuinely novel design decision for this codebase (the first indexed array, other than PSQT's own, converted into `ParameterRef` entries). (2) Pawn structure then confirmed this flattening approach transfers cleanly to FOUR separate arrays with no new wrinkle — applied four times over rather than once. (3) `kOutsidePassedPawnMinFileGap` (a plain `int` file-distance threshold, not a `Score`) is represented the same uniform way every other field is: a plain `double`, rounded via `round_to_int()` at the point of use — with a documented caveat that its true effect on the score is a discrete step function, not a smooth linear one, so gradient-based tuning may need to treat it differently from the other 58 `PawnsWeights` fields; flagged for whichever session eventually builds the real gradient/tuning consumer, not resolved further here. Full account in docs/DECISIONS.md.
-
-**The same mid-signature-insertion hazard as every prior "beyond PSQT" session, handled the same methodical way, three times this session:** inserting `threats_weights`, then `king_safety_weights`, then `pawns_weights` (each between the previous weight parameter and `incremental_material_psqt`) each broke the same 6 production call sites (`search.cpp` x4, `quiescence.cpp` x2) and 6 test-file positional call sites (`eval_tests.cpp`'s 2 lazy-window tests and 1 eval_cache test, `incremental_eval_tests.cpp`'s 3 incremental-accumulator tests) every prior insertion has — every one caught by the compiler as a hard argument-count/type mismatch, fixed by inserting one more `nullptr` at each site (seven `nullptr`s deep at some call sites by the end of this session), confirmed by rebuilding after every fix.
-
-**Bugs fixed:** four total this session, all in test/implementation code written THIS session, none in code carried over from a prior session. (1) The first draft of `eval_tests.cpp`'s ThreatsWeights `evaluate()`-override test insertion accidentally deleted the `TEST_CASE(` line immediately following it (a `str_replace` boundary mistake), leaving a bare string literal. Caught as a hard compiler error on the first build attempt, fixed by re-inserting the missing line. (2) The first draft of `kKingSafetyParameters`' own "every member pointer reaches exactly the field its name claims" test used -1.0 as its per-field sentinel — safe for every earlier table, but `KingSafetyWeights`' own defaults happen to contain TWO fields already exactly -1.0 (`kAttackUnitPenalty.eg` and `kPawnStormPenalty[3].eg`). Caught as a genuine `FAILED` assertion (`changed_count == 3`, not 1), fixed by switching to -999999.0. (3) A `pawns.cpp` `str_replace` edit left a stale, un-replaced duplicate of the original (pre-override) `is_outside_passed_pawn()` function sitting alongside the new one — caught immediately by grepping for the function name and finding two definitions before ever attempting to compile, fixed by deleting the stale copy directly. (4) The first draft of `PawnsWeights` entirely omitted `kCandidatePassedPawnBonus` — a fourth 8-entry array easy to miss since `pawn_structure_value()`'s own candidate-passed-pawn check sits in a different part of the function than the already-passed checks the other three arrays share — caught by re-reading the function body against the struct just written, before compiling or testing either, fixed by adding the missing 12 fields and its own helper function; applied `kPawnsParameters`' own sentinel lesson from (2) preemptively rather than repeating that mistake a third time.
-
-**Decisions made:** threats chosen as Step 8b's first sub-step, king safety second, pawn structure third and last, all on simplicity-of-remaining-shape grounds — same ordering principle Sessions 114/115 already established; every new `Weights` struct's `MaterialWeights`-shaped (constexpr, not out-of-line) pattern for plain-scalar fields, for the identical mechanical reason `MobilityWeights`/`SpaceWeights` already used it; `kPawnStormPenalty`/pawns.h's four arrays all flattened into named scalar fields rather than generalizing `ParameterRef::array_member`; `kOutsidePassedPawnMinFileGap` represented as a plain `double` like every sibling field, with a documented gradient-behavior caveat rather than a special-cased type. Full account in docs/DECISIONS.md (two entries this session: one for king safety's array-flattening decision, covering the design rationale that pawn structure later confirmed transfers cleanly).
-
-**Tests added:** 29 new test cases across all three terms (637 -> 666 total): threats — 3 in `tests/threats_tests.cpp`, 2 in `tests/eval_tests.cpp`, 4 in `tests/tune_tests.cpp` (9 total, 637 -> 646); king safety — 3 in `tests/king_safety_tests.cpp`, 2 in `tests/eval_tests.cpp`, 4 in `tests/tune_tests.cpp` (9 total, 646 -> 655); pawn structure — 4 in `tests/pawns_tests.cpp`, 2 in `tests/eval_tests.cpp`, 4 in `tests/tune_tests.cpp`, 1 in `tests/pawn_tt_tests.cpp` confirming `pawn_tt`'s own new bypass behaves identically to `eval_cache`'s (11 total, 655 -> 666). 691,049 total assertions.
-
-**Verification performed:** full Release and Debug/ASan+UBSan rebuilds after each term's own source changes, again after each term's own test additions, and again after every one of the four bugfixes above. 666/666 green in both configurations by the end of the session. Zero new sanitizer findings — the same pre-existing, unrelated `eval/score.h` signed-overflow UBSan warnings noted in Sessions 112-115 still appear, unchanged. `bench` checked and unchanged at 38,679 total nodes throughout — identical to every prior session in this series, expected since every production `evaluate()` call site still passes all seven weight-override parameters as `nullptr` by default.
-
-**Files changed:** `src/eval/threats.h`, `src/eval/threats.cpp`, `src/eval/king_safety.h`, `src/eval/king_safety.cpp`, `src/eval/pawns.h`, `src/eval/pawns.cpp`, `src/eval/eval.h`, `src/eval/eval.cpp`, `src/search/search.cpp`, `src/search/quiescence.cpp`, `src/tuner/tune.h`, `src/tuner/tune.cpp` (source, each of the last 6 touched three times — once per term); `tests/threats_tests.cpp`, `tests/king_safety_tests.cpp`, `tests/pawns_tests.cpp`, `tests/pawn_tt_tests.cpp`, `tests/eval_tests.cpp`, `tests/tune_tests.cpp`, `tests/incremental_eval_tests.cpp` (tests, the last one call-site-fixup only, no new test cases added there).
-
-**Next session starts:** ROADMAP.md's "PSQT and beyond" tuner item (Steps 1-8) is now entirely closed — every eval term has its own `Weights` struct and `ParameterRef` table, though none is yet actually consumed by `tune()` itself. The next unchecked item, immediately below Step 8b in ROADMAP.md's own top-to-bottom order, is "a materially larger self-play corpus" and "mandatory SPRT-gating before any tuned values are committed" — per Session 113's own correction entry, the SPRT-gating half of that can already be done with this repo's existing `nightwing_sprt`/`play_match()` tooling (no new infrastructure needed there), leaving the corpus-size half, and the still-outstanding work of actually wiring all seven `ParameterRef` tables into `tune()`'s own gradient computation, as the real remaining gap before any of this session's (or Sessions 114/115's) tables produce a real tuned value.
-
----
-
----
-
-### Session 115 — 2026-09-20 — Tier 0 tuner Step 8a: space becomes the tuner's second "beyond PSQT" term
-
-Picked up from ROADMAP.md's own top-to-bottom unchecked order per Session 114's own handoff instruction: Step 8 (king safety/pawn structure/space/threats) was the next unchecked item, with an explicit instruction to re-read each candidate file's own header comment first to gauge shape before assuming any one mirrors mobility's simple case. `space.h` (75 lines, one scalar constant, `kSpaceSquareBonus`) was the clear simplest remaining candidate compared to `king_safety.h` (181 lines), `pawns.h` (255 lines), and `threats.h` (183 lines, 12 scalars across 3 penalty categories x 4 piece types) — so this session splits Step 8 into 8a (space) and 8b (the remaining three, deferred), mirroring how Step 7 (mobility) was picked over the others for the identical "simplest shape first" reason.
-
-**What was built:** `eval/space.h` gained `SpaceWeights` (2 plain scalars, `square_mg`/`square_eg` — the smallest weight struct of the four so far), `default_space_weights()`, and a `space_value()` nullable-override parameter matching `mobility_value()`'s own convention exactly. `eval::evaluate()` gained a matching `space_weights` parameter (inserted between `mobility_weights` and `incremental_material_psqt`, keeping all four weight-override parameters grouped together), added to the same `eval_cache`-staleness condition the other three already trigger. `tuner/tune.h`/`tune.cpp` gained `SpaceParameterRef`/`kSpaceParameters` (2 entries, both unanchored — additive term, same reasoning `kPsqtParameters`/`kMobilityParameters` already established) and a matching optional `space_weights` parameter on `compute_loss()`.
-
-**The same mid-signature-insertion hazard as Session 114, handled the same methodical way:** inserting `space_weights` between `mobility_weights` and `incremental_material_psqt` broke every call site passing arguments positionally past `mobility_weights` — the same 6 production sites Session 114's mobility insertion broke (`search.cpp` x4, `quiescence.cpp` x2), each fixed with an explicit `/*space_weights=*/nullptr`, plus 6 test-file positional call sites this time (`eval_tests.cpp`'s 2 lazy-window tests and 1 eval_cache test, `incremental_eval_tests.cpp`'s 3 incremental-accumulator tests) that reach past `mobility_weights` into `incremental_material_psqt`/the lazy-window parameters — every one caught by the compiler as a hard argument-count/type mismatch, fixed by inserting one more `nullptr` at each site, confirmed by rebuilding after every fix.
-
-**Bugs fixed:** one, in this session's own new test code, not production code — `tune_tests.cpp`'s first draft of the "space_weights argument is forwarded to evaluate()" test used a bare-kings-plus-one-pawn FEN (`4k3/3p4/8/8/8/8/8/4K3 w - - 0 1`) with zero non-pawn material, and only perturbed `square_mg` by 500. Since that position's `compute_phase()` returns exactly 0 (no knights/bishops/rooks/queens on the board at all), `eval::taper()` selects the EG term entirely — the mg-only perturbation was silently invisible to the final score, producing `loss_with_override == 0.0` instead of the expected nonzero value. Caught immediately as a genuine `FAILED` assertion on the first test run, not a false pass; fixed by perturbing both `square_mg` and `square_eg` together, sidestepping the phase-dependence rather than hunting for a differently-shaped position just for this one test.
-
-**Decisions made:** space chosen as Step 8's first sub-step over king safety/pawns/threats, on simplicity of existing shape (1 constant vs. king safety's/pawns' visibly larger files) — same ordering principle Session 114 already established for mobility; splitting Step 8 into 8a/8b rather than treating it as one combined step, matching how Steps 1-6 (PSQT) and Step 7 (mobility) are each already their own separate steps; `SpaceWeights`' `MaterialWeights`-shaped (constexpr, not out-of-line) pattern, for the identical mechanical reason `MobilityWeights` already used it. Full account in docs/DECISIONS.md.
-
-**Tests added:** 9 new test cases (628 -> 637 total): 3 in `tests/space_tests.cpp` (`default_space_weights()` matches the constant, nullable-override parity, weight-scaling proportionality), 2 in `tests/eval_tests.cpp` (`evaluate()` override changes result as expected, `eval_cache` skipped when set), 4 in `tests/tune_tests.cpp` (`kSpaceParameters` structure/anchoring/get-set-roundtrip as 3 separate cases, `compute_loss()` forwarding as the 4th). 690,284 total assertions.
-
-**Verification performed:** full Release and Debug/ASan+UBSan builds (installed `cmake`/`g++` fresh into this sandbox), 637/637 green in both, after the eval/space/tune source changes AND again after the test additions and the compute_loss test's own bugfix. Zero new sanitizer findings — the same pre-existing, unrelated `eval/score.h` signed-overflow UBSan warnings noted in Sessions 112-114 still appear, confirmed independent of this session's changes. `bench` checked and unchanged at 38,679 total nodes — identical to Session 114's own value, expected since every production `evaluate()` call site still passes `space_weights = nullptr` by default.
-
-**Files changed:** `src/eval/space.h`, `src/eval/space.cpp`, `src/eval/eval.h`, `src/eval/eval.cpp`, `src/search/search.cpp`, `src/search/quiescence.cpp`, `src/tuner/tune.h`, `src/tuner/tune.cpp` (source); `tests/space_tests.cpp`, `tests/eval_tests.cpp`, `tests/tune_tests.cpp`, `tests/incremental_eval_tests.cpp` (tests, the last one call-site-fixup only, no new test cases added there).
-
-**Next session starts:** ROADMAP.md's own Step 8b — the same `Weights`-struct-plus-`ParameterRef`-group-plus-wiring treatment mobility (Step 7) and space (Step 8a) just got, for king safety (`eval/king_safety.h`), pawn structure (`eval/pawns.h`), and threats (`eval/threats.h`). Re-read each file's own header comment FIRST — `king_safety.h`/`pawns.h` in particular are visibly longer, more involved files (181/255 lines vs. space's 75) and may need their own indexed-array (`PsqtWeights`-style) treatment rather than mobility's/space's plain-scalar one; `threats.h` (183 lines, 12 scalars across 3 penalty categories x 4 piece types) is plain-scalar-shaped like mobility, just larger. Likely one sub-step per term, not a single combined one, mirroring how this item already treats PSQT (Steps 1-6), mobility (Step 7), and space (Step 8a) as separate steps rather than folding everything into one.
-
----
-
-### Session 114 — 2026-09-19 — Tier 0 tuner Step 7: mobility becomes the tuner's first "beyond PSQT" term
-
-Picked up from ROADMAP.md's own top-to-bottom unchecked order (per Session 113's own handoff instruction) rather than a specific named item — the "Staged / lazy move generation" item is fully closed, so the next real, actionable item in order was the Tier 0 tuner's own top-level checkbox: still unchecked despite Steps 1-6 (PSQT tapering, generalization, wiring, L2, analytic gradient, CLI) all being done, because that item's own intro text explicitly scopes it as "PSQT and **beyond**" — mobility/king-safety/pawn/space/threat constants — and none of the "beyond" part had been started.
-
-**What was built:** `eval/mobility.h`/`mobility.cpp` gained `MobilityWeights` (8 plain scalars, `constexpr`-constructible directly from the header's own `kKnightMobilityBonus`/etc., mirroring `MaterialWeights`' pattern rather than `PsqtWeights`' out-of-line one — see docs/DECISIONS.md for why the choice between those two existing precedents was mechanical, not a judgment call), `default_mobility_weights()`, and a `mobility_value()` nullable-override parameter matching `material_value()`/`psqt_value()`'s own convention exactly. `eval::evaluate()` gained a matching `mobility_weights` parameter, added to the same `eval_cache`-staleness condition the other two weight-override parameters already trigger. `tuner/tune.h`/`tune.cpp` gained `MobilityParameterRef`/`kMobilityParameters` (8 entries, all `anchored = false` — additive term, same reasoning `kPsqtParameters` already established) and a matching optional `mobility_weights` parameter on `compute_loss()`.
-
-**A real hazard, caught methodically:** inserting the new `mobility_weights` parameter BETWEEN `psqt_weights` and `incremental_material_psqt` in `evaluate()`'s signature (rather than appending it at the end, for readability — grouping the three weight-override parameters together) broke every call site passing arguments positionally past `psqt_weights`. Every one was caught by the compiler as a type mismatch, not silently — `search.cpp` (4 sites), `quiescence.cpp` (2 sites), `incremental_eval_tests.cpp` (3 sites), `eval_tests.cpp` (3 sites), each fixed by inserting an explicit `nullptr` in the new slot, confirmed by rebuilding after every fix rather than assuming completeness once the eval/mobility files alone compiled.
-
-**Bugs fixed:** one, in this session's own new test code, not production code — `mobility_tests.cpp`'s first draft of the "a modified MobilityWeights changes only that piece type's contribution" test used a mirrored/symmetric starting FEN, where boosting one side's knight bonus boosts the other's by an identical amount, canceling out exactly in the White-relative score this test needed to observe (caught immediately on first test run — a `FAILED` assertion, not a false pass — and fixed by switching to a deliberately asymmetric single-knight position).
-
-**Decisions made:** `MaterialWeights`-shaped (constexpr) vs. `PsqtWeights`-shaped (out-of-line) for `MobilityWeights`, and why; mobility chosen as the first "beyond PSQT" term over king safety/pawns/space/threats, on simplicity of existing shape rather than any other ordering; all 8 mobility parameters left unanchored; inserting the new parameter mid-signature (readability) over appending it (fewer call-site fixes) despite the latter being less work. Full account in docs/DECISIONS.md.
-
-**Tests added:** 20 new test cases (608 -> 628 total): 7 in `tests/mobility_tests.cpp` (nullable-override parity, per-piece isolation, `default_mobility_weights()` matches constants), 3 in `tests/eval_tests.cpp` (`evaluate()` override changes result as expected, `eval_cache` skipped when set), 10 in `tests/tune_tests.cpp` (`kMobilityParameters` structure/anchoring/get-set-roundtrip, `compute_loss()` forwarding). 690,254 total assertions.
-
-**Verification performed:** full Release and Debug/ASan+UBSan builds, 628/628 green in both, after the eval/mobility/tune source changes AND again after the test additions. Zero new sanitizer findings (the same pre-existing, unrelated `eval/score.h` signed-overflow UBSan warnings noted in Sessions 112/113 still appear, confirmed still independent of this session's own changes). `bench` checked and unchanged at 38,679 total nodes — identical to Session 113's own value, expected since every production `evaluate()` call site still passes `mobility_weights = nullptr` by default; this step adds capability only, the same "zero behavior change" pattern `kPsqtParameters`' own introduction (Tier 0 Step 3) followed.
-
-**Files changed:** `src/eval/mobility.h`, `src/eval/mobility.cpp`, `src/eval/eval.h`, `src/eval/eval.cpp`, `src/search/search.cpp`, `src/search/quiescence.cpp`, `src/tuner/tune.h`, `src/tuner/tune.cpp` (source); `tests/mobility_tests.cpp`, `tests/eval_tests.cpp`, `tests/tune_tests.cpp`, `tests/incremental_eval_tests.cpp` (tests, the last one call-site-fixup only, no new test cases added there).
-
-**Next session starts:** ROADMAP.md's own Step 8 — the same `Weights`-struct-plus-`ParameterRef`-group-plus-wiring treatment mobility just got, for king safety (`eval/king_safety.h`), pawn structure (`eval/pawns.h`), space (`eval/space.h`), and threats (`eval/threats.h`). Re-read each file's own header comment FIRST to gauge its actual constant shape before assuming it mirrors mobility's own simple 8-scalar case — `king_safety.h`/`pawns.h` in particular are visibly longer, more involved files, going by line count alone, and may need their own indexed-array (`PsqtWeights`-style) treatment rather than mobility's plain-scalar one. Likely one sub-step per term, not a single combined one, mirroring how this item already treats PSQT (Steps 1-6) and mobility (Step 7) as separate steps rather than folding everything into one.
-
----
-
-### Session 113 — 2026-09-18 (4) — Staged move generation, Step 3b: discovered `nightwing_sprt` can't strength-verify a search-code change, corrected Session 112's own text, closed the item out on correctness evidence, scoped the real gap as new work
-
-Picked up exactly where Session 112's handoff pointed: Step 3b of the "Staged / lazy move generation" item — build a pre-Step-2b baseline and run a real SPRT match. Before acting on that instruction, read `src/tuner/sprt_main.cpp` and `src/tuner/match.h` in full (Tier 1/2 docs were already current from Session 112 in the same conversation, so this session's own reading was source-code investigation, not a docs re-read).
-
-**What was found:** `nightwing_sprt`/`tuner::play_match()` compares two `eval::MaterialWeights` vectors played against each other using ONE FIXED, already-compiled search implementation — it has no facility for putting a DIFFERENT version of the search code (pre- vs. post-Step-2b `negamax()`) on either side. Session 112's own Step 3b text, written under the (incorrect) assumption that this tool could do that comparison, was wrong. `MatchConfig`'s existing `threads_a`/`threads_b` fields are the one precedent in this codebase for repurposing this single-process match module to compare something other than weights per side, holding weights equal — no equivalent "which search-code path" per-side knob exists yet.
-
-**Decision made:** rather than rush a new per-side toggle into `negamax()` (this session's most recently and heavily modified function) just to get a same-session match number of questionable statistical value at small scale, the gap was logged as its own new ROADMAP item ("Engine-vs-engine match infrastructure for search-code changes," two options sketched: a `threads_a`/`threads_b`-style in-process toggle, or a genuine two-process UCI-vs-UCI match runner closer to cutechess-cli/fastchess/OpenBench) — separate, clearly scoped future work, not a blocker on this item. "Staged / lazy move generation" itself is now closed out: Step 3a (correctness re-verification) already done in Session 112 (619/619 green, full mate-finding/pruning-technique regression battery included) is what "re-verification" means for a change of this kind, consistent with this project's own bench_tests.cpp header comment philosophy (node-count/behavior shifts get recorded and explained, not gate-kept behind a full match, unless the shift itself can't be explained — this one could, and was, in Session 112's own DECISIONS.md entry).
-
-**Bugs fixed:** none.
-
-**Decisions made:** the correction itself (nightwing_sprt's real scope vs. what Session 112 assumed); scoping the real gap as new, separate infrastructure work rather than rushing a fix into `negamax()`; closing the staged-move-generation ROADMAP item on Step 3a's evidence rather than leaving it open indefinitely. Full account in docs/DECISIONS.md's correction entry.
-
-**Tests added:** none — this session was investigation and documentation correction, no source code touched.
-
-**Verification performed:** none needed — no source file was modified this session (only `src/tuner/sprt_main.cpp`/`src/tuner/match.h` were READ, not changed). The test suite's state is exactly as Session 112 left it (619/619 green, both Release and Debug/ASan+UBSan).
-
-**Files changed:** none in `src/`/`tests/`. Docs only: `docs/ROADMAP.md` (Step 3a/3b text corrected; new "Engine-vs-engine match infrastructure" item added), `docs/DECISIONS.md` (correction entry), `docs/SESSIONS.md` (this entry).
-
-**Next session starts:** whoever's free to pick a NEW item — the "Staged / lazy move generation" item is now fully closed out. Reasonable next candidates, in no particular order: the newly-scoped "Engine-vs-engine match infrastructure" item (this session's own discovery); the next unchecked item in ROADMAP.md's own top-to-bottom order at whatever point it now sits; or the Release Automation / Phase 9 items already sitting at the end of ROADMAP.md for whenever they're picked up. Check ROADMAP.md's own current unchecked-item order first, per this project's normal "Start"/"Go" convention, rather than assuming any one of these is next by default.
-
----
-
-### Session 112 — 2026-09-18 (3) — Staged move generation, Steps 1, 2a, and 2b: `GenType`-staged `generate_legal_moves()`, lazy captures-only generation in quiescence AND in negamax()'s own move loop (NPS/Raw Speed track, last remaining item — a multi-step effort; this session covers Steps 1, 2a, and 2b of 4)
-
-Picked up exactly where Session 111's handoff pointed: ROADMAP.md's NPS/Raw Speed track's last remaining item, "Staged / lazy move generation" — flagged there as "a structural change ... scope accordingly when picked up," so this session treats it as its own multi-step effort (matching the Tier 0 tuner item's own convention) rather than a single sitting. Continued past Step 1 into Step 2a (quiescence) in the same sitting, then — on request to keep going — into Step 2b (`negamax()` itself), the harder half Step 2a's own entry had deferred.
-
-**What was built — Step 1 (movegen capability):**
-- `src/board/movegen.h`: new `GenType` enum (`Captures`, `Quiets`, `All`) and a third, defaulted (`= GenType::All`) parameter on `generate_legal_moves()`. `Captures` = every capture (incl. en passant, capture-promotions) plus every promotion, capturing or not; `Quiets` = everything else (ordinary quiet moves, double pawn pushes, castling) — the split deliberately mirrors `search/ordering.h`'s own existing forcing/quiet move-ordering boundary, not the raw `Move::is_capture()` bit.
-- `src/board/movegen.cpp`: `generate_pawn_moves()` gained inline `want_captures`/`want_quiets` filtering; a new internal `stage_mask()` helper narrows `target_mask` for the piece/king generators; `generate_castling_moves()` is skipped entirely under `GenType::Captures`. All pin/check/legality computation is completely unchanged and shared across all three `gen_type` values.
-- `tests/movegen_tests.cpp`: a new staged-generation parity suite (`[movegen][staged]`, 7 test cases) — a recursive, perft-shaped tree walk across all six standard CPW reference positions plus the existing double-check hand-built position, confirming at every node that `Captures` ∪ `Quiets` == `All` exactly.
-
-**What was built — Step 2a (quiescence):**
-- `src/search/quiescence.cpp`: `quiescence_impl()`'s `!us_in_check && !include_checks` path now calls `generate_legal_moves(pos, legal_moves, GenType::Captures)` directly, falling back to `GenType::Quiets` ONLY when the captures result is empty (needed to distinguish stalemate from a merely-quiet position). Provably exactly behavior-preserving — see docs/DECISIONS.md.
-- `tests/quiescence_tests.cpp`: 2 new `[quiescence][staged]` tests added afterward, on request, specifically exercising the fallback branch neither `bench` parity nor the pre-existing suite actually drove.
-
-**What was built — Step 2b (negamax()):**
-- `src/search/search.cpp`: `negamax()`'s move loop now generates `GenType::Captures` up front instead of `GenType::All`, with an in-function `ensure_quiets()` lambda bringing in `GenType::Quiets` (generated, `order_moves()`-sorted on its own, then appended) at 4 specific points: empty captures (terminal-detection ambiguity); `tt_move` non-null and not found among captures (might be a genuine quiet best move from a shallower iterative-deepening pass, might be stale/foreign — no way to tell without checking); Singular Extensions' own alternative-move scan (needs every legal move whenever it triggers); the main loop running out of currently-generated moves without a cutoff. No separate `MovePicker` class — `order_moves()` is reused as-is on whichever list is current at each call site. The main loop's own `for (int i = 0; i < moves.size(); ++i)` header was restructured to `for (int i = 0;; ++i)` with an explicit `i >= moves.size()` check at the top of the body that triggers `ensure_quiets()` and only then decides whether to `break`, so the loop can legitimately grow the list it's iterating over.
-- `tests/search_tests.cpp`: 2 new `[search][staged]` tests — a KQK (king+queen vs. lone king) mate-finding test (zero legal captures anywhere in the entire tree, forcing the empty-captures fallback at nearly every node) and a TT-quiet-move iterative-deepening test (confirms a stored quiet best move from a shallow pass is handled correctly by a deeper one). The pre-existing "pure king-and-pawn endgame" test and "mate-in-3 ... with singular extensions active" test were identified as already incidentally exercising the empty-captures and singular-extension triggers respectively.
-
-**Important finding from Step 2b, not a bug (full account in docs/DECISIONS.md):** unlike Steps 1 and 2a, Step 2b is NOT bench-parity-preserving. `history`/`cont_history`/`capture_history` are global tables mutated by recursive search of already-tried captures at the same node, so quiets brought in via the main loop's own "ran out of moves" trigger — which, unlike the other 3 triggers, can fire AFTER this node's own recursive search has already begun — get `order_moves()`-scored against table state that's moved on since the start of the node, rather than the frozen-at-node-start state the old eager `GenType::All` scheme implicitly gave every move. This can shift quiet moves' relative order among themselves (never relative to captures — score-band separation holds regardless of timing), and because LMR/LMP/history pruning are inherently order-sensitive, this legitimately shifts the reported score/node count at a FIXED depth without either version being wrong — the same trade-off real engines' own staged move generators accept as standard. Observed directly: `quiet_middlegame`'s bench score moved 173 -> 31 with `best_move` UNCHANGED (`d4c5` both times); `kiwipete`'s node count moved 16,049 -> 16,151 with its score unchanged; bench TOTAL moved 37,287 -> 38,679 (+3.7%). Isolated (not just assumed) by temporarily forcing `ensure_quiets()` to fire eagerly and confirming that reproduces the pre-Step-2b baseline byte-for-byte, before reverting the forced-eager override for the real, lazy version.
-
-**Bugs fixed:** none — new-capability and optimization work, not a bugfix session.
-
-**Decisions made:** the `GenType::Captures`-includes-all-promotions split (Step 1); quiescence's captures-first-with-quiets-fallback shape (Step 2a); negamax's 4-trigger `ensure_quiets()` design and why a dedicated `MovePicker` class wasn't needed (Step 2b); the history-staleness finding and why it's an accepted trade-off rather than a bug (Step 2b); the decision NOT to run an SPRT strength match this session, flagged as the recommended follow-up (Step 2b). All logged in docs/DECISIONS.md, this session's three entries.
-
-**Tests added:** 11 new test cases this session (608 -> 619 total): 7 in `tests/movegen_tests.cpp` (Step 1); 2 in `tests/quiescence_tests.cpp` (Step 2a); 2 in `tests/search_tests.cpp` (Step 2b). 629,684 assertions across the `[staged]` tag alone; 690,182 assertions across the full suite.
-
-**Verification performed:** the real project toolchain — `cmake`/`ctest` after installing `cmake`/`g++` into this sandbox. Full Release and Debug/ASan+UBSan builds run green after each of Steps 1 (615/615), 2a (615/615, then 617/617 once its tests were added), and 2b (619/619) — every run a single full-suite pass, zero sanitizer findings beyond the pre-existing, unrelated `eval/score.h` signed-overflow UBSan warnings (present in every Debug run this session, evidently independent of any of this session's changes; flagged for whoever next touches that file). `bench` checked after every step: unchanged at 37,287 through Steps 1 and 2a (proving both behavior-preserving), then DIFFERENT after Step 2b as detailed above — checked specifically rather than assumed, given the size of one position's score swing warranted direct scrutiny. The existing "mate-in-3 ... with [technique] active" regression battery (one test per major pruning/extension feature) staying green throughout Step 2b gives strong evidence no legal move is missed and no illegal move is included by the new lazy generation. NOT performed: an SPRT self-play strength match between a pre-Step-2b baseline and this session's version — this repo's own `nightwing_sprt` binary exists for exactly this question, and the bench shift proves behavior changed but says nothing about whether that change is a net strength win, wash, or slight regression. Flagged explicitly in ROADMAP.md's Step 3b as the recommended next action before treating Step 2b as fully validated for competitive play.
-
-**Files changed:** `src/board/movegen.h`, `src/board/movegen.cpp`, `tests/movegen_tests.cpp` (Step 1); `src/search/quiescence.cpp`, `tests/quiescence_tests.cpp` (Step 2a); `src/search/search.cpp`, `tests/search_tests.cpp` (Step 2b).
-
-**Next session starts:** Step 3b — build a pre-Step-2b baseline binary (revert `search.cpp`'s `negamax()` move-generation call site to plain `GenType::All`, or check out this session's code before the Step 2b edit) and run a real `nightwing_sprt` match against this session's version, to determine whether Step 2b's history-staleness-driven ordering changes are a net strength improvement (the intended effect: fewer wasted quiet-move generations on nodes that cut off during captures) or a wash/regression, before considering the "Staged / lazy move generation" ROADMAP item fully closed out.
-
----
-
-### Session 111 — 2026-09-18 (2) — Lazy evaluation / early-exit on cheap terms (NPS/Raw Speed track) implemented in `eval::evaluate()`, wired into quiescence's stand-pat call
-
-Picked up exactly where Session 110's handoff pointed: ROADMAP.md's NPS/Raw Speed track, "Lazy evaluation / early-exit on cheap terms" item, the next incomplete item after Incremental evaluation.
-
-**What was built:**
-- `src/eval/eval.h`/`.cpp`: `evaluate()` gained two new optional trailing parameters, `lazy_alpha_white`/`lazy_beta_white` — an alpha-beta window expressed in White's fixed perspective (CPW "Lazy Evaluation"). When both are set, material+PSQT (`score`, already computed first per this item's own wording) is tapered on its own and compared against the window widened by a new `kLazyEvalMargin` (650 centipawns) in each direction; if it already clears the window by more than that margin, this function returns that partial, approximate value immediately, before pawn structure, mobility, king safety, threats, space, or any other term is computed at all. `compute_phase(pos)` was hoisted to a single call near the top of the function (reused by both the lazy check and the existing final `taper()` call) rather than only computed at the end as before — a pure restructuring, not a new cost, on the path where the lazy window isn't set or doesn't trigger. `eval_cache` is deliberately never probed or stored whenever a lazy window is supplied, for the identical staleness reason `material_weights`/`psqt_weights` already disable it.
-- `src/search/quiescence.cpp`: the stand-pat computation inside `quiescence_impl()` now converts its own side-to-move-relative `alpha`/`beta` into White's perspective (`lazy_alpha_white = us==White ? alpha : -beta`, `lazy_beta_white = us==White ? beta : -alpha` — the exact mirror of how this same function's own `best` gets un-converted from `white_relative` two lines later) and passes both into `evaluate()`. This is the single highest-frequency static-eval call site in the engine, and the only one wired into the lazy path this session.
-
-**Scope cut, made deliberately, not by oversight:** `negamax()`'s own three static-eval call sites (RFP, razoring, futility/`node_static_eval`, `src/search/search.cpp`) and `order_moves()`'s move-ordering `evaluate()` calls were left unwired this session — every one of them still runs the full, non-lazy computation. The stand-pat site was judged the clearest, lowest-risk fit (a genuine alpha-beta window already on hand, no shared-computation entanglement with other consumers); `node_static_eval` in particular feeds both RFP's own margin check AND the "improving" flag's 2-plies-back comparison, so lazily approximating it would need more careful reasoning about whether an approximate "improving" signal is still safe — judged not worth the additional diff surface and risk for this session. Revisit if a future profiling pass shows those paths are hot enough to matter (the same framing Session 110's own ProbCut/singular-extension scope cut used).
-
-**`kLazyEvalMargin` derivation:** a conservative, hand-surveyed constant (650cp), not a tight sum of every term's literal documented maximum — no single realistic position stacks every term's own maximum simultaneously, so a generous margin was chosen over a precise-but-fragile one. Flagged, like every other pruning-margin constant in this codebase (`kFutilityMargins`, `kRazorMargins`, `kReverseFutilityMargins`), as untuned and a candidate for a future margin-sweeping pass.
-
-**Bugs fixed:** none — this was new-feature work, not a bugfix session.
-
-**Decisions made:** the White-perspective-window API shape for `evaluate()`'s new parameters (mirroring the existing `material_weights`/`psqt_weights` nullable-pointer convention rather than a `std::optional` pair), the single-call-site scope for this session, and the margin-derivation approach — all logged in docs/DECISIONS.md, this session's entry.
-
-**Tests added:** 4 new test cases (604 -> 608 total). `tests/eval_tests.cpp` (3 new, `[lazy_eval]` tag): a wide lazy window never triggers the early-exit path (byte-identical to the non-lazy result on a busy, asymmetric middlegame position); a tight window against a position with a large, deliberately-placed material edge triggers the early-exit path and returns EXACTLY the independently-hand-derived material+PSQT-only tapered value (not merely "some smaller value"), and is confirmed genuinely different from the full computation (proving the test exercises a real trade-off, not a coincidental no-op); `eval_cache` staleness under a lazy window, mirroring the existing `MaterialWeights`/`PsqtWeights` staleness tests exactly. `tests/quiescence_tests.cpp` (1 new, `[quiescence][lazy_eval]` tag): a real end-to-end `quiescence()` call against an overwhelming-material position with a narrow `beta` confirms the stand-pat site's own lazy path fires correctly (`score == material_psqt_only`, `score >= beta`, `nodes == 1`).
-
-**Verification performed:** the real project toolchain — `cmake`/`ctest`, not a sandbox approximation. Full Release build: 608/608 tests green (604 pre-existing + 4 new), zero new compiler warnings under `-Wall -Wextra -Wpedantic`. Full Debug/ASan+UBSan build: same 608/608 green (run in two batches due to this sandbox's own per-command time limit — tests 1-408 and 409-608 — no failures in either), zero sanitizer findings, including the 4 new lazy-eval tests specifically re-verified under ASan/UBSan on their own. `bench` moved from 40,656 to 37,287 total nodes across the 4 fixed bench positions — a genuine, expected DECREASE (different, earlier stand-pat cutoffs from the exact mechanism this item adds, not a regression) — `bestmove`/`score` fields spot-checked as still sane (the mate-in-3 bench position still finds `score 31995`, an exact mate score, unaffected).
-
-**Files changed:** `src/eval/eval.h`, `src/eval/eval.cpp`, `src/search/quiescence.cpp`, `tests/eval_tests.cpp`, `tests/quiescence_tests.cpp`.
-
-**Next session starts:** ROADMAP.md's NPS/Raw Speed track, last remaining item — "Staged / lazy move generation" (a `MovePicker`-style iterator generating captures first and only generating quiet moves if the search gets past captures without a cutoff, instead of always generating the full legal move list upfront). ROADMAP.md's own wording flags this as "a structural change (a real iterator type, not just a small patch) — scope accordingly when picked up," so budget accordingly rather than treating it as a same-size follow-on to this session's or Session 110's own work. Also still open, from this session's own scope cut: wiring `negamax()`'s RFP/razoring/futility static-eval sites (and `order_moves()`'s eval calls) into the same lazy-eval mechanism this session built — worth a look if a future profiling pass shows those paths are hot enough to matter.
-
----
-
-### Session 110 — 2026-09-18 — Incremental evaluation (NPS/Raw Speed track) implemented: material+PSQT accumulator threaded through search, resolving the `sizeof(Position)` sub-decision left open by Session 108
-
-Picked up exactly where Session 109's handoff pointed: ROADMAP.md's NPS/Raw Speed track, "Incremental evaluation" item, whose own first step was resolving the `sizeof(Position)` cache-line-budget conflict logged in docs/DECISIONS.md, 2026-09-16 (2), before writing any accumulator code.
-
-**Decision made:** the accumulator does not become a `board::Position` field (would have breached the existing `sizeof(Position) <= 192` static_assert). Instead it's threaded through `negamax()`'s and `quiescence()`'s own recursion as a new optional `mat_psqt` parameter, computed once from scratch at the true search root and updated by one arithmetic step per move from there — full rationale in docs/DECISIONS.md, this entry.
-
-**What was built:**
-- `src/eval/incremental.h`/`.cpp` (new): `compute_material_psqt()` (the from-scratch 64-square scan, extracted from `eval.cpp`'s own inline loop) and `material_psqt_delta()` (a pure function computing the exact score change from one `Move` + its `UndoInfo` — handles captures, en passant, promotion, and castling's rook relocation).
-- `src/eval/eval.h`/`.cpp`: `evaluate()` gained a new optional trailing `incremental_material_psqt` parameter, used instead of the 64-square scan only when neither `material_weights` nor `psqt_weights` is set. Defaults to `nullptr` — fully backward-compatible.
-- `src/search/quiescence.h`/`.cpp`: `mat_psqt` threaded through the stand-pat eval, the safety-net eval, and the recursive candidate-move loop.
-- `src/search/search.cpp`: `negamax()` gained the same parameter, threaded through all 4 of its own `evaluate()` calls, both `quiescence()` delegations, null-move's recursive call (unchanged value — a null move changes no piece's square), and all 4 recursive calls in the main PVS move loop (a fresh `child_mat_psqt` computed via delta right after each move). `search_root()` seeds `root_mat_psqt` once via `compute_material_psqt()` and threads deltas through its own move loop. ProbCut's and singular extension's own verification searches were deliberately left unwired (still fall back to a full rescan) — a documented scope cut, not an oversight.
-- `src/CMakeLists.txt`: registered `eval/incremental.cpp` as a library source (caught by the real linker when first missed — see "Verification performed" below).
-- `tests/incremental_eval_tests.cpp` (new, 14 tests) + `tests/CMakeLists.txt` registration.
-
-**Bug found and fixed during this session's own verification (not shipped):** an early draft of the null-move edit accidentally dropped `board::unmake_null_move(pos, null_undo);` from the replacement text, leaving every null-move probe permanently mutating `pos` without ever restoring it. Silent at compile time; surfaced several plies later as an AddressSanitizer global-buffer-overflow inside `movegen.cpp`'s internal legality-check simulation. Bisected against a freshly re-cloned, completely unmodified `main` (confirmed clean under identical ASan/UBSan flags), then narrowed to the exact missing line by splicing reverted originals of `search_root()` and `negamax()` back in one at a time. Fixed by restoring the `unmake_null_move()` call. Full account, including the bisection method, in docs/DECISIONS.md, this entry.
-
-**Decisions made:** the `sizeof(Position)`-vs-search-frames choice, and the ProbCut/singular-extension scope cut — both in docs/DECISIONS.md, this entry (2026-09-18).
-
-**Tests added:** 14 new test cases in `tests/incremental_eval_tests.cpp` (604 total, up from 590) — every case `material_psqt_delta()` handles differently (quiet move, regular capture, en passant, quiet promotion, capture-promotion, underpromotion, all four castling sides), a five-move chain confirming the delta composes correctly across positions rather than only from one fixed start, and two tests on `evaluate()`'s own new parameter (a wrong/stale accumulator is correctly ignored whenever `material_weights` is set; a correct one produces an identical result to the default from-scratch path).
-
-**Verification performed:** the real project toolchain, not a sandbox approximation — `cmake` was installed specifically for this session so the actual `FetchContent`-built Catch2 suite could be run via `ctest`, rather than the standalone-`g++`-compiled-every-.cpp-file approach earlier sessions in this sandbox sometimes had to fall back on. Full suite: **604/604 green**, zero regressions, zero new compiler warnings under `-Wall -Wextra -Wpedantic`. The real CMake/link step is what caught the missing `eval/incremental.cpp` registration in `src/CMakeLists.txt` — a class of mistake the earlier per-file `g++` compile checks had no way to surface, since they never exercised the project's own build file. Also separately confirmed, via a small sandbox-only driver (not part of the deliverable): the fixed build produces bit-identical node counts and scores to the original, untouched engine across four test positions at depth 6 and depth 9 — direct evidence the incremental path changes nothing about search behavior, only how the static eval gets computed.
-
-**Files changed:** `src/eval/incremental.h` (new), `src/eval/incremental.cpp` (new), `src/eval/eval.h`, `src/eval/eval.cpp`, `src/search/quiescence.h`, `src/search/quiescence.cpp`, `src/search/search.cpp`, `src/CMakeLists.txt`, `tests/incremental_eval_tests.cpp` (new), `tests/CMakeLists.txt`.
-
-**Next session starts:** ROADMAP.md's NPS/Raw Speed track, next incomplete item in sequence — "Lazy evaluation / early-exit on cheap terms" (compute material+PSQT first inside `eval::evaluate()`; if that alone already clears alpha/beta by a comfortable margin, skip the remaining expensive terms). Note this item's own framing ("compute material+PSQT first... skip the remaining expensive terms") now interacts directly with this session's own opt-in `incremental_material_psqt` fast path — worth explicitly considering, at the start of that work, whether/how the two interact (e.g. does an early-exit still need to run `compute_material_psqt()`'s own loop when an incremental value is already available, or can it skip straight to the early-exit check using the supplied accumulator) rather than treating them as fully independent. Also still open: wiring ProbCut's and singular extension's own verification searches into the incremental-eval fast path (this session's own documented scope cut) — worth a look if a future profiling pass shows those paths are hot enough to matter.
-
-
----
-
-### Session 109 — 2026-09-17 — Three confirmed bugs fixed from an external audit: castling invisible to move ordering/pruning, quiescence dropping quiet promotions, PSQT Knight/Queen mirroring
-
-Two external audit documents were reviewed and independently verified against `main` before any fix was written (docs/DECISIONS.md, 2026-09-17, has the full verification account — grep, standalone compiled probes, and a scratch A/B build comparison). One factual error was found in the audit (a tuning-history claim about the large-scale tuning pipeline never having run for real, contradicted by Sessions 61/62's own account) and corrected in discussion; no code was implicated by that correction.
-
-**Bugs fixed (cause / fix / why correct — one sentence each, full accounts in docs/DECISIONS.md, 2026-09-17):**
-1. **Castling invisible to ordering/pruning.** Cause: `Move::is_castle()` had zero callers, so castling scored like an ordinary untried quiet move and was fully subject to futility/LMP/history pruning and LMR. Fix: `ordering.cpp` gives it a dedicated `kCastleScore` band; `search.cpp` excludes `move.is_castle()` from `move_is_quiet`/`eligible_for_lmr`/the post-cutoff history-bookkeeping block. Why correct: mirrors exactly how captures/promotions are already exempted from the same checks, for the same reason. Empirically confirmed via an A/B build: a real opening position, at depth 3, flips from `bestmove e1g1` (`score 601`, castling's own refutation reduced away) to `bestmove d3d4` (`score 161`, refutation now found) purely from this fix.
-2. **Quiescence dropped quiet promotions.** Cause: the qsearch candidate filter had no `is_promotion()` branch, so a non-capturing promotion matched nothing and was silently never tried. Fix: added `|| move.is_promotion()` to the unconditional (not `include_checks`-gated) branch, matching captures. Why correct: delta pruning and SEE pruning already leave promotions untouched once they're candidates, so this gives promotions the same genuine search captures already got.
-3. **Knight/Queen PSQT never mirrored for Black.** Cause: `psqt_value()` used the raw square for Black's knights/queens instead of `mirror_vertical(sq)`, unlike every other piece type, under a comment that conflated "shared table storage" with "no lookup mirroring needed" — real because those two tables (unlike pawn/bishop/rook/king) aren't rank-mirror-symmetric. Fix: both lookup paths (constexpr table and the tuner's `PsqtWeights` path) now mirror Knight/Queen too. Why correct: verified directly via a standalone probe against the real pre-fix object file (a true mirror pair scored `{0,0}` vs `{5,5}` before the fix, identical after).
-
-**Decisions made:** all logged in docs/DECISIONS.md, 2026-09-17 — the verification methodology, each fix's exact rationale, and the scope boundary (dead-code cleanup and the ranked missing-eval-features list were explicitly left out of this session).
-
-**Tests added:** 10 new test cases (580 -> 590 total, 59,407 -> 60,444 assertions, all green). `tests/ordering_tests.cpp`: 6 new castling-ordering tests (below captures/promotions/TT move, above killers and history, kingside/queenside score identically). `tests/search_tests.cpp`: 1 new end-to-end regression test pinning the A/B-verified score bound described above. `tests/quiescence_tests.cpp`: 1 new test confirming a quiet promotion is genuinely explored (`nodes > 1`) under the exact condition (`include_checks=false`) that previously produced `nodes == 1`. `tests/eval_tests.cpp`: 2 new tests sweeping all 6 piece types x 64 squares for both PSQT lookup paths — the pre-existing symmetry test in that file only ever checked Pawn, which is exactly why the Knight/Queen bug went undetected; these close that gap for every piece type going forward.
-
-**Verification performed:** full test suite green (590/60,444, this sandbox's own GCC/Linux build). `bench` moved from 38,378 to 40,656 total nodes, attributable entirely to Fix 3 (Black's knight/queen eval values genuinely changed) — not a regression, and not touched by Fixes 1-2 in `bench`'s own fixed shallow positions. No MSVC/macOS toolchain available in this sandbox, same standing limitation as every prior session — next CI run is the real cross-platform confirmation.
-
-**Files changed:** `src/search/ordering.h`, `src/search/ordering.cpp`, `src/search/search.cpp`, `src/search/quiescence.cpp`, `src/eval/psqt.cpp`, `tests/ordering_tests.cpp`, `tests/search_tests.cpp`, `tests/quiescence_tests.cpp`, `tests/eval_tests.cpp`.
-
-**Next session starts:** ROADMAP.md's NPS/Raw Speed track, "Incremental evaluation" item, exactly where Session 108 left off — its own first step is still resolving the `sizeof(Position)` cache-line-budget conflict logged in docs/DECISIONS.md, 2026-09-16 (2), before writing any accumulator code. This session's fixes are orthogonal to that item (no shared files touched) and don't change its scope.
-
----
-
-### Session 108 — 2026-09-16 (2) — NPS/Raw Speed "Profile first" completed (`gprof`): `eval::evaluate()` confirmed as the dominant per-node cost; a `Position` cache-line-budget conflict surfaced for the next session to resolve
-
-No source files were modified this session — this was a measurement-only session, ROADMAP.md's own explicit prerequisite before any of the NPS/Raw Speed track's remaining rewrite items are attempted.
-
-**What was built:** a standalone, untracked `-pg`-instrumented Release build (`build_profile/`, LTO disabled) of the current `main` branch, profiled with `gprof` against `bench` plus two longer `go depth` UCI searches (~6.7M nodes, ~26s) chosen specifically because `bench` alone (38,378 nodes, ~100ms) is too short for meaningful `gprof` sampling. `bench`'s node count under this build matched the existing tracked baseline exactly (38,378), confirming the profiling build is behaviorally identical to the tracked source before trusting any of its profiling numbers.
-
-**Findings:** `eval::evaluate()` and its own `eval/*` term functions account for roughly 46% of total profiled self-time in aggregate, with `evaluate()` itself the single largest individual contributor (~14%, 13.9M calls) — confirmed, via the call graph, to be invoked from `negamax()`, `quiescence_impl()`, AND `order_moves()` on very nearly every node the search visits. This directly confirms `eval.cpp`'s own pre-existing comment describing full-recomputation-every-call as a deliberate, profiler-free trade-off, and confirms ROADMAP.md's own stated hypothesis that incremental evaluation is the single biggest available lever on the NPS/Raw Speed track specifically for this codebase, not just as a general classical-engine rule of thumb.
-
-**New conflict surfaced (not resolved this session):** `board.h`'s `Position` struct has an explicit `static_assert(sizeof(Position) <= 192, ...)` already at its ceiling with zero headroom; a material+PSQT accumulator's natural home (a `Score` field inside `Position`, mirroring `zobrist_hash`'s existing role) would breach it. Three options sketched, none chosen — see docs/DECISIONS.md, 2026-09-16 (2), for the full account and the next session's job of deciding among them.
-
-**Bugs fixed:** none — no source changed.
-
-**Decisions made:** tooling substitution (`gprof` in place of unavailable `perf`/`valgrind`), and the `Position` cache-line conflict noted above — both logged in docs/DECISIONS.md, 2026-09-16 (2).
-
-**Verification performed:** profiling build's `bench` node count (38,378) cross-checked against the existing tracked baseline — exact match. No `ctest` run this session (no tracked source touched).
-
-**Next session starts:** ROADMAP.md's NPS/Raw Speed track, "Incremental evaluation" item — but its OWN first step is resolving the `sizeof(Position)` cache-line-budget conflict logged in docs/DECISIONS.md, 2026-09-16 (2) (raise the static_assert ceiling with justification, thread the accumulator outside `Position` instead, or narrow its field width), before writing any accumulator code. Do not skip straight to implementation without that decision being made explicitly and logged.
-
----
-
-### Session 107 — 2026-09-16 — Two CI-discovered bugs from a person-supplied log bundle: a second MSVC parse failure, a fragile macOS floating-point test
-
-A person-supplied GitHub Actions log bundle (run 94909780687, covering the Session 106 CLI/`l2_lambda` commit) surfaced two real, platform-specific bugs — one on Windows, one on macOS — that this sandbox's own GCC/Linux-only testing throughout Sessions 105-106 could not have caught.
-
-**Bugs found and fixed:**
-1. **Windows Debug/Release build failure:** `tune.cpp`'s `psqt_field_pair()` hit the identical MSVC pointer-to-member-array parse failure (`error C3083`) that `tune.h`'s `kPsqtFields` already hit and fixed one session earlier (docs/DECISIONS.md, 2026-09-15 (4)) — the same mistake made a second time, in a different file, by the externally-supplied Step 5-6 implementation (Session 105) rather than by this session's own work. Fixed by extracting the pointer-to-member type into a named alias, REUSING the already-existing `detail::PsqtArrayMemberPtr` (tune.h) rather than declaring a second copy — one shared alias is less surface for a third occurrence to slip through.
-2. **macOS Debug AND Release test failure (`tune_psqt`/`l2_lambda` test, test #529):** a strict `REQUIRE(result.initial_loss == expected)` comparing two independently-summed 768-term floating-point reductions failed by ~3.6e-15 on macOS/Clang while passing exactly on Linux/GCC in the same CI run — floating-point addition is not associative, and different compilers can legally reduce a summation loop into SIMD lanes in a different order. Fixed by relaxing to `std::fabs(diff) < 1e-9`, matching this file's own pre-existing tolerant-comparison convention (a different, earlier L2 test already uses this style for the same underlying reason). The material-side counterpart test (identical shape, only 8 terms instead of 768) was fixed preemptively with the same tolerance, since it has the identical structural risk and had simply not yet been unlucky enough to hit a diverging rounding outcome on any tested platform.
-
-**Decisions made:** see docs/DECISIONS.md's new 2026-09-16 entry for the full account of both bugs, their root causes, and why the material-side test was fixed preemptively without its own CI failure demonstrating the risk.
-
-**Verification performed:** full Release and Debug/ASan+UBSan builds (this sandbox's own GCC/Linux environment): 580 test cases, 59,407 assertions — unchanged from before this session's fixes, confirming both fixes are behavior-preserving, not behavior-changing — all green, zero sanitizer findings, `bench` unchanged at 38,378 nodes. `tune.cpp`/`tune_tests.cpp` compiled standalone with `-Wall -Wextra -Wpedantic` at `-O3`: zero warnings. Neither fix could be directly confirmed against the actual failing platform/toolchain in this sandbox (no MSVC toolchain available for Bug 1, no macOS runner available for Bug 2) — both fixes are judged correct by direct inspection (Bug 1 follows an already-proven-effective pattern from the identical prior fix; Bug 2's tolerance is many orders of magnitude looser than the observed discrepancy) but the next CI run is the actual confirmation for both, same honest caveat as the original MSVC fix one session earlier.
-
-**Next session starts:** unchanged from Session 106's own next-start note — Tier 0's two remaining non-code items (a materially larger self-play corpus, and an actual `nightwing_tune --psqt`-driven run followed by a real `nightwing_sprt`-gated match) are still what's next once this fix's own CI run confirms all 6 platforms green. If the next session begins with another CI log bundle, check it BEFORE assuming these two fixes actually resolved both platforms — this session's own fixes are reasoned-correct but not yet empirically confirmed against the real failing toolchains.
-
----
-
-### Session 106 — 2026-09-15 (3) — CLI follow-up to Tier 0 Steps 5-6: `--psqt` mode, `l2_lambda` exposed, and a real divergence bug found and fixed
-
-Session 105 verified and integrated an externally-supplied implementation of Tier 0 Steps 5-6 (L2 regularization, analytic PSQT gradient, `tune_psqt()`) into the library, but left a real gap: `tuner/tune_main.cpp` (the `nightwing_tune` CLI) had no way to invoke `tune_psqt()` at all, and no way to set `TuneConfig::l2_lambda` either — the library-level work was real and tested, but nothing outside `tests/tune_tests.cpp` could actually reach it. This session closed that gap.
-
-**Built:**
-- `src/tuner/tune_main.cpp`: added a `--psqt` mode (must be the first argument) running `tuner::tune_psqt()` instead of `tuner::tune()`, holding material at `eval::default_material_weights()` for the whole run. Every positional argument after `--psqt` keeps the identical slot number it has in material mode (so switching modes never requires renumbering the rest of a command line), including `finite_diff_epsilon`, which `--psqt` mode still parses but has no effect on (`tune_psqt()`'s gradient is analytic, not finite-difference). `--psqt` mode's own `learning_rate` DEFAULT is overridden to 100.0 (not material mode's 20000.0) before any user-supplied value is applied, matching the value `tests/tune_tests.cpp`'s own `tune_psqt()` test had already empirically found to work well at that gradient's different scale. Output: 12 copy-pasteable 8x8 grids (one per `PsqtWeights` field), in the exact row/column layout `psqt.cpp`'s own `kXxxMgTable`/`kXxxEgTable` literals use, so a real tuning run's output can be pasted directly into `psqt.cpp` with no reordering. Both modes gained a new trailing `l2_lambda` positional argument (`TuneConfig::l2_lambda`, added by Session 105's Step 5 work, had no CLI exposure at all before this session).
-- `src/tuner/tune.h`: added `l2_update_is_stable(learning_rate, l2_lambda)` — see "Bug found and fixed" below for why.
-- `tests/tune_tests.cpp`: 3 new tests for `l2_update_is_stable()` and the divergence it detects (see below).
-
-**Bug found and fixed:** while hand-testing the new `l2_lambda` CLI argument (a real end-to-end run, not just reading the code), a real numerical-stability issue surfaced that neither Session 105's own verification nor the original implementation's own tests had caught: `learning_rate` and `l2_lambda` interact MULTIPLICATIVELY, not additively — each iteration's own update from the L2 term alone multiplies a parameter by `(1 - 2*learning_rate*l2_lambda)`, so once `2*learning_rate*l2_lambda >= 1.0`, every non-anchored parameter diverges GEOMETRICALLY. Concretely: `nightwing_tune 5 20000 1.0 400 0.001` (material mode's own default `learning_rate`, with an `l2_lambda` that doesn't look unreasonably large at a glance) took `knight_mg` from ~320 to ~2×10^19 in 5 iterations, and the reported loss from 0.0066 to ~2×10^19 alongside it. This was NOT caught earlier because the original implementation's own L2 tests (`tests/tune_tests.cpp`, Session 105) both run exactly ONE iteration — sufficient to confirm the first step's closed-form gradient math is correct (which it is), but incapable of revealing multi-iteration geometric divergence, since that requires actually iterating past the first step to observe. Fixed by adding `l2_update_is_stable()` (`tune.h`, a small pure function deriving directly from the update-multiplier formula above) and a startup WARNING (not a hard refusal — a caller might have deliberate reasons) in `tune_main.cpp` whenever a supplied `learning_rate`/`l2_lambda` pair crosses that threshold. `TuneConfig::l2_lambda`'s own doc comment updated with the full derivation and the concrete example above. This is a documentation/guard fix, not a math correctness fix — the underlying gradient formula itself (`2*lambda*value`) was and remains correct; the issue is a hyperparameter-scale interaction a real user could easily hit without warning, now surfaced instead of silently producing nonsense output.
-
-**Decisions made:** see docs/DECISIONS.md's new entry for this session — the CLI design (mode-switching via a leading `--psqt` flag, argument-slot compatibility between modes, the grid output format) and the stability-warning-not-hard-refusal choice for `l2_update_is_stable()`.
-
-**Verification performed:** a tiny real training corpus was generated via `nightwing_selfplay` (10 games, depth 3, well within sandbox time limits) and both CLI modes were run against it end to end — material mode's existing output format confirmed unchanged when `l2_lambda` is omitted; `--psqt` mode's 12 printed grids confirmed to exactly match `psqt.cpp`'s own compiled-in default tables when run with a corpus far too small to move 768 parameters meaningfully (the expected, honest result for a toy corpus this small — not evidence of a bug); the stability warning confirmed to fire correctly in both modes at their own respective thresholds (20000.0/0.000025 material, 100.0/0.005 PSQT) and confirmed silent when a supplied `l2_lambda` is safely under threshold. Full Release and Debug/ASan+UBSan builds: 580 test cases, 59,407 assertions (up from 577/59,395 after Session 105), all green, zero sanitizer findings. `bench` totals unchanged at 38,378 nodes (no eval-path file touched). `tune_main.cpp`/`tune.cpp`/`tune_tests.cpp` each compiled standalone with `-Wall -Wextra -Wpedantic` (at `-O3`, matching the GCC `-Warray-bounds` false-positive investigation's own build flags from Session 105): zero warnings.
-
-**Next session starts:** Tier 0's own two remaining, deliberately-non-code items (unchanged from Session 105's own next-start note, since this session's work was CLI plumbing, not the actual production run): (1) a materially larger self-play training corpus — `tuner/selfplay.h`'s current defaults are sized for development/testing, not a real ~778-parameter (10 material + 768 PSQT) fit; (2) an actual `nightwing_tune --psqt` run against that corpus (now genuinely possible to invoke, unlike before this session), followed by a real `nightwing_sprt`-gated match confirming the resulting weights are stronger, BEFORE any tuned PSQT values are hand-transcribed into `psqt.cpp`'s `constexpr` tables. This is very likely a GitHub Actions `workflow_dispatch` job, not something this sandbox can run directly — self-play generation at real corpus scale (thousands of games) and a real SPRT match both take far longer than this environment's own command-timeout allows (a `nightwing_tune`-only invocation without a corpus already timed out at 5 minutes in an earlier session). Read `.github/workflows/ci.yml` for this repo's own existing GitHub Actions conventions before designing a new workflow file for this.
-
----
-
-### Session 105 — 2026-09-15 (2) — Tier 0 Steps 5-6: L2 regularization + analytic PSQT gradient, implemented externally, verified and integrated
-
-An implementation of ROADMAP.md Tier 0 Steps 5 (L2 regularization) and 6 (analytic gradient for PSQT terms) was supplied externally as three files (`tune.h`, `tune.cpp`, `tests/tune_tests.cpp`) plus a design-notes document, for verification and integration rather than original development this session.
-
-**Verification performed (before accepting the changes):**
-- **Design review:** `TuneConfig::l2_lambda` (new field, default 0.0) is applied analytically (closed-form `2*lambda*value` gradient contribution, not finite-difference) via a shared, `Weights`-templated `l2_penalty()` helper used by both `tune()` and the new `tune_psqt()`; anchored parameters excluded from the penalty. `compute_psqt_gradient()` computes PSQT's full 768-entry gradient in a single board-scan pass per position by exploiting that PSQT's contribution to `evaluate()` is exactly linear in each table cell — confirmed directly against this codebase's actual `eval.cpp` (not assumed): `taper()` is called exactly ONCE, on the sum of every eval term (material+PSQT+mobility+...), with `compute_phase()` computed once per position — the precondition the whole analytic-gradient argument depends on. `tune_psqt()` is a deliberately SEPARATE function from `tune()` (material held fixed, only the PSQT vector moves), not a generalized `tune<Weights>()` — the design notes' own stated reason (the two functions' gradient *source* differs fundamentally, not just the `Weights` type) was reviewed and judged sound; this also resolves the open design question Session 104's own 2026-09-15 (5) DECISIONS.md entry had deliberately left unresolved.
-- **Independent numerical cross-check:** the supplied `tune_tests.cpp` already contains a finite-difference cross-check of `compute_psqt_gradient()` at one cell (agreement ~8.17e-6, confirmed by actually running it, not just reading the claim) — a second, independent cross-check was written from scratch this session (a throwaway probe against the real compiled library, not a copy of the supplied test) at a busier, realistic multi-piece-type middlegame position (`r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R`), spot-checking bishop/knight/pawn/king cells across both colors: agreement to ~4.36e-11, tighter than the supplied test's own single-cell check, across a materially different position and more piece types than the one case the supplied test covers.
-- **Regression/build verification:** full Release and Debug/ASan+UBSan builds, run independently in this session's own sandbox (not re-trusting the design notes' own reported numbers without reproducing them): 577 test cases, 59,395 assertions, all green, zero sanitizer findings — matching the design notes' own claimed "577/577" exactly. `bench` totals confirmed unchanged at 38,378 nodes (`eval.cpp`/`eval.h` were not touched by this change at all — `tune_psqt()`/`compute_psqt_gradient()` are new tuner-only functions, not called from anywhere in the search or eval path). Confirmed `tune_psqt()` is NOT referenced anywhere in `tuner/tune_main.cpp` (the tuner CLI), matching the design notes' own claim that it isn't wired into any CLI tool yet. Confirmed `tuner/selfplay.h` is byte-for-byte unchanged from the version already on `main`, matching the design notes' own "corpus size not yet increased" claim. The real, compiled `nightwing` UCI binary was hand-exercised on an out-of-book Nimzo/QGD-ish position (`go depth 8`): sane, legal output, unaffected (expected, since no eval-path code changed).
-
-**Bug found and fixed (this session, before accepting the changes):** the supplied `tune.h`'s `ParameterRef<Weights>::get()`/`set()` triggered a GCC `-O3`-only `-Warray-bounds` warning when inlined into `tests/tune_tests.cpp` at a call site using a `MaterialWeights` object — `array subscript ... is partly outside array bounds`, flagging the (dead, for `MaterialParameterRef` entries) `array_member`-indexed branch as if it could be taken against an 80-byte `MaterialWeights` object rather than the 512-byte `std::array<double,64>` an indexed access implies. Confirmed as a pure false positive, not a real bug, three independent ways: (1) rewriting the ternary as an explicit if/else — a common fix for this exact GCC false-positive class — did NOT silence it, showing it's tied to the pointer-to-member field itself, not the branch's surface syntax; (2) a full Debug/ASan+UBSan build and test run (built at `-O0`, where this `-O3`-only heuristic doesn't fire at all) found zero memory-safety issues anywhere in this code; (3) every `kMaterialParameters`/`kPsqtParameters` entry was hand-confirmed to set exactly one of `member`/`array_member`, matching `ParameterRef`'s own documented precondition. Fixed by a narrowly-scoped `#pragma GCC diagnostic push`/`ignored "-Warray-bounds"`/`pop` around `get()`/`set()` specifically (not project-wide), with the full false-positive investigation recorded as a comment at the suppression site itself. This was the one and only change made to the supplied files — `tune.cpp` and `tests/tune_tests.cpp` were integrated completely unmodified.
-
-**Decisions made:** see docs/DECISIONS.md's new entry for this session — accepting the externally-supplied Step 5/6 design (L2 regularization, analytic PSQT gradient, `tune_psqt()` as a separate function rather than a generalized template), and the GCC `-O3` `-Warray-bounds` false-positive fix.
-
-**Verification performed:** see the "Verification performed" section above — folded into this entry's own account rather than repeated, since verification WAS this session's primary work, not a separate pass after building something new.
-
-**Next session starts:** Tier 0's own two remaining, deliberately-non-code items (per Step 6's own ROADMAP.md scope, still outstanding): (1) a materially larger self-play training corpus — `tuner/selfplay.h`'s current defaults are sized for development/testing, not a real ~778-parameter (10 material + 768 PSQT) fit; (2) an actual `tune_psqt()` run against that corpus, followed by a real `nightwing_sprt`-gated match confirming the resulting weights are genuinely stronger, BEFORE any tuned PSQT values are hand-transcribed into `psqt.cpp`'s `constexpr` tables. Read `tuner/selfplay.h` in full (corpus-size knobs, self-play game generation) and `tools/`'s existing `nightwing_sprt`/`nightwing_match` CLI entry points before starting, since this step is about actually RUNNING the machinery Tier 0's prior 6 steps built, not adding new tuner abstractions.
-
----
-
-### Session 104 — 2026-09-15 — Tier 0 Steps 1-4: taper PSQTs, add `PsqtWeights`, generalize `ParameterRef<Weights>`, wire PSQT into `evaluate()`/`compute_loss()`
-
-**Built:**
-- `src/eval/psqt.cpp`/`src/eval/psqt.h` (Step 1): `kPawnTable`, `kKnightTable`, `kBishopTable`, `kRookTable`, `kQueenTable` each split into an Mg/Eg pair (`kPawnMgTable`/`kPawnEgTable`, etc.), matching the storage shape `kKingMgTable`/`kKingEgTable` already had. The 5 new Eg tables are exact duplicates of their Mg counterparts (Michniewski's baseline never published real per-phase values for anything but the king — see file header comment, rewritten this session to explain the new shape and why the Eg values aren't yet a real hand-guessed split). `psqt_value()`'s Pawn/Knight/Bishop/Rook/Queen cases rewritten to look up both tables (mirroring the King case's own existing pattern) instead of returning `{v, v}` from one shared table.
-- `src/eval/psqt.h`/`src/eval/psqt.cpp` (Step 2): `PsqtWeights` added — 12 `std::array<double,64>` fields, one Mg/Eg pair per piece type — plus `default_psqt_weights()` (populates one from psqt.cpp's own internal tables) and a `const PsqtWeights* weights = nullptr` parameter added to `psqt_value()`, the same nullable-override convention `material_value()` already uses. See "Tier 0 Step 2" paragraph below for the full account.
-- `src/tuner/tune.h`/`src/tuner/tune.cpp` (Step 3): `MaterialParameterRef` generalized into a template, `ParameterRef<Weights>`, supporting both the original plain-scalar `member` field and a new indexed `array_member`/`index` pair, with uniform `get()`/`set()` accessors; `kMaterialParameters` unchanged in behavior; new `kPsqtParameters` (768 entries: `PsqtWeights`' 12 array fields x 64 squares) added, built via a `constexpr` generator loop rather than typed by hand; `tune.cpp`'s finite-difference loop refactored to use `.get()`/`.set()`. See "Tier 0 Step 3" paragraph below for the full account, including why `kPsqtParameters` isn't consumed by `tune()`/`compute_loss()` yet.
-- `src/eval/eval.h`/`src/eval/eval.cpp`, `src/tuner/tune.h`/`src/tuner/tune.cpp` (Step 4): `evaluate()` gained a 5th parameter, `const PsqtWeights* psqt_weights = nullptr`, forwarded to `psqt_value()` the same way `material_weights` already forwards to `material_value()`; `eval_cache` now bypassed when either override is set. `compute_loss()` gained a matching optional `psqt_weights` parameter, forwarded to `evaluate()`. `tune()` itself left unchanged (still material-only). See "Tier 0 Step 4" paragraph below for the full account.
-- `docs/ROADMAP.md`: the Tier 0 item (not itself checked off — it's a multi-session effort per its own text) gained a nested 6-step breakdown matching docs/DECISIONS.md's 2026-09-08 (2) design-doc order, with Steps 1-4 (this session's work) checked off and Steps 5-6 listed as what's next.
-- `docs/DECISIONS.md`: five new entries this session — 2026-09-15 (Step 1), 2026-09-15 (2) (Step 2), 2026-09-15 (3) (Step 3), 2026-09-15 (4) (a person-supplied CI log bundle's own Windows/MSVC build-failure bug fix, between Steps 3 and 4), and 2026-09-15 (5) (Step 4) — each with its own verification account.
-- `tests/eval_tests.cpp`: 6 new test cases total this session (2 for Step 1, 2 for Step 2, 2 for Step 4 — see the paragraphs below for what each covers).
-- `tests/tune_tests.cpp`: 4 new test cases total this session (3 for Step 3, 1 for Step 4 — see the paragraphs below for what each covers).
-
-**Bugs found and fixed:** a compile error in this session's own first draft of the `eval_tests.cpp` additions above -- `board::Piece`/`board::` used inside a loop, but this file only has `using namespace nightwing::board;` (an unqualified `board` namespace alias doesn't exist at this file's own top level, unlike files that also `using namespace nightwing;`). Fixed by dropping the redundant `board::` qualifier, matching every other `Piece`/`Score`/`Square` usage already in this same file. Caught by this session's own real compile-and-run verification (a second pass, after user feedback prompted adding the tests in the first place), not source review alone. Also, while hand-verifying the new spot-check test's own expected values against `psqt.cpp`'s literal tables before trusting them: the first draft's rook-7th-rank square was a7 (file a, the table's own edge-file value of +5), not the intended uniform +10 interior value -- corrected to d7 before delivery, traced by hand against the table's own literal row rather than assumed. Separately, while adding Step 2's own new test cases to this same file: an `old_str`/`new_str` edit accidentally swallowed the `TEST_CASE(...)` header line of the pre-existing `default_material_weights` test, leaving its body orphaned under the wrong test name — caught immediately by the very next build (a clear "expected declaration" parse error at the file's closing brace, not a silent miscompile), fixed by restoring the missing header line before it ever reached a delivered file. No bugs found during Step 3 -- until a person-supplied GitHub Actions log bundle (CI run 94587466129) surfaced one this sandbox's own GCC-only testing couldn't have caught: `tuner/tune.h`'s new `kPsqtFields` table (Step 3) failed to parse under MSVC specifically (Windows Debug AND Windows Release both failing identically; Linux Debug/Release and macOS Debug/Release in that same CI run all passed, 567/567 and 565/565 respectively) -- `error C3083: 'nightwing': the symbol to the left of a '::' must be a type`, a known MSVC parser limitation with a pointer-to-member-array type written inline, nested inside another template's argument list. Fixed by naming the pointer-to-member type as its own standalone alias (`using PsqtArrayMemberPtr = std::array<double, 64> eval::PsqtWeights::*;`) declared before `kPsqtFields`, rather than inlining the expression directly as a `std::pair<...>` template argument -- the standard, well-known workaround for this exact MSVC issue. See docs/DECISIONS.md's new 2026-09-15 (4) entry for the full account, including the honest caveat that this sandbox has no MSVC toolchain to directly confirm the fix against -- the next CI run is the real confirmation.
-
-**Tier 0 Step 2:** `PsqtWeights` (`src/eval/psqt.h`) added — 12 `std::array<double,64>` fields (one Mg/Eg pair per piece type), matching `MaterialWeights`' own field-naming convention but array-valued instead of scalar, specifically to support Step 3's planned generalized `ParameterRef<Weights>` (see docs/DECISIONS.md's 2026-09-15 (2) entry for the full rationale, including why this struct is deliberately NOT constexpr-constructible the way `MaterialWeights` is). `default_psqt_weights()` (declared in `psqt.h`, defined in `psqt.cpp` where the internal tables it copies from are actually visible) returns one populated from psqt.cpp's own `kXxxMgTable`/`kXxxEgTable` constants. `psqt_value()` gained an optional `const PsqtWeights* weights = nullptr` parameter, the identical nullable-override convention `material_value()` already established — no production call site (eval.cpp) passes it yet, so this step is exactly as behavior-inert as Step 1.
-
-**Tier 0 Step 3:** `MaterialParameterRef` (`tuner/tune.h`) generalized into `ParameterRef<Weights>` — a template with the original `name`/`member`/`anchored` fields kept in their original first-three positions (so every existing positional-brace-init entry and direct `.member` test reference keeps compiling unchanged), plus two new trailing fields (`array_member`, `index`) and `get()`/`set()` accessor methods that branch on whether `array_member` is set. `kMaterialParameters` is now `ParameterRef<eval::MaterialWeights>` via a preserved `MaterialParameterRef` alias, behaviorally identical to before. New `kPsqtParameters` (`ParameterRef<eval::PsqtWeights>`, 768 entries) built by a `constexpr` generator function (`detail::make_psqt_parameters()`) looping over a 12-entry field-descriptor table, rather than 768 hand-typed lines with no independent source to cross-check against. `tune.cpp`'s finite-difference loop refactored to call `.get()`/`.set()` instead of dereferencing `.*member` directly. **`kPsqtParameters` is NOT yet consumed by `tune()`/`compute_loss()`** — both remain specific to `eval::MaterialWeights`; making them generic over `Weights` is Step 4's job, once PsqtWeights actually has a path into `evaluate()` (docs/DECISIONS.md's 2026-09-15 (3) entry has the full rationale for scoping it this way, plus the two alternatives considered and rejected).
-
-**Tier 0 Step 4:** `eval::evaluate()` (`eval.h`/`eval.cpp`) gained a 5th parameter, `const PsqtWeights* psqt_weights = nullptr`, forwarded to `psqt_value()` the exact way `material_weights` already forwards to `material_value()` — independent of `material_weights` (either, both, or neither may be set). `eval_cache` now bypassed (never probed or stored) whenever EITHER override is non-null, extending the existing single-parameter staleness guard. `tuner::compute_loss()` gained a matching optional `psqt_weights` parameter, forwarded straight through to `evaluate()`. `tuner::tune()` itself left completely unchanged — still only enumerates/updates `kMaterialParameters`, so a real `kPsqtParameters`-driven tuning run isn't callable via `tune()` yet, only via `compute_loss()` directly at a hand-picked PSQT vector (which is what this session's own new tests exercise). See docs/DECISIONS.md's 2026-09-15 (5) entry for the full rationale on why generalizing `tune()` itself is deliberately a separate, later decision.
-
-**Decisions made:** see docs/DECISIONS.md's 2026-09-15 entry (Step 1: duplicating Mg into Eg for now), 2026-09-15 (2) entry (Step 2: `PsqtWeights`'s array-of-64-per-field shape and why it isn't constexpr-constructible), 2026-09-15 (3) entry (Step 3: `ParameterRef<Weights>`'s field order and why it's a template rather than a parallel struct), 2026-09-15 (4) entry (the CI-discovered Windows/MSVC build failure and its fix), and 2026-09-15 (5) entry (Step 4: why `tune()` itself stays material-only for now).
-
-**Verification performed:** `psqt.cpp`, `tune.cpp`, and `eval.cpp` each compiled standalone with `-Wall -Wextra -Wpedantic`: zero warnings, at every step. Two full from-scratch CMake+Catch2 builds (the unmodified repo and this session's modified tree, both Release and Debug/ASan+UBSan configs) were run at multiple checkpoints across the session: pristine-vs-modified agreement confirmed after Step 1's plumbing-only change (560/53,489, byte-for-byte identical), then progressively **562 → 564 → 567 → 570 test cases** and **53,819 → 55,359 → 59,244 → 59,254 assertions** as each step's own new tests were added, all green, zero failures, zero sanitizer findings throughout. Every pre-existing `tests/tune_tests.cpp` case — including ones directly referencing `kMaterialParameters[i].member` and positional-brace-init — passed completely unchanged after Step 3's generalization, confirming the backward-compatible field-order design held in practice; every pre-existing `evaluate()`/`compute_loss()` caller using the previous, shorter argument lists also passed completely unchanged after Step 4 (both new parameters are trailing and defaulted). `bench` totals confirmed byte-for-byte unchanged throughout the entire session at **38,378 total nodes** (startpos 2277, kiwipete 13913, quiet_middlegame 2798, endgame_mate_in_3 19390), matching Session 103's own last-reported total exactly — expected, since no production call site passes either new override anywhere in the session. The real, compiled `nightwing` UCI binary was hand-exercised at two points (Steps 1-2 on a Ruy-Lopez-ish position, Step 4 on a Sicilian-ish position, both `go depth 8`): legal `bestmove`/`info` output, no crash, each time. The real `nightwing_tune` CLI binary was NOT similarly hand-exercised for Steps 3-4 — it runs a real self-play/tuning job with no fast `--help`-style path (a launch attempt exceeded a 5-minute sandbox timeout and was killed); `tune_tests.cpp`'s own `[tune]`-tagged cases, several of which call the real `tune()`/`compute_loss()`/`evaluate()` end to end, were judged sufficient for these steps' own scope (library/abstraction changes, not CLI-behavior changes). (Session 103's own reported 558 test cases/27,761 assertions reflects a different, raw-`g++`-against-fetched-Catch2 build method from an earlier sandbox, not a regression against this session's own CMake+Catch2-based counts — the pristine-vs-modified comparison within this session's own single build method is the meaningful check, and it came back exactly equal at every checkpoint.) **Cross-platform CI verification (after the MSVC fix, before Step 4):** a person-supplied CI log bundle for run 94587466129 (the run that included Step 3's original, unfixed `kPsqtFields`) showed Linux Debug/Release and macOS Debug/Release all passing (567/567 and 565/565 tests respectively, matching this session's own local GCC count on Linux exactly) and both Windows jobs failing at the same MSVC parse error — this sandbox's own local testing throughout the session used GCC exclusively and had no way to catch a Windows/MSVC-specific issue on its own; the fix above was verified locally only against GCC (still 567/59,244 at that point, all green) since this sandbox has no MSVC toolchain, so the next actual CI run against this fix is the real confirmation, not yet independently verified against MSVC directly.
-
-**Next session starts:** Tier 0 Step 5 — L2 regularization for `tune()` (ROADMAP.md's own wording: "needed once the parameter count leaves the current 10-scalar regime for PSQT's up-to-768"), which in practice means this is also the natural point to finally decide and implement HOW `tune()` itself becomes able to run a `kPsqtParameters`-driven tuning job at all (Step 4's own docs/DECISIONS.md entry, 2026-09-15 (5), left this deliberately undecided — template `tune()` over `Weights`, a parallel PSQT-specific overload, or a mixed-parameter-list design tuning both `kMaterialParameters` and `kPsqtParameters` together in one run are the three options that entry lays out, unresolved). Read that DECISIONS.md entry in full before starting, along with `src/tuner/tune.h`/`tune.cpp` (particularly `tune()`'s own core loop, which this step will need to restructure regardless of which of the three options gets picked) and `src/eval/psqt.h`'s `PsqtWeights`/`kPsqtParameters` (`tuner/tune.h`) once more, since this step is likely to be the largest single step in Tier 0's remaining 3 (Steps 5-6) given it combines a genuine new eval-tuning capability with the regularization math ROADMAP.md's own wording calls for at the same time.
-
----
-
-### Session 103 — 2026-09-14 — Overloaded pieces (Priority Fixes, 2026-09-08 section — last of its 5 gaps)
-
-**Built:**
-- `src/eval/threats.h`: 4 new penalties, `kKnightOverloadedPenalty` through `kQueenOverloadedPenalty` — same Rook/Queen-larger-than-Knight/Bishop value-scaling convention as the existing hanging-piece table, but smaller throughout (a structural, future-tactic vulnerability, not an already-realized material threat). Header comment extended to document the "Overloaded" concept as a 3rd component alongside the existing pawn-attacked/hanging checks, and to note the three penalties stack independently on the same piece.
-- `src/eval/threats.cpp`: for each own knight/bishop/rook/queen D, count how many other own knights/bishops/rooks/queens are both currently enemy-attacked and have D as their one-and-only own defender — 2 or more means D is overloaded. New `ScopedPiece` scratch structure and `collect_scoped_pieces()` helper build a per-piece (square, type, individual attack bitboard) array once per side (fixed capacity `kMaxOverloadScopedPieces` = 16, no heap allocation, matching this codebase's established convention) — needed because the file's existing `attacks_by_side()` union bitboards only record whether a square is defended by *something*, not by how many, or which, own pieces. `add_overloaded_penalty()` does the actual check in O(pieces²) via two passes (first: which pieces have exactly one defender and who; second: tally how many name each candidate as sole defender) rather than the naive O(pieces³) a nested "for each defender, for each target, recount everyone" approach would cost.
-- `tests/threats_tests.cpp`: 2 new test cases — a rook overloaded across two perpendicular lines (rank and file) defending a knight and a second rook, each attacked by a separate enemy rook, with the two enemy rooks deliberately left mutually defending each other too (confirming the symmetric per-side check correctly stays at zero on the side that's merely defending, not overloading); and a negative case where adding a second defender to just one of the two targets drops the sole-defended count below 2 and removes the penalty entirely, even though the other target is still solely defended. All 5 pre-existing tests in this file re-run and confirmed unaffected.
-- `docs/ROADMAP.md`: "Overloaded pieces" checked off — this was the last of the Priority Fixes (2026-09-08) section's 5 eval-feature gaps, so that whole section is now complete.
-
-**Bugs found and fixed:** none — hand-derived the exact expected `Score` for both new tests before running them (tracing every White and Black piece's own attack/defense relationships by hand, including the incidental Black-rook mutual-defense interaction), and both matched on the first compile-and-run.
-
-**Decisions made:** none requiring a dedicated DECISIONS.md entry — the design (per-piece scratch array instead of extending the existing union-bitboard approach, O(pieces²) two-pass algorithm, minor/major-only scope matching the file's existing hanging/pawn-attacked checks) is documented directly at the relevant constants'/functions' own doc comments (`src/eval/threats.h`/`.cpp`), matching the convention established in Sessions 99-102.
-
-**Verification performed:** `threats.cpp` compiled standalone with `-Wall -Wextra -Wpedantic`: zero warnings. Full suite: **558 test cases, 27,761 assertions, all green, zero failures** (556 baseline from Session 102 + 2 new cases). Reran the full suite twice back-to-back to confirm the determinism Session 102's own IIR fix restored still holds under a further eval addition: identical assertion count both times. Full ASan+UBSan rerun of the entire suite: clean, zero findings. `bench`: **38,378 total nodes** (38,291 before this session — kiwipete rose slightly, 13,826 → 13,913, the only one of the 4 fixed positions where an overload condition happens to be reachable within depth 6; the other three unchanged, a small and expected shift from a new term feeding every static eval call). The real, compiled `nightwing` UCI binary was hand-exercised on both entry paths: `go depth 10` on a King's-Indian-ish position (real gameplay, `search_iterative_deepening()`) and `bench` (`search_fixed_depth()`) — both completed with sane, legal results.
-
-**Next session starts:** the Priority Fixes (2026-09-08) section is now fully complete (all 5 gaps: connected/candidate/outside passed pawns, pawn islands, back-rank weakness, overloaded pieces). Tier 0 — extending the tuner to PSQT and beyond — is next on ROADMAP.md: the largest remaining item, with its own multi-session design doc already reviewed 2026-09-08. Re-read that design doc section of ROADMAP.md in full before starting (it covers tapering the 4 untapered piece PSQTs, a generalized `ParameterRef<Weights>` covering array-valued parameters, and L2 regularization, among other pieces) — this is large enough that it likely needs to be broken into its own sub-sequence of sessions rather than tackled as one unit, and the design doc's own text should say how it was originally intended to be split, if at all.
-
----
-
-### Session 102 — 2026-09-14 — Back-rank weakness (Priority Fixes, 2026-09-08 section), plus a real, confirmed search bug found and fixed
-
-**Built:**
-- `src/eval/king_safety.h`/`.cpp`: new 5th king-safety component, `kBackRankWeaknessPenalty` — a king trapped on its own back rank (every front square blocked by an own pawn) facing at least one enemy rook or queen. Correctly identified as belonging in `king_safety.cpp`, not `pawns.cpp`, by checking `docs/ARCHITECTURE.md`'s own module layout before writing anything (a king-safety pattern, not a pawn-structure one, even though pawns are what create the blockage).
-- `tests/king_safety_tests.cpp`: 2 new test cases (a trapped king penalized more than an identical king given a flight square by moving, not removing, a shield pawn — isolating the comparison from an incidental open-file side effect a first draft of this test got wrong and caught before delivery; an exact-magnitude test confirming the penalty is gated on rook/queen presence specifically, not merely "any enemy piece"). All 7 pre-existing tests in this file re-run and confirmed unaffected.
-- **A real, confirmed, pre-existing bug in `search.cpp`, unrelated to eval work, found as a direct side effect of adding the term above and fixed this same session** (full account in `docs/DECISIONS.md`'s 2026-09-14 entry): Internal Iterative Reduction (IIR) — a heuristic depth reduction gated on `!probe.hit` — behaves inconsistently between a cold and a warm call sharing a persistent transposition table, since a warmed-up table is, by design, exactly what changes `probe.hit` call-to-call. Bisected with a standalone diagnostic driver to a bug already present on unmodified `main` (reproducible at depth 5, zero eval changes involved) — the new eval term only shifted which depth exhibited it (5 → 6), landing on the one depth `persistent_tt_tests.cpp`'s existing test happened to check. Fixed with a single added clause in `negamax()`'s IIR gate (`&& limits != nullptr`), reusing an already-threaded parameter rather than adding new plumbing: IIR now fires only during genuine `search_iterative_deepening()` iterations at depth >= 2, where its own already-documented "self-correction" safety net actually exists.
-- `tests/persistent_tt_tests.cpp`: 2 new tests — a depth-1-through-8 cold/warm determinism sweep (the existing test only ever checked depth 6, which is exactly how this bug went undetected for however many prior sessions it was already latent) and a confirmation that IIR still fires normally under real iterative deepening, unaffected by this fix.
-- `tests/search_tests.cpp`: 1 pre-existing test renamed and its comment corrected — its name claimed "a depth where IIR engages" via `search_fixed_depth()`, which is no longer true after the fix above (its own loose assertions still pass; only the prose was inaccurate).
-- `docs/ROADMAP.md`: "Back-rank weakness" checked off with full build notes, including a summary of the search bug and its fix.
-- `docs/DECISIONS.md`: new entry with the full investigation — the failure signature, the depth-5 bisection proving it predates this session, the IIR root-cause confirmation (disabling IIR entirely resolved the divergence at every depth 1-8), the fix itself, and the accepted bench/tooling trade-off.
-
-**Bugs found and fixed:** the IIR/persistent-TT determinism bug above — the most substantial finding of this session, and the reason it ran long. Also, during this session's own test-writing: a first draft of the "trapped vs. flight-square" king_safety test removed the b2 shield pawn outright to create the comparison, which incidentally also opened the b-file and triggered `kOpenFileNearKingPenalty` — a second, larger, unrelated term that swamped the one being tested and made the comparison assert the wrong thing (caught by the real build-and-test run, not source review: the assertion failed in the opposite direction from what was expected). Fixed by moving the pawn forward within the same shield zone (b2 → b3) instead of removing it, isolating the comparison to only the back-rank term.
-
-**Decisions made:** the IIR gate fix (`limits != nullptr`) — full rationale, including 4 alternatives considered and rejected, is in `docs/DECISIONS.md`'s new entry rather than repeated here.
-
-**Verification performed:** `king_safety.cpp` and `search.cpp` each compiled standalone with `-Wall -Wextra -Wpedantic`: zero warnings. A standalone diagnostic driver (outside the test suite, `start_position()`, depths 1-8, cold vs. warm persistent-TT calls) confirmed the fix directly: full agreement at every depth after the fix, with the expected dramatic node reduction, versus divergence at depths 5 and 6 before it. Full suite: **556 test cases, 27,759 assertions, all green, zero failures** (552 baseline from Session 101 + 2 king_safety tests + 2 persistent_tt tests = 556 exactly, even though one of the new persistent_tt tests internally loops over 8 depths' worth of assertions within its own single `TEST_CASE`). Reran the full suite twice back-to-back to directly confirm restored determinism at the process level, not just within one run: identical assertion count both times. Full ASan+UBSan rerun of the ENTIRE suite (not just the touched files, given a core `search.cpp` change): clean, zero findings. The real, compiled `nightwing` UCI binary was hand-exercised on both entry paths this fix touches differently — `go depth 10` (`search_iterative_deepening()`, real gameplay, IIR behavior unchanged) and `bench` (`search_fixed_depth()`, IIR no longer applies) — both completed with sane, legal results. `bench` totals rose sharply as a direct, expected, and documented consequence of the fix: 23,260 → 38,291 total nodes (`docs/DECISIONS.md`'s new entry has the full per-position breakdown and the reasoning for why this is an accepted trade, not a regression).
-
-**Next session starts:** the Priority Fixes (2026-09-08) section's five-gap eval-feature list has one item left — "Overloaded pieces" (a piece defending two or more things it cannot actually defend if any one is taken/attacked, detectable via the existing Threats bucket's own attack-bitboard machinery). Read `src/eval/threats.cpp` (not `pawns.cpp` or `king_safety.cpp` — check `docs/ARCHITECTURE.md`'s module layout first, the same check that correctly routed this session's own work) before writing anything. After that, the five-gap Priority Fixes list is fully complete, and Tier 0 (the large multi-session tuner-extension effort, own design doc already reviewed 2026-09-08) is next up on ROADMAP.md.
-
----
-
-### Session 101 — 2026-09-14 — Pawn islands (Priority Fixes, 2026-09-08 section)
-
-**Built:**
-- `src/eval/pawns.h`: new `kPawnIslandPenalty`, a single flat `Score` (not rank-indexed, unlike every other constant in this file — an island count has no notion of "how far advanced" the way a per-pawn term does) charged once per island beyond the first. `pawn_structure_value()`'s own doc comment extended to note this is the file's only per-SIDE, not per-pawn, term.
-- `src/eval/pawns.cpp`: a new per-side check appended right after the existing per-pawn loop (deliberately outside it — the check depends on the shape of the whole `file_counts` array at once, not any single pawn's own square). A single scan across all 8 files, counting maximal runs of consecutive own-pawn-occupied files; `islands - 1` charges of `kPawnIslandPenalty` via `Score::operator*(int)` when `islands >= 2`, nothing otherwise (a no-pawns side correctly counts zero islands and is charged nothing).
-- `docs/ROADMAP.md`: "Pawn islands" item in the Priority Fixes (2026-09-08) section's five-gap list checked off. (A stray accidental duplicate of this same bullet, introduced by a slip in this session's own doc-editing script, was caught and removed before delivery — the tarball/build verification loop doesn't cover docs prose, so this was a manual re-read catch, not a compiled/tested one; worth a second look at doc diffs going forward, not just code diffs.)
-- `tests/pawns_tests.cpp`: 2 new dedicated test cases (a clean 2-island case, charged once; a 3-island case, charged twice, confirming the penalty scales with `islands - 1` rather than being a flat per-side charge regardless of count). 1 pre-existing test's own expected value corrected — Session 100's own "outside passed pawn" test happens to place its two White pawns (a5, e2) exactly 4 files apart with 3 empty files in between, which is itself 2 separate islands; the third session running (98, 99, 100→101) to hit this same category of discovery, where a new per-side/per-pawn term retroactively applies to an earlier session's hand-built test position.
-
-**Bugs found and fixed:** the ROADMAP.md duplicate bullet noted above (doc-only, caught before delivery, not a code/test issue).
-
-**Decisions made:** none requiring a DECISIONS.md entry — the design rationale (per-side gating, "beyond the first" charging convention) is documented directly at `kPawnIslandPenalty`'s and `pawn_structure_value()`'s own doc comments (`src/eval/pawns.h`), matching the established convention from Sessions 99/100.
-
-**Verification performed:** `src/eval/pawns.cpp` compiled standalone with `-Wall -Wextra -Wpedantic`: zero warnings. Full suite (raw-`g++`-against-fetched-Catch2-amalgamated, same sandbox path as recent sessions): **552 test cases, 27,730 assertions, all green, zero failures** (550/27,731 baseline from Session 100 — +2 test cases, as expected from this session's own 2 new cases, but a net -1 assertion rather than the naive +2: `tests/selfplay_tests.cpp` exists in the suite and most plausibly plays out a fixed number of full games rather than a fixed number of plies, so a new eval term nudging search's move choices can change total game length/ply count and therefore total assertion count, without indicating any actual failure — every test case, including that file's own, still reports fully green). `bench`: **23,260 total nodes** (23,301 before this session — a further small, expected shift consistent with a new term feeding every static eval call, not a regression: kiwipete/quiet_middlegame/startpos each moved slightly, endgame_mate_in_3 unchanged as in prior sessions). A full ASan+UBSan build of the `[pawns]`-tagged subset came back clean (13/13, zero findings). The real, compiled `nightwing` UCI binary was hand-exercised on an out-of-book Ruy-Lopez-ish position (`go depth 8`): legal `bestmove`, no crash.
-
-**Next session starts:** the Priority Fixes (2026-09-08) section's five-gap eval-feature list has two items left — "Back-rank weakness" (a concrete, well-defined pattern: an open back rank with the king stuck on it) is next. This one likely belongs in a different file than `pawns.cpp` — it's a king-safety/structural pattern involving the king and rook files, not a pawn-only property — so check `docs/ARCHITECTURE.md`'s own module layout for where the existing king-safety evaluation code lives before assuming it's another `pawns.cpp` addition. After that, "Overloaded pieces" (a piece defending two or more things it cannot actually defend if any one is taken/attacked, detectable via the existing Threats bucket's attack-bitboard machinery) is the last of the five, followed by Tier 0 (the large multi-session tuner-extension effort).
-
----
-
-### Session 100 — 2026-09-14 — Outside passed pawns (Priority Fixes, 2026-09-08 section)
-
-**Built:**
-- `src/eval/pawns.h`: new `kOutsidePassedPawnMinFileGap` (3) threshold constant and new `kOutsidePassedPawnBonus` table (same relative-rank indexing convention as `kPassedPawnBonus`, scaled to roughly 30% of its magnitude — deliberately smaller than `kConnectedPassedPawnBonus`'s own 50%, since being merely far away from the rest of the pawns is a weaker, more situational asset than having a genuine mutual defender). `pawn_structure_value()`'s own doc comment extended with the outside-passed-pawn test.
-- `src/eval/pawns.cpp`: new file-local `is_outside_passed_pawn()` helper — the minimum file-distance from the pawn to every OTHER pawn on the board (either color) must be at least `kOutsidePassedPawnMinFileGap`. A new `total_pawns` bitboard (`own_pawns | enemy_pawns`) is precomputed once per side, alongside the existing `file_counts`/`passed_pawns_bb` precomputation, so the per-pawn check can cheaply exclude just the current square (`board::clear_bit()`) rather than re-deriving the union every iteration. Applied inside the existing `if (passed)` block — the opposite gating from the candidate-passed-pawn/backward checks (both `!passed`-gated) added in Session 99, on top of the plain `kPassedPawnBonus` that block already applies.
-- `docs/ROADMAP.md`: "Outside passed pawns" item in the Priority Fixes (2026-09-08) section's five-gap list checked off.
-- `tests/pawns_tests.cpp`: 2 new test cases — a genuine outside passer (target pawn 4 files from its nearest other pawn, past the threshold) and a boundary negative case (exactly 2 files away, symmetric on both sides, demonstrating the threshold is a hard cutoff rather than a fuzzy preference). No pre-existing test needed correcting this time (unlike Sessions 98's `kConnectedPassedPawnBonus` work and Session 99's own `kCandidatePassedPawnBonus` work, both of which hit a pre-existing test whose hand-built position happened to newly qualify) — none of the file's existing hand-built positions place a passed pawn 3+ files from every other pawn on the board.
-
-**Bugs found and fixed:** none — this session's own real build-and-test run passed on the first attempt, including every pre-existing test in the file.
-
-**Decisions made:** the test's own design (gated on `passed`, the opposite of the candidate/backward checks) and the threshold/magnitude choices are documented directly at `kOutsidePassedPawnBonus`'s and `pawn_structure_value()`'s own doc comments (`src/eval/pawns.h`), matching Session 99's own established convention of keeping a term's full rationale next to its constant when the reasoning is self-contained.
-
-**Verification performed:** `src/eval/pawns.cpp` compiled standalone with `-Wall -Wextra -Wpedantic`: zero warnings. Full suite (raw-`g++`-against-fetched-Catch2-amalgamated, same sandbox path as recent sessions): **550 test cases, 27,731 assertions, all green, zero failures** (548/27,729 baseline from Session 99 — +2 tests/+2 assertions, exactly matching this session's own new cases). `bench`: **23,301 total nodes, unchanged from Session 99's own baseline exactly** — none of the 4 fixed bench positions happen to contain a genuinely outside passed pawn at the depths searched, so this session's new term is confirmed additive/inert on that specific fixed set, not a sign the code path is unreachable (the dedicated new unit tests directly exercise and confirm it fires). A full ASan+UBSan build of the `[pawns]`-tagged subset came back clean (11/11, zero findings). The real, compiled `nightwing` UCI binary was hand-exercised on an out-of-book Queen's-Gambit-ish position (`go depth 8`): sane, legal PVs at every depth, no crash.
-
-**Next session starts:** the Priority Fixes (2026-09-08) section's five-gap eval-feature list has two items left — "Pawn islands" (a simple count of contiguous same-color pawn groups) is next. Read `src/eval/pawns.cpp` before writing anything — same file this session's and Session 99's own work both touched, though pawn islands is a per-SIDE structural count rather than a per-pawn check, so it likely wants its own small loop over `file_counts` (already precomputed in this function) rather than slotting into the existing per-pawn loop the way the candidate/outside checks did. After that, "Back-rank weakness" and "Overloaded pieces" remain, followed by Tier 0 (the large multi-session tuner-extension effort).
-
----
-
-### Session 99 — 2026-09-14 — Candidate passed pawns (Priority Fixes, 2026-09-08 section)
-
-**Built:**
-- `src/eval/pawns.h`: new `kCandidatePassedPawnBonus` table (same relative-rank indexing convention as `kPassedPawnBonus`, scaled to roughly 40% of its magnitude at each rank — a real but deliberately smaller bonus, since becoming passed here is conditional on a trade actually happening, not yet a certainty). `pawn_structure_value()`'s own doc comment extended with the exact two-part candidate test.
-- `src/eval/pawns.cpp`: new file-local `is_candidate_passed_pawn()` helper. Part (a): no enemy pawn anywhere ahead of the pawn on its own file (a straight-ahead blocker can never be traded away, since pawns don't capture straight ahead — this alone rules out candidacy regardless of the adjacent files). Part (b): among the up to two ADJACENT files only, the count of own pawns at-or-behind this pawn's own rank is >= the count of enemy pawns ahead of it (a symmetric trade-count argument — a tie counts as qualifying). Applied inside the existing `if (!passed)` block in the main per-pawn loop, alongside (not replacing) the pre-existing backward-pawn check — the two are independent and a pawn can be both.
-- `docs/ROADMAP.md`: "Candidate passed pawns" item in the Priority Fixes (2026-09-08) section's five-gap list checked off.
-- `tests/pawns_tests.cpp`: 2 new test cases — a genuine candidate with a tied adjacent-file count (own support numerically matches the enemy blocker), and a same-file-blocker negative case demonstrating part (a) overrides part (b) regardless of adjacent-file support. 1 pre-existing test's own expected value corrected (not just a new test added) — one of its two White pawns (e4, in the "phalanx pair where only ONE pawn is passed" test) turned out to also newly qualify as a candidate once this feature existed, exactly the same category of discovery Session 98's own `kConnectedPassedPawnBonus` work hit with a different pre-existing test.
-
-**Bugs found and fixed (during this session's own development, before delivery):** none in the shipped code — but the pre-existing test correction above was caught by this session's own real build-and-test run (the test failed on first compile/run, not assumed to still pass), not source review alone.
-
-**Decisions made:** the two-part test's own design (straight-ahead-blocker exclusion as a hard requirement, independent of the adjacent-file count) is documented directly at `kCandidatePassedPawnBonus`'s and `pawn_structure_value()`'s own doc comments (`src/eval/pawns.h`) rather than in a separate DECISIONS.md entry, matching this file's own established convention of keeping a term's full rationale next to its constant when the reasoning is self-contained and doesn't involve weighing alternative designs against each other.
-
-**Verification performed:** `src/eval/pawns.cpp` compiled standalone with `-Wall -Wextra -Wpedantic`: zero warnings. Full suite (raw-`g++`-against-fetched-Catch2-amalgamated, same sandbox path as recent sessions): **548 test cases, 27,729 assertions, all green, zero failures** (546/27,727 baseline confirmed by rebuilding the pre-change source directly — +2 tests/+2 assertions, exactly matching this session's own new cases). `bench`: **23,301 total nodes** (23,621 before this session — a real, expected shift from a new eval term feeding into every static eval call: kiwipete up 5736→7008, quiet_middlegame down 8018→6426, startpos/endgame_mate_in_3 unchanged). A full ASan+UBSan build of the `[pawns]`-tagged subset came back clean (9/9, zero findings). The real, compiled `nightwing` UCI binary was hand-exercised on an out-of-book position (`go depth 8`): legal `bestmove`, no crash, all UCI options advertised correctly.
-
-**Next session starts:** the Priority Fixes (2026-09-08) section's five-gap eval-feature list has one item left after this one done — "Outside passed pawns" is next (a passer on the side of the board away from the pawn majority; a specific, cheap-to-detect sub-case of the existing passed-pawn bucket). Read `src/eval/pawns.cpp` before writing anything — this session's own new `is_candidate_passed_pawn()`/`kCandidatePassedPawnBonus` work is directly adjacent (both concern passed-pawn-adjacent detection in the same file/loop). After that, "Pawn islands," "Back-rank weakness," and "Overloaded pieces" remain, followed by Tier 0 (the large multi-session tuner-extension effort).
-
----
-
-### Session 98 — 2026-09-10 — LMR as a continuous formula; an "improving" flag
-
-**Built (LMR as a continuous formula):**
-- `src/search/search.cpp`: `kLMRReduction`/`kLMRBigReduction`/`kLMRBigReductionDepth` removed; new `kLMRBase`/`kLMRScale` coefficients and a new `lmr_reduction(depth, move_index)` helper computing `R = kLMRBase + ln(depth)*ln(move_index)*kLMRScale` via a cached, lazily-built lookup table (`kLMRTableDepth` x `kLMRTableMoves`, function-local `static`). `negamax()`'s move loop now calls `lmr_reduction(depth, i)`, clamped to `depth - 1`, in place of the old two-value step lookup. `<cmath>` added to this file's includes for `std::log()`/`std::lround()`. Eligibility gating (`kLMRMinDepth`/`kLMRMinMoveIndex`) unchanged. `negamax()`'s own header comment and the nearby ProbCut constants' doc comment updated to stop referencing the now-removed two-tier constants by name.
-- `docs/ROADMAP.md`: "LMR as a continuous formula" item in the Priority Fixes (2026-09-08) section checked off.
-- `tests/search_tests.cpp`: 1 new regression test, reusing the same forced-mate-in-3 fixture every other move-ordering/pruning technique in this file already regression-tests against, tagged `[search][lmr]` alongside the pre-existing LMR test (which predates this session's continuous-formula change and never actually exercised it).
-
-**Bugs fixed (LMR):** none in the delivered code — but a real regression was caught and fixed DURING this session's own development, before delivery: a first coefficient pair (`kLMRBase`=0.5, `kLMRScale`=0.4) broke 2 existing tests (`endgame_suite_tests.cpp`'s KBPK fortress case; `persistent_tt_tests.cpp`'s warm-TT-reuse case) via over-aggressive reduction at the depth/move-index range those tests exercise. Caught by this session's own real build-and-test verification, not source review alone. Fixed by sweeping coefficients against an isolated standalone reproduction of the failing KBPK position and landing on `kLMRBase`=0.0, `kLMRScale`=0.3, which passes the full suite. Full mechanism, the sweep, and why this isn't the old scheme's own limitation returning in a different form: docs/DECISIONS.md, 2026-09-10.
-
-**Decisions made (LMR):** see docs/DECISIONS.md, 2026-09-10 — the continuous-formula shape and helper-function design; the coefficient regression caught mid-session and the sweep that fixed it; alternatives considered (loosening the tests instead; a single-factor formula; deeper root-causing of the first pair's exact failure mechanism).
-
-**Built (an "improving" flag, same session, continued):**
-- `src/search/search.cpp`: a new `static_eval_history` per-ply array parameter (mirroring `path[]`'s own reuse pattern) threaded through `negamax()`, `search_root()`, and all 4 top-level search entry points (`search_fixed_depth`, `run_lazy_smp_helper`, the MultiPV implementation, `search_iterative_deepening`) — 10 `negamax()` call sites and 7 `search_root()` call sites updated. A new `kNoStaticEval` sentinel and `improving` flag (this node's own static eval vs. the same side's own eval 2 plies back). Applied to 2 of ROADMAP.md's own 3 named techniques in this first pass: futility pruning's margin (new `kImprovingFutilityMarginDelta`, shrinks the margin — easier to prune — when not improving) and NMP's reduction (new `kImprovingReductionBonus`, +1 when not improving, gated to `depth >= kNullMoveBigReductionDepth`). NOT applied to LMR in this pass — see Decisions below and the third pass, further down.
-- `docs/ROADMAP.md`: "An 'improving' flag" item checked off (provisionally, in this pass — updated again after the third pass below to reflect LMR's own eventual inclusion).
-- `tests/search_tests.cpp`: 1 new regression test (`[search][improving]`) on the same shared mate-in-3 fixture, specifically exercising NMP's depth-gated bonus (depth 6 reaches `kNullMoveBigReductionDepth` at the root itself).
-
-**Bugs fixed (improving flag):** a real, confirmed bug was found and fixed during this session's own development, before delivery — `static_eval_history[ply]` was first written only after this function's TT-cutoff/IIR early-return gates, so any node that returned earlier (TT cutoff, draw, mate-distance pruning) left that ply's slot holding whatever a completely unrelated earlier call (a different branch, possibly a different iterative-deepening iteration entirely) happened to leave there — a stale cross-branch read, not a real ancestor's own eval. Cause: the write was placed to match where the "improving" computation itself needed to run (after IIR), not where `path[ply]`'s own write already establishes the "always fresh for the current active ancestor chain" invariant this file relies on. Fix: write `kNoStaticEval` at the SAME point `path[ply]` is written (before the draw check, before the TT probe), then overwrite with a genuine value later only if execution actually reaches that point and the node isn't in check. Confirmed via `persistent_tt_tests.cpp`'s own warm-TT-reuse test, which failed identically before and after an unrelated NMP-only fix, isolating this as a separate, second bug rather than a symptom of the first.
-
-**Decisions made (improving flag, first pass):** see docs/DECISIONS.md, 2026-09-10 (2) — the `static_eval_history`/`improving` design; the stale-read bug and its fix; a first 3-way sweep (futility margin / LMR bonus / NMP bonus, each isolated independently) against 2 real regression tests (`endgame_suite_tests.cpp`'s Lucena position; `persistent_tt_tests.cpp`'s warm-TT-reuse case) that found NMP's bonus needed depth-gating (to `kNullMoveBigReductionDepth`) to stop breaking Lucena, and that LMR's identical, additive bonus broke BOTH tests with no depth-gate found that fixed it without losing the effect entirely — so LMR's own version was set aside at this point (not yet a final decision to drop it permanently — see the third pass below, where a differently-shaped version was found instead).
-
-**Built (LMR's own "improving" adjustment, same session, a third pass):**
-- `src/search/search.cpp`: a new `kImprovingLmrDiscount` constant, applied at LMR's own call site with a DIFFERENT shape from futility's/NMP's own "add when not improving" pattern — SUBTRACTED from `lmr_reduction()`'s own continuous-formula result when improving, clamped to never go below 0, leaving the not-improving case completely untouched at the already-tuned baseline. Reasoning (kImprovingLmrDiscount's own doc comment, `search.cpp`, has the full account): LMR fires on potentially a dozen-plus sibling moves per node, unlike NMP's single per-node probe, so a flat additive bonus (the first pass's own attempt, which broke both regression tests) is a much larger relative perturbation for LMR specifically, especially against `lmr_reduction()`'s own small near-threshold values; subtracting only for the improving subset can only ever search a subset of moves MORE thoroughly than the already-verified baseline, never less.
-- `docs/ROADMAP.md`: "An 'improving' flag" item's own DONE note updated to reflect LMR's own final, differently-shaped inclusion rather than a dropped scope.
-- `tests/search_tests.cpp`: 1 more new regression test (`[search][improving][lmr]`) on the same shared mate-in-3 fixture, specifically exercising LMR's own discount.
-
-**Decisions made (LMR's own adjustment, third pass):** see docs/DECISIONS.md, 2026-09-10 (3) — reasoned from the first pass's own diagnosed failure mechanism (a high-frequency technique reacting badly to a flat additive bonus, plausibly by making the reduced probe coarse enough to trigger more PVS re-searches, not fewer nodes overall) to a specific, differently-shaped alternative BEFORE testing it, rather than trying further variants by trial and error; confirmed via the same 2-test sweep the first pass's attempt failed, both pass.
-
-**Verification (combined, all 3 pieces of work):** `search.cpp` compiled standalone with `-Wall -Wextra -Wpedantic` at every stage: zero warnings throughout. Full suite (raw-`g++`-against-fetched-Catch2-amalgamated, same sandbox path as recent sessions): **528 test cases, 27,686 assertions, all green, zero failures** in the final delivered state (526/27,684 after the LMR-continuous-formula work; 527/27,685 after the first improving-flag pass; +1 test/+1 assertion for the third pass's own new `[search][improving][lmr]` test). Every regression this session hit (the LMR coefficient regression; the Lucena-move-mismatch/persistent-TT-reuse failures from the first improving-flag pass's own additive LMR attempt) was deterministically reproduced via standalone diagnostic drivers before being fixed — none were flaky, and none were shipped by loosening a failing test's own assertion instead of fixing the actual cause. `bench` re-run at the very end: **23,366 total nodes** (21,877 after LMR-continuous-formula alone; 21,873 after the first improving-flag pass; a larger jump for the third pass specifically, consistent with LMR's own discount being the highest-frequency of the 3 adjustments — it can genuinely deepen search meaningfully more often than NMP's single-probe-per-node bonus or futility's leaf-only margin change). No strength claim made from any node-count change alone (no `nightwing_match`/`nightwing_sprt` run this session). A full ASan+UBSan suite run came back fully clean at every checkpoint (finalized at 528/528, zero findings). The real, compiled `nightwing` UCI binary was hand-exercised on an out-of-book position (`go depth 10`) after every pass: legal `bestmove`, no crash.
-
-**Built (Correction history, same session, a fourth pass):**
-- `src/search/ordering.h`/`.cpp`: a new `CorrectionHistoryTable` class — a bounded exponential moving average (`kCorrectionWeight` = 32, `kCorrectionMax` = 256), indexed by `[color][pawn-only Zobrist key & mask]` (`board::compute_pawn_hash()`, the same key `eval::PawnHashTable` already uses), with `update()`/`correction()` methods. Deliberately simpler than a full Stockfish-style implementation (one pawn-structure table only, no per-piece-type tables — the ROADMAP item's own text marks that "optional").
-- `src/search/search.cpp`: `pawn_key` computed once, function-wide, near the top of `negamax()`. `CorrectionHistoryTable& correction_history` threaded through `negamax()`, `search_root()`, and all 4 top-level entry points — mirroring exactly how `capture_history` is already threaded (10 `negamax()` call sites, 7 `search_root()` call sites, one `CorrectionHistoryTable` instance constructed per top-level call — stack-local in `search_fixed_depth`, `unique_ptr`-heap-allocated in the other 3, matching each function's own existing convention for its other heuristic tables). The correction is applied independently at all 4 of this file's existing static-eval consumer sites (RFP, razoring, futility, `node_static_eval`/"improving"). Updated once per node at the very end of `negamax()`, gated on `bound_type == Bound::Exact` (reusing the bound classification already computed there for the TT store) and a non-mate score.
-- `docs/ROADMAP.md`: "Correction history" item checked off.
-- `tests/ordering_tests.cpp`: 6 new unit tests for `CorrectionHistoryTable` directly (unrecorded-key default; the moving-average step size; convergence toward, but never past, the clamp on both the positive and negative side; independence across distinct pawn keys; independence across the two colors for an identical pawn key).
-- `tests/search_tests.cpp`: 1 new regression test (`[search][correction_history]`) on the same shared mate-in-3 fixture.
-
-**Decisions made (Correction history):** see docs/DECISIONS.md, 2026-09-10 (4) — the moving-average design and its clamp; indexing by color in addition to pawn key even though `eval::evaluate()`'s own symmetry should make it unnecessary in principle; applying the correction independently at all 4 consumer sites rather than refactoring them to share one computation; gating the update on an exact bound rather than using every returned score regardless of bound type; scoping to pawn-structure-only for this pass, leaving per-piece-type for later per the ROADMAP item's own "optionally" wording.
-
-**Verification (Correction history):** `ordering.cpp`/`search.cpp` each compiled standalone with `-Wall -Wextra -Wpedantic`: zero warnings, on the FIRST attempt for `search.cpp` this time (the mechanical threading pattern from the two prior passes this session carried over cleanly). Full suite: **535 test cases, 27,698 assertions, all green, zero failures** (528/27,686 before this pass; +7 tests/+12 assertions for this pass's own new unit and regression tests). No regression hit this pass — unlike the two earlier passes this session, nothing needed sweeping or reworking. `bench` re-run: **23,349 total nodes** (23,366 before this pass — a small, plausible shift, well within the range the other 3 static-eval-consuming techniques already produced individually). A full ASan+UBSan suite run came back fully clean (535/535, zero findings). The real, compiled `nightwing` UCI binary was hand-exercised on an out-of-book position (`go depth 10`): legal `bestmove`, no crash.
-
-**Built (recapture + passed-pawn-push extensions, same session, a fifth pass):**
-- `src/search/search.cpp`: passed-pawn-push extension implemented as specified — `kPassedPawnExtensionMinRank`/`kPassedPawnExtensionPly`, checked in both `negamax()`'s and `search_root()`'s own move loops, combined via `std::max()` with check/singular extensions. Recapture extension went through 2 designs:
-  - **First design (reverted):** a literal depth extension, exactly as ROADMAP.md's own item text and CPW's "Recapture Extensions" describe — `prev_was_capture` threaded through `negamax()` (mirroring `prev_piece`/`prev_to`'s own existing pattern) and combined into `extension` via `std::max()`. Found, via this session's own real verification (not just the delivered version's own claimed testing), to have a genuine correctness problem, not just a style concern — see Decisions below.
-  - **Second design (shipped):** recapture handling as an exemption from SEE-based capture pruning (`kSeePruningMaxDepth`'s own block) instead of a depth extension. `is_recapture` (same `prev_was_capture`/`prev_to` check) now only decides whether a bad-SEE capture gets tried at all, never what depth it's searched to.
-- `tests/search_tests.cpp`: 2 new regression tests (`[search][extension][passed_pawn]`, `[search][recapture]`) on the shared mate-in-3 fixture.
-
-**Bugs found and fixed (recapture extension, first design):** a real, reproducible correctness bug, not a style issue — `prev_was_capture`/`prev_to` are properties of the EDGE used to reach a position, not the position itself, and every other technique in `negamax()` (TT probes, mate-distance pruning, RFP/NMP/razoring/futility/the "improving" flag/correction history, LMR, check/singular extensions) depends only on `(position, depth, alpha, beta[, ply])`. A transposition reaching the identical position via a capturing vs. non-capturing last move could therefore get a genuinely different search depth depending on which path arrived first — confirmed via `persistent_tt_tests.cpp`'s own warm-TT-reuse test: a warm search of the IDENTICAL startpos-depth-6 position visited 2174 nodes and returned one best move, while a cold search visited 946 nodes and returned a DIFFERENT best move. Not merely non-bit-reproducible — the warm run did MORE work AND returned a worse-verified answer, meaning the feature made persistent-TT reuse actively counterproductive. Two mitigation attempts on the SAME depth-extension design (a per-line cumulative-extension cap; a `ply+depth-root_depth`-derived cap requiring no new mutable state) were each tried and failed to fix it, because the divergence doesn't require a long chain — a single ambiguous transposition is enough, and no amount of capping changes that the extension itself is edge-conditioned. Fixed by reformulating (SEE-pruning exemption instead of depth extension, per the person's own explicit direction after being presented with 3 options) — this never changes a child's own searched depth, so the conflict has nowhere to occur. Reverified via the identical diagnostic that caught the original bug: cold and warm searches of the same position now return the identical best move and score (126, from 8 to 24, both runs), with the expected large node-count reduction on the warm run (846 → 209).
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-10 (5) (the first design and why it was reverted, with the concrete failure numbers) and 2026-09-10 (6) (the SEE-pruning-exemption redesign and why it avoids the same conflict structurally, not just empirically).
-
-**Verification (recapture + passed-pawn-push):** `search.cpp` compiled standalone with `-Wall -Wextra -Wpedantic` at every stage: zero warnings throughout, including after the mid-session design change. Full suite, final shipped state: **537 test cases, 27,700 assertions, all green, zero failures**. `persistent_tt_tests.cpp`'s own warm-TT-reuse test needed NO loosening in the shipped version (it did fail, correctly, against the reverted first design, and that failure is what caught the bug). `bench`: **23,676 total nodes** (23,349 before this pass). A full ASan+UBSan suite run came back clean (537/537). The real, compiled `nightwing` UCI binary was hand-exercised on an out-of-book position AND on the real Lucena position specifically (`1.Rc1` found correctly, matching the documented main line).
-
----
-
-**Built (Lazy SMP helper thread diversification, same session, a sixth pass):**
-- `src/search/ordering.h`/`.cpp`: `order_moves()` gained a new `tie_break_variant` parameter (default 0, reproducing prior behavior exactly). A nonzero value adds a small (`kTieBreakJitterRange` = +/-16), deterministic per-(move, variant) jitter to every move's score before sorting — sized to stay well inside `HistoryTable`'s own `[-kHistoryMax, kHistoryMax]` range and vastly smaller than the >700,000-point gap up to the next score band, so it can only ever break ties within a band (in practice, almost always among untried quiet moves sitting at history score 0), never displace a TT move/capture/killer.
-- `src/search/search.cpp`: `tie_break_variant` threaded through `negamax()`/`search_root()` as a plain pass-through constant for one whole top-level call (the same pattern `material_weights` already uses), touching both `order_moves()` call sites and all 13 recursive `negamax()`/`search_root()` calls. `run_lazy_smp_helper()` gained a `helper_id` parameter (each spawn site's own 0-based loop index, passed at both spawn sites in `search_fixed_depth()` and `search_iterative_deepening()`), from which it derives all 3 diversification axes ROADMAP.md's own item text named: a staggered starting depth (`kLazySmpStartDepthSpread` = 4, wrapping so helper 0 still starts at depth 1 exactly as before), an occasional 2-ply jump instead of 1 for odd-numbered helper ids only (`kLazySmpSkipPeriod` = 3), and its own `tie_break_variant = helper_id + 1` propagated through its entire subtree.
-- `tests/ordering_tests.cpp`: 4 new unit tests for `tie_break_variant` (default-0 exact equivalence to the pre-existing call; TT move never displaced under jitter, swept across 5 variants; a killer move never outranked by a heavily-history-boosted quiet move under jitter, same sweep; confirmation that SOME variant in a reasonable spread does flip an otherwise-tied pair, i.e. the jitter isn't a no-op).
-- `tests/lazy_smp_tests.cpp`: 1 new regression test sweeping thread counts 2 through 5 (exercising `helper_id` values 0 through up to 4, each with a different starting depth and tie-break variant) against the shared mate-in-3 fixture via `search_fixed_depth()`.
-
-**Bugs fixed:** none — this pass's own verification passed cleanly on the first full-suite run, no regressions hit.
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-10 (7) — the 3-axis design derived directly from ROADMAP.md's own item text; why `tie_break_variant` is a plain unchanged pass-through rather than path-dependent state (avoiding the exact category of problem this same session's own recapture-extension work hit); the jitter magnitude's own safety argument against the documented score-band gaps; why `helper_id` is scoped per-spawn-site rather than globally unique.
-
-**Verification:** `ordering.cpp` and `search.cpp` each compiled standalone with `-Wall -Wextra -Wpedantic`: zero warnings, clean on the first attempt for both. Full suite: **542 test cases, 27,717 assertions, all green, zero failures** (537/27,700 before this pass; +5 tests/+17 assertions for this pass's own new tests). `bench` (single-threaded, so unaffected by diversification): unchanged at 23,676 total nodes. A full ASan+UBSan suite run came back clean (542/542). Following this project's own established convention for SMP-touching sessions (documented in this file's own earlier entries): the `[smp]`+`[tt]`-tagged tests (25 cases, 65 assertions in the final state) were additionally re-run in isolation, 8 times in a row, under the ASan/UBSan-instrumented build — all 8 runs clean, no sanitizer findings (this project's sanitizer matrix is still ASan/UBSan only, not yet ThreadSanitizer, same documented gap as before). A standalone multi-threaded diagnostic (1/2/4 threads on an opening-theory middlegame position, depth 8) confirmed an identical best move across all 3 thread counts with sane, monotonically-increasing node counts. The real, compiled `nightwing` UCI binary was hand-exercised at both the default thread count and with `Threads` set to 4: legal `bestmove`, no crash, in both cases.
-
-**Next session starts:** top of the Priority Fixes (2026-09-08) section's remaining items — the first of the 5 further eval-feature gaps identified by the same review is next: candidate passed pawns (a pawn not yet passed but positioned to become passed after a likely, forceable pawn trade). Read `src/eval/pawns.cpp` before writing anything — this session's own new `kConnectedPassedPawnBonus` work is directly adjacent (both concern passed-pawn detection in the same file/loop), everything else from this session (search.cpp/ordering.cpp/king_safety.cpp) is not.
-
-**Built (Eval: pawn storms + connected-passed-pawns bonus, same session, a ninth pass):**
-- `src/eval/king_safety.h`/`.cpp`: new `kPawnStormPenalty` (indexed by the storming enemy pawn's own relative rank, same convention as `pawns.h`'s `kPassedPawnBonus`) — for each of the king's own file and its 2 neighbors, the enemy's own most-advanced pawn there is penalized, scaled by how far it's advanced. A 4th component alongside the existing shield/open-file/attacker-weighting terms, in its own separate loop over the same 3 files (deliberately not folded into the existing open/semi-open-file loop, which `continue`s whenever an own pawn is present — a storming enemy pawn matters regardless of that).
-- `src/eval/pawns.h`/`.cpp`: new `kConnectedPassedPawnBonus` — an additional per-pawn bonus, on top of both the existing `kPassedPawnBonus` and `kConnectedPawnBonus`, when a passed pawn's SPECIFIC defender or phalanx partner is also passed (not merely present). Required precomputing a `passed_pawns_bb` bitboard for the side up front (a single pass over that side's own pawns before the main per-pawn loop) so the main loop can check "is my specific connector also passed," not just "am I passed."
-- `tests/king_safety_tests.cpp`: 2 new comparison-style tests (an identically-semi-open file with a further-advanced vs. barely-advanced storming pawn; a storming pawn vs. no pawn at all, confirming the storm penalty is large enough to overcome the semi-open-file discount it otherwise benefits from).
-- `tests/pawns_tests.cpp`: 1 existing test's own expected value corrected (its own phalanx pair turned out to also already be a connected-PASSED pair, so it now needs the new bonus folded in too) and 2 new tests (a phalanx pair where only one side is passed, confirming no bonus for either; a defended, non-phalanx passed pair, confirming the bonus applies asymmetrically the same way the plain connected bonus already does).
-
-**Bugs found and fixed (this session's own process, before delivery):** a real hand-derivation mistake, not a code bug — one of the 2 new `pawns_tests.cpp` tests initially failed because its own expected value forgot that the Black pawn placed to isolate the scenario (blocking one White pawn's passed status without blocking the other's) is ITSELF evaluated in the same `pawn_structure_value()` call, and picks up its own isolated + backward penalties, which subtract into the White-relative total as a net POSITIVE contribution. Caught immediately by the test itself failing on first run (not silently wrong), root-caused by instrumenting a temporary debug copy of `pawn_structure_value()` with print statements rather than re-guessing by hand a second time, and fixed by correcting the expected value with the mechanism spelled out in the test's own comment for future readers.
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-10 (8) — the storm-penalty and connected-passed-bonus designs, why each is scoped to exactly what its own ROADMAP.md wording asked for (not the 5 sibling gaps also listed under the same review), and the hand-derivation mistake above.
-
-**Verification:** `pawns.cpp` and `king_safety.cpp` each compiled standalone with `-Wall -Wextra -Wpedantic`: zero warnings. Full suite: **546 test cases, 27,727 assertions, all green, zero failures** (542/27,717 before this pass). `bench`: 23,621 total nodes (23,676 before this pass — a small, expected shift from 2 new eval terms feeding into every static eval call). A full ASan+UBSan suite run came back clean (546/546). The real, compiled `nightwing` UCI binary was hand-exercised on 2 positions (an opening and a more developed middlegame): legal `bestmove` in both, no crash.
-
----
-
-### Session 97 — 2026-09-09 — Reverse futility / static null-move pruning
-
-**Built:**
-- `src/search/search.cpp`: new `kReverseFutilityMaxDepth`/`kReverseFutilityMargins` constants (fixed lookup table, index 0 unused, linear 90cp/ply, depth-6 ceiling); new pruning check in `negamax()`, placed right after IIR and before null-move pruning — the cheapest of this function's static-eval-based checks, so it runs first among them. `negamax()`'s own header doc comment gained a new paragraph documenting the addition and its placement rationale.
-- `docs/ROADMAP.md`: Reverse futility / static null-move pruning item in the Priority Fixes (2026-09-08) section checked off.
-- `tests/search_tests.cpp`: 1 new regression test, reusing the same forced-mate-in-3 fixture every other move-ordering/pruning technique in this file already regression-tests against, inserted right after the IIR test (matching this new check's own execution-order placement in `negamax()`, right after IIR).
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-09 (2) — placement before NMP (cheapest check first); a deeper depth ceiling than futility/razoring (matching `kSeePruningMaxDepth`'s own depth-6 precedent) and why; the real bench node-count drop this produced; a deterministic (confirmed via a controlled A/B and 4 repeated runs, not flaky) 47-assertion test-count shift traced to this codebase's known class of wall-clock-time-sensitive tests, judged benign without further root-causing since zero tests failed either way.
-
-**Verification:** `search.cpp` compiled standalone with `-Wall -Wextra -Wpedantic` first: zero warnings. Full suite (raw-`g++`-against-fetched-Catch2-amalgamated, same faster sandbox path as Session 96): **527 test cases, 53,411 assertions, all green, zero failures.** A controlled A/B (identical build, this session's own new check's guard forced `false`) confirmed 53,410 (before this session's own new dedicated `[rfp]` regression test in `tests/search_tests.cpp` added one more passing assertion, bringing the final count to 53,411) vs. Session 96's own exact 53,457-assertion baseline when disabled, isolating this session's change as the sole source of the difference. `bench` re-run: **21,938 total nodes, down from Session 96's own 81,197-node baseline (-73%)** — a large, expected drop for a genuine new whole-node pruning technique; no strength claim made from the node-count change alone (no `nightwing_match`/`nightwing_sprt` run this session). A separate ASan+UBSan full-suite run came back fully clean (527/527, zero findings, including the new `[rfp]` test). The real, compiled `nightwing` UCI binary was hand-exercised on an out-of-book position (`go depth 10`): sane, legal PVs at every depth, no crash.
-
-**Next session starts:** top of the Priority Fixes (2026-09-08) section's remaining items — "LMR as a continuous formula" is next (`R = a + ln(depth)*ln(move_count)*b` in place of the current 2-value step table). Read `src/search/search.cpp`'s existing LMR implementation (the move loop's own reduction logic, `negamax()`) before writing anything — check whether `<cmath>` is already included for `std::log()`.
-
----
-
-
-
-**Built:**
-- `src/search/search.h`/`.cpp`: `TranspositionTable` forward-declared; `make_transposition_table()` promoted out of `search.cpp`'s anonymous namespace to a public declaration in `search.h` (usable by other translation units, though `uci.cpp` ended up needing its own small variant instead — see docs/DECISIONS.md). New trailing `TranspositionTable* external_tt = nullptr` parameter on `search_fixed_depth()`, `search_iterative_deepening()`, and the internal `search_iterative_deepening_multipv()` — `nullptr` (default) is byte-for-byte the old behavior; non-null uses that caller-owned table directly, ignoring `hash_size_mb`. New internal `emplace_transposition_table()` helper works around a real compile hazard (`TranspositionTable` is non-movable/non-copyable via its atomic members) found during this session's own build-and-test pass.
-- `src/uci/uci.cpp`: `run()` now owns one `std::optional<search::TranspositionTable>` for its whole session, initialized at startup, shared by `handle_go()`/`start_pondering()` (both signatures gained a `TranspositionTable&` parameter, threaded through as `external_tt`). `ucinewgame` calls `clear()` on it; `setoption name Hash` genuinely changing size rebuilds it via a new `emplace_persistent_tt()` helper, but only after calling `abandon_pondering()` first — a real concurrency hazard (destroying the table out from under a still-running ponder thread) this session identified and fixed, not merely a stray-output edge case. `run_bench()` deliberately left untouched — still builds its own private table, preserving reproducibility.
-- `docs/ROADMAP.md`: Persistent, engine-lifetime transposition table item in the Priority Fixes (2026-09-08) section checked off.
-- `tests/persistent_tt_tests.cpp` (NEW): 6 cases — `external_tt` defaulting to `nullptr` leaves both `search_fixed_depth()`/`search_iterative_deepening()` unaffected; a non-null `external_tt` is genuinely used (probed after the call, hit matches the reported result); `hash_size_mb` is ignored when `external_tt` is supplied (proven via `num_buckets()`); an identical warm repeat at the same depth visits dramatically fewer nodes (1185 → 61 nodes on the starting position at depth 6, in this session's own diagnostic run) while returning the identical best move/score; MultiPV (`multi_pv > 1`) still populates a supplied external table correctly.
-- `tests/pondering_tests.cpp`: 3 new cases covering the Hash-mid-ponder concurrency path specifically — a genuine size change safely abandons the stale ponder search (no crash, no stray `bestmove`); the engine still works correctly on a fresh `go` afterward; a same-size `setoption` does NOT abandon an active ponder search.
-- `tests/CMakeLists.txt`: `persistent_tt_tests.cpp` registered.
-
-**Bugs fixed:** the non-movable-`TranspositionTable`/`std::optional::emplace()` compile hazard above — caught during this session's own real build, not source review alone; see docs/DECISIONS.md, 2026-09-09 (1), for the full mechanism and fix.
-
-**Decisions made:** see docs/DECISIONS.md, 2026-09-09 (1) — the `std::optional`-based ownership pattern and why `emplace()` needs the constructor's own plain arguments rather than an already-built object; the Hash-mid-ponder concurrency hazard and its `abandon_pondering()`-first fix; `ucinewgame` clears rather than rebuilds; `run_bench()` deliberately excluded from the persistent table.
-
-**Verification:** full repo cloned into a scratch build (this sandbox's single CPU core, so the full CMake+Catch2 `-O3`+LTO build was configured successfully but the actual test run used this project's own established faster raw-`g++`-against-fetched-Catch2-amalgamated path instead). `search.cpp`/`uci.cpp` each compiled standalone with `-Wall -Wextra -Wpedantic` first: zero warnings. Full suite: **526 test cases, 53,457 assertions, all green** (517 carried over from Session 95 + 9 new). `bench` re-run: **81,197 total nodes, unchanged from Session 95's own baseline exactly** (expected — `run_bench()`'s own path is untouched). A separate ASan+UBSan binary ran the `[pondering]`+`[persistent_tt]`-tagged subset (19 cases) 4 times total: zero findings, zero flakiness. The real, compiled `nightwing` UCI binary was also hand-exercised end to end outside the test suite (an out-of-book position: 9588 nodes cold → 223 nodes on an identical warm repeat → back to 9588 after a genuine `Hash` resize → back to 9588 again after `ucinewgame`), directly confirming reuse/rebuild/clear all work correctly on the real binary.
-
-**Next session starts:** top of the Priority Fixes (2026-09-08) section's remaining items — "Reverse futility / static null-move pruning" is next (a node-level pre-move-loop check, `if static_eval - margin*depth >= beta: return static_eval`, the natural third leg alongside the existing futility and razoring, currently absent). Read `src/search/search.cpp`'s `negamax()` (the existing futility/razoring implementation immediately above the move loop is the natural insertion point and template to follow) before writing anything.
-
----
-
-
-
-**Built:**
-- `src/search/ordering.h`/`.cpp`: new `CaptureHistoryTable` class (update/malus/score, keyed by attacker/victim piece type), wired into `score_move()`'s capture branch alongside MVV-LVA; module-level header comment corrected to state plainly that plain SEE does NOT feed into ordering here (only MVV-LVA + capture history do).
-- `src/search/search.cpp`: `#include "search/see.h"` added; new `kSeePruningMaxDepth`/`kSeePruningThresholds` constants and a new cascading skip check in `negamax()`'s move loop, alongside futility/LMP/history pruning, pruning a capture outright when its pre-move SEE value falls below a depth-scaled threshold. `capture_history` threaded through `order_moves()`/`negamax()`/`search_root()`'s entire call chain (10+ recursive call sites, 4 construction sites, 2 signatures). New per-node capture-tracking arrays (mirroring Session 94's own quiet-move ones); capture beta cutoffs now update/malus `CaptureHistoryTable` the same "bonus for the cutoff move, malus for every other genuinely-searched capture" way quiet moves already work. `negamax()`'s own header comment updated with a new paragraph documenting both additions.
-- `docs/ROADMAP.md`: SEE-based capture pruning / capture-history item in the Priority Fixes section checked off.
-- `tests/ordering_tests.cpp`: 7 new `CaptureHistoryTable` unit tests (unrecorded/update/malus/net-against-update/independent-pairs/clamp/floor) + 1 new `order_moves()` integration test confirming capture history re-ranks two MVV-LVA-tied captures.
-- `tests/search_tests.cpp`: 1 new integration test, reusing the same forced-mate-in-3 fixture every other move-ordering/pruning technique in this file already regression-tests against.
-
-**Bugs fixed:** none in the delivered code — but one was caught and fixed DURING this session's own development, before delivery: an early draft of the SEE-pruning check called `static_exchange_evaluation()` AFTER `make_move()` had already been applied for that iteration, violating SEE's own documented precondition (`see.h`: `pos` must reflect the position BEFORE the move). Caught by this session's own real build-and-test verification, not source review alone; fixed by computing the SEE value earlier in the loop, before `make_move()`, alongside the already-existing pre-move `captured_piece` computation, and threading it down as a local (`capture_see`) for the pruning check to consult.
-
-**Decisions made:** full rationale in docs/DECISIONS.md, 2026-09-08 (4) — most notably, a correction of the external review's own stated premise that SEE was already used for capture ordering (it was not; SEE was previously used only by `quiescence.cpp` for its own bad-capture pruning, never in the main search and never for ordering anywhere in this codebase before this session). Also covers: why SEE itself isn't folded directly into `order_moves()`'s own capture scoring (cost per node vs. benefit already captured by pruning + the cheaper capture-history signal); why `CaptureHistoryTable` is keyed on piece type only, not square; and why a linear (not quadratic) SEE-pruning threshold was chosen for a first implementation.
-
-**Verification performed:** full repo cloned into a scratch build with all 5 changed files applied; real CMake+Catch2 Release build rebuilt clean; `ctest` fully green — **517 test cases, 100% passing** (508 carried over from Session 94 + 9 new this session). `bench` RE-RUN: **81197 total nodes**, DOWN from Session 94's own 82166-node figure (-1.2%) — a net decrease, the expected direction for a technique that prunes nodes outright rather than only reordering them (the opposite direction from Session 94's own malus-driven increase). No strength claim made from the node-count shift alone; a real `nightwing_match`/`nightwing_sprt` head-to-head was not run this session.
-
-**Next session start point:** ROADMAP.md's Priority Fixes section (2026-09-08) — every quick/cheap item is now done; the next open item is reverse futility / static null-move pruning (a node-level pre-move-loop check, the natural third leg alongside the existing futility and razoring checks already in `negamax()`). Read `search.cpp`'s existing futility-pruning and razoring header-comment sections in full before starting (both already establish the exact node-level-check-before-the-move-loop pattern the new check should follow) — no need to re-read the move-ordering machinery this and the prior session already touched unless debugging.
-
----
-
-### Session 94 — 2026-09-08 — History malus/gravity added to HistoryTable/ContinuationHistoryTable
-
-**Built:**
-- `src/search/ordering.h`/`.cpp`: `HistoryTable::malus()` and `ContinuationHistoryTable::malus()` — a depth-squared penalty (mirroring `update()`'s existing bonus), floored at each table's existing ceiling's negative mirror. Scores can now go negative.
-- `src/search/search.cpp`: `negamax()`'s move loop now tracks every quiet move genuinely given a real search at a node (not moves skipped outright by futility/LMP/history pruning) in two fixed-size, `board::kMaxMoves`-sized arrays; on a beta cutoff, every tracked quiet move except the one that caused the cutoff gets `malus()` on both tables.
-- `docs/ROADMAP.md`: history malus item in the Priority Fixes section checked off.
-
-- `tests/ordering_tests.cpp`: 6 new unit tests (`HistoryTable::malus()` basic/net-against-update/floor-clamped; `ContinuationHistoryTable::malus()` basic/`PieceType::None`-no-op/floor-clamped).
-- `tests/search_tests.cpp`: 1 new integration test, reusing the same forced-mate-in-3 fixture every other move-ordering/pruning technique in this file already regression-tests against, confirming the mate is still found correctly with malus active end-to-end.
-
-**Bugs fixed:** none — this is new functionality, not a fix. (See Session 93 for the SEE king-legality bug fix.)
-
-**Decisions made:** full rationale in docs/DECISIONS.md, 2026-09-08 (3) — why futility/LMP/history-pruning-skipped moves are excluded from malus (no real search evidence against them); why a fixed-size per-node tracking array was used rather than re-deriving searched-quiet-move status from `moves`' own pre-loop ordering; and, notably, an explicit decision NOT to add the periodic aging/halving the external review paired with its malus recommendation, since `HistoryTable`/`ContinuationHistoryTable` are already scoped to reset every top-level search call (the "long game" staleness concern that recommendation targets doesn't apply the same way until/unless a persistent global History table is ever added alongside the already-queued persistent-TT item).
-
-**Verification performed:** full repo cloned into a scratch build with all 5 changed files applied; real CMake+Catch2 Release build rebuilt clean; `ctest` fully green — **508 test cases, 100% passing** (501 carried over from Session 93 + 7 new this session). `bench` RE-RUN (not just re-verified unchanged, since this change genuinely alters move ordering): **82166 total nodes**, up from the established 81029-node baseline (+1.4%, mixed across the 4 fixed positions — 2 down, 2 up) — logged with full justification in docs/DECISIONS.md, 2026-09-08 (3) per ARCHITECTURE.md's Testing Policy. No strength claim made from the node-count shift alone; a real `nightwing_match`/`nightwing_sprt` head-to-head was not run this session.
-
-**Next session start point:** ROADMAP.md's Priority Fixes section (2026-09-08) — next open item is SEE-based pruning of bad captures in the main search (plus the related smaller capture-history-table addition), `src/search/search.cpp`'s `negamax()` move loop and `src/search/see.h`'s already-public `static_exchange_evaluation()`. Read `search.cpp`'s move loop in full before starting (same function this session's own history-malus work already touched) and re-skim `see.h`'s public interface (no need to re-read `see.cpp` itself unless debugging).
-
----
-
-### Session 93 — 2026-09-08 — External review intake + Priority Fixes: SEE king-legality bug fixed
-
-**Built:**
-- Two external documents reviewed: a full-repo code review (independently rebuilt/tested, 500 cases / 53,403 assertions, perft/UCI/`bench` verified, a depth-5-vs-depth-4 self-play sanity match at +52.5 Elo) and a companion design document scoping an extension of the Texel tuner to PSQT parameters.
-- `docs/ROADMAP.md`: new "Priority Fixes (external code review, 2026-09-08)" section inserted ahead of the Release & Packaging track and Phase 9, listing all findings from both documents (SEE king-legality — done this session; history malus; SEE-based bad-capture pruning; persistent TT; reverse futility; continuous LMR; an "improving" flag; correction history; recapture/passed-pawn extensions; Lazy SMP helper diversification; pawn storms/connected passed pawns; and Tier 0, the full eval-tuning extension, tracked as its own multi-session sub-effort).
-- `src/search/see.cpp`: the swap loop now stops when the next selected attacker is the king and the opponent still attacks the target square afterward (an illegal king "recapture" into check), instead of simulating that move.
-- `src/search/see.h`: doc comment updated to note this one carved-out legality exception, so it no longer overclaims a blanket "ignores all recapture legality" simplification.
-- `tests/see_tests.cpp`: new case — a king as the sole defender behind a second attacker, confirming the exchange correctly stops rather than simulating the illegal recapture.
-
-**Bugs fixed:** SEE's swap algorithm let a hypothetical king "recapture" proceed even when the opponent still attacked the square afterward (an illegal king move into check) — see docs/DECISIONS.md, 2026-09-08 (1), for cause/fix/why-correct, including the by-hand arithmetic confirming this bug was numerically self-limiting in practice (the king's large SEE sentinel value dwarfs any realistic material total) and the fix is a correctness/hygiene fix, not one expected to change any existing test's result.
-
-**Decisions made:** review intake and Priority Fixes section rationale in docs/DECISIONS.md, 2026-09-08 (2); the SEE fix itself in 2026-09-08 (1).
-
-**Verification performed:** full repo cloned into a scratch build, real CMake+Catch2 build (Release) rebuilt clean with the changed files applied — **501 test cases, 100% passing** (500 pre-existing + 1 new `see_tests.cpp` case). `bench` reverified byte-for-byte unchanged (**81029 total nodes**). Additionally, by-hand re-derivation of the old-vs-new backward-resolution arithmetic for the new test's exact position, confirming the old (buggy) code's own backward min-max resolution already coincidentally converges to the same numeric verdict (100) via the king-value-dominance argument in DECISIONS.md, 2026-09-08 (1) — i.e. this fix is confirmed correctness/hygiene-motivated, not expected to move any existing eval/search number.
-
-**Next session start point:** ROADMAP.md's new Priority Fixes section (2026-09-08) has its next open item: history malus/gravity in `HistoryTable::update()` (`src/search/ordering.cpp`) — add malus on non-cutoff quiet moves searched at a node, plus periodic aging/halving. Read that file in full before starting (a fixed HistoryTable size/update path is being modified, not a fresh module).
-
----
-
-### Session 92 — 2026-09-08 — Phase 8: README, build instructions, engine info via `uci` — Phase 8 complete
-
-**Built:**
-- New top-level `README.md`: project description, the NO-NNUE/NO-tablebase constraint stated up front as permanent, a feature summary (search/eval/tuning-testing infrastructure/UCI), build instructions (CMake configure+build, `bench`, `ctest`), a repository-layout diagram, and an attribution-policy pointer.
-- `CMakeLists.txt`: `project(nightwing VERSION 0.1.0 LANGUAGES CXX)` — a real version number, now the single source of truth. New `configure_file()` call generates `build/generated/nightwing/version.h` from a new checked-in template, `src/version.h.in`.
-- `src/uci/uci.cpp`: `id name` now reports `Nightwing 0.1.0` (real version, previously bare `Nightwing`) via the newly generated header.
-
-**Design rationale (full detail in docs/DECISIONS.md, 2026-09-08):** the version lives in exactly one place (CMake's own `project()` declaration) and is generated into C++ rather than hand-duplicated as a separate string literal, so a future version bump can't silently drift between the two. No LICENSE file was added — a genuine ownership decision left for the repository's owner to make explicitly, not invented on their behalf.
-
-**Verification performed:**
-- Full test suite rebuilt via a genuine CMake+Catch2 build and rerun clean — **500 test cases, 100% passing** (the pre-existing `id name` substring-match test in `tests/uci_tests.cpp` is unaffected by the appended version number).
-- `bench` reverified byte-for-byte identical to the established baseline (**81029 total nodes**) after the change.
-- The generated `version.h` and the actual compiled binary's real `uci` response were both inspected directly (`id name Nightwing 0.1.0` confirmed against real output, not assumed from the CMake logic alone) — this also caught and fixed a minor self-referential artifact in the template's own explanatory comment (CMake's `@ONLY` substitution had silently replaced the comment's own illustrative `@PROJECT_VERSION@` example text).
-
-**This closes the last open item in Phase 8 (Polish & Tournament Readiness) — Phase 8 is now complete.** Two items carry an honestly-flagged external-verification gap this sandbox cannot itself close (real-GUI pondering interop; real fishtest/OpenBench interop for `bench`'s own output format) — both already noted at their own ROADMAP.md items, not new findings this session. Both items marked optional (Skill level/strength limiting, Contempt/draw score adjustment) were completed anyway, in Sessions 90 and 91.
-
-**Next session start point:** ROADMAP.md's sequential Phase 0–8 order is now fully complete. The next candidates are the unlabeled Release Automation phase (CI release job, native binary publishing, wasm build — immediately below Phase 8 in ROADMAP.md) and Phase 9 (Advanced/Stretch Goals), neither of which is part of the sequential phase order the way Phases 0–8 were — read ROADMAP.md directly to choose, since no single "next incomplete item" ordering applies here the way it did through Phase 8.
-
----
-
-### Session 91 — 2026-09-07 — Phase 8: Contempt / draw score adjustment (optional)
-
-**Built:**
-- `src/search/search.cpp`: new `contempt_draw_score(pos, contempt_white_pov)` helper (just above `negamax()`) with the full sign-derivation doc comment; `negamax()` and `search_root()` each gained a new trailing `int contempt_white_pov = 0` parameter, threaded through all 9 (`negamax()`) / 3 (`search_root()`) of their own internal negamax()/quiescence() call sites, and used at each function's own draw-scoring points. `run_lazy_smp_helper()` (forward declaration + definition) also updated so Lazy SMP helper threads use the same contempt-adjusted scores as the main thread. Public entry points `search_fixed_depth()` and `search_iterative_deepening()` (`search.h`/`.cpp`) each gained a new trailing `int contempt_cp = 0`, computing the fixed White-perspective `contempt_white_pov` exactly once at entry and threading it down; `search_iterative_deepening_multipv()` also updated to accept and thread the already-derived value through its own 2 call sites.
-- `src/search/quiescence.h`/`.cpp`: `quiescence()`/`quiescence_impl()` gained the same new trailing parameter; a duplicate `contempt_draw_score()` helper added (matching this file's own existing `in_check()` duplication precedent) and used at its own stalemate-terminal case.
-- `src/uci/uci.cpp`: new `Contempt` UCI spin option (default 0, min -100, max 100 — `kMinContemptCp`/`kMaxContemptCp`), wired through `handle_setoption()`/`handle_go()`/`run()`. Deliberately not threaded into `start_pondering()` — same accepted scope limit as `Skill Level`/`MultiPV`.
-- `tests/contempt_tests.cpp` (new, 6 cases): immediate-stalemate sign checks in both directions, a side-to-move-relative (not fixed-color) sign check, and a real multi-ply propagation test reusing `tests/search_tests.cpp`'s own forced-draw-by-repetition fixture — confirms contempt survives several plies of real negamax recursion intact, and that even maximum-configured contempt (100) never overturns a queen's-worth (~900) of material.
-- `tests/uci_tests.cpp`: 6 new cases mirroring the `Skill Level` pattern (Session 90) — option advertisement, byte-for-byte-identical-at-default proof, clamping, malformed input, `ucinewgame` persistence.
-- `src/CMakeLists.txt`/`tests/CMakeLists.txt`: registered `tests/contempt_tests.cpp`.
-
-**Design rationale (full detail in docs/DECISIONS.md, 2026-09-07 (2)):** a fixed White-perspective contempt value, derived once per search and threaded unchanged through the entire recursive search core, correctly accounts for negamax's own per-ply score negation so a drawn line is worth a consistent `-contempt` from the root's own fixed perspective regardless of depth or whose turn it falls on. Range capped at one pawn each direction (matching `kSkillNoiseCapCp`'s own reasoning, Session 90) specifically so contempt can only ever nudge draw preference, never substitute for genuine positional judgement on a materially lopsided position.
-
-**Verification performed:**
-- `tests/contempt_tests.cpp`'s 6 new cases and `tests/uci_tests.cpp`'s 6 new cases all pass.
-- Full test suite rebuilt via a genuine CMake+Catch2 build and rerun clean — **500 test cases, 100% passing** (494 before this session's 12 new cases across the two files).
-- `bench` reverified byte-for-byte identical to the established baseline (**81029 total nodes**) after the change — confirming this large, invasive threading change through the hot recursive search core (dozens of edited call sites across `search.cpp`/`search.h`/`quiescence.cpp`/`quiescence.h`) is completely behaviorally inert at the default `contempt_cp=0`.
-- Manually smoke-tested end to end via a real UCI session against the exact repetition fixture the unit test uses: `Contempt 100` correctly still found and played the forced draw, with the reported score showing exactly -100 instead of 0 — matching the unit test's own hand-derived expectation precisely.
-
-**Next session start point:** ROADMAP.md Phase 8 has one item left — README, build instructions, and engine info (name/author via `uci`). Read ROADMAP.md's own Phase 8 section directly and begin working immediately; this appears to be the final open item in Phase 8.
-
----
-
-### Session 90 — 2026-09-07 — Phase 8: Skill level / strength limiting (optional, for practice/handicap play)
-
-**Built:**
-- `src/search/skill.h`/`.cpp` (new): `nightwing::search::skill` module. `kMinSkillLevel=0`/`kMaxSkillLevel=20` (20 = full strength/disabled, this engine's own existing default). `is_skill_limited()`, `skill_search_multipv()` (silently raises the internal MultiPV line count to `kSkillSearchMultiPv`=8 when limiting is active and the user's own `MultiPV` is smaller), and `pick_skill_move()` (adds bounded random noise — capped at one pawn, `kSkillNoiseCapCp`=100, scaling to zero at full strength — to each MultiPV candidate's own score before picking the highest adjusted one).
-- `src/uci/uci.cpp`: new `Skill Level` UCI spin option (default 20, min 0, max 20), wired through `handle_setoption()`/`handle_go()`; a session-lifetime `std::mt19937_64` (`skill_rng`), seeded once from `std::random_device`, never reseeded by `ucinewgame`. Book-move responses deliberately bypass skill limiting entirely (no MultiPV alternatives exist to weigh for a book hit). Deliberately not threaded into `start_pondering()` — same accepted scope limit as `MultiPV`-during-pondering.
-- `tests/skill_tests.cpp` (new, 10 cases): pure-logic, fully deterministic tests over hand-built `SearchResult` vectors and explicitly-seeded generators — zero-RNG-consumption proofs at full strength, a near-mate line never overturned across 200 fixed-seed trials at the weakest setting, real variability confirmed between two genuinely close lines, and a direct comparison confirming weaker settings pick the worse line strictly more often than a middling setting over the same seed stream.
-- `tests/uci_tests.cpp`: 7 new cases — option advertisement, a byte-for-byte-identical-`bestmove` proof that explicit "Skill Level 20" behaves exactly like never touching the option, a limited level still returning a legal `bestmove` with genuinely expanded `info multipv N` reporting, out-of-range/malformed-input handling, `ucinewgame` persistence, and book-hit bypass.
-- `src/CMakeLists.txt`/`tests/CMakeLists.txt`: registered the new source/test files.
-
-**Design rationale (full detail in docs/DECISIONS.md, 2026-09-07):** weakens only the FINAL move choice, never the search itself — every `info` line stays genuine, full-strength analysis regardless of configured level, mirroring the general shape (not the code) of Stockfish's own classic Skill Level option. The one-pawn noise cap specifically guarantees a forced mate or large material win can never be discarded at any skill level, only a genuinely close alternative is ever put up for grabs. No `UCI_Elo`/`UCI_LimitStrength` companion option offered, deliberately — this project has no real measured Elo-to-skill-level calibration of its own, and offering one would overclaim precision it hasn't earned (same "don't overclaim strength that hasn't actually been measured" convention as `bench`'s own long-standing honest caveat).
-
-**Verification performed:**
-- `tests/skill_tests.cpp`'s 10 new cases pass in isolation via the fast raw-g++/Catch2-amalgamated path (linked with zero dependency on `move.cpp`/`search.cpp` at all — the module's own logic needs neither).
-- Full test suite rebuilt via a genuine CMake+Catch2 build and rerun clean in this sandbox — **488 test cases, 100% passing** (471 before this session's 17 new cases).
-- `bench` reverified byte-for-byte identical to the established baseline (**81029 total nodes**) after the change — zero impact on search/eval behavior.
-- Manually smoke-tested via a real UCI session: `setoption name Skill Level value 0` against a real position at `go depth 4` produced genuine 8-line MultiPV `info` output, and the reported `bestmove` was confirmed to be a real, legal, non-top-ranked alternative drawn from that same analysis — the mechanism engaging exactly as designed, not merely running without crashing.
-
-**Next session start point:** ROADMAP.md Phase 8 still has two open items — contempt/draw-score adjustment (optional) and README/build-instructions/engine-info-via-`uci`. Read ROADMAP.md's own Phase 8 section directly for the next incomplete item and begin working immediately.
-
----
-
-### Session 89 — 2026-09-06 — Follow-up: SPRT pipeline confirmed working on real GitHub Actions CI (not just the development sandbox)
-
-**What happened:** the `sprt-test` job (Session 88) was manually triggered on real GitHub Actions via the `pipeline: sprt` workflow_dispatch input, and the resulting `sprt-pipeline-results` artifact (`training_data.txt`, `tuned_weights.txt`, `sprt_result.txt`) was downloaded and inspected directly.
-
-**Confirmed directly from the real artifact, not the sandbox:**
-- `nightwing_selfplay` produced **224,825** real training positions in `training_data.txt` — a genuine self-play run, not an empty or truncated file.
-- `nightwing_tune` converged to plausible, non-degenerate weights: knight 274.821/310.71, bishop 290.325/321.62, rook 465.036/486.185, queen 876.494/892.185 (mg/eg) — all moved a believable amount from `eval::default_material_weights()`'s own untuned values, none collapsed to zero or blew up, consistent with the tuner working correctly against real self-play data rather than the small/synthetic inputs this project's own unit tests use.
-- `nightwing_sprt` ran the full pipeline against those tuned weights and reached `max_games` (2000) without crossing either bound: `llr=1.297`, `status=Continue`, `score_b=0.5065`, `elo_diff_b_minus_a=4.5`.
-
-**Honest interpretation, not overclaimed either direction:** a `Continue` (inconclusive) result at `max_games` is the CORRECT statistical outcome here, not a failure of the tool — the observed candidate edge (`elo_diff_b_minus_a=4.5`) sits almost exactly at the default `elo1=5` upper hypothesis, which is precisely the hardest case for any sequential test to resolve: the closer a true effect sits to one of the two configured hypotheses, the more games are needed before the test can tell that hypothesis apart from the other one at the configured confidence level. This is expected GSPRT behavior (docs/DECISIONS.md, 2026-09-06 (2), covers the method), not a defect — a genuinely larger or smaller real effect, or a larger `sprt_max_games`, would be expected to resolve to a definite `AcceptH0`/`AcceptH1` faster. The result also serves as an unplanned but welcome secondary confirmation of the tuner itself (Phase 5/7): tuning against 224,825 real positions produced weights close enough to the untuned baseline (~4.5 Elo, within this run's own measurement noise) that no dramatic tuning bug is indicated, while still being different enough from the defaults to confirm the tuner is doing real work, not just returning its own inputs unchanged.
-
-**Net effect:** the SPRT pipeline (ROADMAP.md Phase 8) is now confirmed working end-to-end on the actual target infrastructure (real GitHub Actions) — selfplay → tune → SPRT decision — not just in this development sandbox, closing the one open verification gap Session 88 left (CI-YAML-syntax-checked only, not yet run for real). Same pattern as Session 86's own confirmation of the `pgo-build` job.
-
-**Next session start point:** ROADMAP.md Phase 8 still has open items — skill-level/strength limiting (optional), contempt/draw-score adjustment (optional), and README/build-instructions/engine-info-via-`uci`. Read ROADMAP.md's own Phase 8 section directly for the next incomplete item and begin working immediately.
-
----
-
-### Session 88 — 2026-09-06 — Phase 8: SPRT testing setup/process for validating future changes
-
-**Built:**
-- `src/tuner/sprt.h`/`.cpp` (new): `nightwing::tuner::sprt` module implementing GSPRT (the generalized Sequential Probability Ratio Test used by Fishtest/OpenBench-style engine-testing infrastructure) as a from-scratch computation over cumulative win/draw/loss counts. `SprtConfig` holds two Elo hypotheses and two error-rate bounds (defaulting to the conventional Fishtest values, 0.05/0.05); `compute_sprt()` returns the current log-likelihood ratio, the two decision bounds, and a `Continue`/`AcceptH0`/`AcceptH1` status.
-- `src/tuner/sprt_main.cpp` (new): `nightwing_sprt` executable — reads a candidate `eval::MaterialWeights` from stdin (the same format `nightwing_tune`/`nightwing_match` already use) and plays it against `eval::default_material_weights()` in batches via the pre-existing, unchanged `tuner::play_match()`, checking SPRT after each batch and stopping as soon as one bound is crossed rather than committing to a fixed game count up front.
-- `.github/workflows/ci.yml`: new `sprt` `pipeline` option and `sprt-test` job (`workflow_dispatch`-only, same manual-trigger rationale as the pre-existing `tuning-pipeline`/`pgo-build` jobs), chaining self-play → tune → `nightwing_sprt` end to end; four new workflow inputs (`sprt_elo0`, `sprt_elo1`, `sprt_batch_size`, `sprt_max_games`) — `alpha`/`beta` deliberately left at the executable's own compiled-in defaults, not exposed as CI inputs (see docs/DECISIONS.md, 2026-09-06 (2), for why).
-- `tests/sprt_tests.cpp` (new, 11 cases / 22 assertions): logistic-model properties of `elo_to_score()`, exact default-bound values, the zero-games and all-draws (zero-variance) `Continue` edge cases, two hand-derived decisive win/loss records checked against manually computed LLR values, a small-sample-under-close-hypotheses `Continue` case, a monotonicity check, and a tighter-alpha/beta-widens-bounds check.
-- `src/CMakeLists.txt`/`tests/CMakeLists.txt`: registered the new source/test files and the new `nightwing_sprt` executable target.
-
-**Design rationale (full detail in docs/DECISIONS.md, 2026-09-06 (2)):** SPRT built as a genuinely separate module/executable on top of `tuner::match`'s own pre-existing, completely untouched `play_match()`, rather than growing `play_match()`/`MatchResult` a second, SPRT-aware calling convention; GSPRT (normal approximation over the 0/0.5/1 score) chosen over a literal two-outcome Wald SPRT specifically because chess has three game outcomes and GSPRT is information-preserving for any win/draw/loss mix, matching why Fishtest itself uses this method.
-
-**Verification performed:**
-- `tests/sprt_tests.cpp`'s 11 new cases pass in isolation (fast raw-g++/Catch2-amalgamated path, matching earlier sessions' own precedent for a quick single-module check) with hand-computed LLR values confirmed to match the implementation's own output before being written into assertions.
-- Full test suite rebuilt via a genuine CMake+Catch2 (FetchContent) build and rerun clean in this sandbox — **471 test cases, 100% passing**, including this session's 11 new `[sprt]`-tagged cases. (Earlier sessions, e.g. Session 85, found this full CMake+Catch2 build path too slow for this sandbox's per-command time limits and fell back to the raw-g++ path for a full-suite run; this session's attempt completed within a single command's time budget without needing that fallback.)
-- `bench` reverified byte-for-byte identical to the established baseline (**81029 total nodes**) after the change — confirms zero impact on search/eval behavior from this purely additive, standalone new module.
-- `nightwing_sprt` smoke-tested by hand against two real scenarios: a neutral, identical-weights candidate correctly staying `Continue` through an all-draws run at very shallow search depth (zero-variance edge case hit for real, not just in the unit test); a deliberately worse candidate correctly triggering an `AcceptH1`/`AcceptH0`-style decision partway through a batch run, with the tool's own reported LLR cross-checked against a hand computation of the GSPRT formula for that exact win/draw/loss split.
-- `.github/workflows/ci.yml` changes validated for correct YAML syntax (`python3 -c "import yaml; yaml.safe_load(...)"`) before delivery; the `sprt-test` job itself has NOT been run on real GitHub Actions yet (parallel to Session 85's PGO job, later confirmed working on real CI by Session 86) — flagging this honestly as still open, same pattern as that precedent.
-
-**Next session start point:** ROADMAP.md Phase 8 still has open items — skill-level/strength limiting (optional), contempt/draw-score adjustment (optional), and README/build-instructions/engine-info-via-`uci`. Read ROADMAP.md's own Phase 8 section directly for the next incomplete item and begin working immediately. If real GitHub Actions access becomes available, triggering the new `sprt-test` job once (parallel to Session 86's own PGO confirmation) would close the one open verification gap this session left (CI-YAML-syntax-checked only, not yet run for real).
-
----
-
-### Session 87 — 2026-09-06 — Phase 8: TT prefetch verified — a real placement defect found and fixed, but no measurable speed benefit confirmable in this sandbox
-
-**Built/fixed:**
-- `src/search/search.cpp`: the pre-existing `negamax()` prefetch was confirmed, by direct code inspection, to have zero intervening work between the prefetch call and the `tt.probe()` that immediately followed it (one line apart) — contradicting its own comment and ARCHITECTURE.md's documented intent that it "overlaps memory latency with move generation/ordering work," since movegen for that node actually happens considerably later. Fixed by adding a second, eager prefetch immediately after `board::make_move()` in the main move loop, using the child position's already-updated `pos.zobrist_hash` — genuine work (`in_check()` plus extension logic) now exists between that prefetch and the recursive call's own eventual probe. The original internal prefetch was kept, its comment corrected to describe accurately what it does and doesn't achieve, and documented as still the only prefetch covering the root call and the null-move/ProbCut recursive calls (both structurally unable to benefit from the same fix — see below).
-
-**Rigorous empirical measurement performed (this item's own wording specifically asks for "profiled, not assumed"):**
-- Built three separate binaries — original placement, this session's fix, and prefetch disabled entirely (both call sites no-op'd) — first confirmed all three produce byte-identical node counts, scores, and PVs at a real search depth (11 ply, a complex middlegame position), i.e., the change is provably behavior-neutral.
-- Ran an interleaved (not batched, to average out any non-stationary drift) A/B/C wall-clock comparison, 20 repetitions each at depth 12 (~3.2 seconds per run) with a 256 MB Hash (well beyond typical L2/L3 cache size, to maximize the chance of genuine cache-miss-driven differences showing up): trimmed-mean results were 3180.0ms (original), 3182.1ms (fix), 3173.4ms (no prefetch) — differences under 10ms against a measured standard deviation of roughly 100ms. No statistically or practically significant difference between any of the three.
-
-**Honest interpretation, not overclaimed either direction:** this sandbox has no `perf`/hardware-performance-counter tooling available, and is a virtualized/shared-CPU environment where genuine memory-latency effects are difficult to isolate from ordinary scheduling noise — the null result here means this sandbox specifically cannot substantiate a measurable benefit, not that prefetching provides zero benefit on real, dedicated target hardware. The code-level fix is kept anyway: it's logically sound (a genuine overlap window now exists where none did before) and provably costs nothing (identical node counts, negligible added instructions), even without a confirmed measurable uplift here.
-
-**Verification performed:** full suite (458 cases) recompiled and rerun 3 consecutive times, plus under `-fsanitize=address,undefined` — all green every time, bench node counts byte-for-byte unchanged (confirming the change altered nothing about search behavior, only its instruction-level composition).
-
-**Next session start point:** Read ROADMAP.md's own Phase 8 section directly for the next incomplete item (SPRT testing setup, skill-level limiting, contempt, README/build docs are all still open — flag to a future session with real hardware/`perf` access that a more conclusive TT-prefetch performance measurement, beyond what this sandbox could provide, would still be valuable if search speed becomes a priority) and begin working immediately.
-
----
-
-### Session 86 — 2026-09-06 — Follow-up: PGO pipeline confirmed working on real GitHub Actions CI (not just the development sandbox)
-
-**What happened:** the `pgo-build` job (Session 85) was manually triggered on real GitHub Actions via the `pipeline: pgo` workflow_dispatch input, and the resulting `nightwing-pgo-linux` artifact was downloaded and inspected directly.
-
-**Confirmed directly from the real artifact, not the sandbox:**
-- The uploaded binary is a genuine, valid ELF 64-bit executable — not an empty/corrupt upload.
-- `./nightwing bench` on the real CI-built binary reports **81029 total nodes** — byte-identical to this project's long-standing baseline, confirming the real CI-run PGO build changed nothing about what the engine computes, only how it's compiled, exactly as intended.
-- Normal UCI operation (`uci`/`isready`/`position`/`go`/`bestmove`) works correctly on the real artifact.
-- No leftover `gcov`/profiling symbols in the binary (checked via `strings`) — confirms this is the clean, final `-fprofile-use`-rebuilt binary the pipeline is supposed to upload, not an accidentally-uploaded instrumented copy from the `generate` phase.
-- The job reached its final "Upload PGO-optimized binary" step and produced a downloadable artifact at all — since that step comes after `ctest --output-on-failure` in the job's own step sequence, and no step in this job sets `continue-on-error`, this is strong (if indirect — the actual CI log output was not itself reviewed) evidence the full test suite also passed in `use` phase on real CI infrastructure, closing the gap Session 85 could only leave open due to this sandbox's own resource/time constraints on the CMake+Catch2-FetchContent build specifically.
-
-**Net effect:** the PGO build pipeline (ROADMAP.md Phase 8) is now confirmed working end-to-end on the actual target infrastructure (real GitHub Actions), not just in this development sandbox — the honest caveat Session 85 recorded ("not completed end-to-end via CMake specifically... a sandbox resource/time constraint") has been substantively addressed by this real run, though the actual CI log/test-output text itself was not directly reviewed (only the resulting artifact).
-
-**Next session start point:** Read ROADMAP.md's own Phase 8 section directly for the next incomplete item (TT prefetch verification, SPRT setup, skill-level limiting, contempt, README/build docs are all still open) and begin working immediately.
-
----
-
-### Session 85 — 2026-09-05 — Phase 8: Profile-Guided Optimization (PGO) build pipeline
-
-**Built:**
-- `CMakeLists.txt`: new `NIGHTWING_PGO_PHASE` cache STRING (`""`/`"generate"`/`"use"`), GCC/Clang only (MSVC explicitly rejected with a clear `FATAL_ERROR` message, not silently ignored). Applies `-fprofile-generate=<dir>` or `-fprofile-use=<dir> -fprofile-correction -Wno-missing-profile` globally across every target's compile and link steps.
-- `.github/workflows/ci.yml`: new `pgo-build` job (`workflow_dispatch`-only, Linux, same manual-trigger rationale as the existing `tuning-pipeline` job) implementing the full two-stage pipeline: configure+build instrumented → run a training workload (`bench` plus two ordinary `go depth 8` searches, chosen so the opening book also gets real profile coverage, not just `bench` alone which bypasses it entirely) → reconfigure the SAME build directory into `use` phase → rebuild → run the full test suite → re-run `bench` as a correctness cross-check → upload the optimized `nightwing` binary as an artifact.
-
-**A real gotcha found and documented, not just designed around after the fact:** a standalone sandbox prototype (raw g++, before any CMake/CI files were touched) revealed that GCC ties each `.gcda` profile file to the specific OUTPUT BINARY NAME active during the generate-phase compile. Using a different name between the generate and use phases — even with identical source and an identical build directory — produces a full set of "missing profile" warnings that `-Wno-missing-profile` would then silently mask, yielding a binary that compiles and runs fine but received NONE of the intended PGO optimization, with no error to signal the mistake. This is now called out explicitly in `CMakeLists.txt`'s own option comment and the CI job's own comments, and the CI job is structured (same build directory, same target name, both phases) to never hit it.
-
-**Verification performed, in increasing order of fidelity to the real pipeline:**
-1. Raw g++ prototype of the engine binary alone (lib + main.cpp): generate-phase build, real training run producing 42 `.gcda` files, use-phase rebuild with the same output name — bench output byte-identical (81029 nodes) to a plain `-O3` baseline, confirming PGO changes speed, not behavior.
-2. `cmake` was not installed in this sandbox at session start — installed via `pip install cmake --break-system-packages` specifically to verify the real `CMakeLists.txt` (not just a hand-rolled g++ approximation of what it does). Confirmed: clean configure in both phases, clean build of the actual `nightwing` engine target in both phases via real CMake, zero missing-profile warnings on rebuild, and correct (baseline-matching) bench output from the CMake-built PGO binary specifically.
-3. The full 458-case Catch2 test suite was compiled and run under genuine PGO instrumentation (via the faster raw-g++/Catch2-amalgamated path — the CMake+Catch2-FetchContent test-binary build proved too slow for this sandbox's per-command time limits, and a backgrounded build attempt was found not to persist across separate tool invocations in this environment), then recompiled with `-fprofile-use -fprofile-correction -Wno-missing-profile` using the identical output name, and rerun 3 consecutive times: all green every time, 458/458 cases, node counts unchanged from every prior session's own baseline.
-
-**Left honestly incomplete, noted in ROADMAP.md:** the CMake-driven (not raw-g++) build of the Catch2-based test binary specifically, in `use` phase, wasn't completed end-to-end in this sandbox — a resource/time constraint of this specific environment (Catch2's own FetchContent+compile is genuinely slow here, independent of PGO), not a known or suspected defect in the PGO flags themselves, which were validated via the raw-g++ path using the exact same file set and flags.
-
-**Next session start point:** Read ROADMAP.md's own Phase 8 section directly for the next incomplete item (TT prefetch verification, SPRT setup, skill-level limiting, contempt, README/build docs are all still open) and begin working immediately.
-
----
-
-### Session 84 — 2026-09-05 — Phase 8: `bench` command (fishtest/OpenBench-style regression benchmark)
-
-**Built:**
-- New `src/bench_positions.h`: the four-position, depth-6 bench set (startpos, Kiwipete, a quiet middlegame, a forced-mate endgame) factored out of `tests/bench_tests.cpp` into one shared header, specifically so it and the new real `bench` command below can never silently drift apart into reporting different things for what's nominally "the same" bench. `tests/bench_tests.cpp` updated to consume this shared header instead of its own local copy — no behavioral change to that test.
-- `src/uci/uci.cpp`: new `uci::run_bench(std::ostream&)`, declared in `uci.h`. Runs every position in the shared set to the shared fixed depth via `search_fixed_depth()` (single-threaded, default Hash size, unconditionally — not configurable through this command, since reproducibility across machines/commits is the entire point of a bench a testing harness diffs output against, and either Lazy SMP or a differently-sized TT would perturb node counts). Writes a standard fishtest/OpenBench-parseable summary (`Total time (ms)` / `Nodes searched` / `Nodes/second`) — external tooling greps specifically for the `Nodes searched` line. Recognized as a `bench` command in `run()`'s own dispatch, for tooling that drives engines purely over UCI stdin/stdout.
-- `src/main.cpp`: `./nightwing bench` recognized as a special first command-line argument (the more common way fishtest/OpenBench actually invoke an engine) — runs the board-subsystem init, calls `run_bench()` directly, and exits without starting the interactive UCI loop or initializing the opening book (irrelevant to what bench measures).
-- 3 new tests in `tests/uci_tests.cpp` (`[bench]`): the `bench` UCI command's output format, an independent cross-check that its reported total matches a fresh computation over the same shared position set (not a hardcoded, potentially-stale expected number), and that a `bench` followed by an ordinary `go` still works normally.
-
-**Verified beyond the permanent test suite:** the actual compiled engine binary was built and run directly in this sandbox for both entry points — `./nightwing bench` and `bench` typed at the interactive UCI prompt — confirming real, working output (not just passing unit tests around it), and confirming both entry points produce byte-for-byte identical results since both call the same `run_bench()`. The reported total (81029 nodes) matches the pre-existing internal regression bench's own long-standing baseline exactly, cross-confirming the new command's node counts are genuinely the same computation, not a divergent one.
-
-**Left honestly open, noted in ROADMAP.md:** real interoperability with actual fishtest/OpenBench infrastructure — neither is reachable from this development environment, so the output format (matching the convention several established engines use) is believed-correct by convention rather than confirmed working end-to-end against that specific tooling. Same category of caveat as the "Pondering — protocol side" item's own outstanding real-GUI verification.
-
-**Verification performed:** full suite (458 cases, up from 455) recompiled and rerun 3 consecutive times, plus under `-fsanitize=address,undefined` (including a separate ASan build of the actual `main.cpp`-based engine binary, exercising the CLI `bench` path specifically, not just the test-harness path) — all green, bench node counts/scores unchanged from every prior session's own baseline.
-
-**Next session start point:** Read ROADMAP.md's own Phase 8 section directly for the next incomplete item (PGO build pipeline, TT prefetch verification, SPRT setup, skill-level limiting, contempt, README/build docs are all still open) and begin working immediately.
-
----
-
-### Session 83 — 2026-09-05 — Phase 8: Time management (`movestogo` allocation + best-move-stability-based early stop)
-
-**Built:**
-- `src/search/search.h`/`src/search/search.cpp`: `search_iterative_deepening()` gained a trailing `int soft_time_limit_ms = 0` parameter (default = fully unaffected, matching every prior parameter's own backward-compat pattern). The single-line iteration loop now tracks how many consecutive completed iterations reported the identical `best_move`; once that streak reaches a new `kStabilityThreshold` (4) constant AND elapsed time has passed `soft_time_limit_ms`, the loop stops early — the existing hard `time_limit_ms` deadline is completely unchanged and can never be exceeded because of this. Not threaded into the MultiPV path (`search_iterative_deepening_multipv()`), an accepted scope limit for the same reason MultiPV's own two simplifications are (documented at both functions' own definitions).
-- `src/uci/uci.cpp`: `allocate_time_ms()` reworked to return a `TimeAllocation{soft_ms, hard_ms}` pair instead of a single value, now accepting a `movestogo` parameter — when the GUI provides it, divides remaining time by the actual move count instead of the old fixed "assume ~20 moves left" guess (falls back to that same heuristic when absent/non-positive). The hard budget is `kHardBudgetMultiplier` (3x) the soft budget, both still capped at `remaining_ms / 2` (the pre-existing safety invariant, now applied to both numbers). `compute_search_budget()` parses `movestogo` and populates a new `SearchBudget::soft_time_limit_ms` field — left at 0 (no soft budget) for an explicit `movetime` or bare `depth`, since those are deliberate instructions, not estimates (same convention Move Overhead already established for those two cases). `handle_go()` threads the soft budget through; `start_pondering()` deliberately does NOT — its background search stops via a fixed-delay watchdog after `ponderhit`, a completely different mechanism than the iterative-deepening loop's own soft/hard check, and reconciling the two is real, separate future work (documented at that function's own definition, not silently skipped).
-- 3 new search-level tests (`tests/search_tests.cpp`, `[time_management]`) with real wall-clock timing assertions (generous margins, empirically verified via a standalone diagnostic before being written into the permanent suite — not guessed): default behavior unaffected, a stable position (hanging-queen capture) stops well before the hard cap once a soft budget is set, and an unstable position (the starting position itself) still respects the hard cap regardless. 2 new UCI-level tests (`tests/uci_tests.cpp`, `[time_management]`) confirming `movestogo` parses safely, including malformed values (0, negative, non-integer) falling back cleanly rather than crashing.
-
-**A note on the starting position's own instability:** the "unstable" test case above relies on a real, previously-confirmed phenomenon — the starting position's own best move keeps changing across shallow iterations (the same search instability documented for MultiPV, docs/DECISIONS.md 2026-09-05 (2)), which is exactly why it was chosen as a reliable "never triggers early stop" test case rather than an assumption.
-
-**Verification performed:** a standalone diagnostic (not part of the permanent suite) measured real behavior first — no-soft-limit search ran the full 3-5 second budget regardless of position; the starting position with a soft limit set STILL ran the full hard budget (confirming genuine instability, not a bug); a hanging-queen and a KQ-vs-K position both dropped from running the full 5-second hard cap down to 87-403ms once a small soft budget was added — before any assertion thresholds were chosen, so the permanent tests' margins are based on observed real behavior, not guesses. Full suite (455 cases, up from 450) recompiled and rerun 3 consecutive times, plus under `-fsanitize=address,undefined` and two different `--order rand` seeds — all green every time, bench node counts/scores byte-for-byte unchanged.
-
-**Next session start point:** ROADMAP.md's "Time management" bullet is now fully checked off. Read ROADMAP.md's own Phase 8 section directly for the next incomplete item (`bench` command, PGO build pipeline, TT prefetch verification, SPRT setup, skill-level limiting, contempt, README/build docs are all still open) and begin working immediately.
-
----
-
-### Session 82 — 2026-09-05 — Phase 8: `Ponder` UCI option advertisement (protocol side only — pondering itself already fully implemented)
-
-**Built:** `src/uci/uci.cpp` now advertises `option name Ponder type check default true` in the `uci` response, and `handle_setoption()` accepts `setoption name Ponder value <true|false>` without error but with deliberately no behavioral effect — pondering support (`go ponder`/`ponderhit`/`stop`) has been fully implemented and tested since Session 75/76 entirely independently of this option's value, so there's nothing for either value to gate; a compliant GUI only ever uses this option to decide whether IT sends `go ponder`, never to tell the engine to withdraw support once advertised. 2 new tests in `tests/uci_tests.cpp` (`[ponder]`): the advertisement string, and that `setoption name Ponder value false`/`value true` are both accepted cleanly and a subsequent ordinary `go` still works normally either way.
-
-**Explicitly NOT done, left open in ROADMAP.md:** real verification against an actual GUI (Arena, CuteChess, etc.) as ROADMAP.md's own item text calls for — this sandbox has no way to run either GUI. Only protocol-level (the exact `uci` response string) and unit-level correctness have been confirmed. This should be flagged to whoever next has access to a real GUI to close out the item properly; it would be dishonest to check this off as fully done.
-
-**Verification performed:** full suite (450 cases, up from 448) recompiled and rerun 3 consecutive times, plus once under `-fsanitize=address,undefined` — all green, bench unchanged (startpos 1274, kiwipete 8185, quiet_middlegame 6591, endgame_mate_in_3 64979/score 31995).
-
-**Next session start point:** Read ROADMAP.md's own Phase 8 section directly for the next incomplete item (time management, `bench` command, PGO build pipeline, TT prefetch, SPRT setup, README/build docs are all still open) and begin working immediately.
-
----
-
-### Session 81 — 2026-09-05 — Phase 8: `MultiPV` UCI option (completes "Full UCI option set")
-
-**Built:**
-- `src/search/search.h`: `SearchResult` gained `multipv_index` (1-based rank, default 1) and `multipv_lines` (a self-referential `std::vector<SearchResult>`, confirmed to compile fine on this project's toolchain), both left at their defaults for every ordinary, non-MultiPV call. `search_iterative_deepening()` gained a trailing `int multi_pv = 1` parameter.
-- `src/search/search.cpp`: `search_root()` gained an `excluded_moves` span parameter implementing classic root-move exclusion — filters generated legal moves before ordering/searching begins, a no-op by default so every pre-existing call site is unaffected. New `search_iterative_deepening_multipv()` implements the full MultiPV loop as a completely **separate function** from the single-line path, deliberately, to keep the latter's well-tested code untouched. Two documented first-draft simplifications: no aspiration windows (every line searches the full window) and no Lazy SMP (helper threads ignored when MultiPV genuinely takes effect) — both accepted scope limits, not defects.
-- `src/uci/uci.cpp`: new `MultiPV` option (spin, default 1, min 1, max 256). `emit_info()` now always emits a `multipv N` token right after `depth D` (matches Stockfish's convention of always including it, costs nothing since the field already defaults to 1). `handle_setoption()`/`handle_go()`/`run()` extended to thread `multi_pv` through, following the exact same session-lifetime-state pattern as `Threads`/`Hash`/`Move Overhead`. Deliberately NOT threaded into `start_pondering()` — pondering never emits `info` lines at all and its `bestmove` always already reports the single best line, so extra MultiPV lines there would cost real time for zero observable effect.
-- 5 new unit tests in `tests/search_tests.cpp` (`[multipv]`) and 8 new UCI-level tests in `tests/uci_tests.cpp` (`[multipv]`).
-
-**Bugs found and fixed — both genuine, both caught by this session's own testing, neither hypothetical:**
-1. **Search-level ranking bug**: a standalone diagnostic (before any unit tests were written) showed MultiPV lines coming back out of score order — e.g. rank 3 scoring higher than rank 1 at the same depth. Cause: `killers`/`history`/`cont_history` are shared and mutated across every line's own `search_root()` call within one depth (deliberately, for cross-line ordering reuse), so the same subtree can be pruned differently (different LMR/null-move/futility decisions) depending on which line's search visits it first — real search instability, not a logic error in the exclusion mechanism itself. Fix: sort each depth's lines by score (`std::stable_sort`) before assigning rank — the standard technique real engines use, since exclusion-discovery order was never guaranteed to already be score-sorted order.
-2. **Test-infrastructure bug**: two new UCI-level tests (checking for a `multipv 2` token) used a bare `"position startpos"` rather than `"position startpos moves ..."`. This is a landmine every OTHER search-content test in `uci_tests.cpp` already knew to avoid (confirmed by grep — they all use `moves g1h3` or similar): the opening book (`src/book/book.h`) is a global singleton with no per-test reset, so once ANY earlier test in the same process calls `book::init_book()` (this file's own dedicated book test does exactly that), every LATER bare `"position startpos"` + `"go"` silently answers from book and skips search — and therefore `info`/`multipv` output — entirely, while still producing a perfectly valid non-null `bestmove` (which is why every PRE-EXISTING Hash/Threads/Move-Overhead test, which only ever checks for a valid `bestmove`, was accidentally immune, and only these new multipv-content-checking tests exposed it). Confirmed directly: both failing tests passed in isolation and in the `[multipv]`-tagged subset alone, failed identically and reproducibly (5/5 runs) only as part of the full 448-case suite, and passed again immediately after switching to `moves g1h3`. Fixed by using `moves g1h3` in every MultiPV UCI test that actually checks for `info`/`multipv` content, matching established convention; tests that only check for a valid `bestmove` were left as-is (accidentally book-safe already).
-
-**Decisions made:** logged in docs/DECISIONS.md, 2026-09-05 (2) — the separate-function design (vs. modifying the single-line path in place), the sort-before-rank fix, the no-aspiration-windows/no-Lazy-SMP scope limits, the `kMaxMultiPV` bounds rationale, and the book-singleton test gotcha now named explicitly for future sessions.
-
-**Verification performed:**
-- `search.cpp`/`uci.cpp` each compiled clean standalone (`-Wall -Wextra -Wpedantic`, zero warnings) before integration.
-- A standalone smoke-test program (not part of the permanent suite) exercised MultiPV end-to-end across depths 2/4/6 from the start position, confirming distinct moves per line and — after the sort fix — strictly non-increasing scores by rank at every depth tested.
-- Full suite (448 cases, up from 441 after this session's own — then temporarily 4-failing, now fixed — new tests) recompiled via this sandbox's own g++/Catch2-amalgamated harness and rerun 5 consecutive times, plus under `--order rand` with two different seeds and `--order lex`: all green every time, bench node counts/scores byte-for-byte unchanged (startpos 1274, kiwipete 8185, quiet_middlegame 6591, endgame_mate_in_3 64979/score 31995). Also reran clean under `-fsanitize=address,undefined` (full suite) given the self-referential-vector/nested-copy surface this session's changes touch.
-
-**Next session start point:** ROADMAP.md's "Full UCI option set" bullet is now fully checked off. Read ROADMAP.md's own Phase 8 section directly for the next incomplete item (candidates as of this entry: "Pondering — protocol side" i.e. the `Ponder` option advertisement, time management, `bench` command, PGO build pipeline, TT prefetch, SPRT setup, README/build docs) and begin working immediately.
-
----
-
-### Session 80 — 2026-09-05 — CI-driven bugfix: `Hash` option's 64 GiB max could hang/crash CI via a non-catchable allocation failure (ASan abort / real OOM-kill)
-
-**Context:** GitHub Actions run 91820797115 (the first real CI run of Session 79's `Hash`/`Move Overhead` work) showed the same new test — `"uci: an out-of-range 'setoption name Hash value ...' is clamped, not rejected..."` — failing on 3 of 6 matrix legs: Linux Debug (`Failed`, 1.93 sec), macOS Debug (`Subprocess killed`, 157.05 sec), macOS Release (`Subprocess killed`, 31.61 sec). Linux Release and both Windows legs passed.
-
-**Diagnosis:** downloaded and inspected the actual CI log artifact directly (not just the pass/fail summary). Linux Debug's log contained a full ASan report: `AddressSanitizer: out-of-memory` from inside `operator new` while constructing the `TranspositionTable`'s `std::vector<TTBucket>` — i.e. the allocation failed, but ASan aborted the process directly rather than letting `std::vector`'s allocator convert the failure into a throwable `std::bad_alloc`. This is ASan's own documented default (`allocator_may_return_null=0`): on allocation failure, call `Die()` and terminate, not throw. Session 79's `make_transposition_table()` fallback (which only catches `std::bad_alloc`) therefore never got a chance to run under ASan — which covers both Linux and macOS Debug in this project's CI matrix (CMakeLists.txt). macOS Debug/Release's longer, ASan-report-free "Subprocess killed" (157 sec / 32 sec before termination) is consistent with the real OS out-of-memory killer sending an uncatchable `SIGKILL` once actual physical memory pressure built up from genuinely trying to construct a many-GiB table — also never a catchable C++ exception. Root cause, in one sentence: `kMaxHashMB` (64 GiB) had no real relationship to what any actual CI runner (or plausibly a real user's machine) can reliably satisfy, and the allocation-failure fallback added in Session 79 cannot help against either of the two failure modes real hardware/tooling actually produces for a request that large.
-
-**Fix:** `src/uci/uci.cpp`'s `kMaxHashMB` lowered from 65536 (64 GiB) to 2048 (2 GiB) — a ceiling chosen to be comfortably below the RAM on every runner class in this project's CI matrix even accounting for ASan's shadow-memory overhead (~+12.5%), while remaining generous for actual engine use (most classical, non-NNUE engines run comfortably on a small fraction of this even at serious time controls). `search.cpp`'s `make_transposition_table()` fallback is kept as genuine defense-in-depth for the failure modes it CAN catch (a plain, non-ASan build where malloc failure is reported normally) but is explicitly documented, in both files, as not a substitute for keeping the ceiling itself realistic — its own doc comment now states plainly that it did not help in any of the three CI failures. `tests/uci_tests.cpp`'s advertisement-string test and the out-of-range-clamping test's comment updated to match the new bound (`max 2048`).
-
-**Why correct:** re-verified directly, not just reasoned about — full suite (436 cases) recompiled via this sandbox's own g++/Catch2-amalgamated harness and reran clean, plain build (~6 sec total) and, specifically matching the CI leg that actually failed, under `-fsanitize=address,undefined` as well (full suite, ~95 sec; the `[hash]`/`[overhead]`-tagged subset alone in ~11 sec, versus never returning at all before this fix). Bench node counts/scores unchanged from every prior session's baseline (startpos 1274, kiwipete 8185, quiet_middlegame 6591, endgame_mate_in_3 64979/score 31995).
-
-**Decisions made:** logged in docs/DECISIONS.md, 2026-09-05 — the root-cause diagnosis (ASan's non-catchable abort default, real OS OOM-kill), the choice to lower the ceiling itself rather than lean further on exception-based recovery, and why the earlier `make_transposition_table()` fallback, while still worth keeping, was never going to be sufficient by itself.
-
-**Next session start point:** Read ROADMAP.md's own Phase 8 section directly for its exact remaining item list (next up: either `MultiPV` to finish out "Full UCI option set," or "Pondering — protocol side") and begin working immediately. This fix is CI-log-verified locally (sandbox ASan run matching the failing CI config) but has not yet been confirmed green on GitHub Actions itself — worth a quick check of the next CI run before moving on, though not blocking.
-
----
-
-### Session 79 — 2026-09-04 — Phase 8: `Hash` and `Move Overhead` UCI options (part of "Full UCI option set")
-
-**Built:**
-- `src/search/search.h`: `kDefaultTTSizeMB` (16) promoted from a private `search.cpp` constant to a public `inline constexpr` in `nightwing::search`, so `src/uci/uci.cpp` can reference the same value as its own `Hash` option's advertised default rather than the two risking drift. Both `search_fixed_depth()` and `search_iterative_deepening()` gained a trailing `hash_size_mb = kDefaultTTSizeMB` parameter.
-- `src/search/search.cpp`: both entry points now size their own fresh, private `TranspositionTable` from `hash_size_mb` rather than the old hardcoded constant. Added a new helper, `make_transposition_table(requested_mb)`, that constructs the table with a fallback: on `std::bad_alloc`, halves the requested size and retries, down to a 1 MB floor, rather than letting the exception crash the engine — see Bugs fixed below for why this exists.
-- `src/uci/uci.cpp`: two new UCI options. `Hash` — spin, default 16, min 1, max 65536 (64 GiB; a sanity ceiling against a malformed/oversized `setoption` repeatedly reallocating a huge table on every `go`, not a real technical limit). `Move Overhead` — spin, default 0, min 0, max 5000 ms; subtracted (floored at 1 ms) from any positive computed time budget in `compute_search_budget()`, applied uniformly to both an explicit `movetime` and a `wtime`/`btime`-derived budget (simpler, and no less defensible, than the narrower "wtime/btime only" convention some engines use — deliberately not applied when `time_limit_ms == 0`, i.e. no real time control at all). `handle_setoption()` extended to recognize both, matching `Threads`'s existing clamp-not-reject convention for out-of-range/malformed values. `handle_go()`/`start_pondering()` thread both values through; `run()` owns them as `setoption`-driven, session-lifetime state, not reset by `ucinewgame` (same convention `Threads` already follows).
-- `tests/uci_tests.cpp`: 7 new tests (`[hash]`/`[overhead]` tags) — option-advertisement string with exact bounds, a normal in-range value still producing a legal `bestmove`, out-of-range values (both directions, both options) being clamped rather than rejected, malformed `setoption` lines (missing value, non-integer value) being silently ignored, and persistence across `ucinewgame`.
-
-**Deliberately deferred, documented inline in `uci.cpp`'s own header comment:** `MultiPV` (needs real multi-line search support — root-move exclusion, a second independent per-line search loop — that doesn't exist anywhere in this codebase yet; substantial enough to warrant its own dedicated session) and `Ponder` the option *advertisement* (pondering itself has been fully implemented since Session 75/76; the advertisement is ROADMAP.md's own separate next Phase 8 item, not part of this item's text). ROADMAP.md's "Full UCI option set" bullet is left unchecked, updated with a note on exactly what's done vs. what remains.
-
-**Bugs fixed:** a large but in-bounds `Hash` value (e.g. clamped to the new 64 GiB max) could throw `std::bad_alloc` uncaught from `TranspositionTable`'s constructor, crashing the engine on a memory-constrained machine — caught directly by this session's own new test suite (a `REQUIRE` for a legal `bestmove` after `setoption name Hash value 99999999` failed with an uncaught `std::bad_alloc`, not a hypothetical concern). Cause: no allocation-failure handling existed anywhere on the `Hash`-configurable path, since table size was a fixed, known-safe compile-time constant before this session. Fix: `make_transposition_table()` (`search.cpp`, described above) catches `std::bad_alloc` and halves the request down to a 1 MB floor before giving up. Correct because `TranspositionTable`'s own constructor already guarantees a 1 MB request yields a genuinely usable minimum table rather than an empty one (`tt.h`), so 1 MB is a meaningful, safe place to stop trying smaller, and a machine that can't even allocate that is too constrained to run the engine at all — a case worth failing loudly rather than silently faking success.
-
-**Decisions made:** logged in docs/DECISIONS.md, 2026-09-04 (5) — the `kDefaultTTSizeMB` visibility change, the uniform (not wtime/btime-only) Move Overhead application, the `Hash` bounds rationale, the `make_transposition_table()` fallback design, and the MultiPV/Ponder deferral rationale.
-
-**Verification performed:**
-- `uci.cpp` and `search.cpp` each compiled clean standalone under `g++ -std=c++20 -Wall -Wextra -Wpedantic` (zero warnings) before being folded into the full suite.
-- Full suite (436 cases, up from 429 — the 7 new tests) recompiled via this sandbox's own g++/Catch2-amalgamated harness (no `cmake` available here) and rerun three consecutive times: all green every time, `bench` node counts/scores byte-for-byte unchanged (startpos 1274, kiwipete 8185, quiet_middlegame 6591, endgame_mate_in_3 64979/score 31995) — confirming both new options' defaults leave every pre-existing call site's behavior identical.
-- The `std::bad_alloc` bug above was caught specifically because a test used a real out-of-range value rather than only in-range ones; after the fix, the same full suite (436 cases, 27292 assertions) recompiled and reran clean under `-fsanitize=address,undefined` as well, including a full-suite pass (not just the new `[uci]`-tagged tests) — no findings.
-
-**Next session start point:** Read ROADMAP.md's own Phase 8 section directly for its exact remaining item list (next up: either `MultiPV` to finish out "Full UCI option set," or "Pondering — protocol side" — both are legitimate next picks, pick either) and begin working immediately.
-
----
-
-### Session 78 — 2026-09-04 — Bugfix: flaky Session-77 test on Release builds (CI)
-
-**Context:** CI logs (GitHub Actions run 91705244381, uploaded) showed Linux/macOS/Windows Release each failing exactly one test — Session 77's own `"search_fixed_depth: node counts fold in every helper thread's own contribution..."` — while all three Debug builds passed 100%. All other tests, all platforms: green.
-
-**Built:** nothing new — a bugfix session.
-
-**Bugs fixed:** `tests/thread_regression_tests.cpp`'s node-folding test asserted a strict `with_4_threads.nodes > with_1_thread.nodes`, implicitly assuming Lazy SMP helper threads always get OS-scheduled in time to complete at least one depth iteration (the only point `run_lazy_smp_helper()`, `src/search/search.cpp`, credits any nodes) before the main thread's own fast, single fixed-depth call finishes and stops them. True most of the time, not guaranteed — a fast Release build's depth-4 search on this test's own position can finish before 3 freshly-spawned threads even get their first scheduler timeslice, legitimately leaving their contribution at zero (directly reproduced: 4 of 5 repeated local runs contributed real extra nodes, the 5th didn't, matching CI's own intermittent-by-platform pattern). Not an engine bug — `search_fixed_depth()`'s own fold-in logic is correct either way. Fixed by weakening the assertion to `>=` (the actual, always-true guarantee: helper contributions are non-negative and only ever added, never subtracted) and rewriting the test's own name/comment to match. No production code changed.
-
-**Decisions made:** logged in docs/DECISIONS.md, 2026-09-04 (4) — full root-cause account, the measured contribution rate across depths 3–8, and why `>=` rather than trying to pick a "safer" depth (no depth offers a hard guarantee, only better odds).
-
-**Verification performed:** the fixed test rerun 8 consecutive times at `-O2` (Release-equivalent optimization) with zero failures. Full suite (429 cases) recompiled and rerun at `-O2`: all green, `bench` unchanged. Real helper participation under realistic conditions was separately, directly measured (not merely assumed) at every depth from 3 through 8 before choosing the fix.
-
-**Next session start point:** Phase 7 remains fully complete; this was a same-day CI-driven bugfix with no new roadmap item touched. Read ROADMAP.md's own Phase 8 section directly for its exact item list and pick the next one.
-
----
-
-### Session 77 — 2026-09-04 — Verify no strength regression vs. single-threaded at equal single-thread depth (Phase 7's last item — Phase 7 now complete)
-
-**Built:**
-- `src/search/search.h`/`.cpp`: `search_fixed_depth()` gained a `num_threads = 1` parameter (same meaning as `search_iterative_deepening()`'s own), spawning Lazy SMP helpers around its one fixed-depth `search_root()` call. Required a small structural change too: `run_lazy_smp_helper()` is defined later in the file than `search_fixed_depth()`, so a forward declaration (same anonymous namespace, real definition unchanged/unmoved) was added ahead of `search_fixed_depth()` rather than relocating either function.
-- `src/tuner/match.h`/`.cpp`: `MatchConfig` gained `threads_a`/`threads_b` fields (both default 1), threaded through `play_one_match_game()`/`play_match()`'s existing per-side selection logic (alongside the existing per-side `weights_white`/`weights_black` selection) into each side's own `search_fixed_depth()` call.
-- `tests/thread_regression_tests.cpp` (new, 5 tests, `[thread_regression]` tag): structural/plumbing checks for both capabilities above — `num_threads > 1` still returns a legal move at the requested depth; the `num_threads = 1` default leaves every existing call site unaffected; helper threads' own node counts actually fold into the reported total; a match with different thread counts per side runs to completion with no crash; `threads_a`/`threads_b` defaulting to 1/1 leaves `play_match()` byte-for-byte identical to before these fields existed.
-- Four real, dispatched `tuner::play_match()` runs (not unit tests) — the actual verification this item calls for. Full numbers, methodology, and the important "Lazy SMP's score at equal depth isn't bit-for-bit thread-count-invariant" finding that shaped this whole approach are logged in docs/DECISIONS.md, 2026-09-04 (3). Headline result: 1-vs-2/4/8-thread comparisons (400 games each, depth 4) plus a 1-vs-4-thread comparison at depth 5 (300 games) — every comparison favored the multi-threaded side by roughly 19–43 Elo, never a regression.
-
-**Bugs fixed:** none this session.
-
-**Decisions made:** logged in docs/DECISIONS.md, 2026-09-04 (3) — the `search_fixed_depth()`/`MatchConfig` extension design, the empirical non-invariance finding that motivated a statistical rather than exact-equality verification approach, the full match results table, and the alternatives considered (exact-equality assertions, a dedicated new module, a single comparison instead of three thread counts across two depths).
-
-**Verification performed:**
-- Every touched file compiled clean under `g++ -std=c++20 -Wall -Wextra -Wpedantic`.
-- Full suite (429 cases via this sandbox's own g++/Catch2-amalgamated harness) recompiled and rerun: all green, `bench` node counts/scores unchanged (startpos 1274, kiwipete 8185, quiet_middlegame 6591, endgame_mate_in_3 64979/score 31995) — confirming both new parameters' defaults leave every existing call site's behavior identical.
-- The 5 new `[thread_regression]`-tagged tests additionally recompiled and rerun standalone under `-fsanitize=address,undefined` (`board/attacks.cpp` separately compiled at `-O2`, same convention as every prior sanitizer check this project has run) — clean, no findings.
-- The four real match runs themselves (docs/DECISIONS.md's own table) were run directly against this session's own compiled engine, not assumed or estimated.
-
-**Next session start point:** Phase 7 is now fully complete. Read ROADMAP.md's own Phase 8 ("Polish & Tournament Readiness") section directly for its exact item list and pick the next one — no partial work or open bugs left from this session.
-
----
-
-### Session 76 — 2026-09-04 — Bugfix: pondering's background thread stack-overflowing on macOS CI (Bus error), same root cause as Session 73's Lazy SMP fix
-
-**Context:** CI logs for the commit covering Session 75 (uploaded, GitHub Actions run 91647071717) showed macOS Debug and macOS Release both failing exactly the same 6 tests — every `tests/pondering_tests.cpp` UCI-level case that actually spawns `start_pondering()`'s background thread (all 6 `go ponder ...` cases; the 2 pure `search_iterative_deepening()`-level `external_stop` tests, which never touch `src/uci/uci.cpp`'s own thread, passed everywhere) — with `Bus error` / ASan `BUS on unknown address`, while Linux Debug/Release and Windows Debug/Release all passed cleanly (426/426). Exactly the same signature, exactly the same platform split, as Session 73's own Lazy SMP stack-overflow bug.
-
-**Flagged, separate, non-blocking observation from the same CI log:** macOS's own two jobs report 424 total discovered tests, not 426 like every other platform (`"6 tests failed out of 424"` vs. `"0 tests failed out of 426"`/`"100% tests passed out of 426"` elsewhere) — a 2-test gap in CTest's own test DISCOVERY on macOS specifically, separate from the crash above. Checked and ruled out as a duplicate-test-name issue: a full parse of every `TEST_CASE(...)` name string across all of `tests/*.cpp` (handling multi-line/concatenated string literals, not a naive single-line grep) confirms exactly 426 unique names, matching Linux/Windows's own count precisely — so this isn't two tests silently colliding and deduplicating. This sandbox has no macOS runner and no `cmake` at all to reproduce `catch_discover_tests`'s own POST_BUILD discovery step, so the actual mechanism (a plausible guess: this suite's unusually long, descriptive test names interacting with some macOS-specific command-line-length or parsing limit in that discovery step) is not confirmed here — flagged for whoever next has macOS+CMake access to investigate, not treated as blocking, since it affects test DISCOVERY count bookkeeping only and none of the 424 macOS DID discover were false passes.
-
-**Built:** nothing new — a bugfix session. See docs/DECISIONS.md, 2026-09-04 (2), for the full root-cause writeup.
-
-**Bugs fixed:** `search::search_iterative_deepening()`'s own top-level loop (`src/search/search.cpp`) still declared its `HistoryTable history;`/`ContinuationHistoryTable cont_history;` (~176 KiB combined) as plain stack locals — safe on every caller that existed before Session 75 (the main thread, synchronously, every time), because Lazy SMP's own helper threads call the separate `run_lazy_smp_helper()` function instead (already heap-allocated since Session 73), never `search_iterative_deepening()` itself. Session 75's `start_pondering()` (`src/uci/uci.cpp`) broke that assumption: it calls `search_iterative_deepening()` directly from a freshly spawned `std::thread`, which on macOS gets a fixed 512 KiB default stack regardless of the process's own `ulimit`/`RLIMIT_STACK` (Session 73's own decision entry has the full platform-difference explanation) — the same 176 KiB of fixed locals that were never a problem on a large-stack main thread overflowed that budget on pondering's new background thread. Fixed identically to Session 73: `history`/`cont_history` are now `std::make_unique`-allocated inside `search_iterative_deepening()` too, with every internal `search_root()` call site updated to dereference (`*history`/`*cont_history`). `search_fixed_depth()` (`src/search/search.cpp`) was checked and deliberately left untouched — confirmed (by grepping every call site across `src/`) to still only ever be called from an ordinary, single, already-large-stack thread (tests, `src/tuner/selfplay.cpp`, `src/tuner/match.cpp`, none of which spawn any threads of their own), so it has no confirmed bug to fix.
-
-**Decisions made:** logged in docs/DECISIONS.md, 2026-09-04 (2) — the fix itself (identical pattern to Session 73, applied to a second function), and specifically why `search_fixed_depth()` was checked and left alone rather than defensively "fixed" too.
-
-**Verification performed:**
-- Every touched file compiled clean under `g++ -std=c++20 -Wall -Wextra -Wpedantic`.
-- Full suite (424 cases via this sandbox's own g++/Catch2-amalgamated harness, no `cmake` available here — see prior sessions' own notes on this) recompiled and rerun: all green, `bench` node counts/scores byte-for-byte unchanged (startpos 1274, kiwipete 8185, quiet_middlegame 6591, endgame_mate_in_3 64979/score 31995) — confirming zero behavioral change to search itself, only the two tables' storage location.
-- The bug and the fix were both DIRECTLY REPRODUCED, not just inferred from the CI log, mirroring Session 73's own methodology exactly: a standalone ASan-instrumented harness spawned a `pthread` with `pthread_attr_setstacksize()` set to macOS's real 512 KiB non-main-thread default, then called `search_iterative_deepening()` (the exact function pondering's background thread calls) inside it. Run against a programmatically-reconstructed pre-fix version, this reproduced `AddressSanitizer: stack-overflow`, pinned to `search_iterative_deepening()` itself, on the first attempt. Run against the actual fixed `src/search/search.cpp`, the identical call completed cleanly (depth reached, legal best move, no crash). A second, more end-to-end repro went one level further: `uci::run()` itself, driving a real `position` / `go ponder wtime ... btime ...` / `ponderhit` / `quit` sequence, run entirely inside a 512 KiB-constrained thread (so `start_pondering()`'s own background thread is a grandchild of an already-constrained thread, closer to a real constrained-everywhere process) — completed cleanly with a `bestmove` produced, no crash. This sandbox still has no real macOS/ARM64 runner, but both repros isolate and directly confirm the exact mechanism CI's `Bus error` is consistent with, and directly confirm the fix removes it — not just "should fix it by analogy to Session 73."
-
-**Next session start point:** this was a bugfix session slotted in ahead of Phase 7's one remaining item; the fix is complete and directly verified (including two levels of reproduction under the exact constrained-stack condition macOS's own default reproduces), and should be committed before this CI run's failure is expected to clear. Genuine confirmation on the real macOS runner still needs a fresh push/CI run — flag this as the one thing this session's own verification could not directly observe (same caveat Session 73 itself flagged). Once that's confirmed green, run "Start" to begin Phase 7's last item, "Verify no strength regression vs. single-threaded at equal single-thread depth" (ROADMAP.md's own Phase 7 section is the source of truth for its exact wording).
-
----
-
-### Session 75 — 2026-09-04 — Pondering (Phase 7's fourth item)
-
-**Built:**
-- `src/search/search.h` / `src/search/search.cpp`: `search_iterative_deepening()` gained a trailing `external_stop = nullptr` parameter — a second, independent way (alongside `time_limit_ms`) for the calling thread's own loop to be told to stop, from outside the call entirely. Checked once between iterations (mirroring the existing `time_limit_ms > 0` between-iteration check) and threaded into every iteration's own `SearchLimits` alongside whatever deadline that iteration already has, so negamax()/quiescence()'s existing mid-search checks (no change needed there) pick it up automatically. `nullptr` (the default) is behaviorally identical to before this parameter existed — every pre-existing caller is unaffected.
-- `src/uci/uci.cpp`: `go`'s previously-inline depth/time-control token parsing extracted into a new shared `compute_search_budget()` helper (returns a `SearchBudget{max_depth, time_limit_ms}`), so both `handle_go()` (an ordinary `go`) and the new pondering path can reuse identical parsing logic without duplication. New `has_token()` helper detects `ponder` amid `go`'s other sub-options. New `PonderState` struct holds one in-flight ponder search's `std::thread`, its `stop`/`suppress_output` atomics, an `active` flag, and the saved real time budget. `start_pondering()` launches the search on a background thread with `time_limit_ms = 0` / `max_depth = kTimedSearchMaxDepth` / its own `external_stop` pointer, so `run()`'s own command loop keeps reading further lines while it runs; the background thread itself is responsible for printing `bestmove` once the search returns (unless suppressed). `handle_ponderhit()` hands the real move's time budget (computed up front by `start_pondering()` via `compute_search_budget()`) to the still-running search via a short, detached watchdog thread that sleeps then raises the same stop flag — or, if `go ponder` carried no real time budget at all, requests an immediate stop instead. `handle_stop()` stops and joins immediately, synchronously, still allowing the background thread's own `bestmove` (the UCI spec requires one even here). `abandon_pondering()` is the defensive path for an out-of-protocol command arriving mid-ponder (a second `go ponder`, `position`, `ucinewgame`, or `quit`/end-of-input with neither `ponderhit` nor `stop` ever sent) — suppresses that search's `bestmove` entirely and force-stops it. `finish_pondering()`, used only at `run()`'s own tail (covering both `quit` and end-of-input), is deliberately NOT the same as `abandon_pondering()` — see its own doc comment and the bug entry below for why conflating the two was a real, caught bug. `run()`'s command dispatch: `go` branches on `has_token(tokens, "ponder")`; `ponderhit`/`stop` now call the new handlers instead of being silently ignored; `position`/`ucinewgame` each call `abandon_pondering()` first. File header comment updated — pondering is no longer listed as out of scope; ordinary (non-ponder) `go`/`stop` remain explicitly unaffected and still fully synchronous.
-- `tests/pondering_tests.cpp` (new, 10 tests, `[pondering]` tag): 2 at the `search_iterative_deepening()` level (an `external_stop` flipped from another thread interrupts a generous-depth search well short of completion; the new parameter defaulting to `nullptr` leaves every existing call site's behavior unchanged) and 8 at the UCI level — the full `go ponder`/`ponderhit` flow with a real time control; the no-time-control immediate-stop fallback on `ponderhit`; a bare `stop` (no `ponderhit`) still producing a `bestmove` per the UCI spec; `go ponder` abandoned by `quit` alone producing NO `bestmove`; `ponderhit`/`stop` each as safe no-ops with nothing pondering; a `position` command arriving mid-ponder handled defensively with the engine still working correctly afterward; and a second `go ponder` abandoning the first cleanly.
-
-**Bugs fixed:** the first version of `run()`'s own end-of-function cleanup called `abandon_pondering()` unconditionally — which unconditionally sets `suppress_output = true` before joining. That's correct for a genuinely abandoned search (nothing else has claimed the result), but wrong whenever `ponderhit`/`stop` had already properly been handled and the background thread simply hadn't finished printing yet by the time `quit` arrived right behind it (the overwhelmingly common real-world sequence) — the properly-earned `bestmove` was being silently swallowed. Caught immediately by 3 of the 10 new tests failing on first run. Fixed by adding `finish_pondering()`, which only calls `abandon_pondering()` (suppress + force-stop) when `ponder.active` is still true (nothing ever claimed this search); otherwise it does a plain, unsuppressed `thread.join()`, letting an already-earned result finish printing on its own.
-
-**Separately, a Session 74 misplacement was found and fixed:** while browsing the repo mid-session, `src/uci/uci_tests.cpp` was noticed — a file not referenced by any `CMakeLists.txt`, sitting in `src/uci/` instead of `tests/`. Diffing it against the real `tests/uci_tests.cpp` showed it was byte-identical for its first 353 lines, plus 6 additional `[threads]`-tagged test cases at the end that don't exist anywhere else in the repo — exactly the 6 tests Session 74's own entry (below) describes adding, apparently committed to the wrong path that session and never actually wired into the build (meaning that coverage has not been running in CI since Session 74, despite Session 74's own entry claiming otherwise). The 6 tests were moved into `tests/uci_tests.cpp` (now 24 cases total, up from 18) and the stray `src/uci/uci_tests.cpp` deleted. Recompiled and reverified: all 24 cases in the file pass, and the full suite (424 cases now) stays green with `bench` unchanged.
-
-**Decisions made:** logged in docs/DECISIONS.md, 2026-09-04 — the overall pondering design (background thread, `external_stop`'s split between-iteration/mid-iteration checks, the watchdog-thread approach to handing off `ponderhit`'s time budget onto an already-running call) and every accepted scope limitation: no `info` lines during the pondering phase itself; the time budget handed off at `ponderhit` is the one implied by `go ponder`'s own clock values at the moment pondering started, not re-synced against the GUI's actual elapsed think time (UCI's `ponderhit` carries no parameters to do so with); the opening book isn't consulted while pondering; true async `go`/`stop` for an ordinary (non-ponder) `go` remains explicitly out of scope.
-
-**Verification performed:**
-- No CMake/CTest available in this sandbox — as in prior multi-threaded sessions (71–74), verified via a direct `g++ -std=c++20 -pthread` compile of the full library plus a fetched Catch2 v3.5.2 amalgamated distribution (`raw.githubusercontent.com`), matching the project's real toolchain (C++20, GCC 13).
-- Every touched file, plus the new test file, compiled clean under `g++ -Wall -Wextra -Wpedantic` — zero warnings.
-- The full existing test suite (all 44 `tests/*.cpp` files, including the tuner-dependent ones) recompiled and run together with the 10 new cases: all green, including `bench`'s own 4 embedded checks (node counts/scores unchanged from prior sessions' baselines — startpos 1274, kiwipete 8185, quiet_middlegame 6591, endgame_mate_in_3 64979/score 31995), confirming this session's changes are additive and don't alter search behavior for any non-pondering call site.
-- The 10 new `[pondering]`-tagged tests additionally recompiled and rerun standalone under `-fsanitize=address,undefined` (mirroring CI's Debug sanitizer job, with `board/attacks.cpp` separately compiled at `-O2` to keep magic-bitboard init fast, matching `src/CMakeLists.txt`'s own existing per-file override) — clean, no findings, despite this being the one area besides Lazy SMP where genuine background-thread concurrency is exercised.
-- A real bug (see above) was caught and fixed by this same test suite on its first run, not just a clean-compile check.
-
-**Next session start point:** Phase 7's only remaining item is "Verify no strength regression vs. single-threaded at equal single-thread depth" — read ROADMAP.md's own Phase 7 section directly first for its exact wording. No open bugs or partial work left mid-file from this session.
-
----
-
-### Session 74 — 2026-09-03 — Thread count UCI option (Phase 7's third item)
-
-**Built:**
-- `src/uci/uci.cpp`: new `kMinThreads`/`kMaxThreads` constants (1 / 1024). New `handle_setoption()`: parses `setoption name <name...> value <value...>` positionally (last `name`/`value` token pair, tolerant of a multi-word name even though `Threads` itself is one word), recognizes only `Threads`, clamps to `[kMinThreads, kMaxThreads]`, silently ignores any other option name or a malformed line. `run()`: new `num_threads` session-lifetime local (default `kMinThreads`), NOT reset by `ucinewgame`; `uci` response now emits `option name Threads type spin default 1 min 1 max 1024`; new `setoption` dispatch branch calling `handle_setoption()`. `handle_go()` gained a `num_threads` parameter, passed straight through as `search::search_iterative_deepening()`'s own `num_threads` argument. File header comment updated (the old blanket "no options exist yet" note no longer applies).
-- `tests/uci_tests.cpp`: 6 new tests (`[threads]` tag, one also `[smp]`) — the advertised `uci` option string itself; `setoption name Threads value 4` followed by `go` still returning a legal bestmove; `value 1` behaving identically to never setting the option at all (single-threaded search is deterministic, so both runs must produce the exact same bestmove); out-of-range values (0 and 999999999) clamped rather than rejected, confirmed by `go` still returning a legal move afterward; a malformed `setoption` (missing value, non-integer value, unrecognized option name) leaving a later `go` unaffected; and `Threads` surviving a `ucinewgame` in between.
-
-**Bugs fixed:** none — new-feature work, no defects found in previously-shipped code.
-
-**Decisions made:** one, logged in docs/DECISIONS.md dated 2026-09-03 (4) — the `Threads` bounds and why 1024, clamping over rejecting out-of-range values, persistence across `ucinewgame`, and three alternatives considered (an `OwnBook` toggle added in the same session, a generic options registry, and resetting `Threads` on `ucinewgame`) and why each was deferred/rejected.
-
-**Verification performed:**
-- Every touched file compiled clean under `g++ -std=c++20 -Wall -Wextra -Wpedantic`.
-- A full CMake Debug build (ASan/UBSan active, real Catch2) compiled with zero warnings.
-- Full real-Catch2 suite run: 416 test cases (410 previously-existing + 6 new), 52,969 assertions (52,955 + 14 new), all green — `bench` node counts/scores byte-for-byte identical to Sessions 71–73's own baselines (startpos 1274, kiwipete 8185, quiet_middlegame 6591, endgame_mate_in_3 64979/score 31995), confirming zero behavioral change to anything besides the new option itself. The 6 new `[threads]`-tagged tests specifically re-run in isolation, all passing.
-
-**Next session start point:** Phase 7's first three items (Lazy SMP, Lock-free TT, Thread count UCI option) are complete; Session 73 separately fixed a macOS-specific stack-overflow bug found in CI along the way (still pending real-CI confirmation as of that session's own entry — check whether a fresh push/CI run has confirmed macOS green before assuming it's fully closed out). Two Phase 7 items remain: "Pondering" and "Verify no strength regression vs. single-threaded at equal single-thread depth" — read ROADMAP.md's own Phase 7 section directly first, since that section (not this sentence) is the source of truth for which of those two to start next and their own full descriptions. No open bugs or partial work left mid-file from this session.
-
----
-
-### Session 73 — 2026-09-03 — Bugfix: Lazy SMP helper threads stack-overflowing on macOS CI (Bus error)
-
-**Context:** CI logs for the commit covering Sessions 71–72 (uploaded, GitHub Actions run 91292621513) showed macOS Debug and macOS Release both failing exactly the same 4 tests — `tests/lazy_smp_tests.cpp`'s 4 `num_threads > 1` cases — with `Bus error`/`Subprocess killed`, while Linux Debug/Release, Windows Debug/Release, and the `num_threads == 1` test all passed cleanly everywhere, every time.
-
-**Built:** nothing new — a bugfix session, see docs/DECISIONS.md, 2026-09-03 (3), for the full root-cause writeup and the confirmed (not just theorized) fix.
-
-**Bugs fixed:** `search::run_lazy_smp_helper()`'s (`src/search/search.cpp`) own `HistoryTable`/`ContinuationHistoryTable`, together ~176 KiB, were declared as thread-stack locals — fine on the main thread (which gets a large default stack on every platform this project targets), unsafe on a genuinely new OS thread, where macOS's default is a fixed 512 KiB regardless of the process's own `ulimit -s`/`RLIMIT_STACK` (unlike Linux, where a new thread's default stack size tracks `RLIMIT_STACK`, typically 8 MiB) — 176 KiB of fixed locals plus `search_root()`'s own recursive call stack overflowed that budget, surfacing as `SIGBUS` on macOS specifically. Fixed by `std::make_unique`-allocating both tables inside `run_lazy_smp_helper()` instead of declaring them as locals; every other Lazy SMP file/table is unaffected.
-
-**Decisions made:** one, logged in docs/DECISIONS.md dated 2026-09-03 (3) — heap allocation over an explicit large-stack-size thread-creation approach (a bigger, more invasive change, noted as a fallback if this pattern ever resurfaces with different offending locals) or shrinking the tables themselves (conflates an unrelated search-quality sizing decision with a stack-budget problem).
-
-**Verification performed:**
-- Every touched file compiled clean under `g++ -std=c++20 -Wall -Wextra -Wpedantic`.
-- A full CMake Debug build (ASan/UBSan active) compiled with zero warnings; the full real-Catch2 suite (410 test cases, 52,955 assertions) run clean, with `bench` node counts/scores byte-for-byte identical to Sessions 71–72's own baselines (startpos 1274, kiwipete 8185, quiet_middlegame 6591, endgame_mate_in_3 64979/score 31995) — confirming this fix changed zero observable search behavior. `[smp]`-tagged tests specifically re-run 4 additional times, all clean.
-- The bug and the fix were both DIRECTLY REPRODUCED, not just inferred from the CI log's signal name: a standalone ASan-instrumented harness spawned a `pthread` with `pthread_attr_setstacksize()` set to macOS's actual 512 KiB non-main-thread default (the spawning thread itself kept a normal large stack, mirroring macOS's real main-vs-new-thread asymmetry — a plain `ulimit -s` was tried first and rejected for this purpose, since it shrinks every thread uniformly and doesn't reproduce the platform's actual behavior). Running the OLD stack-locals pattern (via `search_fixed_depth()`, which shares the identical two-large-table-as-locals shape the old `run_lazy_smp_helper()` had) inside that constrained thread reproduced `AddressSanitizer: stack-overflow`, pinned to that exact function, on the first attempt. Running the NEW heap-allocated pattern (calling `search_root()` directly, `HistoryTable`/`ContinuationHistoryTable` both `std::make_unique`-allocated) inside the identical constrained thread completed all 6 depths cleanly with no crash. This sandbox has no macOS/ARM64 runner to reproduce the CI failure verbatim, but this repro isolates and confirms the exact mechanism CI's `Bus error` is consistent with, and confirms the fix removes it.
-
-**Next session start point:** this was a bugfix session slotted in ahead of Phase 7's third item; the fix is complete, verified (including a direct, isolated repro of both the bug and the fix under the same constrained-stack condition macOS's own default reproduces), and should be committed before this CI run's failure is expected to clear. Genuine confirmation on the real macOS runner still needs a fresh push/CI run — flag this as the one thing this session's own verification could not directly observe. Once that's confirmed green, run "Start" to begin Phase 7's third item, "Thread count UCI option" (docs/SESSIONS.md's Session 72 entry, and ROADMAP.md's own Phase 7 section, are still the source of truth for what comes next).
-
----
-
-### Session 72 — 2026-09-03 — Lock-free TT for concurrent access (Phase 7's second item)
-
-**Built:**
-- `src/search/tt.h`: `TTEntry` redesigned from five separate plain fields (`key`, `move_raw`, `score`, `depth`, `bound_and_age`) to two `std::atomic<std::uint64_t>` words (`data`, `key_xor_data`) implementing the classic CPW "Shared Hash Table" XOR-checksum technique — still exactly 16 bytes (`static_assert` unchanged), still 4 per 64-byte `TTBucket`. New `static_assert(std::atomic<std::uint64_t>::is_always_lock_free, ...)`, documented as a canary against this scheme silently degrading into a hidden per-word lock on some future platform. `TTEntry::bound()`/`age()` member functions removed (no longer meaningful without a loaded `data` snapshot to unpack) — see tt.cpp. All of Session 71's striped-locking machinery (`shard_locks_`, `kMaxLockShards`, `lock_for()`, the `<mutex>` include) removed entirely — `probe()`/`store()` are genuinely lock-free now, not just safe-under-a-lock. Header comment's THREAD-SAFETY NOTE rewritten to describe the new scheme, including the one accepted edge case (simultaneous same-slot writers can lose that slot early, never return wrong data).
-- `src/search/tt.cpp`: new file-local `pack_data()`/`unpack_move_raw()`/`unpack_score()`/`unpack_depth()`/`unpack_bound()`/`unpack_age()` free functions implementing the exact bit layout (move 16 bits, score 16 bits, depth 8 bits, bound 2 bits, age 6 bits, packed into one 64-bit word). `probe()` rewritten: loads both atomic words per candidate entry, XORs them, compares against the caller's key, unpacks fields from `data` only on a genuine match. `store()` rewritten the same way for its same-key-refresh check and its age/depth replacement-ranking loop over the bucket's other entries; writes go through a small local `write()` closure (`data` stored first, then `key_xor_data` — a documented convention, not a safety requirement, since either order is provably safe against a concurrent reader). `clear()` now resets each atomic word individually (`.store(0, relaxed)`) rather than whole-struct-assigning a default `TTEntry{}`, since `std::atomic` has no copy/move assignment. Constructor: `buckets_.resize(...)` replaced with direct construction (`buckets_ = std::vector<TTBucket>(count)`) — `resize()` on an empty vector needs the element type to be move-constructible (to move-construct each newly-appended element from a temporary), which `TTBucket` (via `TTEntry`'s atomic members) no longer is; the sized constructor only needs `DefaultInsertable`, which value-initializes each bucket in place with no move required.
-- `src/CMakeLists.txt`/`tests/CMakeLists.txt`: unchanged this session (`Threads::Threads` from Session 71 is still needed — `search.cpp`'s Lazy SMP helper threads, `std::thread`, are untouched by this session's own change).
-
-**Bugs fixed:** none in previously-shipped code — new-feature work (replacing an already-correct interim mechanism with its intended final one, not fixing a defect in it). One build-time issue was found and fixed during this session's own work, before it reached a committed state: `std::vector<TTBucket>::resize()` failing to compile once `TTBucket` stopped being move-constructible (see "Built" above) — caught immediately by this session's own compile-check step, fixed by constructing the vector directly instead of resizing an empty one.
-
-**Decisions made:** one, logged in docs/DECISIONS.md dated 2026-09-03 (2) — the XOR-checksum technique itself and why it's safe, why this landed as its own session rather than folding into Session 71, and three alternatives considered (keeping striped locking permanently, a sequence-number/epoch validation scheme, and widening `TTEntry` beyond 16 bytes) and why each was rejected.
-
-**Verification performed:**
-- Every touched file compiled clean under `g++ -std=c++20 -Wall -Wextra -Wpedantic` individually before the full build was attempted.
-- A full CMake Debug build (ASan/UBSan active, real Catch2 v3.7.1) compiled with zero warnings across the entire `nightwing_lib`/`nightwing_tests` target set.
-- Full real-Catch2 suite run three times in a row after the change: 410 test cases, 52,955 assertions, all green every time — and, specifically checked rather than assumed, byte-for-byte IDENTICAL `bench` node counts/scores to Session 71's own last-verified run (startpos 1274 nodes, kiwipete 8185, quiet_middlegame 6591, endgame_mate_in_3 64979/score 31995) — direct confirmation that the TT redesign changed zero observable search behavior, only its internal concurrency mechanism.
-- The `[smp]`+`[tt]`-tagged tests (19 cases, 46 assertions) specifically re-run in isolation, 8 times in a row, under the ASan/UBSan-instrumented Debug binary (`libasan.so.8` confirmed linked) — all 8 runs clean, no sanitizer findings. Same caveat as Session 71's own entry: this project's sanitizer matrix is ASan/UBSan, not yet ThreadSanitizer, so this is the closest available check, not a substitute for real race detection.
-
-**Next session start point:** Phase 7's first two items (Lazy SMP, Lock-free TT) are both complete. Run "Start" to begin Phase 7's third item, "Thread count UCI option" — confirm by reading ROADMAP.md's own Phase 7 section directly first, since that section (not this sentence) is the source of truth. No open bugs or partial work left mid-file from this session; every touched file was completed, compiled, and tested (including the full real-Catch2 suite three times, a direct node-count/score identity check against the prior session's own results, and 8 isolated ASan/UBSan reruns of the concurrency-relevant tests) before this session ended.
-
----
-
-### Session 71 — 2026-09-03 — Lazy SMP implementation (Phase 7's first item)
-
-**Built:**
-- `src/search/search.h`: `SearchLimits` gained `std::atomic<bool>* external_stop = nullptr;`, a second, independent way (alongside the pre-existing `deadline`) to request a search interruption — used by helper threads to be told to stop once the main thread's own loop finishes. `search_iterative_deepening()` gained a trailing `int num_threads = 1` parameter; full doc comment covers the whole Lazy SMP contract.
-- `src/search/search.cpp`: `negamax()`'s periodic time-check block now also checks `external_stop` alongside `deadline`, either one setting `stopped` the same way. New internal `run_lazy_smp_helper()` (anonymous namespace): one helper thread's own private, non-aspirating depth 1..`max_depth` loop over its own private `Position` copy, `KillerTable`, `HistoryTable`, `ContinuationHistoryTable`, `path`, `PawnHashTable`, and `EvalCache`, sharing only the caller's `TranspositionTable`. `search_iterative_deepening()`: once the mandatory depth-1 iteration has produced a real `best_move`, spawns `num_threads - 1` such helpers (each given its own private `Position` copy taken synchronously on the calling thread, before that helper's thread is even constructed — see docs/DECISIONS.md for exactly why the copy must happen there, not inside the helper's own thread function), lets its own pre-existing single-threaded loop run completely unchanged, then signals `external_stop`, joins every helper, and folds their node counts into the returned `SearchResult::nodes`.
-- `src/search/quiescence.cpp`: its own periodic time-check block updated the same way as `negamax()`'s, for consistency — a helper thread's `external_stop` signal now stops an in-flight quiescence search too, not just the negamax tree above it.
-- `src/search/tt.h`/`.cpp`: `TranspositionTable` made safe for concurrent `probe()`/`store()` calls from multiple threads on the same instance. `current_age_` changed from a plain `std::uint8_t` to `std::atomic<std::uint8_t>` (relaxed ordering) — found to be a genuine data race once helper threads exist (`new_search()`, main thread only, writes it; every `probe()`/`store()` call, any thread, reads it). Added coarse STRIPED LOCKING: a fixed array of `std::mutex` (`kMaxLockShards` = 1024, capped at the table's own bucket count for small test tables), each guarding a contiguous stripe of buckets — both `probe()` and `store()` take the stripe lock for their key before touching its bucket. `TTBucket`/`TTEntry`'s existing 16-byte/64-byte cache-line layout is completely untouched by this — see docs/DECISIONS.md for why striped locking, not a true lock-free redesign, was chosen for this landing (the separate, still-open "Lock-free TT" roadmap item is exactly that redesign).
-- `src/CMakeLists.txt`: `find_package(Threads REQUIRED)` + `target_link_libraries(nightwing_lib PUBLIC Threads::Threads)`, needed for `std::thread`/`std::mutex` to link correctly on platforms (notably glibc Linux) where the threading library isn't linked in implicitly.
-- `tests/lazy_smp_tests.cpp` (new, 5 tests): a legal-move/no-hang smoke test from the start position; the same forced mate-in-3 fixture `tests/search_tests.cpp`'s IIR/NMP tests already use, confirmed still found correctly with `num_threads > 1`; a leaves-position-unmodified check; a small-time-budget check confirming helper-thread `join()` doesn't itself blow the time budget open; and a `num_threads == 1` check confirming the new parameter's mere existence doesn't change the pre-existing default-argument call site's behavior at all. `tests/CMakeLists.txt` updated to register the new file.
-
-**Bugs fixed:** none in previously-shipped code — new-feature work. One correctness issue was found and fixed DURING this session's own design work, before it ever reached a committed/tested state: `current_age_`'s data race (see "Built" above and docs/DECISIONS.md) — caught by reasoning through the new concurrent-access pattern against `tt.cpp`'s existing code before writing any locking, not by a test failure or sanitizer finding after the fact.
-
-**Decisions made:** one, logged in docs/DECISIONS.md dated 2026-09-03 (1) — striped-lock TT sharing (and why not a full lock-free redesign yet, and why not one single table-wide mutex), atomic `current_age_`, plain non-aspirating helper-thread loops, summed cross-thread node counts, the private-Position-copy timing rule, and no UCI `Threads` option yet.
-
-**Verification performed:**
-- Every touched file compiled clean under `g++ -std=c++20 -Wall -Wextra -Wpedantic` individually before the full build was attempted.
-- A full CMake Debug build (ASan/UBSan active per `CMakeLists.txt`'s existing Debug config, real Catch2 v3.7.1 fetched the same way prior sessions' verification has used) compiled with zero warnings across the entire `nightwing_lib`/`nightwing_tests` target set, including every pre-existing file untouched by this session.
-- Full real-Catch2 suite run three times in a row: 410 test cases, 52,955 assertions, all green every time, including all pre-existing `tests/search_tests.cpp`/`tests/tt_tests.cpp` cases (confirming `num_threads <= 1`'s byte-for-byte-unchanged path claim) and the 5 new `tests/lazy_smp_tests.cpp` cases.
-- The new `[smp]`-tagged tests specifically re-run isolated, under the ASan/UBSan-instrumented Debug binary (`libasan.so.8` confirmed linked), with no sanitizer findings — the closest this project's current sanitizer matrix (ASan/UBSan, not yet ThreadSanitizer — see docs/DECISIONS.md's own note on this gap) can get to directly exercising the new concurrent code path under instrumentation, rather than only a plain, unobserved green run.
-
-**Next session start point:** Phase 7's first item (Lazy SMP) is complete. Run "Start" to begin Phase 7's next item, "Lock-free TT for concurrent access" — confirm by reading ROADMAP.md's own Phase 7 section directly first, since that section (not this sentence) is the source of truth; its own item note (added this session) explains exactly what's already done (thread-safety, via striped locking) versus what that item itself still needs to deliver (a true lock-free scheme replacing the striped locks). No open bugs or partial work left mid-file from this session; every touched file was completed, compiled, and tested (including the full real-Catch2 suite, three times, plus an isolated ASan/UBSan-instrumented rerun of the new tests specifically) before this session ended.
-
----
-
-### Session 70 — 2026-08-31 — Dedicated endgame test suite + opening book (Phase 6's two remaining low-priority items) — Phase 6 fully complete
-
-**Built (endgame test suite):**
-- `tests/endgame_suite_tests.cpp` (new, 9 tests): exercises the FULL engine (`search::search_fixed_depth()`) end to end on KPK, KBPK (wrong bishop corner), insufficient material, KRK, KBNK, the canonical Lucena position, a Philidor-pattern position, and an opposite-colored-bishops-vs-same-colored-bishops comparison. Every expected result was confirmed against this project's own actual compiled engine (real search, real depth) before being written into the test file, not assumed from theory alone. The Lucena position uses a real, independently sourced canonical FEN (English Wikipedia's "Lucena position" article) with a best-move assertion (1.Rc1) matching that same source's own documented main line — and the engine's own found move matched it exactly on the first real search run, unprompted.
-
-**Built (opening book):**
-- `src/book/book.h`/`.cpp` (new module, new `src/book/` directory): a small curated opening book. Entries are plain UCI move sequences (`curated_lines()`) covering well-established main-line openings; `init_book()` replays each line through real legal move generation at startup, deriving every book position's Zobrist hash by construction rather than any hand-maintained table.
-- `src/uci/uci.cpp`: `handle_go()` now consults the book first, unconditionally (no options infrastructure exists to gate it — see docs/DECISIONS.md, 2026-08-31 (11)); a book hit answers immediately with `bestmove`, no `info depth` line.
-- `src/main.cpp`: `book::init_book()` added to the startup sequence, after the mandatory board-subsystem init.
-- `src/CMakeLists.txt`: registered `book/book.cpp`.
-- `tests/book_tests.cpp` (new, 4 tests) plus one new UCI-integration test in `tests/uci_tests.cpp` confirming the book works end-to-end through the real UCI loop the way `src/main.cpp` actually uses it.
-- `tests/uci_tests.cpp`: two PRE-EXISTING tests (`info depth` line formatting/ordering) updated to start from a position one ply outside the book, since a bare startpos `go` no longer runs a real search at all now that the book intercepts it — their own actual intent (verifying real search info-line output) is unaffected; see docs/DECISIONS.md for why this was the right fix rather than adding a way to disable the book.
-
-**Bugs fixed:** none in previously-shipped code. The two `uci_tests.cpp` updates above are not bug fixes — they're existing tests correctly updated for a genuine, intentional behavior change (the book intercepting `go` at book positions), caught immediately by the full Catch2 suite run this session's own infrastructure enables.
-
-**Decisions made:** one, logged in docs/DECISIONS.md dated 2026-08-31 (11) — no opening-book on/off toggle (and why), and updating the two affected tests directly rather than adding any book-bypass mechanism to keep them passing unmodified.
-
-**Verification performed:**
-- The full real-Catch2 suite (same setup as Sessions 68-69) compiled and run after every change: 384 test cases, 26,850 assertions, all green — including a SECOND full run with `--order rand` (a different, randomized test-case execution order) specifically to rule out any hidden cross-test static-state dependency in this session's own sandbox process (the two `uci_tests.cpp` failures this session actually found and fixed were exactly this kind of issue, caught by running the real, full suite rather than assumed away).
-- Every `endgame_suite_tests.cpp` position and its expected result, and every `book_tests.cpp` scenario, was independently confirmed via a standalone compiled driver against the real implementation before being written into its permanent test file — including, for the endgame suite specifically, actually running this project's own compiled `nightwing` UCI binary on each position at real search depths first, rather than assuming a theoretical result would automatically hold once encoded as a test.
-- Linked and ran the real `nightwing` UCI binary directly (not just the test binary): confirmed a bare `position startpos` + `go` answers instantly with `bestmove e2e4` and no search at all; confirmed a position one ply outside the book runs a normal, real iterative-deepening search with proper `info depth` output; confirmed following a real book line (1.e4 e5 2.Nf3 Nc6) continues correctly with the matching book move (3.Bb5).
-
-**Next session start point:** Phase 6 is now fully complete, including both of its previously-open low-priority items. Run "Start" to begin Phase 7 (Multithreading — Lazy SMP is that phase's first item per `docs/ROADMAP.md`) — confirm by reading ROADMAP.md's own Phase 7 section directly for its current item order and any notes, since that section (not this sentence) is the source of truth. No open bugs or partial work left mid-file from this session; every touched file was completed, compiled, and tested (including the full real-Catch2 suite, twice, in two different execution orders) before this session ended.
-
----
-
-### Session 69 — 2026-08-31 — KRK/KBNK basic-mate technique + insufficient-material draw detection (Phase 6's final item) — Phase 6 complete
-
-**Built:**
-- `src/eval/basic_mates.h`/`.cpp` (new): `eval::basic_mate_value()`, covering ROADMAP.md's final Phase 6 item's KRK/KBNK clauses — this project's last two `EndgameSignature` buckets with no consumer at all. KRK: a generic edge-push term (defending king toward any edge) plus a king-proximity term. KBNK: the same two terms plus the one genuinely KBNK-specific addition — a bishop-color-matching corner term (only the two corners the attacking bishop actually controls count; the other two accomplish nothing, which is exactly why this endgame is famously "the hardest of the basic mates"). Five new public `Score` constants.
-- `src/search/search.cpp`: new `is_insufficient_material()`, wired into the existing `is_draw_by_rule()` alongside 50-move-rule and repetition detection. Recognizes bare kings, king+single-minor vs. bare king, and same-colored-bishop-pair vs. bare-king pairs as automatic draws — deliberately NOT knight-vs-knight, bishop-vs-knight, or opposite-colored-bishop combinations (see docs/DECISIONS.md, 2026-08-31 (10), for the helpmate-construction reason those aren't safe to auto-draw).
-- `src/eval/eval.h`/`.cpp`: `basic_mate_value()` wired into `evaluate()`'s additive sum; header comments updated for the fourth `classify_endgame()`-consuming eval term.
-- `src/CMakeLists.txt`/`tests/CMakeLists.txt`: registered the new files.
-- `tests/basic_mates_tests.cpp` (new, 7 tests) and 3 new `tests/search_tests.cpp` cases (insufficient-material draw detection, including a case confirming two-knights-vs-king is correctly NOT auto-drawn).
-
-**Bugs fixed:** none in previously-shipped code — new-feature work, no regressions anywhere in the full suite.
-
-**Decisions made:** one, logged in docs/DECISIONS.md dated 2026-08-31 (10) — the insufficient-material list's exact scope (and why a broader, initially-appealing version was specifically rejected mid-session once its correctness problem was found), plus the decision not to build a second, separate KPK mechanism under this item's own name.
-
-**Verification performed:**
-- The full real-Catch2 suite (same setup as Session 68 — `catch_amalgamated.hpp`/`.cpp` fetched via `raw.githubusercontent.com`) compiled and run end-to-end after every change this session: 370 test cases, 26,829 assertions, all green, including every pre-existing Phase 5/6 eval test and every `search_tests.cpp` case with the new `is_insufficient_material()` check now live on every real search.
-- Every `basic_mates_tests.cpp` scenario (exact KRK/KBNK formula values, a corner-color right-vs-wrong comparison, both sign-convention checks) was independently verified against the exact C++ branch logic via a standalone Python simulation before being written into the permanent test file.
-- Linked and ran the real `nightwing` UCI binary on real KRK, KBNK, and insufficient-material FENs — sane, non-crashing search output in all three (a real rook-endgame-technique-looking move sequence in the KRK case, a real bishop/knight-coordination sequence in the KBNK case, and a score that correctly drops to exactly 0 once the search reaches a real node past the insufficient-material check, while still showing raw material at the shallower depth that only reaches a leaf-eval, not yet the check itself — matching the exact same "child node, not root static eval" mechanism the pre-existing 50-move-rule test already relies on).
-
-**Next session start point:** Phase 6 is now complete. Two lower-priority Phase 6 items remain genuinely open in ROADMAP.md but don't block moving on — "Dedicated endgame test suite" (curated known-tricky K+P/rook-ending positions with known-correct results, its own CI test file per ARCHITECTURE.md's Testing Policy) and the optional opening book. Run "Start" to begin whichever of those, or Phase 7 (Multithreading, starting with Lazy SMP), is preferred — confirm by reading ROADMAP.md's own current top-level phase order directly, since that ordering (not this sentence) is the source of truth for which comes next by default. No open bugs or partial work left mid-file from this session; every touched file was completed, compiled, and tested before this session ended.
-
----
-
-### Session 68 — 2026-08-31 — Zugzwang-aware search shaping (Phase 6) -- Phase 6's first search/ change, and a real Catch2 test setup
-
-**Built:**
-- `src/eval/endgame.h`: added `is_zugzwang_prone(EndgameSignature)`, flagging only `RookEndgame`. Header comment updated -- this file now has consumers in both `eval/` (four terms) and, for the first time, `search/` (one).
-- `src/search/search.cpp`: negamax()'s NMP block now reduces its null-move probe's reduction amount `R` (floored at a minimum) whenever `eval::is_zugzwang_prone(eval::classify_endgame(pos))` flags the current node, instead of leaving null-move pruning fully unbiased there. Two new constants, `kZugzwangReductionDecrease`/`kZugzwangMinReduction`. The pre-existing, stronger `non_pawn_material == 0` guard (KPK) is untouched -- this is a new, softer, additional lever, not a replacement for it.
-- `tests/endgame_tests.cpp`: 1 new case, exact-value checks on `is_zugzwang_prone()` across all seven `EndgameSignature` values.
-- `tests/search_tests.cpp`: 1 new case, a real RookEndgame-material FEN searched with the bias active, confirming no crash/hang/nonsense result (same honest scope as the file's own pre-existing KPK NMP guard test).
-- Docs (this entry, ROADMAP.md, docs/DECISIONS.md 2026-08-31 (9)).
-
-**Infrastructure change worth flagging on its own:** this session fetched Catch2's amalgamated single-header/source (`catch_amalgamated.hpp`/`.cpp`, v3.5.2, via `raw.githubusercontent.com`, an allowed sandbox domain) and used it to compile and run the ENTIRE existing test suite for real -- 360 test cases, 26,819 assertions, `perft_tests.cpp` through `search_tests.cpp` through every Phase 5/6 eval test, all green -- rather than the hand-rolled hard-coded hand-verified hand-compiled hard-coded assert()-based drivers Sessions 65-67 relied on in the absence of `cmake`. This is a meaningfully stronger verification standard than every earlier session in this project's history had access to, and is worth knowing about for future sessions in a similar no-`cmake` sandbox: fetching Catch2's amalgamated distribution directly is a viable path to a real `ctest`-equivalent run without `cmake` itself.
-
-**Bugs fixed:** none -- new-feature work, no regressions found anywhere in the full 360-case suite.
-
-**Decisions made:** one, logged in docs/DECISIONS.md dated 2026-08-31 (9) -- RookEndgame-only flagging, a reduced-not-skipped null-move probe, and an explicitly accepted, empirically-verified node-count regression in flagged positions (per ARCHITECTURE.md's own Testing Policy requirement to track such regressions here when they occur).
-
-**Verification performed:**
-- The full real-Catch2 run described above: 360/360 test cases green, including every pre-existing `search_tests.cpp` case (mate-in-3 regression tests with NMP/LMR/LMP/futility/razoring/IIR all simultaneously active) with this session's NMP change applied -- no correctness regression anywhere in the existing suite.
-- `is_zugzwang_prone()`'s exact return value confirmed for all seven `EndgameSignature` values via a standalone compiled driver, before being written into the permanent Catch2 test.
-- An empirical before/after node-count comparison: a real RookEndgame FEN searched at depths 4-8 with this session's actual change, and again with a control build (the bias's own code short-circuited to a no-op, everything else byte-identical) -- node counts higher with the bias active at shallow depths (confirming the mechanism genuinely engages), best scores IDENTICAL at every depth between the two builds (confirming no correctness regression from the change itself, independent of the broader 360-case suite run).
-- Linked and ran the real `nightwing` UCI binary on the same RookEndgame FEN at depth 8 -- sane, non-crashing, legal output.
-
-**Next session start point:** Run "Start" to move to the next open Phase 6 item -- `docs/ROADMAP.md`'s next (and, as of this entry, LAST remaining) unchecked Phase 6 bullet is "Hand-built base heuristics carried over: KPK, KRK, KBNK exact-play rules (algorithmic, not lookup-table), draw detection refinement (insufficient material)" -- confirm by reading ROADMAP.md's Phase 6 list directly, since bullet order there is the source of truth, not this sentence. Note this item's own wording says "KPK, KRK, KBNK exact-play rules" -- KPK already has real algorithmic theory (Sessions 65's king_pawn_endgame.cpp) but not yet exact, provably-correct play (a real distinction worth re-reading this item's exact wording carefully for); KRK and KBNK are this project's last two `EndgameSignature` buckets with no consumer at all. After that, Phase 6 is complete except for the two lower-priority items further down ROADMAP.md's list ("Dedicated endgame test suite" and the optional opening book), worth checking whether either should be picked up before moving to Phase 7. The Catch2 amalgamated-header setup this session used lives only in this sandbox's `/tmp` and `/home/claude` (`catch_amalgamated.hpp`/`.cpp`, plus an `include/catch2/catch_test_macros.hpp` shim in the sandbox's `fullrepo` copy) -- not part of the repo itself, and NOT committed as a deliverable this session (the project's actual CMake-based Catch2 integration, via `tests/CMakeLists.txt`, is unaffected and remains how the real CI build gets its Catch2); a future no-`cmake` sandbox session can re-fetch the same two files the same way if it wants the same stronger verification standard again. No open bugs or partial work left mid-file from this session; every touched file was completed, compiled, and tested before this session ended.
-
----
-
-### Session 67 — 2026-08-31 — Fortress pattern detection (Phase 6)
-
-**Built:**
-- `src/eval/fortress.h`/`.cpp` (new): `eval::fortress_value()`, ROADMAP.md Phase 6's "Fortress pattern detection" item. Deliberately does NOT call `eval::classify_endgame()` — the first Phase 6 term not gated on that classifier at all (see docs/DECISIONS.md, 2026-08-31 (8), for the full reasoning). Four structural checks (no queens; at most `kFortressMaxNonPawnPieces` non-pawn pieces combined; a nonzero material lead; at least `kFortressMinBlockedPawns` mutually-blocked pawns), then a proportional discount against whichever side leads — never a hard zero, never a sign flip.
-- `tests/fortress_tests.cpp` (new, 6 tests).
-- `src/eval/eval.h`/`.cpp`: new term wired into `evaluate()`'s additive sum; header comments updated to note this is the fourth Phase 6 term and the first that pays its own separate structural-scan cost rather than sharing `classify_endgame()`'s.
-- `src/CMakeLists.txt`: registered `eval/fortress.cpp`.
-- `tests/CMakeLists.txt`: registered `fortress_tests.cpp`.
-
-**Bugs fixed:** none — new-feature work, no regressions found in previously-shipped code.
-
-**Decisions made:** one, logged in docs/DECISIONS.md dated 2026-08-31 (8) — fortress detection stays classifier-independent and proportional-discount-based rather than either adding more `EndgameSignature` buckets or making a hard win/draw call the way the three earlier Phase 6 terms do for their own much narrower, exactly-defined patterns.
-
-**Verification performed (no `cmake`/Catch2 available in this sandbox, same limitation as every prior session without a full toolchain):**
-- Full `nightwing_lib` source set (`board/`, `eval/`, `support/`, `search/`, `uci/`, `tuner/`) compiled clean via direct `g++ -std=c++20 -Wall -Wextra -Wpedantic`, zero warnings.
-- All 6 planned test scenarios were first independently verified against the exact C++ branch logic via a standalone Python simulation, then re-verified a second, independent way: a standalone `g++`-compiled C++ driver linking the real, compiled `fortress.cpp` — all 6 passed against the actual code.
-- Linked and ran the real `nightwing` UCI binary; ran a real search on a rook-up FEN with pawns present but not mutually blocked, confirming the term correctly stayed silent there (an ordinary large material-based score, as expected — this scenario doesn't meet the blocked-pawn criterion) rather than mis-firing on a position that merely looks endgame-ish.
-
-**Next session start point:** Run "Start" to move to the next open Phase 6 item — `docs/ROADMAP.md`'s next unchecked bullet is "Zugzwang-aware search shaping" as of this entry — confirm by reading ROADMAP.md's Phase 6 list directly, since bullet order there is the source of truth, not this sentence. Note that item is a SEARCH change (`src/search/`), not an eval/ term the way every Phase 6 item so far has been — it belongs in a different part of the codebase than Sessions 64–67's own work, worth re-reading that item's exact wording carefully before starting, and likely worth reading `src/search/search.cpp`'s current null-move-pruning logic in full first (this session's own Tier-2-equivalent "read the file before changing it" rule applies just as much to search/ as it does to eval/). After that, the KPK/KRK/KBNK base-heuristics item is the natural next step for the two still-unconsumed classifier buckets (`KRK`, `KBNK`). No open bugs or partial work left mid-file from this session; every touched file was completed, compiled, and tested before this session ended.
-
 ---
 
-### Session 66 — 2026-08-31 — Minor piece endgame theory (Phase 6), plus a classifier gap fix
+**Session 45**
 
-**Built:**
-- `src/eval/endgame.h`/`.cpp`: added a new `EndgameSignature::KBPK` bucket (one side has a bishop and at least one pawn, the other side completely bare) — the original Session 64 six-bucket classifier had no bucket for this case at all, a gap `endgame.cpp`'s own `is_light_square()` comment had already anticipated in writing without yet filling in. See docs/DECISIONS.md, 2026-08-31 (7).
-- `tests/endgame_tests.cpp`: 4 new test cases covering the new KBPK bucket (White side, Black side with multiple pawns, and two fallthrough-to-None cases — defender has a pawn, defender has a bishop).
-- `src/eval/minor_piece_endgame.h`/`.cpp` (new): `eval::minor_piece_endgame_value()`, ROADMAP.md Phase 6's "Minor piece endgames" item. Dispatches across three `classify_endgame()` buckets — `KBPK` (wrong-bishop-corner draw detection, reusing the rule-of-the-square technique against the drawing corner rather than a pawn's promotion square, narrowed to single-rook-file-pawn(s) positions), `OppositeColoredBishops` (a per-pawn-count-difference drawish discount against whichever side leads, not a flat always-on bonus), and `KnightVsBishop` (a blocked/open mutual-pawn-pair structural bonus, favoring the knight in closed structures and the bishop in open ones). Four new public `Score` constants: `kWrongBishopCornerDrawPenalty`, `kOCBDrawishPenaltyPerExtraPawn`, `kKnightClosedPositionBonusPerBlockedPawn`, `kBishopOpenPositionBonusPerOpenPawn`.
-- `tests/minor_piece_endgame_tests.cpp` (new, 10 tests).
-- `src/eval/eval.h`/`.cpp`: new term wired into `evaluate()`'s additive sum; header comments updated to note this is now the third of three `classify_endgame()`-consuming terms, each paying its own redundant classifier call per node.
-- `src/CMakeLists.txt`: registered `eval/minor_piece_endgame.cpp`.
-- `tests/CMakeLists.txt`: registered `minor_piece_endgame_tests.cpp`.
+Screenshot follow-up to Session 44. Vault heading's box (background, border, padding) removed; its
+`h2` now matches Home's "Today" metrics so it sits on the same row as the lock/power buttons.
+`--gold` brightened `#d4af37` → `#ffc61a`, lock glow doubled to two `drop-shadow` layers.
+CSS-only; build clean, braces balanced (137/137). Decisions made: 67.
 
-**Bugs fixed:** none in previously-shipped code — the KBPK classifier gap (above) was new-item discovery during this session's own work, not a regression in already-tested, already-shipped Session 64 code; Session 64's own six original buckets remain correct and unchanged, confirmed by re-running their existing tests (all still pass) before adding the seventh.
+Next session start point: unchanged — confirm on device that the heading aligns with the buttons
+and the brighter gold reads well in dark mode too.
 
-**Decisions made:** one, logged in docs/DECISIONS.md dated 2026-08-31 (7) — extending the endgame classifier with a new bucket, rather than either detecting the pattern inline outside the classifier or deferring it the way Rook endgame patterns' own Vancura sub-pattern was deferred in Session 65.
-
-**Verification performed (no `cmake`/Catch2 available in this sandbox, same limitation as every prior session without a full toolchain):**
-- Full `nightwing_lib` source set (`board/`, `eval/`, `support/`, `search/`, `uci/`, `tuner/`) compiled clean via direct `g++ -std=c++20 -Wall -Wextra -Wpedantic` after every change in this session, zero warnings (one unused-variable warning caught and fixed mid-session, before being shipped).
-- All 10 planned `minor_piece_endgame_tests.cpp` scenarios, plus the 4 new `endgame_tests.cpp` KBPK scenarios, were first independently verified against the exact C++ branch logic via standalone Python simulations (catching one real labeling mistake — an early hand-picked "wrong bishop" test square that was actually the RIGHT bishop for that corner, since a1 and h8 are both dark squares on a real board, a fact this file's own test-file header comment now states explicitly as a result), then re-verified a second, independent way: standalone `g++`-compiled C++ drivers linking the real, compiled implementations — all 16 passed against the actual code.
-- Linked and ran the real `nightwing` UCI binary; smoke-tested a genuine wrong-bishop-corner FEN at real search depth and confirmed the eval score dropped from what plain material would otherwise show (roughly +350 to +450 cp for a bishop and pawn up) down to under +110 cp — the fortress-drawish signal firing correctly inside an actual search, not just in isolated unit tests. A control FEN with the RIGHT-colored bishop for its corner, and another with the defending king too far from the corner, both correctly showed ordinary large winning scores instead.
-
-**Next session start point:** Run "Start" to move to the next open Phase 6 item — `docs/ROADMAP.md`'s next unchecked bullet is "Fortress detection" as of this entry — confirm by reading ROADMAP.md's Phase 6 list directly, since bullet order there is the source of truth, not this sentence. Only two `EndgameSignature` buckets (`KRK`, `KBNK`) still have no real consumer at all; the KPK/KRK/KBNK "base heuristics" item further down Phase 6's list is the natural next consumer for those two specifically, worth checking whether it's a better next step than Fortress detection depending on how that item's own wording reads at that point. No open bugs or partial work left mid-file from this session; every touched file was completed, compiled, and tested before this session ended.
-
----
-
-### Session 65 — 2026-08-31 — King+pawn (KPK) and Rook endgame theory (Phase 6)
-
-**Built (King+pawn theory):**
-- `src/eval/king_pawn_endgame.h`/`.cpp` (new): `eval::king_pawn_endgame_value()`, ROADMAP.md Phase 6's "King+pawn theory" item. Applies whenever `eval::classify_endgame()` (Session 64) returns `EndgameSignature::KPK` — this is that classifier's first real consumer, closing out the "stays open until at least one of them actually does" checkbox left open in Session 64. Implements Rule of the Square, Key Squares, and direct Opposition as genuine formulas over the pawn's/kings' actual squares, not a case table. Four new public `Score` constants: `kUnstoppablePawnBonus`, `kRookPawnDrawishPenalty`, `kKeySquareBonus`, `kOppositionDrawishPenalty`.
-- `src/board/bitboard.h`: promoted `chebyshev_distance()` from a local helper in `eval/king_tropism.cpp` (its own documented revisit trigger — see docs/DECISIONS.md's 2026-08-31 (4bis) entry) to a shared function, now that `king_pawn_endgame.cpp` is a second caller.
-- `src/eval/king_tropism.cpp`: updated to call the now-shared `board::chebyshev_distance()`, local copy removed.
-- `tests/king_pawn_endgame_tests.cpp` (new, 9 tests).
-
-**Built (Rook endgame patterns):**
-- `src/eval/rook_endgame.h`/`.cpp` (new): `eval::rook_endgame_value()`, ROADMAP.md Phase 6's "Rook endgame patterns" item. Applies whenever `classify_endgame()` returns `EndgameSignature::RookEndgame` — the classifier's second real consumer. Implements Tarrasch's Rule (rook behind a passed pawn, own or enemy, at any pawn count) and, narrowed to the single-pawn textbook case, Lucena and Philidor position recognition. Vancura position recognition deliberately deferred — see docs/DECISIONS.md, 2026-08-31 (6). Four new public `Score` constants: `kRookBehindOwnPassedPawnBonus`, `kRookBehindEnemyPassedPawnBonus`, `kLucenaWinBonus`, `kPhilidorDrawPenalty`.
-- `tests/rook_endgame_tests.cpp` (new, 7 tests).
-
-**Built (shared, both items):**
-- `src/eval/eval.h`/`.cpp`: both new terms wired into `evaluate()`'s additive sum; header comments updated, including a note on the now-doubled deliberately-accepted per-node cost of two separate `classify_endgame()` calls per node.
-- `src/CMakeLists.txt`: registered `eval/king_pawn_endgame.cpp` and `eval/rook_endgame.cpp`.
-- `tests/CMakeLists.txt`: registered both new test files.
-
-**Bugs fixed:** none — this was new-feature work, no bug reports going into this session.
-
-**Decisions made:** three, all logged in docs/DECISIONS.md dated 2026-08-31 — (5) KPK theory scope limited to direct opposition only, no guessed sign for the residual ambiguous case; (4bis) `chebyshev_distance()` promoted to `board/bitboard.h` on its second real caller; (6) rook-endgame Vancura recognition deferred, Lucena/Philidor narrowed to the single-pawn case, Tarrasch's Rule applies generally.
-
-**Verification performed (no `cmake`/Catch2 available in this sandbox, same limitation as every prior session without a full toolchain):**
-- Full `nightwing_lib` source set (`board/`, `eval/`, `support/`, `search/`, `uci/`, `tuner/`) compiled clean via direct `g++ -std=c++20 -Wall -Wextra -Wpedantic`, zero warnings, after each of the two items' changes — confirming neither regressed the other or anything else depending on `board/bitboard.h` or `eval/eval.h`/`.cpp`.
-- All 16 planned test scenarios (9 KPK + 7 rook-endgame) were first independently verified against the exact C++ branch logic via standalone Python simulations, then re-verified a second, independent way: standalone `g++`-compiled C++ drivers linking the real, compiled implementations — all 16 passed against the actual code, not just the Python models of it.
-- Linked and ran the real `nightwing` UCI binary multiple times across both items' changes; smoke-tested real searches from the starting position and from real KPK and rook-endgame FENs (rook-pawn near-draw, opposition-blockade draw, a Lucena-shaped position, a Philidor-shaped position) — all sane, non-crashing, non-extreme scores.
-
-**Next session start point:** Run "Start" to move to the next open Phase 6 item — `docs/ROADMAP.md`'s next unchecked bullet is "Minor piece endgames" (wrong-bishop-corner draw detection, opposite-colored bishop fortress/drawish-tendency eval adjustment, knight vs. bishop endings weighted by pawn structure) as of this entry — confirm by reading ROADMAP.md's Phase 6 list directly, since bullet order there is the source of truth, not this sentence. That item's two sub-patterns each already have a matching `EndgameSignature` bucket ready to consume (`OppositeColoredBishops`, `KnightVsBishop`) from Session 64's classifier — no new classifier work needed, same situation King+pawn theory and Rook endgame patterns were both in this session. No open bugs or partial work left mid-file from this session; every touched file was completed, compiled, and tested before this session ended.
-
----
-
-## 2026-08-31 (1) — Session 64: Phase 6 started — endgame material-signature classifier (classification half)
-
-**What was built:** `src/eval/endgame.h`/`.cpp` — `eval::EndgameSignature` (six buckets: `KPK`, `KRK`, `KBNK`, `RookEndgame`, `OppositeColoredBishops`, `KnightVsBishop`, plus `None`) and `eval::classify_endgame()`, which recognizes each purely from piece counts, which side each piece belongs to, and (for `OppositeColoredBishops`) bishop square color. Added `tests/endgame_tests.cpp` (18 test cases) — the dedicated endgame test suite ARCHITECTURE.md's own Module Layout/Testing Policy sections already named in advance. Wired both new files into `src/CMakeLists.txt`/`tests/CMakeLists.txt`.
-
-**Bugs fixed:** None in shipped code — one caught and fixed during test-writing, before it reached a commit: two `OppositeColoredBishops`/same-color test cases initially used c1+f8 as the "opposite colors" pair and c1+c8 as the "same colors" pair, backwards from their actual square colors (verified by direct computation: c1 dark, c8 light, f8 dark — so c1/c8 are the genuinely opposite pair, c1/f8 the genuinely same-colored pair). Caught by computing square colors independently rather than trusting the first hand-picked squares, before running the tests — not a shipped regression.
-
-**Decisions made:** See docs/DECISIONS.md's new 2026-08-31 (4) entry — full rationale for why the classifier is built and fully tested but NOT yet wired into `eval::evaluate()` or `search/` (nothing to route to until later Phase 6 items exist), the KBNK/KnightVsBishop same-side-check subtlety (a total-piece-count shortcut that's safe for KPK/KRK silently breaks for KBNK), and why bucket granularity stops where ROADMAP.md's own later-item wording stops (no Lucena/Philidor/Vancura sub-classification, no "wrong bishop corner" sub-case yet).
-
-**Verification:** Full repository tarball pulled fresh via `codeload.github.com`. Built locally (CMake + Ninja, `NIGHTWING_BUILD_TESTS=ON`, Catch2 via `FetchContent`). New tests: 18/18 passing (`[endgame]` tag). Full suite: **343 test cases, 52,867 assertions, all green** (up from 325/52,849 before this session — exactly the 18 new endgame test cases added, zero regressions elsewhere).
-
-**Not yet done / left for next session:** ROADMAP.md Phase 6's first item stays unchecked — only the classification half is done, not the "route to specialized endgame reasoning" half (there's no reasoning to route to yet). Next up per ROADMAP.md Phase 6's own item order: King+pawn theory (opposition, key squares, corresponding squares, the rule of the square) — the first item that will actually consume `classify_endgame()`'s `KPK` signature. `MinorPieceEndgame`/wrong-bishop-corner sub-case and RookEndgame's Lucena/Philidor/Vancura sub-classification remain unimplemented by design (docs/DECISIONS.md's new entry) — each belongs in ITS OWN later item's specialized-reasoning code, not the classifier.
-
-**Next session start point:** Begin Phase 6's second item — King+pawn theory. Read `src/eval/endgame.h` in full first (fresh this session, don't assume still in context) to consult `EndgameSignature::KPK` rather than re-deriving pawn-vs-king detection from scratch. Say "Start" to begin.
-
 ---
-
-## 2026-08-31 (2) — Session 63: Phase 5 closed — production tuning run (post-fix) reviewed, defaults retained
-
-**What was built:** No source code changed this session — this was a review/decision session. The re-dispatched `tuning-pipeline` workflow (Session 62's pawn-anchoring fix in place) completed and its artifact was reviewed: `tuned_weights.txt` showed `pawn_mg=100 pawn_eg=100` exactly (anchoring confirmed working at production scale), and `match_result.txt` showed `score_a=0.5088, elo_diff=6.1` — the untuned defaults nominally ahead of the tuned weights, within 1 standard error (~6.55 Elo) for a 400-game sample.
 
-**Bugs fixed:** None (no code touched).
+**Session 44**
 
-**Decisions made:** See docs/DECISIONS.md's new 2026-08-31 (3) entry — closed ROADMAP.md Phase 5's tuning item with the hand-set material defaults retained, `eval/psqt.h` unchanged. Rationale: two independent large-scale runs (Session 61's buggy one, Session 62's fixed one) both found the defaults statistically indistinguishable from the tuned alternative, and the SECOND (methodologically sound) run's nominal gap was smaller than the first's (6.1 Elo vs. 9.6 Elo) — consistent with the true difference being near zero, not consistent with "a real effect hiding in the noise." Alternatives considered and rejected: transcribing the tuned weights anyway; running a still-larger match to shrink the error bar further; leaving the item open pending more games. Full quantitative comparison table in that entry.
+Follow-up screenshots after Session 43's changes went live — several restyle requests plus one
+reported bug (Vault's lock button "missing").
 
-**Verification:** N/A beyond re-confirming the artifact's own arithmetic (`score_a`/`elo_diff`/standard-error calculations checked by hand against `match_result.txt`'s raw `wins_a`/`wins_b`/`draws` counts) — no build or test run this session since no source changed.
+**Restyles:** back button got a new icon (curved-return arrow, no enclosing circle, matching a
+supplied reference minus its ring) and a 0.5s tap-glow (`.glow` class, force-reflowed before
+re-adding so rapid taps restart the animation, removed again on `animationend`). Lock button
+restyled gold (`--gold`, new CSS variable, fixed across both themes like `--danger`), thicker
+stroke, persistent glow. Power button given a matching persistent red glow.
 
-**Not yet done / left for next session:** ROADMAP.md Phase 5 is now fully complete. Phase 6 — Endgame Knowledge — is next: material-signature classifier, King+pawn theory (opposition/key squares/corresponding squares/rule of the square), rook endgame patterns (Lucena/Philidor/Vancura/rook-behind-passed-pawn), minor piece endgames (wrong-bishop-corner, opposite-colored-bishop fortress adjustment, knight-vs-bishop weighting), fortress pattern detection, zugzwang-aware search shaping, KPK/KRK/KBNK hand-built heuristics, and a dedicated endgame test suite (see ROADMAP.md, Phase 6, for full item list) — nothing in this phase started yet.
+**Disabled state:** the lock button now visually disables itself on Home/Settings whenever no
+app-open password is set (grayscale, dimmed, not tappable) — quick access has nothing for it to
+lock into. Computed fresh on every entry into those tabs (`updateLockButtonDisabledState()`,
+called from `switchMainTab()`), not cached, so it stays correct if a future session ever adds a UI
+to change the app-open password after first-run (none exists today — confirmed by checking:
+`setAppPassword()`/`removeAppPassword()` are only ever called from first-run-setup). Also now
+hidden entirely on first-run setup, resolving the assumption flagged at the end of Decision 65.
 
-**Next session start point:** Begin Phase 6's first item — the material-signature classifier (detect endgame material buckets at each node, route to specialized endgame reasoning when matched) — since every other Phase 6 item depends on this existing first to have somewhere to route into. Say "Start" to begin.
+**Vault's lock button bug:** reported as missing, actually a contrast bug, not a logic bug —
+`.vault-banner`'s background was `var(--vault)` (near-black), and the icon sitting on top of it was
+`var(--fg)` (dark in light theme) — present in the DOM, just nearly invisible against a near-black
+backdrop. Fixed at the root: removed `.vault-banner`'s dark background entirely (now
+`var(--card-bg)` with a border) and the bottom nav's matching dark active-Vault-tab background (now
+`var(--vault-fg)`, a light tint, with `var(--vault)` as the legible text/icon color) — both were the
+same "black bar" look, requested separately, and removing them fixes the contrast bug as a side
+effect (on top of the lock icon's own restyle to gold, which would have fixed it either way).
+Left the inner filter chips (`.vault-tab.active`) untouched — not named in the request, and
+light-lavender text on that same dark background is genuinely legible there, unlike an icon
+matching its backdrop almost exactly.
 
----
-
-## 2026-08-31 (1) — Session 62: fixed the tuner's pawn-value scale-degeneracy bug found in Session 61's production run
-
-**What was built:** An `anchored` flag on `tuner::MaterialParameterRef` (`src/tuner/tune.h`), set for `pawn_mg`/`pawn_eg` only. `tune()` (`src/tuner/tune.cpp`) now skips both the gradient probe and the update step for any anchored parameter, so pawn value is held exactly fixed at its starting value for an entire tuning run while the other eight `MaterialWeights` fields still tune normally. `nightwing_tune`'s stderr banner now states this explicitly.
-
-**Bugs fixed:** The `tuning-pipeline` CI run dispatched at the end of Session 61 (5000 self-play games, 200 tune iterations, 400 match games — the first real production run) came back with `pawn_mg` collapsed from 100 to ~21.4 and the resulting tuned weights scoring no better than the untuned defaults in the match comparison (`score_a=0.5138` favoring the OLD weights, within that sample size's own noise band). Cause: the tuner's loss surface has a flat "scale the whole weight vector together" direction since `sigmoid_scale` is a fixed constant, not itself fit from the data — gradient descent can drift freely along it without the fit to real piece values actually improving. Fix: anchor the pawn value so every other weight is implicitly expressed relative to a fixed unit, removing that flat direction. Why correct: re-ran the pipeline at smoke scale before/after — before, pawn drifted (1.81 at one small scale, 21.4 at production scale); after, `pawn_mg=100 pawn_eg=100` exactly, unmoved, while other weights (e.g. `knight_mg` 320 → 247.3) still moved substantially, confirming the fix stops the specific degenerate drift without disabling tuning generally.
+Verified with a real `npm install` + `vite build`: zero errors, CSS brace-balanced (137/137). All
+ids cross-checked between `app.js` and `index.html` — clean except the same class of pre-existing
+dynamically-created ids flagged every session.
 
-**Decisions made:** See docs/DECISIONS.md's new 2026-08-31 (2) entry — full rationale, and alternatives considered (fitting `sigmoid_scale` from data instead; L2 regularization instead of anchoring; discarding the bad run and rerunning unchanged).
+Decisions made: 66.
 
-**Verification:** Full repository tarball pulled fresh via `codeload.github.com` (this session started from the real, already-committed state, including Session 61's `ci.yml`/docs changes and the actual `tuning-pipeline-results` artifact the person downloaded and shared). Built locally (CMake + Ninja, `NIGHTWING_BUILD_TESTS=ON`, Catch2 fetched via `FetchContent` from `github.com` — allowed in this sandbox's network policy). Full test suite: **325 test cases, 52,849 assertions, all green** — no regressions anywhere else in the codebase from this change. `tests/tune_tests.cpp` specifically: 36 test cases (two new: a structural check that `kMaterialParameters` marks only `pawn_mg`/`pawn_eg` as `anchored`, and a behavioral check using a position with both a knight AND pawn material imbalance, labeled to strongly disagree with both — confirming pawn stays exactly fixed while `knight_eg` still moves in that same run, ruling out "anchored just because there was no gradient anyway"). Then rebuilt `nightwing_selfplay`/`nightwing_tune`/`nightwing_match` (Release, no tests) and re-ran the full three-tool pipeline by hand at smoke scale (100 self-play games, 200 tune iterations, 20 match games) to confirm the fix holds end to end through the actual CLI tools, not just the library-level tests.
+Next session start point: this session's changes haven't been seen on the actual device yet —
+worth confirming the glow effects render as expected (drop-shadow support, animation timing) and
+that the Vault banner's new lighter look reads correctly in both light and dark mode.
 
-**Not yet done / left for next session:** This fix has NOT yet been exercised at real production scale — the `tuning-pipeline` `workflow_dispatch` job needs to be re-dispatched (same 5000/4/8/200/200/400 defaults as Session 61's run) now that pawn-anchoring is in place, and its resulting `tuned_weights.txt`/`match_result.txt` reviewed. If the tuned weights come out ahead in that match comparison this time, they should be hand-transcribed into `eval/psqt.h`'s `kPawnValue`/etc. constants (pawn itself will already read `100`/`100` unchanged, by construction), with the before/after comparison logged in both ROADMAP.md and DECISIONS.md, closing out Phase 5's final item. Also still true from Session 61's own entry and worth keeping in mind when reviewing that result: `search/see.cpp`/`search/ordering.cpp` still use unweighted material values, so the match comparison reflects only each side's static-eval/pruning behavior, not its tactical judgment.
-
-**Next session start point:** Re-dispatch the `tuning-pipeline` workflow (GitHub Actions tab or mobile app: Actions → CI → Run workflow, main branch, default inputs) now that the pawn-anchoring fix is committed. Once it completes, download the `tuning-pipeline-results` artifact and bring `tuned_weights.txt`/`match_result.txt` into the next session to review and, if the comparison favors the tuned weights this time, transcribe into `eval/psqt.h` to close out ROADMAP.md Phase 5.
-
 ---
 
-## 2026-08-31 (1) — Session 61: `tuning-pipeline` `workflow_dispatch` CI job for the real large-scale self-play/tune/match run
+**Session 43**
 
-**What was built:** A new `tuning-pipeline` job in `.github/workflows/ci.yml`, triggered only by `workflow_dispatch` (with six configurable inputs: `selfplay_games` default 5000, `selfplay_search_depth` default 4, `selfplay_random_opening_plies` default 8, `selfplay_max_plies` default 200, `tune_iterations` default 200, `match_games` default 400). The job builds `nightwing_selfplay`/`nightwing_tune`/`nightwing_match` (Release, `NIGHTWING_BUILD_TESTS=OFF`, Linux only — see docs/DECISIONS.md's new entry for why), runs the full pipeline (`nightwing_selfplay` piped into `nightwing_tune`'s stdin, its `tuned_weights.txt` output piped into `nightwing_match`'s stdin against `eval::default_material_weights()`), and uploads `training_data.txt`/`tuned_weights.txt`/`match_result.txt` as a build artifact (`tuning-pipeline-results`, 30-day retention).
+Screenshots showed the app actually running on-device for the first time (CI is producing installable
+builds now) — three related UI requests off the back of seeing it live:
 
-**Bugs fixed:** None — no source code (`src/`/`tests/`) was touched this session, only `.github/workflows/ci.yml` and docs.
+1. **Lock/unlock toggle**, fixed top-right left of the power button, on every screen except the two
+   biometric/PIN unlock pages (app-open lock screen, Vault's locked gate). Context-aware at click
+   time — checks whether `#vault-content` is visible to decide whether to lock the Vault or the main
+   app, rather than tracking a separate flag that could drift out of sync. Vault path is the exact
+   same two calls the old `#vault-lock-btn` made; main-app path reuses `showLockScreen()` wholesale
+   (already handles password-set / quick-access / no-credentials-yet correctly) rather than
+   re-implementing that branching. `#vault-lock-btn` removed from the Vault banner — genuinely
+   redundant now.
+2. **Universal Back button** — third bottom-nav slot, between Home and Vault, styled as a plain
+   rounded square rather than a third tab. Backed by a deliberately simple two-slot toggle
+   (`currentLocation`/`lastLocation`), not a full history stack — recorded inside `showScreen()`/
+   `switchMainTab()` themselves, so every existing caller gets Back support for free without
+   touching individual call sites. Lives physically inside `#bottom-nav`, so it's hidden together
+   with it for free wherever the nav itself is hidden.
+3. **Every dedicated "back" element removed** — `#settings-back-btn` ("← Back to Home") is gone,
+   replaced by the universal button.
 
-**Decisions made:** See docs/DECISIONS.md's new 2026-08-31 (1) entry — why this moved to a dispatchable CI job rather than being run by hand in this session's own sandbox (a real time-limit finding: a bare `nightwing_tune`/`nightwing_match` invocation with no piped stdin blocks reading `std::cin` and hits the sandbox's own command timeout, in addition to the documented "GitHub Actions handles ALL building/running of anything compute-heavy" convention already present in `src/tuner/selfplay_main.cpp`'s/`tune_main.cpp`'s/`match_main.cpp`'s own header comments); why it's `workflow_dispatch`-only, not `push`/`pull_request`; why Linux Release only, not the full 6-leg matrix.
+One real cross-closure wrinkle: `goBack()` needed to call `refreshVaultGateView()`, but that
+function only ever existed inside the `DOMContentLoaded` closure, not at module top level where
+`goBack()`/`showScreen()`/`switchMainTab()` live. Exposed it as `window.refreshVaultGateView`,
+same pattern already used for `window.tryBiometricUnlockVault`/`window.attemptUnlock` — not a new
+mechanism, just applied to a third function.
 
-**Verification:** Full repository tarball pulled fresh via `codeload.github.com`, built locally (CMake + Ninja, Release, `NIGHTWING_BUILD_TESTS=OFF` — no test suite touched or re-verified this session, since no test-relevant code changed). `nightwing_selfplay`/`nightwing_tune`/`nightwing_match` all built clean. Ran the exact positional-argument sequences the new CI job's `run:` step uses, at small scale to fit sandbox time limits (`nightwing_selfplay 5 1 4 8 200` → 273 sampled positions from 5 games; `nightwing_tune 20` on that data → loss decreased monotonically from iteration 1 to 20; `nightwing_match 4 1 4 8 200` on the resulting weights → completed 4 games, sensible `score_a`/`elo_diff` output) — confirms every CLI argument order and the `nightwing_tune`-stdout → `nightwing_match`-stdin handoff format actually work as each tool's header comment claims, before committing them into a YAML file that isn't locally dry-runnable the way this repo's existing `ci.yml` jobs are (those get real exercise on every push; a `workflow_dispatch`-only job doesn't get that until someone actually dispatches it). No `ctest` run this session (no test-relevant files changed; Tier-1/Tier-2 convention treats this as acceptable for a docs/CI-only session).
+Verified with a real `npm install` + `vite build`: 264 KB main bundle, zero errors. All ids
+cross-checked between `app.js` and `index.html` — clean except the same class of pre-existing
+dynamically-created ids flagged every session (recording timer/stop, backup-reminder's two buttons).
 
-**Not yet done / left for next session:** The `tuning-pipeline` workflow itself still needs to actually be triggered from GitHub (requires a person with write access on the real repo — dispatching a `workflow_dispatch` run isn't something a chat sandbox can do against the live repo) at real scale (the 5000/200/400 defaults, not this session's 5/20/4 smoke values), and its resulting `tuned_weights.txt`/`match_result.txt` artifacts downloaded and reviewed. If the tuned weights come out ahead in the match comparison (`score_a` for the default weights meaningfully below 0.5, i.e. the tuned side scoring above 0.5), they should be hand-transcribed into `eval/psqt.h`'s `kPawnValue`/etc. constants, with the before/after comparison logged in both ROADMAP.md and DECISIONS.md, to close out Phase 5's final item. Also worth remembering going into that transcription: docs/DECISIONS.md's 2026-08-30 (6) entry's own scope-boundary note — `search/see.cpp`/`search/ordering.cpp` still use unweighted material values, so this match comparison's result reflects only each side's static-eval/pruning behavior, not its tactical judgment, which is a real caveat on how much weight to put on the match result alone.
+Decisions made: 65.
 
-**Next session start point:** If the `tuning-pipeline` workflow has been dispatched and its artifacts are available, download `tuned_weights.txt` and `match_result.txt` from the `tuning-pipeline-results` artifact and bring their contents into the next session to review and (if the comparison favors the tuned weights) transcribe into `eval/psqt.h`, closing out ROADMAP.md Phase 5. If it hasn't been dispatched yet, that's the first action needed (via GitHub's Actions tab or mobile app: Actions → CI → Run workflow) before this item can move further.
+Next session start point: whether the lock/unlock button should also show during first-run-setup
+was ambiguous in the request — left visible there per the literal instruction (only two exclusions
+were named), with the click handler guarding against acting on it before setup completes. Flagged,
+not assumed either way — worth confirming once seen on device. Device-pass debt from Sessions
+25 onward is now partially resolved (CI produces a real APK — that's new progress), but this
+session's three changes haven't themselves been tapped on a real device yet.
 
 ---
-
-## 2026-08-30 (6) — Session 60: Strength-comparison match harness (new tuner::match module) — required threading eval::MaterialWeights all the way through search first
-
-**What was built:** Threaded `eval::MaterialWeights` (Session 59) all the way through `search::negamax()`/`search::search_root()`/`search::quiescence()`/`quiescence_impl()` and the public `search_fixed_depth()`/`search_iterative_deepening()` APIs — previously the override only reached a single `eval::evaluate()` call, not every leaf-level static-eval call inside an actual search tree, so a search couldn't yet genuinely PLAY under different weights. New `tuner::match` module (`src/tuner/match.h`/`match.cpp`) — `play_match()` plays games between two `MaterialWeights` vectors using this newly-threaded search, alternating colors each game; `MatchResult` reports win/draw/loss plus `score_a()`/`elo_diff()`. New `nightwing_match` executable. Ran the complete three-stage pipeline end to end for the first time: `nightwing_selfplay` → `nightwing_tune` → `nightwing_match`.
-
-**Bugs fixed:** None in shipped code — two mistakes caught and fixed during this session's own test-writing: a floating-point exact-equality assertion that failed on a ~3e-14 rounding difference (fixed with an epsilon comparison), and a SEGFAULT in a hand-built `Position` test fixture caused by `Position`'s default constructor not safely initializing `castling_rights`/`en_passant_square` on its own (fixed by using the same local `empty_position()` helper `eval_tests.cpp` already established for exactly this reason — a real, pre-existing hazard flagged in docs/DECISIONS.md for future test-writers, not fixed at its source in `board::Position` itself).
 
-**Decisions made:** See docs/DECISIONS.md's new 2026-08-30 (6) entry — why search-level threading was a genuine, not-yet-satisfied prerequisite (not redundant with Session 59's eval-level threading); a real, honest scope boundary discovered by direct inspection: `search/see.cpp`/`search/ordering.cpp` both still use unweighted material values, so SEE/move-ordering stay tactically identical between the two sides of a match regardless of their different eval weights — flagged as real follow-on work, not silently glossed over; why `match`'s game loop deliberately duplicates rather than shares `selfplay`'s; why colors alternate every game.
+**Session 42**
 
-**Verification:** Fresh repository checkout with every new/changed file overlaid, both Release and Debug (ASan+UBSan) configurations. `nightwing_lib`/`nightwing`/`nightwing_bench`/`nightwing_selfplay`/`nightwing_tune`/`nightwing_match`/`nightwing_tests` all build clean, zero warnings, both configs — including the large mechanical search-layer threading change, which compiled clean on the first attempt. Full test suite: **all 323 test cases, 52,836 assertions, passed**, both configurations (up from Session 59's 314/52,815 — 9 new tests in `match_tests.cpp`). Real end-to-end pipeline run by hand: 30 self-play games → 40 tuning iterations → 12-game match (tuned weights vs. defaults), every stage correctly consuming the previous one's output. Regression bench (Linux Release, depth 6) identical to the established baseline:
+Second CI log upload. Progress from Session 41's fix — `src/js/privacy-screen.js` now resolves (20
+modules transformed, up from 19 before it existed), but the build failed one step further in:
 
 ```
-BENCH startpos            depth=6  nodes=1274   score=114    best_move=a2a4
-BENCH kiwipete             depth=6  nodes=8185   score=100    best_move=e2a6
-BENCH quiet_middlegame     depth=6  nodes=6591   score=0      best_move=g1h1
-BENCH endgame_mate_in_3    depth=6  nodes=64987  score=31995  best_move=a1c1
-BENCH TOTAL                depth=6  nodes=81037
+[vite]: Rollup failed to resolve import "@capacitor-community/privacy-screen" from
+".../src/js/privacy-screen.js"
 ```
 
-**Not yet done / left for next session:** CI hasn't confirmed this session's work on the actual GitHub Actions runners yet. **Reminder, given Session 57's CI break:** double-check `src/CMakeLists.txt` (new `tuner/match.cpp` line and `nightwing_match` executable target) and `tests/CMakeLists.txt` (new `match_tests.cpp` line) actually land in the commit. The full ROADMAP.md Phase 5 final item is still not closed out — this session built the strength-comparison *infrastructure* only; a real large-scale run, committing the resulting weights, and logging the comparison are all still to come. Extending `material_weights` into SEE/move-ordering (docs/DECISIONS.md's own scope-boundary note) is real follow-on work worth doing before treating match results as fully faithful for subtle (non-extreme) weight differences.
+**Cause:** the npm package itself isn't in `node_modules` at build time, which only happens if
+`package.json` in the actual committed repo doesn't list it — i.e. Session 39's `package.json`
+(and likely `capacitor.config.json`, delivered alongside it, though a missing config wouldn't itself
+break the build) never got committed, even though this session's earlier file
+(`privacy-screen.js`) now has. Confirmed by the error message directly — `npm install` (the step
+right before) completed without error, so it simply had nothing named `@capacitor-community/
+privacy-screen` to install.
 
-**Next session start point:** Confirm green CI (all 6 platforms) for this session's commit, then run ROADMAP.md Phase 5's final item for real: a large-scale `nightwing_selfplay` run (thousands of games, not this session's 30-game smoke test) piped into `nightwing_tune`, a `nightwing_match` comparison against the current defaults logged with its actual result, and — if the tuned weights come out ahead — hand-transcribing them into `eval/psqt.h`'s `kPawnValue`/etc. constants to close out Phase 5 entirely.
+**Fix:** re-delivered `package.json` and `capacitor.config.json` unchanged, re-confirmed against
+the sandbox (clean `npm install` + `vite build`, 99 modules, zero errors). **Why correct:** the
+error names the exact unresolvable package, and it's the one dependency line unique to Session 39
+that a prior session's `package.json` wouldn't have — every other file this build step touches
+(`privacy-screen.js`, `app.js`) is already confirmed present from Session 41's diagnosis.
+
+No code changed this session either — two sessions in a row now have been "which of Session 39's
+several files actually landed," not a code defect. Worth naming as a pattern: **Session 39
+delivered 6 files in one message** (2 NEW: `privacy-screen.js`; REPLACE: `package.json`,
+`capacitor.config.json`, `app.js`, `index.html`) — it looks like they're landing one or two per
+push rather than all at once. Flagged for the person, not assumed silently: double-check all of a
+multi-file session's outputs got applied before the next push, rather than re-uploading logs
+one gap at a time.
+
+Decisions made: none.
+
+Next session start point: unchanged — once `package.json`/`capacitor.config.json` are actually
+committed, the workflow should get past step 6 for the first time. If it fails again, check whether
+anything else from Session 39 (or any earlier multi-file session) is still missing before assuming
+new code is at fault.
 
 ---
 
+**Session 41**
 
-
-**What was built:** The "gradient descent" half of ROADMAP.md's Texel/SPSA tuner item, completing it. Built the runtime-mutable parameter-vector abstraction Session 58 identified as a prerequisite, scoped to material values only: `eval::MaterialWeights` (`src/eval/psqt.h`), `default_material_weights()`, and an optional override parameter threaded through `material_value()` and `eval::evaluate()`. New `nightwing::tuner::tune` module (`src/tuner/tune.h`/`tune.cpp`) — Texel's Tuning Method MSE loss (`compute_loss()`) and full-batch finite-difference gradient descent (`tune()`) over an enumerable 10-field parameter table (`kMaterialParameters`). New `nightwing_tune` executable reads self-play training data from stdin, prints tuned weights and the loss curve. Ran the complete real pipeline end to end: `nightwing_selfplay` piped into `nightwing_tune` on genuine self-play data — loss decreased monotonically with sensible movement in every material weight.
-
-**Bugs fixed:** None in shipped code — two mistakes were caught and fixed during this session's own development/verification before anything was finalized: (1) an `EvalCache` test sentinel value outside `int16_t` range, silently wrapping on store; (2) an initial `learning_rate` default (1.0) that produced a tuning run where the loss never visibly changed, because the resulting per-iteration weight movement was too small to ever cross `material_value()`'s integer-rounding boundary. Both are detailed in docs/DECISIONS.md.
-
-**Decisions made:** See docs/DECISIONS.md's new 2026-08-30 (5) entry — why the runtime-mutable abstraction was scoped to material values only, not every eval term; why `eval_cache` must never be consulted when a `material_weights` override is active (a real correctness hazard: stale results from a different weight vector); why `MaterialWeights` fields are `double`, not `int`; why finite-difference (not analytic) gradients were chosen even though material's own gradient is trivially linear; the empirically-derived `learning_rate`/`finite_diff_epsilon` defaults and the numerical mechanism behind why they matter; why `sigmoid_scale` (Texel's K) is a fixed default, not fit from data.
-
-**Verification:** Fresh repository checkout with every new/changed file overlaid, both Release and Debug (ASan+UBSan) configurations. `nightwing_lib`/`nightwing`/`nightwing_bench`/`nightwing_selfplay`/`nightwing_tune`/`nightwing_tests` all build clean, zero warnings, both configs. Full test suite: **all 314 test cases, 52,815 assertions, passed**, both configurations (up from Session 58's 298/52,715 — 16 new tests: 10 in `tune_tests.cpp`, 6 in `eval_tests.cpp`). Real end-to-end pipeline run by hand: `nightwing_selfplay 30 7 3 6 80` (30 games) piped into `nightwing_tune 40` — 1,526 sampled positions, loss 0.015331 → 0.015026, strictly monotonic, all five material weights showing sensible, bounded movement. Regression bench (Linux Release, depth 6) identical in every field to the established baseline — every new parameter defaults to leaving `evaluate()`'s behavior completely unchanged:
-
-```
-BENCH startpos            depth=6  nodes=1274   score=114    best_move=a2a4
-BENCH kiwipete             depth=6  nodes=8185   score=100    best_move=e2a6
-BENCH quiet_middlegame     depth=6  nodes=6591   score=0      best_move=g1h1
-BENCH endgame_mate_in_3    depth=6  nodes=64987  score=31995  best_move=a1c1
-BENCH TOTAL                depth=6  nodes=81037
-```
-
-**Not yet done / left for next session:** CI hasn't confirmed this session's work on the actual GitHub Actions runners yet. **Reminder, given Session 57's CI break:** double-check `src/CMakeLists.txt` (new `tuner/tune.cpp` line and `nightwing_tune` executable target) and `tests/CMakeLists.txt` (new `tune_tests.cpp` line) actually land in the commit.
-
-**Next session start point:** Confirm green CI (all 6 platforms) for this session's commit, then start ROADMAP.md Phase 5's final item: "Tuned weights committed, before/after strength comparison logged" — a real, large-scale self-play + tuning pass (likely thousands of games, not this session's 30-game smoke test) against the current material-only tuner, a strength comparison (before/after tuned weights) logged in the docs, and the resulting values hand-transcribed into `eval/psqt.h`'s `kPawnValue`/etc. constants. Expanding tuner coverage beyond material values (PSQT, pawn structure, mobility, ...) is natural follow-on work but not required to close out this specific item.
-
----
-
-
-
-**What was built:** New `nightwing::tuner` module (`src/tuner/selfplay.h`/`selfplay.cpp`, new `src/tuner/` directory) — plays engine-vs-itself games via `search::search_fixed_depth()`, with a short random opening (reusing `support::Xorshift64Star`) as each game's only diversity source, samples "quiet" positions (not in check, next move not a capture, never during the random opening) and labels each with the game's final result (White's perspective, matching CPW's Texel Tuning Method convention). New `nightwing_selfplay` executable (`src/tuner/selfplay_main.cpp`) runs a batch and writes a `<fen>;<result>` training-data file to stdout. This is ONLY the "self-play data generation" half of the ROADMAP item — the gradient-descent tuning loop over eval's named constants is a deliberate, documented follow-up (needs a runtime-mutable parameter-vector abstraction over eval that doesn't exist yet; see docs/DECISIONS.md).
-
-**Bugs fixed:** None — new feature.
-
-**Decisions made:** See docs/DECISIONS.md's new 2026-08-30 (4) entry — why the two ROADMAP sub-parts are split across sessions (precedent: 2026-08-21 (1)'s pawn-hash-table/pawn-structure split); why diversity comes only from a short random opening, not randomness throughout each game (preserves `search_fixed_depth()`'s determinism and this module's own reproducibility); why "quiet position" sampling uses a simple not-in-check/not-a-capture filter (CPW's Texel Tuning Method guidance); why a `max_plies` safety-net draw exists alongside checkmate/stalemate/50-move/threefold-repetition (insufficient-material detection is a not-yet-built Phase 6 item); the `<fen>;<result>` file format choice (semicolon avoids ambiguity with FEN's own internal spaces).
-
-**Verification:** Fresh repository checkout with every new/changed file overlaid, both Release and Debug (ASan+UBSan) configurations. `nightwing_lib`/`nightwing`/`nightwing_bench`/`nightwing_selfplay`/`nightwing_tests` all build clean, zero warnings, both configs. `nightwing_selfplay` run by hand end to end (5 games) — well-formed training-data output confirmed. Full test suite: **Release — all 298 test cases, 52,715 assertions, passed. Debug/ASan/UBSan — identical: 298 test cases, 52,715 assertions, passed.** (Up from Session 57's 289/52,380 — the 9 new `[selfplay]` tests and their 335 assertions account for the difference.) The 9 new tests run in under 1s (Release) / ~13s (Debug/ASan/UBSan) — well within CI's existing budget. Regression bench (Linux Release, depth 6) identical in every field to the established baseline, as expected for a change that adds a new, separate tool without touching search/eval:
+Uploaded a GitHub Actions log bundle from a real CI run — the first actual CI feedback since the
+device-pass debt started (Session 25). Build failed at step 6 (`npm run build`, i.e. the Vite build):
 
 ```
-BENCH startpos            depth=6  nodes=1274   score=114    best_move=a2a4
-BENCH kiwipete             depth=6  nodes=8185   score=100    best_move=e2a6
-BENCH quiet_middlegame     depth=6  nodes=6591   score=0      best_move=g1h1
-BENCH endgame_mate_in_3    depth=6  nodes=64987  score=31995  best_move=a1c1
-BENCH TOTAL                depth=6  nodes=81037
+Could not resolve "./privacy-screen.js" from "src/js/app.js"
 ```
 
-**Not yet done / left for next session:** CI hasn't confirmed this session's work on the actual GitHub Actions runners yet — this sandbox's own build/test runs (both configs) stand in for that in the meantime. **Reminder, given Session 57's CI break:** double-check both `src/CMakeLists.txt` (new `tuner/selfplay.cpp` line and `nightwing_selfplay` executable target) and `tests/CMakeLists.txt` (new `selfplay_tests.cpp` line) actually get committed this time.
+**Cause:** Session 39 delivered `src/js/privacy-screen.js` as a **NEW** file alongside several
+**REPLACE** files — easy to miss when pasting into GitHub's web UI, since a REPLACE overwrites a
+path that already exists in the file browser, while a NEW file has to be deliberately created at a
+path that isn't there yet. It never made it into the commit; `app.js`'s `import { setPrivacyScreen }
+from './privacy-screen.js'` (also from Session 39) had nothing to resolve against. `npm install`
+(step 5, just before) succeeded fine — the new dependency itself, `@capacitor-community/privacy-screen`
+in `package.json`, was committed correctly; only the wrapper module was missing.
 
-**Next session start point:** Confirm green CI (all 6 platforms) for this session's commit, then build part 2 of the Texel/SPSA tuner item: the gradient-descent tuning loop, starting with the runtime-mutable parameter-vector abstraction over eval's currently-`constexpr` named constants that it needs as a prerequisite (docs/DECISIONS.md's new entry has the full rationale for why this wasn't attempted alongside self-play generation).
+**Fix:** re-delivered `src/js/privacy-screen.js` unchanged (confirmed against the sandbox copy,
+which still builds clean — 99 modules, zero errors — with nothing else in the repo touched). **Why
+correct:** the error names the exact missing path and nothing else; every other file this depends
+on (`package.json`, `capacitor.config.json`, `app.js`) was already confirmed present since `npm
+install` and module resolution got as far as needing this one specific file before failing.
+
+No code changed this session — this was a missing-file diagnosis, not a bug in anything that was
+written. Logged here anyway since it's exactly the kind of gap that could recur with any other NEW
+file in a future session's delivery, worth remembering as a pattern, not just a one-off.
+
+Decisions made: none.
+
+Next session start point: unchanged — once this file is actually committed, the same workflow run
+(or a fresh push) should get past step 6 for the first time and reach the actual APK build/signing
+steps, which is the real first test of everything built across Sessions 25–40. Re-upload the next
+log bundle (or report success) so the device-pass debt can finally start closing.
 
 ---
 
+**Session 40**
 
+No new request pending, so continued down the standing list of unblocked Phase 9 items (same
+pattern as Sessions 16/17/35) — built the recurring backup-reminder banner (ARCHITECTURE §9).
 
-**What was built:** Diagnosed a full CI failure across all 6 platform/config jobs (Linux/Windows/macOS, Release/Debug) from uploaded CI log ZIPs — every job failed at the LINK step (not compile) with "undefined reference"/"unresolved external symbol" errors for every `EvalCache` member function (`EvalCache::EvalCache`, `probe`, `store`). Root cause: `src/CMakeLists.txt`'s `add_library(nightwing_lib ...)` sources list was missing `eval/eval_cache.cpp` — the file itself and every file that calls into it were correctly present and correct in the live repo, but this one line hadn't made it into what was actually committed after the Eval cache session (2026-08-30 (1)), even though the accompanying `tests/CMakeLists.txt` change (registering `eval_cache_tests.cpp`) had. Fixed by adding the missing line to `src/CMakeLists.txt`.
+New `backupReminderDue()` (app.js) checks whichever of `credentials.last_backup_at`/
+`last_drive_backup_at` is more recent — either backup path keeps the "forgot app password"
+recovery flow usable, so only the most recent of the two matters, not local specifically. Due at
+30+ days, same threshold the spec named. Suppressed when there are zero entries (nothing yet worth
+losing) so a brand-new install isn't nagged on day one — without that check, `last_backup_at` being
+unset (`0`) would always read as "over 30 days," which is true but misleading for an install with
+nothing in it yet.
 
-**Bugs fixed:** CI build/link failure on all 6 platforms (not a code bug — `EvalCache`'s own implementation was correct throughout; see docs/DECISIONS.md's new 2026-08-30 (3) entry for the full account of why this surfaced at link time only, and why it passed the delivering session's own local verification).
+Rendered as `renderBackupReminder()`, following the exact populate-then-wire shape already used for
+digest/on-this-day right above it in the same DOMContentLoaded block. New `#backup-reminder-banner`
+in Home's header, hidden unless due. Two buttons, built dynamically (same as the recording-timer
+UI elsewhere) rather than static markup: "Back up now" jumps into Settings' Backup & Restore
+section (`switchMainTab('settings')` + `.open = true` + `scrollIntoView`), "✕" dismisses — in-memory
+only, not persisted, so it reappears at the next cold launch rather than going silently snoozed for
+weeks if forgotten. Deliberately a plain in-app banner, not a push notification — simpler, and
+"soft" in the spec only requires never blocking anything, which this doesn't either way.
 
-**Decisions made:** None beyond the fix itself — see docs/DECISIONS.md.
+Fixed in passing while updating ROADMAP.md's Phase 9 intro line: it still listed "gradient mode
+toggle (done, 2 color pickers, same-color allowed)" as a current feature, though Decision 53 (Session
+29) removed gradient mode entirely — a stale line left over from before that removal. Corrected to
+say removed, not done.
 
-**Verification:** Fetched the live repository fresh (not a sandbox copy with other files overlaid) and applied only the one-line `src/CMakeLists.txt` fix. Clean configure, clean build of every target (`nightwing_lib`, `nightwing`, `nightwing_bench`, `nightwing_tests`) with zero errors. Full test suite — **all 289 test cases, 52,380 assertions, passed**, with the same regression-bench totals already established for this commit (`startpos`/`kiwipete`/`quiet_middlegame`/`endgame_mate_in_3` = `1274`/`8185`/`6591`/`64987` nodes, TOTAL `81037`).
+Verified with a real `npm install` + `vite build`: builds clean. All ids cross-checked between
+`app.js` and `index.html` — clean except the same two pre-existing dynamically-created ids
+(`recording-stop-btn`, `recording-timer`) flagged every session, plus this session's own two new
+dynamically-created ids (`backup-reminder-btn`, `backup-reminder-dismiss-btn`), same non-issue for
+the same reason.
 
-**Not yet done / left for next session:** Confirm this fix produces a green CI run on the actual GitHub Actions runners once `src/CMakeLists.txt` is committed and pushed — the fresh-clone-plus-one-line-fix verification above stands in for that in the meantime.
+Decisions made: none — implementing an already-specified feature, not a new design call.
 
-**Next session start point:** Confirm green CI (all 6 platforms) for this fix, then move to ROADMAP.md Phase 5's next unchecked item: "Texel/SPSA tuner module (self-play data generation + gradient descent)."
+Next session start point: unchanged in substance — the device-pass debt from Sessions 25 onward
+still stands, now also covering whether the banner's `scrollIntoView` actually lands correctly and
+whether the 30-day threshold feels right in practice. If picking up more unblocked work instead:
+quick-capture widget, expense charts, map view, and the confidence-confirmation chip remain open
+from Phase 9; label autocomplete UI/batch-add wiring remains open from Phase 8; obfuscation/
+ProGuard/signature check remain open from Phase 10.
 
 ---
 
+**Session 39**
 
+Idea from last session's screenshot-blocking complaint: make Privacy Screen a real Settings toggle
+the person can flip themselves, instead of something only adjustable by editing CI.
 
-**What was built:** Audited every scoring line across all 13 `src/eval/*.cpp` modules for raw numeric literals not backed by a named constant. Found one real gap: `eval/psqt.h`'s `material_value()` returned raw literals (`{100,100}`, `{320,320}`, `{330,330}`, `{500,500}`, `{900,900}`) directly instead of named constants, unlike every other term in the codebase. Fixed with five new named constants (`kPawnValue`/`kKnightValue`/`kBishopValue`/`kRookValue`/`kQueenValue`) that `material_value()`'s switch now returns. Pure internal refactor — signature, behavior, and every caller (`quiescence.cpp`, `see.cpp`, `ordering.cpp`) unchanged.
+Session 37/38's approach (`scripts/patch-mainactivity.js` hand-patching `MainActivity.java`) was
+fundamentally build-time — the flag got set once at process start, no way for JS to change it
+afterward short of a rebuild, which is exactly why Session 38 could only disable it entirely rather
+than offer a real switch. Replaced it outright with `@capacitor-community/privacy-screen`, after
+checking npm for a real, compatible, maintained option first rather than writing more native code —
+found one. Pinned to `5.2.0` specifically: its `peerDependencies` is `@capacitor/core ^6.0.0`, the
+only version line of this plugin that matches this project's Capacitor 6 (its own newer major
+versions, 6.x/8.x, need Capacitor 7/8 — an unrelated numbering coincidence). Verified by downloading
+the actual `5.2.0` tarball and reading its shipped `PrivacyScreenPlugin.java`/`PrivacyScreen.java`
+directly rather than trusting the README: `enable()`/`disable()` do exactly `window.addFlags`/
+`clearFlags(FLAG_SECURE)` on the current Activity, real runtime toggles, nothing more.
 
-**Bugs fixed:** None — this was a naming/consistency gap, not a behavioral bug (identical values returned before and after).
+`capacitor.config.json`'s `PrivacyScreen.enable` set to `false` so native startup never turns it on
+by itself. New `src/js/privacy-screen.js` (mirrors `biometric.js`'s shape) applies whatever's
+actually stored, called at the same point in `bootstrap()` as `applyAppearance()` — before the lock
+screen renders, so the setting also covers the lock screen when on. Persisted via `metaGet`/
+`metaSet` under `privacy_screen_enabled`, same mechanism as `dark_mode`/`auto_backup_enabled` — off
+by default. New `#privacy-screen-settings` card in Settings, same populate-then-wire pattern as the
+dark-mode toggle right below it.
 
-**Decisions made:** See docs/DECISIONS.md's new 2026-08-30 (2) entry — why base material values were the most important gap to catch (foundation for the next ROADMAP item, the Texel/SPSA tuner); why the seven PSQT tables and `kPassedPawnBonus[8]` already satisfy "named tunable constant" at the table level, needing no per-cell naming; why small geometric/structural literals (shield-zone/space-zone loop bounds) are out of scope, being "which squares," not "how much."
+Retired the old approach rather than leaving it as dead weight: `scripts/patch-mainactivity.js`
+deleted, `build-android.yml`'s already-commented-out step calling it removed outright,
+`android-notes/native-setup.md` §13 rewritten to describe the new plugin instead of the old patch.
 
-**Verification:** Same fresh-checkout-plus-overlay method as this session's earlier eval-cache work. `nightwing_lib`/`nightwing`/`nightwing_bench` build clean, zero warnings. Full test suite — **all 289 test cases, 52,380 assertions, passed**, identical count to before this change (no tests added, none needed, for a same-behavior refactor). Regression bench (Linux Release, depth 6) identical in every field to the prior baseline:
+One known gap stated plainly: a cold launch has one or two frames between the WebView painting and
+`setPrivacyScreen()`'s call resolving, during which an "on" setting isn't in effect yet — no fix
+without native code reading a persisted native-side flag before `onCreate()` finishes, out of scope
+for what's otherwise a plain web-layer setting.
+
+Verified with a real `npm install` + `vite build`: 99 modules (plus the new dependency), zero
+errors, same class of pre-existing benign warnings as always. All ids cross-checked between `app.js`
+and `index.html` — clean except the same two pre-existing dynamically-created ids flagged every
+session. `capacitor.config.json`, `package.json`, and the YAML workflow all parse cleanly.
+
+Decisions made: 64 (replaces 62/63's approach entirely, doesn't just amend it).
+
+Next session start point: unchanged in substance — the device-pass debt from Sessions 25 onward
+still stands, now also covering whether this plugin's `enable()`/`disable()` actually work as
+expected on a real device (the sandbox could verify the source and the build, not runtime behavior
+on Android). If picking up more unblocked work instead: quick-capture widget, expense charts,
+backup-reminder nudge, map view, and the confidence-confirmation chip remain open from Phase 9;
+label autocomplete UI/batch-add wiring remains open from Phase 8; obfuscation/ProGuard/signature
+check remain open from Phase 10.
+
+---
+
+**Session 38**
+
+Reported: `FLAG_SECURE` (Decision 62) was getting in the way of taking screenshots during active
+development — expected, since screenshot-blocking is an inherent side effect of the same flag that
+blanks the recents preview, not a separate switch. Asked whether deleting `scripts/patch-mainactivity.js`
+was the right way to turn it off — no: `build-android.yml` still calls it, so deleting the file
+would have turned a clean disable into a CI failure (missing file) instead.
+
+Disabled by commenting out the one CI step that calls the script, not deleting anything — the
+script stays, untouched and still correct, so re-enabling later is a one-line uncomment rather than
+rebuilding the feature. Updated ARCHITECTURE.md, `android-notes/native-setup.md` §13, and ROADMAP.md
+to say clearly that this is built-but-disabled, not built-and-live, so a future session doesn't
+assume recents actually blanks on a real device right now.
+
+Decisions made: 63 (disable, not delete — reasoning above).
+
+Next session start point: unchanged in substance — the device-pass debt from Sessions 25 onward
+still stands. When development is far enough along that screenshots aren't needed as often,
+re-enabling Decision 62 is uncommenting the step in `build-android.yml` — worth doing before any
+build meant to be used for real, since the feature was requested for exactly that use case.
+
+---
+
+**Session 37**
+
+Two requests: recents-preview should go dark/blank like Opera Incognito's task-switcher behavior;
+the power button should be restyled to a transparent-background red-outline icon (matching a
+supplied reference image) instead of a solid red circle, with its confirmation dialog removed and
+the button itself removed from the app-open lock screen.
+
+**Recents-preview blanking** needs Android's `FLAG_SECURE` on `MainActivity`'s window — no
+Capacitor-layer or JS equivalent exists. Since `android/` is never committed (Decision 49), a hand
+edit to a real `MainActivity.java` would be discarded the next CI run, so this follows
+`patch-manifest.js`'s exact pattern: a new `scripts/patch-mainactivity.js`, run in CI right after the
+manifest patch, that finds the stock override-free `MainActivity.java` Capacitor's template
+generates and inserts an `onCreate()` setting the flag — idempotent (skips if already patched),
+aborts loudly rather than guessing if the stock file's shape doesn't match what it expects. Tested
+in this session's sandbox against a reconstructed stock file (real `android/` doesn't exist outside
+actual CI): correct output on first run, clean no-op on a second run, braces balanced. One flag, two
+effects, not separable — the recents preview goes blank (the actual ask) and screenshots/screen
+recording are blocked system-wide as a side effect; documented in ARCHITECTURE.md and
+`android-notes/native-setup.md` §13 as a feature of the same piece, not a bug, so it isn't mistaken
+for one later. This specific native behavior hasn't run on a device yet — same standing gap as
+everything since Session 25, called out again here since it's a new native code path, not just UI.
+
+**Power button restyle:** replaced the emoji-on-solid-circle button with an inline SVG (line + open
+arc, the standard power-icon shape), transparent background, `stroke="currentColor"` tied to
+`color: var(--danger)` — reads correctly in both themes with no dark-mode override needed, since
+`--danger` doesn't change between themes the way `--bg`/`--fg`/`--card-bg` do. Confirmation dialog
+removed — tapping now calls `exitApp()` immediately (still guarded by the existing
+`Capacitor.isNativePlatform()` check for the browser-preview case). Hidden specifically on
+`#lock-screen` via one line in `showScreen()`; every other screen, including first-run and the
+Vault's own PIN gate, keeps it — "the unlock screen" wasn't fully unambiguous (the Vault's gate says
+"Unlock Vault" too), read as `#lock-screen` since that's the one whose actual purpose is unlocking
+the app itself; flagged in Decision 62 as an assumption in case that's not what was meant.
+
+Verified with a real `npm install` + `vite build`: 99 modules, zero errors. All ids cross-checked
+between `app.js` and `index.html` — clean except the same two pre-existing dynamically-created ids
+(`recording-stop-btn`, `recording-timer`) flagged in every prior session's check.
+
+Decisions made: 62 (all four changes this session, one decision, all UI/native-config, no
+schema/credential/backup-format change).
+
+Next session start point: unchanged in substance — the device-pass debt from Sessions 25 onward
+still stands, now also covering whether `FLAG_SECURE` actually blanks recents and doesn't break
+anything else (camera preview, screenshots for support requests, etc. — worth knowing about before
+relying on it). If picking up more unblocked work instead: quick-capture widget, expense charts,
+backup-reminder nudge, map view, and the confidence-confirmation chip remain open from Phase 9;
+label autocomplete UI/batch-add wiring remains open from Phase 8; obfuscation/ProGuard/signature
+check remain open from Phase 10.
+
+---
+
+**Session 36**
+
+Requested UI restructure: bottom nav reduced from three tabs to two (Home, Vault); the main app's
+Settings moved from a nav destination to an "App Settings" tile inside Home; the Vault's three
+scattered settings sections (biometric toggle, auto-lock, Vault Trash) consolidated into one
+"Vault Settings" tile inside the Vault screen; a small red circular power button added, fixed
+top-right, present on every screen, force-closing the app.
+
+`#settings-tab` itself is untouched — same accordion of settings sections, same lazy-render-on-open
+listeners — only its entry point changed, from the nav's third button to the new tile plus a
+"← Back to Home" link at the top of the panel. `switchMainTab()` picked up one line: viewing
+Settings now keeps the Home nav icon highlighted (Settings is conceptually part of Home, not a
+destination of its own) instead of leaving nothing highlighted.
+
+Vault's three sections moved into one `<details id="vault-settings-card">`: the biometric row and
+the auto-lock select flattened to plain subsections (no id changes, so no JS wiring needed beyond
+what already existed); Vault Trash stayed its own nested `<details>` since `renderVaultTrash()` is
+lazily triggered by its own `toggle` event, and flattening it would mean it re-renders every time
+Vault Settings opens rather than only when Trash itself does. Extended the existing `#settings-tab`
+chevron-card CSS (Decision 53) to also cover `#vault-settings-card` and its nested details, fixing
+a pre-existing, never-flagged gap where Vault's settings had always rendered as plain unstyled
+`<details>` — only Home's had ever gotten the card treatment.
+
+Power button: `#power-close-btn`, fixed `top`/`right`, living directly under `<body>` rather than
+inside any `.screen` div, so it's present regardless of which screen `showScreen()` shows — no
+duplication needed across first-run/lock/main/vault/ad-gate. Confirms before acting, then calls
+`@capacitor/app`'s `App.exitApp()` (already a dependency, already used for `appStateChange` —
+Decision 45), guarded by `@capacitor/core`'s `Capacitor.isNativePlatform()` so a browser preview
+gets a plain message instead of a silent no-op. z-index sits above the bottom nav but below modal
+overlays, so an open modal keeps visual priority and the button can't be tapped through it.
+
+Verified with a real `npm install` + `vite build` before delivering: 99 modules, zero errors, same
+class of pre-existing benign dynamic-import warnings as prior sessions (one new one for
+`@capacitor/core`, harmless for the same reason the others are — it's already statically imported
+by nearly every Capacitor plugin in the project regardless of this change).
+
+Decisions made: 61 (this session's three changes, one decision — all UI-only, no schema/credential/
+backup-format change). Also fixed in passing: DECISIONS.md had Decision 53's entry sitting out of
+chronological order (after 59 instead of after 52) from an earlier edit — moved back into place,
+content unchanged.
+
+Next session start point: unchanged in substance — the device-pass debt from Sessions 25 onward
+still stands, now covering this session's changes too. Flagged but not resolved: whether the power
+button should appear inside modal overlays wasn't specified — left underneath them (visible, not
+tappable-through) rather than assuming either way. If picking up more unblocked work instead:
+quick-capture widget, expense charts, backup-reminder nudge, map view, and the
+confidence-confirmation chip remain open from Phase 9; label autocomplete UI/batch-add wiring
+remains open from Phase 8.
+
+---
+
+**Session 35**
+
+Picked up an unblocked Phase 9 item rather than waiting further on the standing device-pass debt
+(Sessions 25–34), same pattern as Sessions 16/17 — nothing here needed a device to build or verify.
+
+Built the "Your Data" transparency screen (ARCHITECTURE §7), specified but not yet coded: a Settings
+section showing total entry count and an on-device storage estimate, plus an Export Now button.
+`yourDataSummary()` (app.js) counts non-deleted, non-vault entries — vault entries excluded for the
+same reason `showDigest()`/`onThisDay()` already exclude them (Decision 40): this screen sits behind
+the app-open password, not the Vault PIN, so a count that included vault items would leak the vault's
+size to anyone with app access but not the PIN. Storage size has no such split available —
+`navigator.storage.estimate()` reports the whole origin's usage, not per-category — so it's shown as
+one on-device total (files + vault content + the database itself), labeled as an estimate, same
+caveat already used for the backup/restore storage checks. Export Now opens the existing Backup &
+Restore settings section and scrolls it into view rather than building a second export path.
+
+New `<details id="your-data-settings">` added to Settings, positioned above Storage breakdown (the
+higher-level, "is my data actually local" summary, vs. the per-category breakdown below it). Verified
+with a real `npm install` + `vite build` before delivering, not just syntax-checked: 99 modules
+transformed, zero errors, only the same pre-existing benign dynamic-import warnings prior sessions
+have already seen. Also fixed a stale line in ARCHITECTURE.md §13 while touching it — the Status
+section still listed the on-this-day/storage-breakdown screens as "not yet coded," though Session 17
+built both; corrected to reflect what's actually implemented.
+
+Decisions made: none — implementing an already-specified, already-scoped feature, not a new design
+call.
+
+Next session start point: unchanged in substance — the device-pass debt from Sessions 25 onward still
+stands, now with one more built-but-unverified-on-device screen added to it (low risk: read-only
+display plus a settings-open call, no data mutation). If picking up more Phase 9 work instead of the
+device pass: quick-capture widget, expense charts, backup-reminder nudge, map view, and the
+confidence-confirmation chip are all unblocked and unstarted.
+
+---
+
+**Session 34**
+
+Fixed the Select files screen's scattered layout, reported against a screenshot — checkboxes
+floating disconnected from their labels. Root cause: those checkboxes (`.cat-select-all`,
+`.item-select`) had never been given a rule of their own, so they fell through to the general
+`input { width: 100% }` rule and stretched, scattering their flex row. Every checkbox styled so far
+had been scoped to a specific class (`.switch-row`/`.category-checkboxes`) — anything outside those
+was unprotected.
+
+Fixed at the root instead of adding a third class-scoped patch: the compact checkbox is now the
+default for any plain checkbox, with `.switch-row` overriding it to the sliding-switch look where
+that's wanted. Closes this category of bug for any checkbox added later, not just this one.
+
+Also found and fixed while reviewing this file: Decision 53's entry had ended up out of
+chronological order in `DECISIONS.md`, sitting after Decision 59 instead of after 52 — an artifact
+of an earlier edit anchoring to non-unique text. Moved back into place, no content changed.
+
+Decisions made: 60.
+
+Next session start point: unchanged — the device-pass debt from Sessions 25 onward still stands.
+This session's fix is CSS-only and low-risk by nature, but still unconfirmed visually on a device.
+
+---
+
+**Session 33**
+
+Two bugs reported together, both traced to the same single line: a double biometric prompt on every
+app open (with the app's own unlock behaving inconsistently depending on which prompt got completed
+or ignored), and the Vault sometimes showing up already unlocked with no prompt at all.
+
+Cause: `DOMContentLoaded`'s initial setup called `refreshVaultGateView()` once, unconditionally,
+immediately after wiring the Vault's buttons — before the person had reached or tapped the Vault tab
+at all. That function auto-triggers a Vault biometric attempt when enabled (Decision 56), so this
+fired a second prompt on cold start racing against the app lock screen's own one, and could silently
+set the Vault's unlock state in the background while the person was still on the app's lock screen —
+so by the time they actually opened the Vault tab, it was already unlocked with nothing asked.
+
+This call had been redundant since Session 30 (the bottom-nav Vault button already calls it fresh on
+every real visit) but harmless on its own; it only became actively wrong once Decision 56 gave the
+function it was calling a side effect. Removed the line entirely.
+
+Decisions made: 59.
+
+Next session start point: unchanged — still the same device pass owed since Session 25, now with
+one more thing this session should make easier to verify (only one biometric prompt should ever
+appear at app open; the Vault should never be reachable without its own prompt first).
+
+---
+
+**Session 32**
+
+Product decision, not a bug: ads are deliberately not part of this build — no AdMob account, no
+plugin, no gate, no ad format of any kind, notifications included. Phase 12 marked as an explicit
+deferral in ROADMAP.md rather than left looking like ordinary unfinished work.
+
+Removing the one place that called into `ads.js` turned out to matter for two bugs reported in the
+same message: a full app freeze after entering, and a worse version of Session 31's biometric-timing
+issue (needing a whole second unlock, not just a second tap). Two things found together:
+
+`onUnlocked()` called the ad gate with `window.adSdk`, which has never been set anywhere (confirmed
+by checking `package.json` and `capacitor.config.json` directly — no AdMob plugin has ever been
+added). `ads.js`'s own try/catch already handled that safely, so this wasn't a confirmed crash by
+itself, but it was real, pointless work sitting on the unlock path.
+
+More likely the actual cause: Session 31's biometric-timing fix used a bare `setTimeout` fired from
+inside `showLockScreen()`, independent of the rest of `DOMContentLoaded`'s own setup — which does
+its own sequence of awaited database calls. On a slower device, the timeout could land mid-setup,
+racing two chains of SQLite calls against the same connection. Reasoned from the code, not confirmed
+via device logging. Fixed by moving the actual biometric trigger to the very last line of
+`DOMContentLoaded`, after everything else has finished — nothing left to race against. The
+window-focus delay from Session 31 stayed, just layered on top of that instead of standing alone.
+
+Decisions made: 58.
+
+Next session start point: unchanged in substance — a real device pass is owed for all of Sessions
+25 through this one. This session specifically should make that pass easier, not harder: fewer
+things happening on the unlock path, one less untested integration point (ads) removed from the
+critical path entirely.
+
+---
+
+**Session 31**
+
+Five bugs reported directly against real device screenshots, all fixed:
+
+1. Auto-biometric on the app lock screen needed two attempts (worked, stayed on the same page,
+   worked again on a second explicit tap). Reasoned cause: triggering the OS prompt immediately on
+   cold start, before the Activity has window focus, is a known timing issue. Added a 400ms delay
+   before the automatic attempt — an estimate, not a measured fix, worth revisiting after a real
+   device check.
+2. Bottom-nav Home/Settings did nothing while viewing the Vault — the handler changed which
+   sub-tab main-screen would show without ever actually showing main-screen. Gave `showScreen()` an
+   optional tab parameter so navigating there from anywhere can land on a specific tab.
+3. The Vault's Lock button stayed visible even when already locked. Now hidden unless genuinely
+   unlocked.
+4. The biometric enable/disable toggle showed on the locked landing page, not just once inside —
+   requested directly. Moved it into the unlocked content area; the actual unlock button correctly
+   stays on the locked gate.
+5. Locking the Vault didn't return Home immediately — the handler awaited an unnecessary async
+   refresh before navigating. Now synchronous, right after lock.
+
+Also added two more capture cards, Reminder and Location, positioned before Money — eight cards now
+(Text/Voice/Image/PDF/Reminder/Location/Money/Files). Reminder reuses the existing auto-detected
+`reminder` type (a reminder is a reminder, unlike Money's deliberately-kept-separate relationship to
+Expense); Location is entirely new, same placeholder treatment as Money. Extended the backup
+filename letters from `tvipmf` to `tviprlmf` to match — flagged as a judgment call, not something
+explicitly re-specified, since the request added cards to the same set the letters were drawn from.
+Capture-card grid moved from 3 to 4 columns for a clean 4x2 layout. Two new type colors (orange,
+cyan) picked and contrast-checked the same way as every color since Decision 52.
+
+Decisions made: 56, 57.
+
+Next session start point: still the same real-device pass owed since Session 30, now covering five
+more fixes on top — none of tonight's changes have been confirmed on a device either, only reasoned
+through and checked for internal consistency (syntax, no duplicate IDs, contrast math). Priority if
+only some of it can be tested: the Vault gate states (setup/locked/unlocked, and the Lock button's
+visibility in each) and the nav fix, since those are the two that were reported as actually broken
+rather than requested-and-built-fresh.
+
+---
+
+**Session 30**
+
+A reported bug turned out to be a real one: tapping the bottom-nav Vault button opened straight into
+Vault content with no PIN prompt. Traced it to Session 29's refactor — the actual gate elements
+(`vault-pin-setup-view`/`vault-locked-view`, plus Session 26's biometric toggle) had been moved into
+Settings' Private Vault accordion, disconnected entirely from `vault-screen`, which was left holding
+only the content with nothing above it to gate on. A second bug in the same area: `lockVault()`
+cleared the in-memory key but never cleared the vault list's already-rendered HTML, so even a
+reconnected gate wouldn't have hidden content from a previous unlock.
+
+Fixed by moving the gate back into `vault-screen` itself and rewriting `refreshVaultGateView()` as
+the single function deciding all three states (needs-setup/locked/unlocked) and toggling the
+content's visibility as part of that, rather than the content being permanently shown. Every unlock
+path now routes through it. `lockVault()` now also clears the rendered lists directly.
+
+Also: both the app lock screen and the Vault gate now auto-attempt biometric unlock as soon as they
+show, when enabled, instead of waiting for a button tap — requested directly. Fire-and-forget, same
+success/failure paths a manual tap already used; the Vault's version is guarded against re-prompting
+on every re-render while still locked.
+
+Added Money as a sixth capture type — card only, its real capture flow deliberately not built yet.
+Kept it separate from the existing auto-detected `expense` type rather than reusing that machinery
+without being asked to. Threaded through everywhere the other five types are: vault support, backup
+category (letter `m`), labels, a new red accent color (the one hue not already in use). Tapping it
+shows a plain "coming soon" rather than falling into the generic file-picker path, which would have
+been wrong for an undefined type.
+
+Redesigned both capture bars as a 3-column card grid (icon + label) instead of a thin icon-only row —
+Home's bar gains text labels it never had. Checked contrast again for the newly-visible labels on
+the category colors, same discipline as Sessions 28–29.
+
+Renamed backup/append output files to `backup_<letters>_<timestamp>.dz` /
+`append_<letters>_<timestamp>.dz`, exactly as specified, with two flagged (not silently assumed)
+defaults: an "x" placeholder if none of the six lettered categories are selected, and the standard
+`yyyymmdd_hhmmss` timestamp shape (read the request's extra "h" as a likely typo rather than building
+it literally). Old `.dzbackup`/`.zip` extensions still accepted on import so existing backups keep
+working; nothing is written with them going forward. Found and cleaned up a stale leftover from
+Decision 53 while in this file: backup.js's App Settings category still listed the removed gradient
+meta keys.
+
+Decisions made: 54, 55.
+
+Next session start point: unchanged in spirit, more urgent in practice — this session touched the
+Vault's actual security gate, which makes an on-device pass non-optional before trusting any of
+Sessions 25 through this one further. Priority order if only some of it can be tested: (1) the Vault
+gate fix — confirm tapping the Vault tab always asks for the PIN/biometric when locked and never
+shows stale content, (2) biometric auto-prompt on both locks, (3) everything else already queued.
+
+---
+
+**Session 29**
+
+Second visual pass, requested directly: drop Gradient mode entirely (keep dark mode), replace the
+single long scrolling page with a proper modern layout, switches instead of checkboxes.
+
+Gradient mode: removed end to end — CSS custom properties and rules, the JS that wrote them, the
+toggle and two color pickers in Settings. Nothing to migrate; appearance was always stored as loose
+key-value rows in the generic `meta` table, not schema columns, so the old rows just sit there
+unread from now on, harmless, including inside any backup made before this session.
+
+Layout: main-screen split into a Home panel (capture bar, search, timeline) and a Settings panel
+(everything that used to be a wall of stacked `<details>` below the timeline on the same page), switched
+by a new fixed bottom nav — Home / Vault / Settings. Vault needed no restructuring, it was already
+its own screen; the nav button just calls the same `showScreen('vault-screen')` every existing
+unlock path already called. `showScreen()` itself now also drives the nav's visibility and active
+state, centrally, rather than leaving that to every call site.
+
+Every standalone on/off setting is now a sliding switch — a pure CSS restyle of the existing
+checkbox inputs (`appearance: none` + a `::before` thumb), no id or JS listener touched. Backup/
+restore's multi-select category checkboxes deliberately stayed compact checkboxes rather than
+switches — a different kind of choice (pick-several vs one on/off), and five switches in a row for
+that would have read wrong. `<details>` sections in Settings got a custom rotating chevron and card
+treatment instead of the browser's bare disclosure triangle, which was doing a lot of the "dated"
+work by itself.
+
+Checked contrast again before shipping, same as last time: found and fixed the bottom nav's active
+and inactive tab-label colors, both slightly under AA at small text size — added a dedicated
+per-theme active-color token and raised the inactive label's opacity rather than leaving either as a
+near-miss. Also swapped two newer CSS features (`color-mix()`, `:has()`) that would render fine on a
+recent Chrome for explicit per-theme tokens and an HTML class instead, given this app's minSdk 22
+means some real device could plausibly carry an older system WebView.
+
+Decisions made: 53.
+
+Next session start point: unchanged — still need a real CI build and device pass covering
+everything from Sessions 25 through this one before any of it moves from "reasoned through" to
+"confirmed."
+
+---
+
+**Session 28**
+
+Visual redesign, requested directly against two screenshots showing the actual on-device look — flat
+grey/white, one blue accent, described accurately as dated. Rebuilt `style.css` around a colorful
+default theme, kept fully separate from the existing opt-in Gradient mode (untouched, still exactly
+what it was).
+
+Design: one brand accent (indigo/violet) for primary actions, plus five category colors — one per
+capture type (Text/Voice/Image/PDF/Files) — applied everywhere that type shows up: capture-bar
+buttons, every list row's left edge, the Vault's filter tabs. Same five hues, same meaning, everywhere
+they appear, so the color coding only has to be learned once. `app.js` gained `data-type="..."` on six
+row-render call sites that previously only put the type in text, so the new CSS selectors have
+something to match against — additive only, checked the type vocabulary already lined up with the
+capture buttons' own `data-type` values before relying on it.
+
+Checked accessibility before shipping, not after: computed real WCAG contrast ratios for every
+text-on-color pairing in a sandbox rather than eyeballing it. Found and fixed two real failures —
+white button-label text on the lighter category colors (amber/teal/green) in the Vault's capture bar,
+and the primary-button gradient's lighter end in both light and dark theme. Fixed by separating
+button-fill colors from brand-as-text colors (different contrast requirements: white-on-fill vs
+text-on-page-background) rather than trying to satisfy both with one token.
+
+Decisions made: 52.
+
+Next session start point: unchanged — still need a real CI build and device pass covering Sessions
+25–28 together (voice-recording permissions, biometric unlock, real per-build versioning, and now
+this visual pass) before any of it can be called confirmed rather than reasoned-through.
+
+---
+
+**Session 27**
+
+Two things this session. First, informational only: the app icon was replaced directly on GitHub by
+hand (`resources/icon.png`) — no code or doc change needed, that's exactly the one-file swap
+`native-setup.md` §2 already documents.
+
+Second, a real bug: every build still installed as version 1.0 no matter what changed. Same root cause
+as Decision 49, one layer over — extracted `@capacitor/cli`'s actual android template and confirmed
+`android/app/build.gradle` unconditionally ships `versionCode 1` / `versionName "1.0"`, and since
+`android/` is never committed (regenerated fresh every run), nothing had ever overridden that. Every
+build since Session 1 has been identically versioned.
+
+Fixed with the same pattern as `patch-manifest.js`: `scripts/patch-version.js` (new), run by CI right
+after it. `versionCode` comes from GitHub's own run number — always increasing, no manual step, nothing
+to forget. `versionName` is `package.json`'s version plus that same run number, so an installed build
+can be identified from Settings > Apps without checking CI logs. Tested against the real extracted
+Capacitor template in a sandbox: correct rewrite, correct overwrite on a second run with a different
+number, correct refusal (not a silent guess) when the run number isn't set.
+
+Decisions made: 51.
+
+Next session start point: unchanged from Session 26 — get a build through CI and onto the device. This
+build will be the first to carry a real version string, which should make it obvious at a glance
+whether the device actually picked up the new APK before testing anything else in it (voice recording
+permissions, biometric unlock, both locks independently).
+
+---
+
+**Session 26**
+
+Built biometric (fingerprint/face) unlock as an alternative to typing the app-open password or Vault
+PIN, requested explicitly — off by default, toggled independently per lock, never a fourth credential.
+
+Plugin choice took real checking, not just picking the first match: the obvious package
+(`capacitor-native-biometric`) turned out to target Capacitor 3 and depend on `jcenter()`, dead since
+2021 — would likely have broken the CI build. Found and verified `@capgo/capacitor-native-biometric@6.0.4`
+instead by downloading both packages and reading their manifests/gradle directly: peer dep
+`@capacitor/core@^6.0.0`, modern `google()`/`mavenCentral()`-only gradle, matches this project exactly.
+
+Also read the chosen plugin's native Java source before trusting its security model: its Keystore key
+requires the device to be unlocked but does not require a fresh biometric check to decrypt — the actual
+gate is enforced in `src/js/biometric.js`'s own call order (verify, then read), not by hardware on every
+access. Documented this plainly rather than overselling it (`native-setup.md` §10, `ARCHITECTURE.md` §3).
+
+Built: `src/js/biometric.js` (new — thin plugin wrapper); two new `credentials` columns plus `db.js`'s
+first real migration helper (`ensureColumn()`, needed since the existing on-device test install's DB
+predates these columns and `CREATE TABLE IF NOT EXISTS` doesn't retrofit them — same class of gap as
+Decision 49, different layer); enable/disable/unlock wiring in `app.js`, reusing `attemptUnlock()` and
+`unlockVault()` as-is rather than a second copy of "what counts as correct"; settings UI (toggle +
+confirm-password/PIN sub-form) in both the App lock and Vault sections, plus a biometric button on the
+lock screen and the Vault gate. Changing or removing either password/PIN now also clears its stored
+biometric secret automatically, so a stale cached value can never unlock (or derive a vault key from)
+a credential that's no longer correct.
+
+Also removed `@capawesome-team/capacitor-android-foreground-service` from `package.json` — the dead
+dependency flagged in Session 25, confirmed unused anywhere in `src/js/`.
+
+Decisions made: 50. Fixed three stale `native-setup.md §10` cross-references (ARCHITECTURE.md,
+DECISIONS.md, ROADMAP.md) left over from inserting the new §10 ahead of the old Google Drive section,
+which shifted to §11.
+
+Not done: no device test yet — this is new code on top of Session 25's not-yet-built permission fix, so
+neither has been run through CI or a real device at this point. Native biometric prompts in particular
+can't be meaningfully verified any other way (no emulated fingerprint sensor in this sandbox).
+
+Next session start point: get a build through CI and onto the device. Three things need confirming
+together, in order — (1) Session 25's manifest-permission fix (voice recording end-to-end), (2) this
+session's biometric enable/unlock flow for both locks, (3) that enabling biometric for one lock doesn't
+interfere with the other (they use separate `server` keys in the plugin's storage, but that's reasoning
+from the code, not something confirmed on a real device yet). If biometric enrollment isn't available on
+the test device, the settings rows should simply stay hidden (`isBiometricAvailable()` returning false) —
+worth checking that path too, not just the happy one.
+
+---
+
+**Session 25**
+
+Followed up on Session 24's flagged-but-unverified question: does `cap-voice-rec` self-declare
+`RECORD_AUDIO`, or does the app's manifest need it added by hand? Answered by downloading the actual
+package and reading its shipped `AndroidManifest.xml` rather than inferring from its README — it
+self-declares neither `RECORD_AUDIO` nor any permission for the foreground service it does declare
+(`foregroundServiceType="microphone"`).
+
+That second half turned into the bigger finding. Capacitor 6's default `targetSdkVersion` is 34
+(checked against Capacitor's own upgrade docs), and Android 14 requires `FOREGROUND_SERVICE` +
+`FOREGROUND_SERVICE_MICROPHONE` declared for a microphone-typed foreground service or the OS throws a
+`SecurityException` at `startForeground()` — a native-side crash no JS try/catch can catch, same shape
+as Decision 47's GoogleAuth crash. Untested until now since Session 24 only built the recording UI.
+
+Checking where to actually add these permissions surfaced a deeper, structural gap: **`android/` has
+never been committed to the repo**, across all 24 prior sessions — `build-android.yml`'s "add platform
+if missing" branch has been true every single run. `android-notes/native-setup.md` §3's permission list
+has existed since Session 1 but had no mechanism to ever reach a real manifest; any hand-edit would be
+silently thrown away the next CI run. This means every permission in that list — not just the two new
+ones — has been documentation only, never actually built into any APK, including the ones already
+confirmed working on-device (Sessions 22–24 only exercised file/note capture, which doesn't need any of
+them; voice recording, reminders, and location would have been the first real test, and hadn't happened
+yet).
+
+Fix: `scripts/patch-manifest.js` (new), run by CI right after `npx cap add android` — inserts any of the
+eight required permissions not already present in the freshly-generated manifest, idempotently. Verified
+by running it against a representative sample manifest in a sandbox: correctly inserted all eight, then
+correctly no-op'd on a second run. `build-android.yml` updated with one new step calling it.
+
+Also noted, not removed: `package.json`'s `@capawesome-team/capacitor-android-foreground-service`
+dependency is unused anywhere in `src/js/` — likely left over from before `cap-voice-rec` was chosen.
+Flagged for a future cleanup pass, not urgent.
+
+Decisions made: 49.
+
+Next session start point: get a build through CI with this change and back on the device — this is the
+first real test of voice recording, and the first time *any* of the documented manifest permissions will
+have actually shipped in a built APK. If recording works end-to-end (permission prompt, record, stop,
+save, playback), continue the standing test checklist: search, edit, local backup/restore, Vault. Also
+worth a quick sanity check once on-device: confirm the permission *prompts* (not just presence in the
+manifest) actually appear for RECORD_AUDIO/location/notifications at the expected first-use moments,
+since a declared-but-never-requested permission is a different bug than what was just fixed here.
+
+---
+
+**Session 24**
+
+Two real bugs reported from continued testing:
+
+1. **PDF/image capture accepted literally any file type.** The file `<input>` for both had no
+   `accept` attribute at all — same generic picker used for every non-text type. Fixed with a
+   per-type `acceptForType()` helper (`image/*`, `application/pdf,.pdf`; `file` stays intentionally
+   unrestricted).
+
+2. **"Record voice" actually asked to upload an existing audio file instead of recording one.**
+   Bigger gap: voice capture was routed through the exact same generic file-picker as image/pdf/file
+   — there was never any actual recording UI built, matching Phase 5's already-documented
+   "not implemented" status, but worth fixing now that it's blocking real testing. Added
+   `cap-voice-rec` (Decision 48) after real verification, not assumption: queried npm directly for
+   the actual current version (`6.0.1`, chosen specifically because its major version tracks
+   Capacitor's own — the same version-mismatch mistake that caused the Google Sign-In crash last
+   session was worth actively avoiding here), installed it in a sandbox, and read its actual shipped
+   type definitions rather than trust its README, which had a real inconsistency about its own
+   return shape (a `path` field mentioned in one section that doesn't exist in the actual types).
+   Built a record/stop UI with a live timer, wired into both the main and vault capture bars.
+
+Not done: the noise-reduction toggle from the original Phase 5 plan — `cap-voice-rec` has no
+audio-source parameter to expose it. Tracked separately in `android-notes/native-setup.md` §5;
+basic recording (what was actually broken) is fixed.
+
+Verified the same way as every session since the crash saga began: ran a real `npm install` +
+`vite build` after adding the new dependency, not just a syntax check — confirmed the plugin bundled
+correctly with zero unresolved imports.
+
+Decisions made: 48.
+
+Next session start point: continue the test checklist — confirm voice recording actually works
+end-to-end on-device (permission prompt, record, stop, save, playback), then search, edit, local
+backup/restore, Vault. Also worth confirming on the next device test: whether `cap-voice-rec` needs
+a manual `RECORD_AUDIO` manifest permission or self-declares it — flagged as unverified in
+`android-notes/native-setup.md` §5.
+
+---
+
+**Session 23**
+
+Real functional testing began — file, image, and note capture all confirmed working, tags display
+correctly, and all five per-file actions render per entry. First real bug from actual usage rather
+than a crash: every action button rendered full-width and stacked instead of sitting compactly in a
+row. Cause: `.drive-backup-row`'s button-sizing CSS rule was scoped to `#drive-backup-list .drive-backup-row`
+from when it was first written (Session 11), before the same class got reused generically across the
+main timeline, vault list, and trash bins. Everywhere except the Drive list fell back to the
+universal `input, button { width: 100% }` default. Fixed by removing the `#drive-backup-list` scope
+so the rule applies everywhere the class is used, plus `flex-wrap` so a row of five buttons wraps
+onto multiple lines on narrow screens instead of overflowing.
+
+Verified the same way as the last several sessions: ran the actual Vite build after the fix, not
+just eyeballed the CSS — bundles clean.
+
+Decisions made: none — a scoping bug, not a design call.
+
+Next session start point: continue the test checklist — search, edit, local backup/restore, Vault.
+
+---
+
+**Session 22**
+
+**First successful device load, after three straight sessions of crashes (18–21).** Screenshots
+confirm: first-run setup renders correctly (both optional-credential fields, matching the spec
+exactly), the main screen shows digest/on-this-day/timeline/capture bar, "Select files" opens with
+correct empty-state text rather than erroring on empty data, and all eight settings sections render
+(Storage breakdown, Trash, App lock, Private Vault, Appearance, Backup & Restore, Google Drive
+Backup, Append files from download).
+
+This confirms the three fixes from the last three sessions weren't just individually correct but
+actually work together in a real build: the SQLite import fix (Session 18), the Vite bundler
+addition (Session 19), and the GoogleAuth null-check guard (Session 21). Nothing new built or fixed
+this session — just recording the milestone, since it's the first time in this project's history
+that anything has been confirmed running on an actual device.
+
+Decisions made: none.
+
+Next session start point: real functional testing, not crash-hunting. Priority order, cheapest and
+most foundational first: capture one of each type and confirm it appears with all five actions;
+search; tags; edit; local backup then restore (the one place a bug would be worst to discover late);
+Vault setup, capture, search, its own trash; auto-lock (idle and backgrounding). Skip Drive and ads
+for now — both still need manual setup that hasn't happened (OAuth client, AdMob unit), so failures
+there are expected, not bugs to report.
+
+---
+
+**Session 21**
+
+Got the real crash log via ADB (`adb logcat -d`, after some detours — a third-party crash-viewer app
+couldn't read another app's logs at all, since that's an OS-level restriction on Android since 4.1,
+not a tool problem). Root cause, confirmed in the actual stack trace, not inferred:
 
 ```
-BENCH startpos            depth=6  nodes=1274   score=114    best_move=a2a4
-BENCH kiwipete             depth=6  nodes=8185   score=100    best_move=e2a6
-BENCH quiet_middlegame     depth=6  nodes=6591   score=0      best_move=g1h1
-BENCH endgame_mate_in_3    depth=6  nodes=64987  score=31995  best_move=a1c1
-BENCH TOTAL                depth=6  nodes=81037
+Caused by: java.lang.NullPointerException: Attempt to invoke virtual method
+'android.content.Intent com.google.android.gms.auth.api.signin.GoogleSignInClient.getSignInIntent()'
+on a null object reference
+  at com.codetrixstudio.capacitor.GoogleAuth.GoogleAuth.signIn(GoogleAuth.java:81)
 ```
 
-**Not yet done / left for next session:** CI hasn't confirmed either of this session's two commits (Eval cache, and this tunable-constants fix) on the actual GitHub Actions runners yet — this sandbox's own build/test runs stand in for that, same as recent sessions.
+This is a narrower, later crash than the two from Sessions 18–19 — it only fires when
+`GoogleAuth.signIn()` is actually called (tapping "Connect Google Drive"), and confirms both earlier
+fixes (the SQLite import, the Vite bundling) were real and correct — the app is loading and running
+fine otherwise. The plugin's native `signIn()` has no null-check on its internal sign-in client;
+with no client ID configured (removed as a hedge last session), calling it throws an uncaught
+`NullPointerException` **inside the plugin's own compiled Java code**, which kills the whole app
+process before anything can reach JavaScript. Confirmed via the stack trace that no JS-side
+try/catch could have caught this regardless of how it was written — the crash happens on Capacitor's
+own "CapacitorPlugins" native thread, before a promise resolution/rejection is even possible.
+
+Fixed with a `GOOGLE_DRIVE_CONFIGURED` guard in `gdrive.js` (currently `false`) that stops the app
+from ever calling `GoogleAuth.signIn()` until it's manually flipped — documented alongside the
+real-client-ID setup step in `android-notes/native-setup.md` §10 so both are done together, not one
+forgotten. Also added try/catch around the two UI call sites (`drive-connect-btn`,
+`handleDriveBackupNow`) that previously had none, for clean error display generally, though the
+guard itself is what actually prevents the crash — a JS-side catch alone would not have been enough.
+
+Verified the same way as last session, not just asserted: ran the real Vite build again after these
+changes — still bundles cleanly, same benign warnings, zero errors.
+
+Decisions made: 47.
+
+Next session start point: back on the device for a fourth attempt. If this clears — three
+distinct, confirmed root causes fixed across three sessions (SQLite import, missing bundler, Google
+Auth null-check) — that's real, substantial forward motion after a long stretch of untested code.
+Standing items otherwise unchanged: CI status, Phase 13's actual OAuth setup (still not done, by
+design — the guard means that's fine to defer).
+
+---
+
+**Session 20**
+
+Third device test — no longer a blank screen (confirms Session 19's Vite fix actually worked), but
+a native "Dumpzone keeps stopping" crash instead. This is a different failure class entirely: JS
+module loading now succeeds, and something is throwing at the native Android layer.
+
+**No confirmed root cause this session — being explicit about that rather than shipping another
+guess as if it were certain.** Investigated several plausible candidates against real documentation
+rather than assuming:
+- `@capacitor-community/sqlite`'s documented Android minimums (`minSdkVersion 22+`,
+  `compileSdkVersion 33+`) — checked Capacitor 6's actual default `variables.gradle` values and
+  confirmed they already satisfy this. Ruled out with reasonable confidence.
+- `@codetrix-studio/capacitor-google-auth` reads its client ID from `capacitor.config.json` at
+  native startup, and that file held a literal placeholder (`REPLACE_WITH_ANDROID_OAUTH_CLIENT_ID...`)
+  since the Google Cloud setup isn't done yet. Couldn't confirm whether this crashes at plugin load
+  or only fails later at sign-in time — but since Drive backup is unused until the OAuth setup is
+  complete regardless, removed the `GoogleAuth` config block entirely as a no-regret hedge rather
+  than carrying a guaranteed-invalid value for no benefit. Documented in
+  `android-notes/native-setup.md` §10 to re-add once real credentials exist.
+
+Recommended getting an actual stack trace via a free Play Store logcat-reader app (no root/computer
+needed) rather than continuing to guess through plugin documentation one at a time — a real
+exception trace will confirm which candidate (if either) is responsible, or reveal something not yet
+considered.
+
+Decisions made: none — investigation and one hedge, not a confirmed fix or a new design call.
+
+Next session start point: get the actual crash log. Everything else stands until then — confirming
+CI status, and now this native crash, are both blocking real verification of six-plus sessions of
+accumulated app logic that's never actually run.
+
+---
+
+**Session 19**
+
+Second device test, same blank screen. This time the cause went much deeper than a single fixable
+line: **the app has never been able to load, in any session, on any real device or browser** —
+`www/` had no bundler and no import map, and every file that imports a Capacitor plugin
+(`notifications.js`, `backup.js`, `fileactions.js`, `gdrive.js`, and `app.js` after last session's
+fix) uses `import { X } from '@capacitor/...'`, a bare specifier a browser's native ES module loader
+cannot resolve on its own. ES module resolution happens before any code runs, so one unresolvable
+import anywhere in the dependency graph blocks the whole script — exactly the blank-page symptom,
+both times. Last session's `window.sqlitePlugin` fix was a real, necessary fix for a real bug, but
+it replaced one crash with a normal `import` of the same package, which has the identical failure
+mode underneath. The reason 18 sessions of `node --check` never caught this: Node's module
+resolution *can* resolve bare specifiers from `node_modules`; a browser's cannot, without a bundler
+or an import map. Checking with the wrong tool gave false confidence the whole time.
+
+Fixed by adding Vite — the standard choice for exactly this situation. `src/` is now the real
+source directory (every file that used to live in `www/` moved there, unchanged); `www/` becomes
+Vite's build output (`vite.config.js`: `root: 'src'`, `outDir: '../www'`, so
+`capacitor.config.json`'s `webDir` needed no change at all). `build-android.yml` now runs `npm run
+build` before `cap sync`. Checked Vite's actual current version against npm data rather than
+assuming from memory — it's on major version 7 now (`^7.3.2`), not the 5.x a stale assumption would
+have produced.
+
+**Verified this actually works, rather than asserting it and handing back a third blank screen:**
+ran `npm install` and `npx vite build` for real in a sandbox before delivering anything. 82 modules
+transformed, build succeeded, and the output was grepped for any remaining unresolved
+`@capacitor`/`@zip`/`@codetrix` import statements — zero found. This is the first time in the
+project's history that the actual bundled output has been confirmed loadable rather than assumed to
+be, because it's the first time anything was actually built end-to-end outside of a GitHub Actions
+runner I can't inspect.
+
+No application code changed as part of this fix — every import statement across every file was
+always correct JavaScript; the only thing missing was the build step that makes bare specifiers
+resolvable in a real browser engine. Also added: `.gitignore` (didn't exist before — `node_modules/`
+was never excluded, though nothing had committed it yet since nothing had ever run `npm install`
+outside CI).
+
+Decisions made: 46.
 
-**Next session start point:** Confirm green CI (all 6 platforms) for both of this session's commits, then move to ROADMAP.md Phase 5's next unchecked item: "Texel/SPSA tuner module (self-play data generation + gradient descent)."
+Next session start point: get this rebuilt and back on the device — third attempt, but the first one
+built on a verified, actually-tested fix rather than a fix that only looked correct on paper. If a
+screen finally renders, that's the real first signal after seven sessions of accumulated surface. Old
+`www/*` files remain committed in the repo but are now stale/vestigial — safe to delete whenever
+convenient, not urgent, since CI regenerates them fresh every run regardless of what's committed.
 
 ---
 
+**Session 18**
 
+First real device test, first real device bug — screenshot showed a completely blank screen on
+launch. Cause: `bootstrap()` read `window.sqlitePlugin`, a global nothing anywhere ever set. It's a
+leftover from the original pre-existing scaffold (predates every session in this log), never caught
+because nothing had actually run the app on a device until this test. `SQLiteConnection` ended up
+`undefined`, `new SQLiteConnection(...)` threw immediately inside `bootstrap()`, and since
+`DOMContentLoaded` awaits `bootstrap()`, the whole script halted before any `showScreen()` call ever
+ran — every screen stays `hidden` by default, so the result is exactly a blank page in the
+background color. Fixed: import `CapacitorSQLite`/`SQLiteConnection` directly from
+`@capacitor-community/sqlite` (already a real dependency) instead of reading a global.
 
-**What was built:** `EvalCache` (new `src/eval/eval_cache.h`/`.cpp`), caching `eval::evaluate()`'s complete, final result keyed on a position's full Zobrist hash — modeled on `PawnHashTable` (single-entry-per-slot, unconditional replacement, power-of-2 KB sizing) but caching the WHOLE eval result rather than one term. `evaluate()` gained an optional `eval_cache` parameter, probed first (short-circuits everything on a hit) and stored into on a miss. Threaded through `quiescence()`/`quiescence_impl()` and `negamax()`/`search_root()` the same way `pawn_tt` already is — every recursive call site, both `evaluate()` calls inside `negamax()` (razoring, futility), the quiescence delegation, and both top-level entry points (which each construct one fresh instance per call, `kDefaultEvalCacheSizeKB = 2048`). See docs/DECISIONS.md for the full design rationale, in particular the concrete same-node double-`evaluate()`-call finding (razoring and futility pruning independently evaluating the identical unchanged position when both conditions apply at one node) that justified the work regardless of transposition-driven hit rate.
+Audited for the same bug shape before handing this back, rather than fixing only the one reported
+symptom: found a second, separate bug of the identical class. Every `window.Dumpzone.X` function is
+nested under that object, but several button handlers (Share/Download/Download-for-append/Edit,
+restore-from-trash, permanently-delete) called bare `window.X()` — none of which exist at that path.
+These would have thrown the moment anyone clicked past the (now-fixed) blank screen. Fixed all six
+call sites to go through `window.Dumpzone.X`.
 
-**Bugs fixed:** None — new feature, no pre-existing bug involved.
+Also: `crypto.js` and `intents.js` had never been staged into the working sandbox across any prior
+session (only ever read, never modified, so never copied in) — meaning no session's syntax checks or
+audits had ever actually covered them. Staged and checked now: both clean, both have zero imports and
+zero `window.` references, so neither is at risk of this bug class at all.
 
-**Decisions made:** See docs/DECISIONS.md's new 2026-08-30 (1) entry — full-position Zobrist-hash keying (not a coarser key); `int16_t` storage (matching `TTEntry::score`'s reasoning); mandatory-reference threading through `negamax()`/`search_root()` (no default, unlike `evaluate()`'s/`quiescence()`'s own optional-pointer parameters, since every in-file caller already has a real instance); 2048 KB default size (larger than the pawn hash table's 512 KB, since this cache's working set isn't bounded as tightly, but still far smaller than the main TT, matching the ROADMAP item's own "separate from TT" framing).
+Checked `ads.js`'s `window.adSdk` reference too, since it's the same shape — confirmed safe, already
+wrapped in try/catch with the correct no-fill fallback (Decision 14), unlike the two that broke.
 
-**Verification:** Built and tested against a fully fresh repository checkout with every touched file overlaid (this sandbox's compiler/CMake access, same method as recent sessions). `nightwing_lib`/`nightwing`/`nightwing_bench` all build clean, zero warnings, `-Wall -Wextra -Wpedantic`. A UCI smoke test (`go depth 8` from two different positions) ran the real search path end to end with sane scores and legal PVs. Full test suite (Catch2, fetched live via FetchContent) — **all 289 test cases, 52,380 assertions, passed**, including the 12 new `eval_cache_tests.cpp` cases (table mechanics mirroring `pawn_tt_tests.cpp`'s own pattern, `evaluate()` transparency on both a miss and a cached hit, full-position keying confirming two different same-material positions never collide, and a combined `pawn_tt`+`eval_cache` interaction test). Regression bench (Linux Release, depth 6) — identical to Session 56's baseline in every field, exactly as expected for a transparent, deterministic cache that changes zero search decisions:
+Decisions made: none — bug fixes, not new design calls.
 
-```
-BENCH startpos            depth=6  nodes=1274   score=114    best_move=a2a4
-BENCH kiwipete             depth=6  nodes=8185   score=100    best_move=e2a6
-BENCH quiet_middlegame     depth=6  nodes=6591   score=0      best_move=g1h1
-BENCH endgame_mate_in_3    depth=6  nodes=64987  score=31995  best_move=a1c1
-BENCH TOTAL                depth=6  nodes=81037
-```
+Next session start point: get this rebuilt and back on the device. If the blank screen is gone and
+first-run setup renders, that's real progress — six sessions of untested surface just got its first
+actual signal. Standing items unchanged otherwise: CI status, Phase 13's OAuth setup.
 
-**Not yet done / left for next session:** CI hasn't confirmed this session's work on the actual GitHub Actions runners yet (this sandbox's own build/test run stands in for that, same as recent sessions) — next session should start by confirming a green CI run across all 6 platforms once these files are committed and pushed, the same pattern as Session 56 confirming Session 55.
-
-**Next session start point:** Confirm green CI (all 6 platforms) for this session's Eval cache commit, then move to ROADMAP.md Phase 5's next unchecked item: "All terms as named tunable constants (per DECISIONS.md)."
-
----
-
-
-
-**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms, that Session 55's Material imbalance table builds clean and passes 100% of tests everywhere: 277/277 on Linux/Windows, 275/275 on macOS (the same BMI2-gated-hooks/ARM-runner gap noted since Session 37) — the total rose from Session 54's 271/269 by exactly 6, matching `material_imbalance_tests.cpp`'s 6 new TEST_CASEs exactly. Regression bench (Linux Release, depth 6):
-
-```
-BENCH startpos            depth=6  nodes=1274   score=114    best_move=a2a4
-BENCH kiwipete             depth=6  nodes=8185   score=100    best_move=e2a6
-BENCH quiet_middlegame     depth=6  nodes=6591   score=0      best_move=g1h1
-BENCH endgame_mate_in_3    depth=6  nodes=64987  score=31995  best_move=a1c1
-BENCH TOTAL                depth=6  nodes=81037
-```
-
-**Compared against Session 54's `81328` baseline (the correct comparison point per docs/DECISIONS.md 2026-08-29 (2) — this is the first bench captured since that fix, so this is the first "normal," directly comparable incremental-term delta in a while):** total nodes dropped slightly (`81328`→`81037`, roughly -0.36%) — a small delta, in line with expectations for a term that only changes anything when a side both has a same-piece-type pair (bishop or knight) AND some pawns are already off the board, a real but narrower-than-average combination of conditions to hit within a depth-6 search tree from these four particular starting positions. Per-position: `startpos` is completely unchanged (`1274` nodes, `114` score, `a2a4` best move, all identical) — no line explored within this shallow a search from the opening position apparently hit the "pair-plus-missing-pawns" combination in a way that shifted any pruning decision. `kiwipete` (`8738`→`8185` nodes, score `75`→`100`) and `quiet_middlegame` (`6329`→`6591` nodes, score `7`→`0`) both moved modestly with their best moves unchanged (`e2a6`, `g1h1` respectively) — plausible, unconfirmed read: both are messier, more piece-dense middlegame positions where a bishop or knight pair is more likely to actually be present partway down some search lines. `endgame_mate_in_3` is unchanged again (`64987`, `31995`, `a1c1`, all identical) — the same forced-mate-dominated-by-mate-distance-scoring pattern already seen not moving under the last two terms' additions either (Trapped piece penalties, Session 52; this fix itself surprisingly did move it, Session 54, since that was a phase-direction correction rather than a bounded term).
-
-**Bugs fixed:** None.
-
-**Decisions made:** None new.
-
-**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **Eval cache** (optional performance optimization, separate from TT) — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 55's own next-start-point guidance, which already flagged this as a different KIND of task (explicitly "optional" in the item's own wording) than the run of eval-term additions so far — worth confirming scope/value before assuming it should be built the same way. Once implemented and confirmed green, compare its own bench delta against THIS entry's `81037` (depth 6, Linux Release, TOTAL) — the current correct baseline for future incremental comparisons. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-29 (5) — Session 55: Material imbalance table implemented — Phase 5's tenth item done, Eval cache next
-
-**What was built:** The tenth unchecked Phase 5 item (docs/ROADMAP.md): a new `material_imbalance_value()` (new files `src/eval/material_imbalance.h`/`src/eval/material_imbalance.cpp`) scoring exactly the two cases the ROADMAP item's own wording names -- bishop pair and knight pair -- each scaled by how many pawns (both colors combined) have left the board relative to the starting 16. Bishop pair gets an ADDITIONAL bonus (`kBishopPairPerMissingPawn = {2, 3}` per missing pawn) on top of `eval/piece_bonuses.h`'s existing flat bishop-pair bonus (Session 41) -- deliberately additive, not a replacement. Knight pair gets a PENALTY of the same shape (`kKnightPairPerMissingPawn = {-2, -2}`), growing in the SAME direction as the bishop-pair bonus (both scale up as pawns disappear) rather than the opposite -- full reasoning for that non-obvious symmetric-direction choice in docs/DECISIONS.md, 2026-08-29 (4). Wired into `eval::evaluate()` (`eval.cpp`) as an eleventh uncached term. `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated. `tests/material_imbalance_tests.cpp` (new, 6 tests): starting-position zero, White bishop-pair-with-no-pawns exact value, White knight-pair-with-no-pawns exact (negative) value, single-bishop-scores-zero boundary, linear scaling at half the pawns off, and Black-side sign negation.
-
-**Bugs fixed:** None.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md, 2026-08-29 (4) -- the additive-not-replacing relationship to `piece_bonuses.h`'s existing bishop-pair bonus, the knight-pair-penalty-not-bonus choice, the same-direction (not mirrored-direction) scaling choice between the two pair terms, the both-sides-combined pawn count, and why `kKnightPairPerMissingPawn` deliberately uses equal `mg`/`eg` rather than picking a split the way nearly every other term this phase does.
-
-**Verification:** Same g++-direct-compile approach as Sessions 51/53 (no cmake/ctest in this sandbox). This session went further than either of those: built a FULLY FRESH repository checkout (not an incrementally-overlaid working copy) with every file touched across this entire phase's recent run (Sessions 51/53/55: `trapped_pieces.*`, `tempo.*`, `material_imbalance.*`, `eval.*`, both `CMakeLists.txt` files, and all four new/modified test files) applied on top in one pass, then compiled all 21 affected translation units clean with `-Wall -Wextra -Wpedantic` from that fresh checkout, confirming nothing in this session's work depends on any stale intermediate state left over from an earlier session's own sandbox copy. A standalone driver then re-ran, against that same fresh build, both this session's own 6 new planned test assertions (all matched exactly) AND Session 53's full prior verification driver (the `compute_phase()`/tapering-direction and Tempo bonus checks) together in one combined pass, confirming this session's additive term introduced no regression in anything verified previously.
-
-**Regression bench:** NOT captured this session (no CMake build run). Compare against Session 54's `81328` (depth 6, Linux Release, TOTAL) once this session's next CI run is green -- that figure, not anything from before the `compute_phase()` fix, is the correct baseline going forward (docs/DECISIONS.md, 2026-08-29 (2)).
-
-**Next session start point:** Push `src/eval/material_imbalance.h`, `src/eval/material_imbalance.cpp`, `src/eval/eval.h`, `src/eval/eval.cpp`, `src/CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/material_imbalance_tests.cpp`, plus `docs/ROADMAP.md`/`docs/SESSIONS.md`/`docs/DECISIONS.md`. **Do not treat this as green until a fresh CI run actually confirms it** -- same standing caveat as every g++-only-verified session. Once green, capture the regression bench and compare against Session 54's `81328` baseline. After that, next task per ROADMAP.md: **Eval cache** (optional performance optimization, separate from TT) -- the next unchecked Phase 5 item, and notably a different kind of task than the last several sessions' worth of eval TERMS: this one is explicitly flagged "optional performance optimization" in ROADMAP.md's own wording, so it may be worth confirming its value/scope before diving in rather than assuming it should be built exactly like every preceding term. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-29 (4) — Session 54: Session 53 (Tempo bonus + the compute_phase() fix) confirmed green on a fresh CI run; a genuinely new regression-bench baseline captured, NOT comparable to any prior session's numbers
-
-**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms, that Session 53's work (Tempo bonus, and — far more consequentially — the `compute_phase()` direction fix, docs/DECISIONS.md 2026-08-29 (2)/(3)) builds clean and passes 100% of tests everywhere: 271/271 on Linux/Windows, 269/269 on macOS (the same BMI2-gated-hooks/ARM-runner gap noted since Session 37). The total rose from Session 52's 262/260 by exactly 9 on every platform, matching this session's new test cases exactly: `tempo_tests.cpp`'s 5 new TEST_CASEs plus `eval_tests.cpp`'s 4 new ones (3 `compute_phase()` direction tests plus the end-to-end centralized-king regression case) — the pre-existing "starting position is exactly balanced" test was renamed/updated in place, not added, so it contributes 0 to this count. Fresh regression bench (Linux Release, depth 6):
-
-```
-BENCH startpos            depth=6  nodes=1274   score=114    best_move=a2a4
-BENCH kiwipete             depth=6  nodes=8738   score=75     best_move=e2a6
-BENCH quiet_middlegame     depth=6  nodes=6329   score=7      best_move=g1h1
-BENCH endgame_mate_in_3    depth=6  nodes=64987  score=31995  best_move=a1c1
-BENCH TOTAL                depth=6  nodes=81328
-```
-
-**This is a fresh baseline, not a delta against Session 50's `93629` or Session 52's `90967`** — per docs/DECISIONS.md 2026-08-29 (2)'s own explicit instruction, restated here since it's the whole point of this entry. That said, the SHAPE of the change is worth recording as confirmation the fix did what it was supposed to, not as a magnitude comparison: two of the four positions' best moves actually changed (`startpos`: `d2d4`→`a2a4`; `quiet_middlegame`: `f3e5`→`g1h1`) — real, visible search-tree/move-choice differences, exactly what a tapering-direction fix (rather than a bounded single-term addition, none of which changed a single best move across this entire phase's history until now) would be expected to produce. `endgame_mate_in_3` — the position Session 53's own next-start-point note specifically flagged as the one most likely to show a visible shift from this exact fix, since its remaining material is almost entirely pawns/kings and its eval weighting flips from wrongly-mg to correctly-eg there — moved from `65438` to `64987` nodes, a real but modest change (the position is dominated by mate-distance scoring regardless of eval weighting once the forced mate is found, tempering how much even a full tapering-direction reversal can move its node count). `kiwipete`'s best move (`e2a6`) is unchanged, plausibly because it's already a fairly balanced middlegame-ish position with several roughly comparable options where a shift in one hand-crafted term's weighting doesn't cross a best-move threshold — offered as a plausible read only, not confirmed by deeper analysis.
-
-**Bugs fixed:** None this session (Session 53's own bug fix is what's being confirmed here).
-
-**Decisions made:** None new.
-
-**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **Material imbalance table** (e.g. bishop pair/knight pair value shifts with pawn count, per Stockfish-classic style) — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 53's own next-start-point guidance. Once implemented and confirmed green, compare its own bench delta against THIS entry's `81328` (depth 6, Linux Release, TOTAL) — this is now the correct baseline for every future incremental term-addition comparison going forward, the same role Session 50's `93629` played before the compute_phase() fix superseded it. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-29 (3) — Session 53: Tempo bonus implemented (Phase 5's ninth item) — but this session is really about a critical compute_phase() bug found and fixed while verifying it, which retroactively invalidates every prior regression-bench baseline this phase
-
-**What was built:** Two things, discovered in sequence within this one session.
-
-1. **Tempo bonus** (docs/ROADMAP.md's next unchecked Phase 5 item): new `src/eval/tempo.h`/`src/eval/tempo.cpp`, `tempo_value()` returning `+kTempoBonus`/`-kTempoBonus` (`{20, 10}`) for White/Black to move respectively. Wired into `eval::evaluate()` (`eval.cpp`) as a tenth term. `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated. `tests/tempo_tests.cpp` (new, 5 tests). Full writeup: docs/DECISIONS.md, 2026-08-29 (3).
-
-2. **A critical, unrelated bug found while verifying #1 end to end** (this sandbox had g++ access again this session, same as Session 51): `eval.cpp`'s `compute_phase()` computed the game phase backwards -- the actual game start (full material) resolved to `phase = 0`, which `taper()` (correctly, per its own tests) resolves to each term's `eg` value, not `mg`; a bare endgame resolved to `phase = kMaxPhase`, picking up `mg` instead of `eg`. This is the exact opposite of every tapered term's documented design intent across this entire phase (Mobility eval, King safety, King tropism, Trapped piece penalties, and this session's own new Tempo bonus all assumed the correct, non-inverted direction when their own `mg`-vs-`eg` weighting was decided). Fixed: `compute_phase()` now counts UP from 0 as present material rather than down from `kMaxPhase`, moved out of `eval.cpp`'s anonymous namespace and declared in `eval.h` so it's directly testable going forward, with four new dedicated `eval_tests.cpp` cases pinning the corrected direction (start position `== kMaxPhase`; bare kings `== 0`; removing one queen drops phase by exactly `kQueenPhase`; an end-to-end regression case confirming a centralized White king now scores worse than a back-rank king specifically at the starting phase). Full writeup, including exactly why this went undetected across so many prior sessions: docs/DECISIONS.md, 2026-08-29 (2).
-
-**Bugs fixed:** `compute_phase()`'s inverted phase direction (see above and docs/DECISIONS.md, 2026-08-29 (2) for the full cause/fix/why-correct account) — **cause:** `phase` was initialized to `kMaxPhase` and had present material SUBTRACTED, the opposite of what `taper()`'s own already-correct, already-tested semantics require. **Fix:** initialize `phase` to 0 and ADD present material instead, with the defensive clamp flipped to an upper bound accordingly. **Why correct:** now matches both `compute_phase()`'s own pre-existing doc comment (which was always right) and `taper()`'s own tested behavior (which was also always right) -- the bug was purely in the one function that disagreed with both of its own already-correct references.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md: 2026-08-29 (3) for Tempo bonus's own formula/scoping/tapering-direction rationale; 2026-08-29 (2) for the bug's full cause, fix, why-correct, undetected-until-now explanation, test-suite impact, and — most importantly for future sessions — an explicit flag that this is NOT a normal incremental-term regression-bench delta.
-
-**Verification:** Same g++-direct-compile approach as Session 51 (no cmake/ctest in this sandbox). Every touched file compiled clean with `-Wall -Wextra -Wpedantic`. A standalone driver exercised: all 5 planned `tempo_tests.cpp` assertions (matched exactly); all 4 planned new `compute_phase()`/tapering-direction `eval_tests.cpp` assertions (matched exactly, including the corrected `start_position()` phase now reading `kMaxPhase` instead of the previous buggy `0`, and the centralized-vs-back-rank-king regression case coming out in the intended direction); and every PRE-EXISTING `eval_tests.cpp` assertion re-run under the fix to confirm nothing broke — all held except the one expected, deliberate exception (see below). Also grepped every `tests/*.cpp` file for `evaluate(` calls to confirm the fix's test-suite blast radius was fully scoped (only `eval_tests.cpp`, `pawn_tt_tests.cpp`, `quiescence_tests.cpp` call it at all; the latter two only assert relative/consistency properties, unaffected either way).
-
-**One pre-existing test needed a deliberate, expected update, not a bug fix:** `eval_tests.cpp`'s `"evaluate: starting position is exactly balanced"` (`REQUIRE(evaluate(start_position()) == 0)`) — Tempo bonus (landing in this same session) means White, to move, now scores exactly `kTempoBonus` at the start, not `0`; every other term still cancels symmetrically regardless of the phase fix. Renamed and updated to assert the tapered `kTempoBonus` value computed via `compute_phase()` rather than a hardcoded `0`, so it stays correct automatically if either constant changes again later.
-
-**Regression bench:** NOT captured this session (no CMake build run, same as every g++-only-verification session). **Flagged explicitly and prominently, per docs/DECISIONS.md 2026-08-29 (2):** the next real CI bench run's `TOTAL nodes=` figure must NOT be compared against Session 50's `93629` or Session 52's `90967` the way every previous single-term addition's bench delta was — this session's `compute_phase()` fix changes the tapering direction for the ENTIRE engine, at essentially every node with more than one legal reply to weigh, not a narrow, bounded term the way Trapped piece penalties or Knight outposts were. Treat the next CI run's total as a fresh baseline going forward, not a comparison point against anything before it.
-
-**Next session start point:** Push `src/eval/tempo.h`, `src/eval/tempo.cpp`, `src/eval/eval.h`, `src/eval/eval.cpp`, `src/CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/tempo_tests.cpp`, `tests/eval_tests.cpp`, plus `docs/ROADMAP.md`/`docs/SESSIONS.md`/`docs/DECISIONS.md`. **Do not treat this as green until a fresh CI run actually confirms it** — same standing caveat as every g++-only-verified session (Session 36's own escaped build failure remains the reason this is said every time), doubly true here given the scope of the `compute_phase()` change. Once green: capture the fresh regression bench as this phase's new baseline (do NOT compare it against Session 50/52's pre-fix numbers — see above); watch specifically for `endgame_mate_in_3`, which was completely unchanged by Session 51's Trapped piece penalties (Session 52) and is exactly the kind of position where an inverted-vs-corrected tapering direction could plausibly show the largest, most visible shift, since mate-distance scoring aside, its remaining eval weighting flips from "endgame-material, wrongly mg-weighted" to "endgame-material, correctly eg-weighted." After that, next task per ROADMAP.md: **Material imbalance table** (e.g. bishop pair/knight pair value shifts with pawn count, per Stockfish-classic style) — the next unchecked Phase 5 item. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-29 (2) — Session 52: Session 51 (Trapped piece penalties) confirmed green on a fresh CI run; regression bench captured — smallest net delta of any eval term this phase, as expected from a narrow trigger condition
-
-**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms (Linux/macOS/Windows × Debug/Release), that Session 51's trapped-piece-penalties work builds clean and passes 100% of tests everywhere (262 tests on Linux/Windows, 260 on macOS — the same BMI2-gated-hooks/ARM-runner gap noted since Session 37, unrelated to this session). Regression bench (Linux Release, depth 6, via the `ctest -R bench -V` step):
-
-```
-BENCH startpos            depth=6  nodes=2814   score=69     best_move=d2d4
-BENCH kiwipete             depth=6  nodes=11508  score=63     best_move=e2a6
-BENCH quiet_middlegame     depth=6  nodes=11207  score=-25    best_move=f3e5
-BENCH endgame_mate_in_3    depth=6  nodes=65438  score=31995  best_move=a1c1
-BENCH TOTAL                depth=6  nodes=90967
-```
-
-**Comparison against Session 50's baseline (`nodes=93629` TOTAL, pre-trapped-piece-penalties):** total nodes DROPPED slightly (`93629`→`90967`, roughly -2.8%) — the smallest net delta of any eval term added this phase (compare King tropism's own +16% the entry immediately above, Threats' -8%, King safety's roughly -8% in the other direction, and even Knight outposts'/Space's already-small deltas). Per-position picture: `startpos` rose noticeably (`1765`→`2814` nodes, score flipping sign `-8`→`69`, best move unchanged `d2d4`); `kiwipete` is essentially unchanged (`11515`→`11508` nodes, score identically `63`, best move unchanged `e2a6`); `quiet_middlegame` dropped (`14911`→`11207` nodes, score `-52`→`-25`, best move unchanged `f3e5`); `endgame_mate_in_3` is IDENTICAL in every field (`65438` nodes, `31995` score, `a1c1` best move) — the only test position this phase where an eval-term addition produced zero measurable change at all. **Read as expected, not alarming, and consistent with this term's own deliberately narrow trigger condition:** unlike King tropism (a bonus applied to every minor/major piece on the board, every node) or Threats (fires on any attacked piece, a large fraction of positions), trapped-piece penalties only apply to a knight or bishop with EXACTLY zero safe squares — a genuinely rare structural pattern, absent entirely from four ordinary developed/tactical/mate-search test positions apparently for three of the four (the small nonzero deltas in the other three most plausibly come from search-tree-wide move-ordering ripple effects of the new term existing at all, not from the penalty itself actually firing in these specific lines — not confirmed by profiling, offered as a plausible read only). `endgame_mate_in_3`'s complete lack of change is itself informative: a forced-mate line's search is dominated by mate-distance scoring long before any hand-crafted-eval term's magnitude matters, so a rarely-firing structural term having literally zero effect there is unsurprising. Not treated as a strength claim in either direction (raw bench comparison of hand-tuned constants at fixed depth 6, not a strength measurement); flagged here only as a data point for the eventual Texel tuner.
-
-**Bugs fixed:** None.
-
-**Decisions made:** None new.
-
-**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **Tempo bonus** — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 51's own next-start-point guidance. Once implemented and confirmed green, run the regression bench again and compare its `BENCH TOTAL nodes=` figure against this entry's `90967` (depth 6, Linux Release) the same way this entry compared against Session 50's. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-29 (1) — Session 51: Trapped piece penalties implemented — Phase 5's eighth item done, Tempo bonus next; first session with actual compiler access, used to verify end-to-end rather than by hand
-
-**What was built:** Phase 5's eighth unchecked item (docs/ROADMAP.md): a new trapped-piece evaluation term, the standard CPW "Trapped Piece" concept. New `src/eval/trapped_pieces.h`/`src/eval/trapped_pieces.cpp` add `trapped_piece_value()`, applying a flat penalty to any own knight/bishop with zero "safe mobility" — its own pseudo-mobility bitboard (the same building block eval/mobility.h's mobility_value() already computes) with every square attacked by an enemy pawn additionally excluded (the reverse-pawn-attack trick eval/pawns.cpp/eval/space.cpp/eval/threats.cpp already establish), checked for exactly zero rather than a softer low-but-nonzero threshold. Deliberately scoped to knights and bishops only, not rooks/queens, matching Knight outposts' own precedent of scoping a term to exactly the piece types its source pattern describes. Wired into `eval::evaluate()` (`eval.cpp`) as a ninth uncached term, alongside Mobility (Session 36), King safety (Session 39), the bishop-pair/rook-file/rook-7th-rank bonuses (Session 41), Knight outposts (Session 43), Space (Session 45), Threats (Session 47), and King tropism (Session 49). `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated for the new files. `tests/trapped_pieces_tests.cpp` (new, 5 tests) covers starting-position zero, an exactly-zero-safe-squares trapped knight, an exactly-zero-safe-squares trapped bishop (via an own-pawn wall rather than an enemy one, confirming the term treats own-occupied and enemy-pawn-attacked squares identically as "unavailable"), the exactly-one-safe-square boundary (deliberately NOT trapped, isolating the "exactly zero" rule from a softer threshold), and the Black-relative sign.
-
-**Bugs fixed:** None — but see Verification below for a real toolchain catching a would-be `<cstddef>` omission before it reached CI, the first time this phase a compile step actually ran locally rather than being deferred to CI.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md, 2026-08-29 (1) — the exact safe-mobility formula, why scoped to knights/bishops only, why only enemy pawn attacks (not a full attacks-by-side union) count against safe mobility, why "exactly zero" rather than a softer threshold, and the mg/eg tapering-direction and knight-vs-bishop weight rationale.
-
-**Verification:** Unlike every previous session this phase (each of which explicitly noted "no compiler toolchain available in this sandbox"), this session's sandbox had g++ 13.3.0 available (no cmake/ctest, so the actual CMake+Catch2 build still was not run — CI remains the only real confirmation of the full test suite). Used g++ directly: compiled every existing `src/board/*.cpp` and `src/eval/*.cpp` translation unit plus the new `trapped_pieces.cpp` and the modified `eval.cpp` individually with `-Wall -Wextra -Wpedantic` (all clean, zero warnings) against a fresh pristine checkout of the repo with only the touched files overlaid, then linked a standalone driver (not `tests/trapped_pieces_tests.cpp` itself, since no Catch2 was fetched) that exercised `trapped_piece_value()` and full `evaluate()` directly and printed results. All five hand-derived expected values from the planned test file — starting-position zero, the trapped-knight penalty, the trapped-bishop penalty, the one-safe-square boundary at zero, and the negated Black-side penalty — matched the real compiled-and-run output exactly, not just a hand-traced derivation. This is a strictly stronger confirmation than any single-term session so far this phase has had, though still short of the real CMake+Catch2+CI pipeline, which remains the actual gate.
-
-**Regression bench:** NOT captured this session — the standalone g++ driver used for verification above is not the engine's own `nightwing_bench` target (no CMake build was run), so no comparable `BENCH ... nodes=` figures exist yet. Session 50's `nodes=93629` (depth 6, TOTAL, Linux Release) is the last confirmed-real baseline; this session's change is expected to shift that figure the way every previous eval addition has, but by how much isn't known until a real CI run happens under this session's code.
-
-**Next session start point:** Push `src/eval/trapped_pieces.h`, `src/eval/trapped_pieces.cpp`, `src/eval/eval.h`, `src/eval/eval.cpp`, `src/CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/trapped_pieces_tests.cpp`, plus `docs/ROADMAP.md`/`docs/SESSIONS.md`. **Do not treat this as green until a fresh CI run actually confirms it** — this session's stronger-than-usual local verification (see above) still isn't the real CMake+Catch2+CI pipeline, and Session 36's own history (a build failure that escaped review and only CI caught) remains the standing reason to say this explicitly every time. Once green, capture the regression bench numbers (`ctest -R bench -V`, Linux Release leg) and compare against Session 50's `nodes=93629` baseline. After that, next task per ROADMAP.md: **Tempo bonus** — the next unchecked Phase 5 item. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-28 (6) — Session 50: Session 49 (King tropism) confirmed green on a fresh CI run; regression bench captured — mixed per-position deltas, net increase
-
-**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms (Linux/macOS/Windows × Debug/Release), that Session 49's king-tropism work builds clean and passes 100% of tests everywhere (257 tests on Linux/Windows, 255 on macOS — the same BMI2-gated-hooks/ARM-runner gap noted since Session 37, unrelated to this session). Regression bench (Linux Release, depth 6, via the `ctest -R bench -V` step):
-
-```
-BENCH startpos            depth=6  nodes=1765   score=-8     best_move=d2d4
-BENCH kiwipete             depth=6  nodes=11515  score=63     best_move=e2a6
-BENCH quiet_middlegame     depth=6  nodes=14911  score=-52    best_move=f3e5
-BENCH endgame_mate_in_3    depth=6  nodes=65438  score=31995  best_move=a1c1
-BENCH TOTAL                depth=6  nodes=93629
-```
-
-**Comparison against Session 48's baseline (`nodes=80628` TOTAL, pre-king-tropism):** total nodes rose noticeably (`80628`→`93629`, roughly +16%), but the per-position picture is mixed rather than uniform: `startpos` and `kiwipete` both DROPPED (`2701`→`1765` and `12073`→`11515` respectively, `startpos`'s best move also changing from `b1c3` to `d2d4` and its score flipping sign, `62`→`-8`), while `quiet_middlegame` nearly DOUBLED (`7698`→`14911`, score `-3`→`-52`) and `endgame_mate_in_3` rose moderately (`58156`→`65438`, score/best-move unchanged — still finds the same mate). **Read as expected, not alarming, though the largest and least uniform shift of any term this phase:** king tropism directly reshapes move ordering around piece-to-enemy-king proximity across the whole game, and unlike every penalty-style term added so far (piece bonuses, threats), this is the first PURELY positional bonus this phase applied to EVERY minor/major piece on the board simultaneously, every single node — a broader footprint than Knight outposts' or Space's narrow triggers, closer in scope to Mobility's own original addition. `endgame_mate_in_3`'s node-count rise, despite `kTropismUnitBonus`'s own `eg` component being smaller than its `mg` one, is consistent with the term still applying (just more weakly) via `eval::taper()`'s blend rather than vanishing outright the way Space's `eg=0` design does — not itself surprising, just worth noting as a data point distinguishing the two mg-leaning terms' actual endgame behavior. Not treated as a strength claim in either direction (raw bench comparison of hand-tuned constants at fixed depth 6, not a strength measurement); flagged here only as a data point for the eventual Texel tuner, which will need to weigh this term's own broad per-node footprint against the others already in place.
-
-**Bugs fixed:** None.
-
-**Decisions made:** None new.
-
-**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **Trapped piece penalties** — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 49's own next-start-point guidance. Once implemented and confirmed green, run the regression bench again and compare its `BENCH TOTAL nodes=` figure against this entry's `93629` (depth 6, Linux Release) the same way this entry compared against Session 48's. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-28 (5) — Session 49: King tropism implemented — Phase 5's seventh item done, Trapped piece penalties next
-
-**What was built:** Phase 5's seventh unchecked item (docs/ROADMAP.md): a new king-tropism evaluation term. New `src/eval/king_tropism.h`/`src/eval/king_tropism.cpp` add `king_tropism_value()`, scoring a linear Chebyshev-distance-based bonus for each own knight/bishop/rook/queen based on proximity to the enemy king, using piece-type weights reused verbatim from eval/king_safety.h's own existing attack-unit scheme. Wired into `eval::evaluate()` (`eval.cpp`) as an eighth uncached term, alongside Mobility (Session 36), King safety (Session 39), the bishop-pair/rook-file/rook-7th-rank bonuses (Session 41), Knight outposts (Session 43), Space (Session 45), and Threats (Session 47). `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated for the new files. `tests/king_tropism_tests.cpp` (new, 5 tests) covers starting-position symmetry, a closer-vs-farther distance comparison (with the farther case landing exactly on the formula's own zero-contribution boundary), a queen-vs-knight weight-ratio check (exactly 4x at the same distance), an explicit maximum-distance boundary test, and an additive-stacking test — every expected outcome hand-derived from the distance formula and constants before being written, the same discipline every eval-term session this phase has followed.
-
-**Bugs fixed:** None this session — continuing the standing lesson from Session 36's missing-include build failure, every `board::` symbol `king_tropism.cpp` calls was individually cross-checked against the specific header that declares it (`board/bitboard.h` for `pop_lsb()`/`bitscan_forward()`/`file_of()`/`rank_of()`, `board/board.h` for `opposite()`) before this entry.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md, 2026-08-28 (3) — the exact distance-to-bonus formula, why this doesn't duplicate king_safety.h's own existing attacker-weighting component (current direct threat vs. general proximity are genuinely different signals), why the piece-type weights are reused verbatim from king_safety.h rather than independently re-derived, why a linear formula was chosen over a lookup table, and why the distance helper stays local to this file rather than being promoted to a shared header.
-
-**Verification:** No compiler toolchain available in this sandbox, same as every session. Brace/paren balance swept on every touched/created file (`king_tropism.h`, `king_tropism.cpp`, `eval.h`, `eval.cpp`, `king_tropism_tests.cpp`) — all balanced. Every one of `king_tropism_tests.cpp`'s five tests had its expected outcome hand-derived before being written, including manually computing each placed piece's exact Chebyshev distance to the enemy king and tracing it through the proximity/units/bonus formula before asserting the resulting Score. As with every eval addition, this changes search's own node counts (a new eval term changes move ordering/pruning decisions) — see "Regression bench" below.
-
-**Regression bench:** NOT captured this session — no compiler available in this sandbox to run `ctest -R bench`. Session 48's `nodes=80628` (depth 6, TOTAL, Linux Release) is the last confirmed-real baseline; this session's change is expected to shift that figure (a new eval term always does), but by how much isn't known until a real CI run happens under this session's code.
-
-**Next session start point:** Push `src/eval/king_tropism.h`, `src/eval/king_tropism.cpp`, `src/eval/eval.h`, `src/eval/eval.cpp`, `src/CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/king_tropism_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. **Do not treat this as green until a fresh CI run actually confirms it** — Session 36's own history (a build failure that escaped review and only CI caught) is the standing reason to say this explicitly every time now, not just once. Once green, capture the regression bench numbers (`ctest -R bench -V`, Linux Release leg) and compare against Session 48's `nodes=80628` baseline. After that, next task per ROADMAP.md: **Trapped piece penalties** — the next unchecked Phase 5 item. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-28 (4) — Session 48: Session 47 (Threats evaluation) confirmed green on a fresh CI run; regression bench captured — the largest node-count shift of any eval term this phase, as anticipated
-
-**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms (Linux/macOS/Windows × Debug/Release), that Session 47's threats-evaluation work builds clean and passes 100% of tests everywhere (252 tests on Linux/Windows, 250 on macOS — the same BMI2-gated-hooks/ARM-runner gap noted since Session 37, unrelated to this session). Regression bench (Linux Release, depth 6, via the `ctest -R bench -V` step):
-
-```
-BENCH startpos            depth=6  nodes=2701   score=62     best_move=b1c3
-BENCH kiwipete             depth=6  nodes=12073  score=60     best_move=e2a6
-BENCH quiet_middlegame     depth=6  nodes=7698   score=-3     best_move=g1h1
-BENCH endgame_mate_in_3    depth=6  nodes=58156  score=31995  best_move=a1c1
-BENCH TOTAL                depth=6  nodes=80628
-```
-
-**Comparison against Session 46's baseline (`nodes=87887` TOTAL, pre-threats-evaluation):** total nodes DROPPED noticeably (`87887`→`80628`, roughly -8%) — the largest single-term bench delta of this entire phase so far (compare Mobility's own first-term shift, King safety's roughly -8% in the other direction, and the much smaller Knight outposts/Space deltas noted in Sessions 44/46). `startpos`'s score moved substantially (`2`→`62`) with a different best move (`b1a3`→`b1c3`); `quiet_middlegame`'s best move also changed (`f3e5`→`g1h1`) with its score shifting less dramatically (`-13`→`-3`); `kiwipete` barely moved (`16700`→`12073` nodes is actually a large node-count drop despite the score staying near-identical, `59`→`60` was Session 46's own change, now `60` again — same score, notably fewer nodes to reach it); `endgame_mate_in_3` is essentially unchanged. **Read as expected, not alarming, and specifically anticipated in Session 47's own entry:** unlike Knight outposts or Space (each gated behind a narrow structural condition), a term that penalizes ANY undefended attacked piece or ANY piece a pawn attacks is relevant in a large fraction of real positions throughout a normal search tree — a genuinely different order of eval-tree impact than the last two terms, which is exactly why Session 47 flagged in advance that a larger delta here "shouldn't be treated as suspicious on its own." The node-count DROP (rather than a rise, unlike most previous additions) is also plausible on its own terms: a term that penalizes hanging/pawn-attacked pieces more strongly discourages moves that walk into such threats, which can sharpen move ordering and improve alpha-beta cutoff efficiency, reducing nodes searched for the same depth — though this is offered as a plausible read, not a confirmed mechanism, since no profiling was done to verify it. Not treated as a strength claim in either direction (raw bench comparison of hand-tuned constants at fixed depth 6, not a strength measurement); flagged here only as a data point for the eventual Texel tuner.
-
-**Bugs fixed:** None.
-
-**Decisions made:** None new.
-
-**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **King tropism (piece proximity to enemy king in the attack)** — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 47's own next-start-point guidance. Once implemented and confirmed green, run the regression bench again and compare its `BENCH TOTAL nodes=` figure against this entry's `80628` (depth 6, Linux Release) the same way this entry compared against Session 46's. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-28 (3) — Session 47: Threats evaluation implemented — Phase 5's sixth item done, King tropism next
-
-**What was built:** Phase 5's sixth unchecked item (docs/ROADMAP.md): a new threats-evaluation term. New `src/eval/threats.h`/`src/eval/threats.cpp` add `threats_value()`, scoring two independent, stacking penalties for a side's own knights/bishops/rooks/queens: an unconditional penalty for being attacked by an enemy pawn, and a boolean hanging-piece penalty for being attacked by anything at all with zero own defenders. Wired into `eval::evaluate()` (`eval.cpp`) as a seventh uncached term, alongside Mobility (Session 36), King safety (Session 39), the bishop-pair/rook-file/rook-7th-rank bonuses (Session 41), Knight outposts (Session 43), and Space (Session 45). `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated for the new files. `tests/threats_tests.cpp` (new, 5 tests) covers starting-position zero, an isolated pawn-attack-penalty test (defended piece, exact equality against the named constant), an isolated hanging-penalty test (undefended piece attacked by a rook), a stacking test (both conditions on the same piece), and a defended-despite-attacked test confirming the hanging penalty never fires when any own defender exists — every expected outcome hand-derived from the constants and attack patterns before being written, the same discipline every eval-term session this phase has followed.
-
-**Bugs fixed:** None this session — continuing the standing lesson from Session 36's missing-include build failure, every `board::` symbol `threats.cpp` calls was individually cross-checked against the specific header that declares it (`board/attacks.h` for the sliding-piece attack functions, `board/masks.h` for `knight_attacks()`/`king_attacks()`/`pawn_attacks()`, `board/bitboard.h` for `kEmptyBitboard`/`pop_lsb()`/`bitscan_forward()`/`test_bit()`, `board/board.h` for `opposite()`) before this entry.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md, 2026-08-28 (2) — the exact two-penalty definition, why pawns/king are excluded as the attacked piece, why a simplified boolean check is used instead of reusing `search/see.h`'s SEE (a deliberate avoidance of a backwards eval→search module dependency), why the two penalties are allowed to stack, why `attacks_by_side()` is computed once per side rather than per piece, and why this term restores the `board::init_magic_bitboards()` precondition that the three most recently added terms didn't need.
-
-**Verification:** No compiler toolchain available in this sandbox, same as every session. Brace/paren balance swept on every touched/created file (`threats.h`, `threats.cpp`, `eval.h`, `eval.cpp`, `threats_tests.cpp`) — all balanced. Every one of `threats_tests.cpp`'s five tests had its expected outcome hand-derived before being written, including manually tracing each placed piece's exact attack pattern (rook file-clearance, pawn diagonal-capture squares, knight-move destinations) to confirm which specific squares each test's attacker/defender pieces actually cover before asserting the resulting Score. Also double-checked `Position::place_piece()`/`pieces()`/`occupied()` and `Score`'s own operator set directly against `board/board.h`/`eval/score.h` before finalizing, since this is the first eval term this phase to combine sliding-piece attack generation with the reverse-pawn-attack trick in the same function. As with every eval addition, this changes search's own node counts (a new eval term changes move ordering/pruning decisions) — see "Regression bench" below.
-
-**Regression bench:** NOT captured this session — no compiler available in this sandbox to run `ctest -R bench`. Session 46's `nodes=87887` (depth 6, TOTAL, Linux Release) is the last confirmed-real baseline; this session's change is expected to shift that figure more than the last two terms did (unlike Knight outposts/Space, which each only fire in narrow structural circumstances, hanging/pawn-attacked pieces are a much more broadly-applicable pattern likely to appear throughout a normal search tree), but by how much isn't known until a real CI run happens under this session's code.
-
-**Next session start point:** Push `src/eval/threats.h`, `src/eval/threats.cpp`, `src/eval/eval.h`, `src/eval/eval.cpp`, `src/CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/threats_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. **Do not treat this as green until a fresh CI run actually confirms it** — Session 36's own history (a build failure that escaped review and only CI caught) is the standing reason to say this explicitly every time now, not just once. Once green, capture the regression bench numbers (`ctest -R bench -V`, Linux Release leg) and compare against Session 46's `nodes=87887` baseline — given this term's broader applicability (see "Regression bench" above), a noticeably larger delta than the last two terms' near-zero shifts wouldn't be surprising and shouldn't be treated as suspicious on its own. After that, next task per ROADMAP.md: **King tropism (piece proximity to enemy king in the attack)** — the next unchecked Phase 5 item. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-28 (2) — Session 46: Session 45 (Space evaluation) confirmed green on a fresh CI run; regression bench captured
-
-**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms (Linux/macOS/Windows × Debug/Release), that Session 45's space-evaluation work builds clean and passes 100% of tests everywhere (247 tests on Linux/Windows, 245 on macOS — the same BMI2-gated-hooks/ARM-runner gap noted since Session 37, unrelated to this session). Regression bench (Linux Release, depth 6, via the `ctest -R bench -V` step):
-
-```
-BENCH startpos            depth=6  nodes=3067   score=2      best_move=b1a3
-BENCH kiwipete             depth=6  nodes=16700  score=60     best_move=e2a6
-BENCH quiet_middlegame     depth=6  nodes=9988   score=-13    best_move=f3e5
-BENCH endgame_mate_in_3    depth=6  nodes=58132  score=31995  best_move=a1c1
-BENCH TOTAL                depth=6  nodes=87887
-```
-
-**Comparison against Session 44's baseline (`nodes=87634` TOTAL, pre-space-evaluation):** total nodes rose modestly (`87634`→`87887`, roughly +0.3%), with `kiwipete` accounting for nearly all of the change (`16457`→`16700`, score `59`→`60`) and `quiet_middlegame` shifting by a similarly small amount (`9978`→`9988`, score unchanged at `-13`); `startpos` and `endgame_mate_in_3` are unchanged. **Read as expected, not alarming:** consistent with Session 44's own observation about Knight outposts, a term whose bonus only applies within a specific fixed zone (here, the c-f/relative-ranks-2-4 squares) will naturally have more effect on positions where that zone is contested — kiwipete's own well-developed, semi-open middlegame structure plausibly has more central-zone occupancy/attack activity for `space_value()` to actually register than the quieter three other bench positions. This continues to be a smaller bench delta than Mobility's or King safety's own additions (docs/DECISIONS.md's running comparisons), which is itself broadly consistent with `kSpaceSquareBonus`'s own smaller per-square magnitude (`{2,0}`) relative to those two terms' constants. Not treated as a strength claim in either direction (raw bench comparison of hand-tuned constants at fixed depth 6, not a strength measurement); flagged here only as a data point for the eventual Texel tuner.
-
-**Bugs fixed:** None.
-
-**Decisions made:** None new.
-
-**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **Threats evaluation (hanging/attacked pieces, pieces attacked by pawns)** — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 45's own next-start-point guidance. Once implemented and confirmed green, run the regression bench again and compare its `BENCH TOTAL nodes=` figure against this entry's `87887` (depth 6, Linux Release) the same way this entry compared against Session 44's. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-28 (1) — Session 45: Space evaluation implemented — Phase 5's fifth item done, Threats evaluation next
-
-**What was built:** Phase 5's fifth unchecked item (docs/ROADMAP.md): a new space-evaluation term. New `src/eval/space.h`/`src/eval/space.cpp` add `space_value()`, scoring a flat bonus per safe (pawn-free, unattacked-by-an-enemy-pawn) square within a fixed 12-square zone (c-f files, relative ranks 2-4) per side. Wired into `eval::evaluate()` (`eval.cpp`) as a sixth uncached term, alongside Mobility (Session 36), King safety (Session 39), the bishop-pair/rook-file/rook-7th-rank bonuses (Session 41), and Knight outposts (Session 43). `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated for the new files. `tests/space_tests.cpp` (new, 5 tests) covers a bare-board balance check, a starting-position balance check (via a different route than the bare-board case — own-pawn occupancy rather than an entirely empty zone), an own-pawn-occupancy disqualification, an enemy-pawn-attack disqualification isolated from any own-occupancy side effect, and an additive-stacking check combining both mechanisms — every expected outcome hand-derived from the zone definition and constants before being written, the same discipline every eval-term session this phase has followed.
-
-**Bugs fixed:** None this session — continuing the standing lesson from Session 36's missing-include build failure, every `board::` symbol `space.cpp` calls was individually cross-checked against the specific header that declares it (`board/bitboard.h` for `kEmptyBitboard`/`set_bit`/`test_bit`/`make_square`/`pop_lsb`, `board/masks.h` for `pawn_attacks()`, `board/board.h` for `opposite()`), including confirming `pop_lsb()`'s `int` return assigns cleanly to `Square` (a `using Square = int` alias) before this entry.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md, 2026-08-28 (1) — the exact zone definition and per-square qualification test, why `eg` is exactly zero (the first fully-absent taper component this phase, versus every other term's merely-smaller-but-nonzero eg), why the zone is fixed rather than requiring a shielding friendly pawn, why pawn occupancy disqualifies a square but other own-piece occupancy doesn't, and why the zone itself is computed per call rather than precomputed into a masks.h table.
-
-**Verification:** No compiler toolchain available in this sandbox, same as every session. Brace/paren balance swept on every touched/created file (`space.h`, `space.cpp`, `eval.h`, `eval.cpp`, `space_tests.cpp`) — all balanced. Every one of `space_tests.cpp`'s five tests had its expected outcome hand-derived before being written, including manually tracing which specific squares each placed pawn disqualifies and confirming the two disqualification mechanisms (own-pawn occupancy vs. enemy-pawn attack) don't interact when combined in the same position. As with every eval addition, this changes search's own node counts (a new eval term changes move ordering/pruning decisions) — see "Regression bench" below.
-
-**Regression bench:** NOT captured this session — no compiler available in this sandbox to run `ctest -R bench`. Session 44's `nodes=87634` (depth 6, TOTAL, Linux Release) is the last confirmed-real baseline; this session's change is expected to shift that figure (a new eval term always does, though Session 44's own entry notes this phase has already seen one term — Knight outposts — move the baseline by only 3 nodes, so a small shift here wouldn't itself be surprising either), but by how much isn't known until a real CI run happens under this session's code.
-
-**Next session start point:** Push `src/eval/space.h`, `src/eval/space.cpp`, `src/eval/eval.h`, `src/eval/eval.cpp`, `src/CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/space_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. **Do not treat this as green until a fresh CI run actually confirms it** — Session 36's own history (a build failure that escaped review and only CI caught) is the standing reason to say this explicitly every time now, not just once. Once green, capture the regression bench numbers (`ctest -R bench -V`, Linux Release leg) and compare against Session 44's `nodes=87634` baseline. After that, next task per ROADMAP.md: **Threats evaluation (hanging/attacked pieces, pieces attacked by pawns)** — the next unchecked Phase 5 item. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-27 (4) — Session 44: Session 43 (Knight outposts) confirmed green on a fresh CI run; regression bench captured — near-identical node counts, read as expected given how rarely the term fires
-
-**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms (Linux/macOS/Windows × Debug/Release), that Session 43's knight-outposts work builds clean and passes 100% of tests everywhere (242 tests on Linux/Windows, 240 on macOS — the same BMI2-gated-hooks/ARM-runner gap noted since Session 37, unrelated to this session). Regression bench (Linux Release, depth 6, via the `ctest -R bench -V` step):
-
-```
-BENCH startpos            depth=6  nodes=3067   score=2      best_move=b1a3
-BENCH kiwipete             depth=6  nodes=16457  score=59     best_move=e2a6
-BENCH quiet_middlegame     depth=6  nodes=9978   score=-13    best_move=f3e5
-BENCH endgame_mate_in_3    depth=6  nodes=58132  score=31995  best_move=a1c1
-BENCH TOTAL                depth=6  nodes=87634
-```
-
-**Comparison against Session 42's baseline (`nodes=87631` TOTAL, pre-knight-outposts):** total nodes barely moved at all (`87631`→`87634`, a 3-node difference, entirely within `kiwipete`), every score and best move identical to Session 42's own reading. **Read as expected, not a red flag:** unlike Mobility or King safety (both of which touch essentially every node, since every piece has SOME mobility and every king has SOME safety-relevant surroundings), a knight-outpost bonus only fires when a specific three-part condition is met — pawn-defended, pawn-unreachable, AND in the [3,5] relative-rank window — a narrow, specific pattern these four particular bench positions (startpos, kiwipete, quiet_middlegame, endgame_mate_in_3, all fixed early/mid-game or simple endgame setups) apparently rarely or never satisfy at depth 6. This is the smallest bench delta of any eval-term addition so far this phase (docs/DECISIONS.md's own running comparisons: Mobility ~+8%, King safety ~-8%, piece bonuses ~+4%) — not evidence the term is broken or inert in general (`tests/knight_outposts_tests.cpp`'s own 5 tests independently confirm it fires correctly on hand-built qualifying positions), just evidence these four particular fixed bench positions don't happen to contain many outpost-qualifying knights within a depth-6 search. Not treated as a strength claim in either direction (this is a raw bench comparison of hand-tuned constants at fixed depth 6, not a strength measurement); flagged here only as a data point for whenever the eventual Texel tuner (a later Phase 5 item) runs, and as a note that this term's own low-impact bench footprint on these specific positions shouldn't be read as low impact in general play, where outpost patterns are common.
-
-**Bugs fixed:** None.
-
-**Decisions made:** None new.
-
-**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **Space evaluation** — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 43's own next-start-point guidance. Once implemented and confirmed green, run the regression bench again and compare its `BENCH TOTAL nodes=` figure against this entry's `87634` (depth 6, Linux Release) the same way this entry compared against Session 42's. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-27 (3) — Session 43: Knight outposts implemented — Phase 5's fourth item done, Space evaluation next
-
-**What was built:** Phase 5's fourth unchecked item (docs/ROADMAP.md): a new knight-outpost evaluation term. New `src/eval/knight_outposts.h`/`src/eval/knight_outposts.cpp` add `knight_outpost_value()`, scoring a flat bonus for each own knight standing on a square that's pawn-defended, unreachable by any enemy pawn (current or future), and within a relative-rank window near enemy territory. Wired into `eval::evaluate()` (`eval.cpp`) as a fifth uncached term, alongside Mobility (Session 36), King safety (Session 39), and the bishop-pair/rook-file/rook-7th-rank bonuses (Session 41). `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated for the new files. `tests/knight_outposts_tests.cpp` (new, 5 tests) covers starting-position zero, a defended-vs-undefended e5 knight comparison (with an exact expected `Score{18,10}` check, not just an ordering comparison), an enemy-pawn disqualification case, a rank-window exclusion case, and a Black-side sign-convention check — every expected outcome hand-derived from the constants and mask definitions before being written, the same discipline every eval-term session this phase has followed.
-
-**Bugs fixed:** None this session — continuing the standing lesson from Session 36's missing-include build failure, every `board::` symbol `knight_outposts.cpp` calls was individually cross-checked against the specific header that declares it (`board/masks.h` for `pawn_attacks()`/`passed_pawn_mask()`/`adjacent_files_mask()`, `board/bitboard.h` for `file_of()`/`rank_of()`/`pop_lsb()`, `board/board.h` for `opposite()`) before this entry.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md, 2026-08-27 (2) — the exact three-part outpost qualification test, why the enemy-pawn-threat span reuses existing `passed_pawn_mask()`/`adjacent_files_mask()` rather than a new masks.h function, why the outpost rank window is [3,5], why the bonus is mg-heavier (mirrors king_safety.h's own reasoning, for a distinct underlying cause), why only knights and not also bishops, and why this term gets its own standalone file rather than joining piece_bonuses.h's grouping.
-
-**Verification:** No compiler toolchain available in this sandbox, same as every session. Brace/paren balance swept on every touched/created file (`knight_outposts.h`, `knight_outposts.cpp`, `eval.h`, `eval.cpp`, `knight_outposts_tests.cpp`) — all balanced. Every one of `knight_outposts_tests.cpp`'s five tests had its expected outcome hand-derived before being written, including tracing the reverse-pawn-attack trick's exact square set for both the White (d4/e5) and Black (c5/d4) cases and confirming the enemy-threat-span mask's rank cutoff against a pawn exactly one rank away (the closest possible immediate-attacker case) as well as one further back (a still-advancing future threat). As with every eval addition, this changes search's own node counts (a new eval term changes move ordering/pruning decisions) — see "Regression bench" below.
-
-**Regression bench:** NOT captured this session — no compiler available in this sandbox to run `ctest -R bench`. Session 42's `nodes=87631` (depth 6, TOTAL, Linux Release) is the last confirmed-real baseline; this session's change is expected to shift that figure (a new eval term always does), but by how much isn't known until a real CI run happens under this session's code.
-
-**Next session start point:** Push `src/eval/knight_outposts.h`, `src/eval/knight_outposts.cpp`, `src/eval/eval.h`, `src/eval/eval.cpp`, `src/CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/knight_outposts_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. **Do not treat this as green until a fresh CI run actually confirms it** — Session 36's own history (a build failure that escaped review and only CI caught) is the standing reason to say this explicitly every time now, not just once. Once green, capture the regression bench numbers (`ctest -R bench -V`, Linux Release leg) and compare against Session 42's `nodes=87631` baseline. After that, next task per ROADMAP.md: **Space evaluation** — the next unchecked Phase 5 item. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-27 (2) — Session 42: Session 41 (Bishop pair / rook files / rook 7th rank) confirmed green on a fresh CI run; regression bench captured
-
-**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms (Linux/macOS/Windows × Debug/Release), that Session 41's piece-bonuses work builds clean and passes 100% of tests everywhere (237 tests on Linux/Windows, 235 on macOS — the same 2-test BMI2-gated-hooks/ARM-runner gap noted in Sessions 37/40, unrelated to this session). Regression bench (Linux Release, depth 6, via the `ctest -R bench -V` step):
-
-```
-BENCH startpos            depth=6  nodes=3067   score=2      best_move=b1a3
-BENCH kiwipete             depth=6  nodes=16454  score=59     best_move=e2a6
-BENCH quiet_middlegame     depth=6  nodes=9978   score=-13    best_move=f3e5
-BENCH endgame_mate_in_3    depth=6  nodes=58132  score=31995  best_move=a1c1
-BENCH TOTAL                depth=6  nodes=87631
-```
-
-**Comparison against Session 40's baseline (`nodes=84197` TOTAL, pre-piece-bonuses):** total nodes rose to `87631` (roughly 4% more) — a real, expected consequence of the new bishop-pair/rook-file/rook-7th-rank term changing move ordering and pruning decisions throughout the tree (docs/ROADMAP.md's "node-count/strength tracked... per change" practice exists precisely to make a change like this visible, not to flag it as wrong by default). `startpos`'s score moved from `-1` to `2` and its best move from `a2a4` to `b1a3`; `quiet_middlegame`'s score moved from `6` to `-13` and its best move from `a2a3` to `f3e5`; `kiwipete`'s score shifted more noticeably (`28`→`59`) with its best move unchanged (`e2a6`); `endgame_mate_in_3` is essentially unchanged (still finds the same mate, nodes `58098`→`58132`). **Read as expected, not alarming:** the new term's constants are explicitly first-draft hand estimates, not yet Texel-tuned (docs/DECISIONS.md, 2026-08-27 (1), same caveat every eval term added this phase carries) — kiwipete's score shift is the largest of any single-session bench delta so far this phase, plausibly because kiwipete's own starting position has both sides' bishop pairs and rooks on semi-open files already in play, giving this particular new term more surface area to affect than the quieter startpos/quiet_middlegame positions. Not treated as a genuine strength claim in either direction (this is a raw bench comparison of hand-tuned constants at fixed depth 6, not a strength measurement) — flagged here only as a data point for whenever the eventual Texel tuner (a later Phase 5 item) runs.
-
-**Bugs fixed:** None.
-
-**Decisions made:** None new.
-
-**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **Knight outposts** — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 41's own next-start-point guidance. Once implemented and confirmed green, run the regression bench again and compare its `BENCH TOTAL nodes=` figure against this entry's `87631` (depth 6, Linux Release) the same way this entry compared against Session 40's. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-27 (1) — Session 41: Bishop pair / rook-on-open-or-semi-open-file / rook-on-7th-rank implemented — Phase 5's third item done, Knight outposts next
-
-**What was built:** Phase 5's third unchecked item (docs/ROADMAP.md): a new grouped positional-bonus evaluation term. New `src/eval/piece_bonuses.h`/`src/eval/piece_bonuses.cpp` add `piece_bonus_value()`, summing three components per side: a flat bishop-pair bonus, a per-rook open/semi-open-file bonus, and a per-rook 7th-rank bonus. Wired into `eval::evaluate()` (`eval.cpp`) as a fourth uncached term, alongside Mobility eval (Session 36) and King safety (Session 39). `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated for the new files. `tests/piece_bonuses_tests.cpp` (new, 5 tests) covers starting-position symmetry, bishop pair vs. a single bishop, a strict open > semi-open > closed file ordering, a 7th-rank rook vs. the same rook off the 7th rank, and additive stacking of the open-file and 7th-rank bonuses on a single rook — every expected outcome hand-derived from the constants before being written, the same discipline Sessions 36/39 established for mobility_tests.cpp/king_safety_tests.cpp.
-
-**Bugs fixed:** None this session — continuing the standing lesson from Session 36's missing-include build failure, every `board::` symbol `piece_bonuses.cpp` calls was individually cross-checked against the specific header that declares it (`board/masks.h` for `file_mask()`, `board/bitboard.h` for `file_of()`/`rank_of()`/`pop_lsb()`/`popcount()`, `board/board.h` for `opposite()`) before this entry.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md, 2026-08-27 (1) — why the three terms share one module rather than each getting its own file (unlike mobility/king safety/pawn structure), why bishop pair is eg-heavier (mirrors mobility.h's own taper direction), why the open/semi-open-file bonuses are mg-heavier (the literal mirror image of king_safety.h's own file-penalty taper direction, same board feature seen from the attacking rook's side instead of the defending king's), why the 7th-rank bonus doesn't require the enemy king on its own back rank or enemy pawns present on the rank, and why `piece_bonus_value()` — unlike its two sibling terms — doesn't need `board::init_magic_bitboards()`.
-
-**Verification:** No compiler toolchain available in this sandbox, same as every session. Brace/paren balance swept on every touched/created file (`piece_bonuses.h`, `piece_bonuses.cpp`, `eval.h`, `eval.cpp`, `piece_bonuses_tests.cpp`) — all balanced. Every one of `piece_bonuses_tests.cpp`'s five tests had its expected outcome hand-derived from the file's own constants before being written, including the additive-stacking test's exact expected `Score` (an open-file-only reading plus `kRookOnSeventhBonus`, checked for exact equality rather than just an ordering comparison, as an extra tripwire against the two components accidentally interacting instead of staying independent). As with every eval addition, this changes search's own node counts (a new eval term changes move ordering/pruning decisions) — see "Regression bench" below.
-
-**Regression bench:** NOT captured this session — no compiler available in this sandbox to run `ctest -R bench`. Session 40's `nodes=84197` (depth 6, TOTAL, Linux Release) is the last confirmed-real baseline; this session's change is expected to shift that figure (a new eval term always does), but by how much isn't known until a real CI run happens under this session's code.
-
-**Next session start point:** Push `src/eval/piece_bonuses.h`, `src/eval/piece_bonuses.cpp`, `src/eval/eval.h`, `src/eval/eval.cpp`, `src/CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/piece_bonuses_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. **Do not treat this as green until a fresh CI run actually confirms it** — Session 36's own history (a build failure that escaped review and only CI caught) is the standing reason to say this explicitly every time now, not just once. Once green, capture the regression bench numbers (`ctest -R bench -V`, Linux Release leg) and compare against Session 40's `nodes=84197` baseline. After that, next task per ROADMAP.md: **Knight outposts** — the next unchecked Phase 5 item. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-26 (7) — Session 40: Session 39 (King safety) confirmed green on a fresh CI run; regression bench captured
-
-**What was built:** Nothing in engine code. Confirmation, from a fresh CI log covering all 6 platforms (Linux/macOS/Windows × Debug/Release), that Session 39's King safety work builds clean and passes 100% of tests everywhere (232 tests on Linux/Windows, 230 on macOS — the same 2-test BMI2-gated-hooks/ARM-runner gap noted in Session 37, unrelated to this session). Regression bench (Linux Release, depth 6, via the `ctest -R bench -V` step added in Session 37):
-
-```
-BENCH startpos            depth=6  nodes=1380   score=-1     best_move=a2a4
-BENCH kiwipete             depth=6  nodes=17016  score=28     best_move=e2a6
-BENCH quiet_middlegame     depth=6  nodes=7703   score=6      best_move=a2a3
-BENCH endgame_mate_in_3    depth=6  nodes=58098  score=31995  best_move=a1c1
-BENCH TOTAL                depth=6  nodes=84197
-```
-
-**Comparison against Session 38's baseline (`nodes=91786` TOTAL, pre-King-safety):** total nodes dropped to `84197` (roughly 8% fewer) — a real, expected consequence of King safety changing move ordering and pruning decisions throughout the tree, not itself concerning (docs/ROADMAP.md's "node-count/strength tracked... per change" practice exists precisely to make a change like this visible, not to flag it as wrong by default). More notable: `startpos`'s score moved from `71` to `-1` and its best move from `e2e4` to `a2a4`; `quiet_middlegame`'s score moved from `-32` to `6` and its best move from `f3e5` to `a2a3`; `kiwipete`'s score shifted slightly (`30`→`28`) with its best move unchanged; `endgame_mate_in_3` is essentially unchanged (still finds the same mate). **Read as expected, not alarming:** King safety's constants are explicitly first-draft hand estimates, not yet Texel-tuned (docs/DECISIONS.md, 2026-08-26 (6), same caveat every eval term added this phase carries) — a brand-new, uncalibrated term is exactly the kind of change that can flip a shallow (depth 6) fixed-depth search's top move in an otherwise-balanced, quiet position, since the position's other terms leave the choice close to begin with. `a2a4`/`a2a3` as "best" at depth 6 are not being treated as genuine opening-theory claims (this is a raw bench comparison of hand-tuned constants, not a strength measurement) — they're flagged here only as a data point for whenever the eventual Texel tuner (a later Phase 5 item) runs, not as something to chase down or reverse now. No test failed, and the hand-derived math backing King safety's own dedicated tests (Session 39) was independently re-checked, not just re-trusted, before writing this paragraph.
-
-**Bugs fixed:** None.
-
-**Decisions made:** None new.
-
-**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed to **Bishop pair, rook on open/semi-open file, rook on 7th rank** — the next unchecked Phase 5 item (docs/ROADMAP.md), per Session 39's own next-start-point guidance. Once implemented and confirmed green, run the regression bench again and compare its `BENCH TOTAL nodes=` figure against this entry's `84197` (depth 6, Linux Release) the same way this entry compared against Session 38's. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-26 (6) — Session 39: King safety implemented — Phase 5's second item done, Bishop pair/rook-file terms next
-
-**What was built:** Phase 5's second item (docs/ROADMAP.md): a new king safety evaluation term. New `src/eval/king_safety.h`/`src/eval/king_safety.cpp` add `king_safety_value()`, summing three components per side: a flat per-pawn pawn-shield bonus, an open/semi-open-file-near-the-king penalty, and an attacker-weighting penalty scaled by which enemy knights/bishops/rooks/queens threaten the king's immediate zone. Wired into `eval::evaluate()` (`eval.cpp`) as a third uncached term, alongside Mobility eval (Session 36). Every constant is deliberately MG-heavy/EG-light — the opposite tapering direction from Mobility eval's own constants, on purpose (see docs/DECISIONS.md, 2026-08-26 (6), for the full reasoning on this and every other design choice this session made). `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated for the new files. `tests/king_safety_tests.cpp` (new, 5 tests) covers starting-position symmetry, shielded-vs-bare, a strict closed > semi-open > fully-open file ordering, an attacking-queen comparison, and a defensive missing-king edge case — every expected numeric outcome hand-derived square-by-square before being written, the same discipline Session 36's `mobility_tests.cpp` established.
-
-**Bugs fixed:** None this session — Session 36's missing-include build failure (`board/masks.h` not included despite calling `board::knight_attacks()`) was treated as a direct, standing lesson rather than a one-off: every `board::` symbol `king_safety.cpp` calls was individually cross-checked against the specific header that actually declares it (`board/masks.h` for `king_attacks()`/`file_mask()`, `board/attacks.h` for the sliding-piece functions) before this entry, rather than assumed safe by pattern-matching against mobility.cpp's own (now-corrected) includes.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md, 2026-08-26 (6) — the three components' own constants and rationale, the MG/EG tapering direction (and why it's the mirror image of Mobility eval's), why the shield zone isn't promoted to a shared board/masks.h table, why attacker weighting is binary per piece rather than counting zone-square overlap, and why pawns don't get their own attacker-weighting entry.
-
-**Verification:** No compiler toolchain available in this sandbox, same as every session. Brace/paren balance swept on every touched/created file (`king_safety.h`, `king_safety.cpp`, `eval.h`, `eval.cpp`, `king_safety_tests.cpp`) — all balanced. Every one of `king_safety_tests.cpp`'s five tests had its expected numeric outcome fully hand-derived (shield-zone squares enumerated, every affected file's own/enemy-pawn presence checked, every attacker's own attack ray traced against the king zone) before being written — including working through both the starting-position exact-zero claim and the closed/semi-open/fully-open three-way ordering arithmetically in full, not just asserted by intuition. As with every eval addition, this changes search's own node counts (a new eval term changes move ordering/pruning decisions) — see "Regression bench" below.
-
-**Regression bench:** NOT captured this session — no compiler available in this sandbox to run `ctest -R bench`. Session 38's `nodes=91786` (depth 6, TOTAL, Linux Release) is the last confirmed-real baseline; this session's change is expected to shift that figure (a new eval term always does), but by how much isn't known until a real CI run happens under this session's code.
-
-**Next session start point:** Push `src/eval/king_safety.h`, `src/eval/king_safety.cpp`, `src/eval/eval.h`, `src/eval/eval.cpp`, `src/CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/king_safety_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. **Do not treat this as green until a fresh CI run actually confirms it** — Session 36's own history (a build failure that escaped review and only CI caught) is the standing reason to say this explicitly every time now, not just once. Once green, capture the regression bench numbers (`ctest -R bench -V`, Linux Release leg — see `.github/workflows/ci.yml`'s "Print regression bench" step, added in Session 37) and compare against Session 38's `nodes=91786` baseline. After that, next task per ROADMAP.md: **Bishop pair, rook on open/semi-open file, rook on 7th rank** — the next unchecked Phase 5 item, a good structural fit to implement together (all three are simple positional bonuses reusable across a single new module, likely `src/eval/piece_bonuses.h`/`.cpp` or similar — name it based on what best captures the three terms' shared theme once actually writing it), following the same file-per-concern convention `mobility.h`/`king_safety.h` both established. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-26 (5) — Session 38: Regression bench numbers captured for the first time (Linux Release, depth 6) — closes out the gap flagged across Sessions 36–37
-
-**What was built:** Nothing in engine code. This entry exists purely to record the regression bench's actual output (docs/ROADMAP.md's own "node-count/strength tracked in SESSIONS.md per change" practice), read from the first CI run under the previous entry's `ci.yml` fix ("Print regression bench" step, Linux Release leg):
-
-```
-BENCH startpos           depth=6  nodes=2174   score=71     best_move=e2e4
-BENCH kiwipete            depth=6  nodes=15345  score=30     best_move=e2a6
-BENCH quiet_middlegame    depth=6  nodes=16428  score=-32    best_move=f3e5
-BENCH endgame_mate_in_3   depth=6  nodes=57839  score=31995  best_move=a1c1
-BENCH TOTAL               depth=6  nodes=91786
-```
-
-**Important caveat — this is a baseline, not a diff:** `tests/bench_tests.cpp` was added in the session that closed out Phase 4 (2026-08-25 (9)), but no session ever successfully read its `BENCH` output from a real CI run until now — every attempt between then and Session 37 either predated a working `-V`-based capture step or hit one of the two build failures documented in Session 36's own entries. That means these five numbers are the FIRST ones ever actually recorded here, and they already include every change made since bench_tests.cpp was written, most notably Mobility eval (Session 36) — there is no earlier "pre-mobility" bench reading to diff against and never will be, since it was never captured. From this point forward, THESE numbers are the baseline: the next session that changes eval or search should compare its own bench run against the five lines above, not against nothing.
-
-**Bugs fixed:** None.
-
-**Decisions made:** None new — this is a data-recording entry, not a design entry, so no new docs/DECISIONS.md entry accompanies it.
-
-**Next session start point:** No file changes to push from this entry beyond this updated docs/SESSIONS.md itself. Proceed directly to **King safety** (pawn shield, open files near king, attacker weighting) — the next unchecked Phase 5 item (docs/ROADMAP.md) — per Session 36's own next-start-point guidance (read `src/eval/king_safety.h`/`.cpp` first if either already exists via `raw.githubusercontent.com`; use `mobility.h`/`mobility.cpp` as a structural template, but trace every called function against the header that actually declares it — see Session 36's bug 1 — rather than the header that seems thematically related). Once King safety is implemented and confirmed green, run the regression bench again and compare its `BENCH TOTAL nodes=` figure against this entry's `91786` (depth 6) — a meaningfully different node count would be an expected, natural consequence of a new eval term changing move ordering and pruning decisions, not itself a red flag, but worth recording here either way to keep this practice actually alive going forward now that it finally works. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-26 (4) — Session 37: Session 36 (Mobility eval) confirmed green on a fresh CI run; ci.yml fixed so regression bench numbers are actually visible going forward
-
-**What was built:** Confirmation, from a fresh CI log covering all 6 platforms (Linux/macOS/Windows × Debug/Release), that Session 36's Mobility eval work — including the build-fix from earlier this same session (see that entry's "Bugs fixed" item 1) — genuinely builds clean and passes 100% of tests everywhere (227 tests on Linux/Windows, 225 on macOS — the 2-test difference is `board/attacks.h`'s `NIGHTWING_ENABLE_BMI2`-gated PEXT test-only hooks not being compiled on macOS's ARM/Apple Silicon runners, a pre-existing, expected platform difference unrelated to this session's own changes, not a regression). Separately, `.github/workflows/ci.yml` gained a new step ("Print regression bench", Linux Release leg only) running `ctest -R bench -V` after the main `ctest --output-on-failure` step — a real, structural gap found while trying to locate the regression bench's `BENCH ...` node-count lines in this very CI log and finding nothing: `--output-on-failure` (the existing Test step) only ever prints a test's stdout when it FAILS, so the bench test (`tests/bench_tests.cpp`) passing was, perversely, exactly the condition under which its own printed output could never be read from CI, for as long as that step has existed — not something introduced or noticed by any earlier session. This was a genuine blind spot in the project's own documented "regression bench: node-count/strength tracked in SESSIONS.md per change" practice (docs/ROADMAP.md, Phase 4), not merely inconvenient for this specific session.
-
-**Bugs fixed:** None in engine code this entry — the ci.yml gap above is a tooling/CI-visibility fix, not a functional bug in the engine.
-
-**Decisions made:** The new `ctest -R bench -V` step runs on exactly one matrix leg (Linux Release) rather than all six — search is deterministic given a fixed position/depth, so the printed node counts aren't expected to vary by OS/build-type, and this output exists for a human to read while updating docs/SESSIONS.md, not for any test assertion, so six identical copies would add nothing. Full comment explaining this lives directly in ci.yml.
-
-**Regression bench:** Still NOT captured in this entry — the CI run just confirmed used the PREVIOUS ci.yml (without today's `-V` fix), so the bench's own `BENCH ...` lines still aren't present in that log, only "Passed" / timing for it same as every other test. **Action needed next session:** once ci.yml's fix above has been pushed and a fresh CI run has happened under it, pull the "Print regression bench" step's output from that run and record the `BENCH ...` lines here, finally closing out what Session 36 and this entry both flagged as outstanding.
-
-**Next session start point:** Push `.github/workflows/ci.yml` (the only file this entry touches) and this updated `docs/SESSIONS.md`. Once a fresh CI run happens under the new workflow, capture the regression bench numbers from its "Print regression bench" step output (see above) in a follow-up entry — this has now been outstanding across three consecutive entries (Session 36's two sub-entries and this one) purely because CI wasn't previously configured to surface it; the actual fix is in place now, so the next run should finally close it out. After that, proceed to **King safety** (pawn shield, open files near king, attacker weighting) — the next unchecked Phase 5 item (docs/ROADMAP.md) — following Session 36's own next-start-point guidance (read `src/eval/king_safety.h`/`.cpp` first if either already exists; use `mobility.h`/`mobility.cpp` as a structural template, but this time trace every called function against the header that actually declares it, not the header that seems thematically related — see Session 36's bug 1). Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-26 (3) — Session 36: Mobility eval implemented — Phase 5's first item done, King safety next
-
-**What was built:** Phase 5's first item (docs/ROADMAP.md): a new mobility evaluation term. New `src/eval/mobility.h`/`src/eval/mobility.cpp` add `mobility_value()`, scoring knight/bishop/rook/queen pseudo-mobility (attacked squares, excluding own-occupied ones) via a flat per-square, per-piece-type `Score` bonus — deliberately simple (not a diminishing-returns table), matching Pawn structure's own established preference for a handful of hand-estimated constants over a larger tuned table before the eventual Texel tuner exists. Wired into `eval::evaluate()` (`eval.cpp`) as a new, uncached term. King and pawns are deliberately excluded — see docs/DECISIONS.md, 2026-08-26 (3), for the full reasoning on every design choice here, including why "pseudo-mobility" rather than Stockfish-style "safe mobility" was chosen, and why king mobility specifically doesn't belong in this term. `src/eval/score.h` gained `Score::operator*(int)` to support the per-square scaling. `src/CMakeLists.txt`/`tests/CMakeLists.txt` updated for the new files; `docs/ARCHITECTURE.md`'s Module Layout section updated to list `eval/mobility.cpp/.h` (and `eval/pawn_tt.cpp/.h`, noticed missing from that list while there, even though it already existed in the repo from an earlier session).
-
-**Bugs fixed:** Two, of very different severity.
-
-1. A build-breaking bug that reached CI and failed all 6 platform builds (Linux/macOS/Windows × Debug/Release), caught from the CI logs the user uploaded, NOT self-caught before delivery: `src/eval/mobility.cpp` called `board::knight_attacks()` without including `board/masks.h`, the header that actually declares it (`board/attacks.h`, the only board header this file included besides `board/bitboard.h`, only declares the SLIDING-piece functions — `rook_attacks()`/`bishop_attacks()`/`queen_attacks()` — not the leaper ones). **Cause:** every OTHER attack function this file calls (`bishop_attacks`/`rook_attacks`/`queen_attacks`) lives in `board/attacks.h`, which WAS included; `knight_attacks()` doesn't follow that pattern — it's a leaper table populated by `init_masks()`, declared in `board/masks.h` alongside the other init_masks()-populated tables, a header this file never ended up including despite eval/pawns.cpp (checked, and used as a style reference throughout this session) already demonstrating the correct pattern of including `board/masks.h` directly. **Fix:** added `#include "board/masks.h"` to `mobility.cpp`. **Why this escaped the session's own verification:** every check performed before delivery (brace/paren balance, hand-tracing test math, cross-checking function signatures against `board.h`/`bitboard.h`) checked that things were used CORRECTLY once resolved — none of it was a substitute for actually compiling, which would have caught a missing include immediately; this class of error (a symbol that exists, spelled correctly, just not visible from this translation unit) is exactly what a compiler-less review process is structurally unable to catch, not a one-off oversight to patch around. Verified fixed by checking `board/masks.h`'s own declaration of `knight_attacks()` directly and confirming `eval/pawns.cpp` already establishes this exact `#include "board/masks.h"` pattern for the same reason.
-2. A real, latent gap in existing tests, surfaced (not introduced) by this session's change and fixed in the same session: `mobility_value()` is the first eval term to call a sliding-piece attack function from inside `evaluate()` — material/PSQT/pawn structure never touched the magic-bitboard tables `board::init_magic_bitboards()` populates. Several `TEST_CASE`s in `tests/eval_tests.cpp` (no init calls at all) and `tests/pawn_tt_tests.cpp` (only `init_masks()`, missing `init_magic_bitboards()`) called `evaluate()` on positions with bishops/rooks/queens on the board without that initialization — silently harmless before this session (nothing read those tables yet) despite `evaluate()`'s own precondition implying it should have been called regardless. **Cause:** no earlier eval term exercised that code path, so the gap was never observable. **Fix:** both files updated to properly initialize (an `init_all()` helper added to `eval_tests.cpp`, matching search_tests.cpp's/perft_tests.cpp's convention; `pawn_tt_tests.cpp`'s two affected `TEST_CASE`s each gained the missing call directly, with a comment explaining why). `ordering_tests.cpp`, `bench_tests.cpp`, and `quiescence_tests.cpp` were checked and already initialize correctly (they all exercise search/movegen, which already needed magic bitboards regardless of this session's change) — no fix needed there.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md, 2026-08-26 (3) — flat-bonus vs. lookup-table, pseudo- vs. safe-mobility, why the king is excluded, why no caching (unlike pawn structure), and the test-initialization gap above.
-
-**Verification:** No compiler toolchain available in this sandbox, same as every session — see "Bugs fixed" item 1 above for the direct consequence of that limitation this time: a missing-include build failure that every non-compiling check performed (brace/paren balance, hand-traced test math, signature cross-referencing) was structurally unable to catch, and that only the user's own CI run actually surfaced. Brace/paren balance swept on every touched/created file (`mobility.h`, `mobility.cpp`, `score.h`, `eval.h`, `eval.cpp`, `eval_tests.cpp`, `pawn_tt_tests.cpp`, `mobility_tests.cpp`) — all balanced, both before and after the include fix (a one-line addition, doesn't change brace/paren counts). `make_square(file, rank)` parameter order, `Position::occupancy[color]` indexing, and `board::pop_lsb()`/`popcount()` signatures were all cross-checked against `board.h`/`bitboard.h` directly rather than assumed from memory. Every `mobility_tests.cpp` test's expected numeric outcome was hand-derived square-by-square before being written (knight center-vs-corner: 8 vs. 2 attacked squares; open-vs-boxed rook: 14 vs. 0) — one such derivation caught a genuine test-design error before it was ever shown: an initial draft of the "counts an enemy-occupied square" test placed the enemy pawn mid-ray rather than at the ray's own natural edge-terminus, which would have made the two compared configurations differ by exactly one square (correctly, but not for the reason that test was trying to isolate) — corrected by moving the enemy piece to the ray's edge square before finalizing. **This session's CI run (the one that caught bug 1) failed at the build step on every platform, before ctest ever ran — none of the new/modified tests in this entry have actually executed anywhere yet.** The next CI run, after this fix, is the first real test of all of it.
-
-**Regression bench:** Still NOT captured — the CI run available so far failed at the build step (see "Bugs fixed" item 1), before the test binary was even produced, so no `BENCH ...` lines exist to record yet. **Action needed next session (or from a fresh CI run after this fix lands):** run the regression bench (`tests/bench_tests.cpp`, `[bench]` tag) and record the printed `BENCH ...` lines here, replacing this note.
-
-**Next session start point:** Push the corrected `src/eval/mobility.cpp` (one-line include fix) along with everything else already listed for this session: `src/eval/mobility.h`, `src/eval/score.h`, `src/eval/eval.h`, `src/eval/eval.cpp`, `src/CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/mobility_tests.cpp`, `tests/eval_tests.cpp`, `tests/pawn_tt_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`/`docs/ARCHITECTURE.md`. **Do not treat this as green until a FRESH CI run (or local build) actually succeeds** — the only CI evidence so far is the failing one this entry describes; nothing in this change set has been confirmed to build, let alone pass its tests, yet. Once genuinely green, capture the regression bench numbers (see above) in a follow-up entry, then proceed to King safety (pawn shield, open files near king, attacker weighting) — the next unchecked Phase 5 item. Read `src/eval/king_safety.h`/`.cpp` first if either already exists (check via `raw.githubusercontent.com` before assuming), and re-read this session's own `mobility.h`/`mobility.cpp` as a structural template — but this time, before declaring it done, mentally trace EVERY function call against the header that actually declares it, not just the header that seems thematically related, given what this session's bug 1 just demonstrated about that specific failure mode. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-26 (2) — Session 35: UCI `info` output implemented (Priority Fix, Medium) — Priority Fixes section now fully complete, Phase 5 begins next
-
-**What was built:** The second and final Priority Fixes item from the 2026-08-25 external code review. `SearchResult` (`src/search/search.h`) gained a `pv` field, populated by a new `extract_pv()` (`src/search/search.cpp`) that reconstructs the principal variation by walking the transposition table from the root position rather than threading a triangular PV array through `negamax()`'s own recursion (see docs/DECISIONS.md, 2026-08-26 (2), for why the TT-walk approach was chosen and its accepted PV-can-come-back-shorter-than-depth_completed trade-off). A new `IterationCallback` type lets `search_iterative_deepening()` invoke a caller-supplied function once per genuinely completed iteration (depth 1 always; a mid-search-interrupted iteration — 2026-08-26 (1) — never), reporting that iteration's own `score`/`depth_completed`/`pv` alongside a `nodes` field rewritten to the cumulative running total (matching conventional UCI `info nodes` semantics, not `search_root()`'s own fresh-per-call count). `src/uci/uci.cpp` gained `emit_info()`, wired into `handle_go()` as this callback, formatting `info depth <d> score cp <s>|mate <n> nodes <n> pv <m1> <m2> ...` — including the `mate` branch, distinct from `cp`, once a forced mate is found. `tests/search_tests.cpp` and `tests/uci_tests.cpp` both gained new coverage (five and four new test cases respectively — see docs/DECISIONS.md for the full list) exercising the PV's contents/legality/emptiness-when-terminal, the callback's firing order and cumulative node counts, and the actual formatted `info` line's presence, ordering relative to `bestmove`, and correct `mate`-vs-`cp` branch via a real mate-in-1 position.
-
-**Bugs fixed:** One self-introduced, self-caught mid-session, never reached a delivered file: while moving `extract_pv()`'s definition into place ahead of `search_root()` via a `str_replace` anchored on `search_root()`'s own signature line, the replacement text omitted re-including that signature line, silently deleting it and leaving `search_root()`'s body orphaned directly under `extract_pv()`'s closing brace. **Cause:** the `str_replace` matched the exact signature-line text intending to insert content *before* it, but the new_str given didn't end with a copy of that same matched line. **Fix:** the missing line was restored, then (having noticed the resulting *order* was still wrong — `extract_pv()`'s comment+body ended up sandwiched between `search_root()`'s own doc comment and its signature) the whole `extract_pv()` block was relocated to sit entirely before `search_root()`'s doc comment begins, restoring correct declaration order. **Why this is now believed correct:** every recursive call site and both functions' full bodies were re-viewed end-to-end after the fix, a code-only (comment-stripped) paren-depth walk across the whole file confirmed it never goes negative and ends at exactly zero, and the brace/paren counts were re-diffed against a fresh pristine fetch of the pre-session file to confirm no residual imbalance beyond the same single pre-existing stray `)` inside prose comments noted in the previous session's own verification. This is exactly the kind of structural editing risk `tests must stay green` exists to catch — flagging it here rather than omitting it, per this project's own error-handling convention, even though it was caught before being shown to the user as a deliverable.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-26 (2)) — TT-walk vs. triangular-PV-array, cumulative vs. per-iteration `nodes` in the callback, the `score mate` branch, `std::function` vs. a template callback parameter, and deferring `nps`/`time` fields.
-
-**Verification:** No compiler toolchain available, same as every session — see "Bugs fixed" above for the specific extra verification steps this session's structural edit required beyond the usual brace/paren sweep. Every `negamax()`/`quiescence()` call site from the previous session was re-confirmed unaffected by this session's changes (this session touched only `search_root()`'s tail, `search_iterative_deepening()`'s tail, and net-new code, never `negamax()`/`quiescence()` themselves). New test call sites' argument lists (`search_iterative_deepening(pos, N, 0, {}, lambda)`) were checked against the updated public signature in `search.h` by hand.
-
-**Next session start point:** Push `src/search/search.h`, `src/search/search.cpp`, `src/uci/uci.cpp`, `tests/search_tests.cpp`, `tests/uci_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. Confirm a real `ctest` run is fully green on all 6 platforms before proceeding — same higher-than-usual verification bar as last session, since this one also touches `search_root()`'s and `search_iterative_deepening()`'s control flow, not just additive code. After confirming green, the Priority Fixes section (docs/ROADMAP.md) is fully done — next up is **Phase 5 — Eval Expansion & Tuning**, starting with Mobility eval (the first unchecked Phase 5 item). Read docs/ARCHITECTURE.md's eval-related sections and `src/eval/eval.h`/`src/eval/eval.cpp` in full before writing any Phase 5 code, since eval.cpp hasn't been touched in several sessions and shouldn't be assumed still fresh in context. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-26 (1) — Session 34: Mid-search time checks implemented (Priority Fix, High) — first Priority Fixes item done
-
-**What was built:** The first Priority Fixes item from the 2026-08-25 external code review: a shared `SearchLimits` struct (new, in `src/search/search.h`) threaded through `negamax()`, `quiescence()`/`quiescence_impl()`, and `search_root()` (`src/search/search.cpp`, `src/search/quiescence.h`, `src/search/quiescence.cpp`), giving the search a genuine mid-iteration time-budget check rather than only the previous between-iteration one. Checked every 2048 nodes (`kTimeCheckNodeInterval`); once the deadline passes, every subsequent negamax()/quiescence() call along every branch returns immediately, callers stop trusting a just-returned score to update their own `alpha`/`best_move`/TT store, and `search_iterative_deepening()` discards the whole interrupted iteration's `SearchResult` wholesale in favor of the previous, fully-completed iteration's — never partially trusted. Depth 1 remains unconditionally uninterruptible (no `SearchLimits` passed at all), preserving the existing "always returns a legal move" guarantee. All threading uses a trailing, defaulted (`= nullptr`) parameter, so `search_fixed_depth()` and every existing test/bench call site needed zero changes. Full design (including why individual probes like NMP/ProbCut/singular verification aren't each made precisely cancellation-aware, and why quiescence search participates too) in docs/DECISIONS.md (2026-08-26). `tests/search_tests.cpp` — one new regression test asserting wall-clock time stays well bounded (under a generous 2000ms) even when `max_depth` is set high enough (10, from the starting position) that a single unpruned-enough iteration alone would otherwise run far longer than the requested 1ms budget — specifically targeting the case the between-iteration-only check couldn't catch.
-
-**Bugs fixed:** None — this is new capability, not a bug fix in existing behavior (the previous between-iteration-only check was a documented, intentional Phase 2 scope cut, not a defect).
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-26) — the `SearchLimits` design, the "bounded but not surgically precise unwind, safe because the whole iteration is discarded wholesale" reasoning, the 2048-node check interval choice, and why quiescence search needed the same treatment as negamax().
-
-**Verification:** No compiler toolchain available in this environment, same as every session. Brace/paren balance swept on all four touched source files (`search.h`, `search.cpp`, `quiescence.h`, `quiescence.cpp`) and the test file — all balanced, and `search.cpp`'s paren count confirmed to differ from open by exactly the same pre-existing offset (one extra `)` inside prose comments) as a fresh pristine fetch of the file before this session's edits, so the imbalance is not a regression introduced this session. Every recursive `negamax()`/`quiescence()` call site was individually grepped and re-viewed to confirm `limits` is threaded through correctly (10 `negamax()` call sites, 2 `quiescence()`/`quiescence_impl()` sites touched). Hand-traced the control flow for: the NMP/ProbCut/singular-verification probe guards, the main move loop's post-unmake stop-check-before-bookkeeping-update, both `tt.store()` guards, and the depth-loop's per-iteration `SearchLimits` construction/discard logic in `search_iterative_deepening()`.
-
-**Next session start point:** Push `src/search/search.h`, `src/search/search.cpp`, `src/search/quiescence.h`, `src/search/quiescence.cpp`, `tests/search_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. Confirm a real `ctest` run is fully green on all 6 platforms — this session's change touches `negamax()`'s own recursion on nearly every call path, so this is a higher-than-usual-risk change to verify for real, not just hand-trace. After confirming green, next task per ROADMAP.md's updated footer: UCI `info` output during search (Medium priority, the external code review's second Priority Fix) — read `uci.cpp`'s `go`-handling loop and `SearchResult`'s fields in full first (the data needed, `score`/`nodes`/`depth_completed`, already exists; this is purely about emitting it per completed iteration, not computing anything new). Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-25 (8) — Session 33: Regression bench implemented — Phase 4 complete
-
-**What was built:** `tests/bench_tests.cpp` — the last Phase 4 item, per the scope agreed in the prior discussion turn: node-count only, four fixed positions (startpos, kiwipete, a quiet middlegame, the recurring mate-in-3 endgame fixture) searched via `search_fixed_depth()` at a fixed depth (6), node counts/score/best-move printed to stdout in a plain `BENCH ...` format for a human to read from CI logs and record in this file going forward. Asserts only genuine invariants (non-null best move, `nodes > 0`, `depth_completed == kBenchDepth`), never the node count itself — full reasoning in docs/DECISIONS.md (2026-08-25 (9)). Wired into `tests/CMakeLists.txt`. This docs push also carries the previous session's (Session 32's) "Priority Fixes" ROADMAP.md section, which had been drafted but not yet committed when this session started — reapplied here alongside this session's own regression-bench checkbox, both against a fresh fetch of the actual repo state. **Phase 4 (Pruning & Extensions) is now fully complete.**
-
-**Bugs fixed:** None this session.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-25 (9)) — the bench's design (why no exact-count assertions, why fixed depth, why these four positions) and a note on how the `BENCH` output is meant to feed this file's own "record node counts per change" convention from here on. The external-review Priority Fixes entry (2026-08-25 (8)) was also reapplied in this same push since it hadn't reached the repo yet.
-
-**Verification:** No compiler toolchain available in this environment, same as every session. Brace-balance swept on `tests/bench_tests.cpp` (11/11, 1 TEST_CASE). This is a NEW test file, not an edit to an existing one, so the recurring orphaned-`TEST_CASE` `str_replace` failure that's hit several recent sessions' worth of test-file edits doesn't apply here — the whole file was written fresh via `create_file`, not patched into an existing one.
-
-**Next session start point:** Push `tests/bench_tests.cpp`, `tests/CMakeLists.txt`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. Confirm a real `ctest` run is fully green on all 6 platforms, AND this time also read the `BENCH` lines from the CI log — they're this project's first real bench baseline, worth recording in a follow-up SESSIONS.md note once available, even though no session's own work is waiting on that number specifically. After confirming green, next task per ROADMAP.md's own updated footer: mid-search time checks (High priority, the external code review's first Priority Fix) — read `search.cpp`'s `negamax()`/`search_iterative_deepening()` and `uci.cpp`'s time-control parsing in full first, since this touches the recursion's own unwind path, not just a single self-contained block the way every Phase 4 technique was. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-25 (7) — Session 32: External code review intake + regression-bench scope agreed (docs-only, no code changed)
-
-**What was built:** Nothing in source code this session — a docs-only planning session prompted by two inputs: (1) a discussion on the last remaining Phase 4 item's own scope (regression bench: node-count only, a small fixed set of positions, wired into `ctest`), and (2) an independently-produced code review report against a checkout of the repository, confirming a clean build and full green test suite (52,236 assertions / 211 test cases) in both Release and Debug/ASan+UBSan configurations, plus three findings. Two of the three (no UCI `info` output during search; time management doesn't check the clock mid-search) were promoted to a new "Priority Fixes" section in ROADMAP.md, positioned between Phase 4 and Phase 5; the third (TT/pawn hash reallocated per `go` call) needed no new item, already an intentional documented placeholder cross-referenced from Phase 8. Full reasoning in docs/DECISIONS.md (2026-08-25 (8)). **Note:** this session's own docs edits were drafted but not committed to the repo before the next session began — see Session 33's own entry above for how that was reconciled (both sessions' docs bundled into one push against a fresh repo fetch).
-
-**Bugs fixed:** None — no source code touched this session.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-25 (8)) — how each of the review's four findings was handled, and the ordering rationale for the two promoted Priority Fixes relative to the in-progress regression-bench item and Phase 5.
-
-**Verification:** N/A — no code changed. The review itself is the verification event worth noting: the first time this project's build/test claims have been checked by something other than the CI logs pasted back each session, and it came back clean.
-
-**Next session start point:** Superseded by Session 33's own entry above (that session picked this one up and completed the regression bench).
-
----
-
-## 2026-08-25 (6) — Session 31: Singular extensions (Phase 4 continues — last search-code item)
-
-**What was built:** Phase 4's next item, singular extensions, added to `negamax()`'s move loop in `src/search/search.cpp` — this file's second depth-adding technique (after check extensions, last session), and its most expensive: evaluated only for the TT move, it runs a genuine reduced-depth verification search over every OTHER legal move at the node before deciding whether to grant a bonus ply. New `kSingularMinDepth`/`kSingularTTDepthMargin`/`kSingularMarginPerPly`/`kSingularDepthDivisor`/`kSingularExtensionPly` constants. Required restructuring the move loop so the verification check (which needs the pre-move position) runs BEFORE each move's own `make_move()`, while `move_gives_check` (check extensions, needing the post-move position) still runs after — the two techniques straddle `make_move()` from opposite sides for reasons specific to what each observes. `extension` is now `std::max(check_extension, singular_extension)` rather than just the check-extension value alone. Full design and rationale, including why `us_in_check` deliberately isn't a guard here (unlike several pruning techniques), in docs/DECISIONS.md (2026-08-25 (7)). `tests/search_tests.cpp` — one new regression test using `search_iterative_deepening()` specifically, so the TT is realistically populated by the time the check could plausibly trigger.
-
-**Bugs fixed:** None this session.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-25 (7)) — singular extensions' design (all five guards and why each exists, the formula-not-table margin choice, the `us_in_check` non-exclusion, the `std::max()` combination with check extensions).
-
-**Verification:** No compiler toolchain available in this environment, same as every session. Brace-balance swept on `search.cpp` (80/80) and `search_tests.cpp` (36/36, 30 TEST_CASE declarations up from 29). This session's test insertion used a different, more conservative `str_replace` strategy specifically to avoid the recurring orphaned-`TEST_CASE` failure documented in the last several sessions: the `old_str` matched the COMPLETE three-line header of the following test (`TEST_CASE(...)` through its opening brace) rather than a truncated fragment of it, so there was no partial line left for a mismatched `new_str` to silently drop. The programmatic orphan-scan script was still run afterward as final confirmation (per the "run it as a mandatory final step" note from the last session), and found nothing — this is the first test-insertion session since the corruption pattern first appeared that did NOT need an in-session self-correction.
-
-**Next session start point:** Push `src/search/search.cpp` and `tests/search_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. Confirm a real `ctest` run is fully green on all 6 platforms — standard requirement, and this session's verification-search addition is the most structurally invasive move-loop change since continuation history's own signature threading, so this confirmation matters more than usual. If green, Phase 4 has exactly one item left: "Regression bench: node-count/strength tracked in SESSIONS.md per change." This is different in kind from every prior Phase 4 item — not a search-code change at all, but a PROCESS change: establishing a convention (likely a small script or a fixed set of benchmark positions + node counts) so future sessions can record node-count deltas per change in SESSIONS.md going forward, giving a concrete signal of whether each technique is actually helping. Read ROADMAP.md's exact wording again before starting, since "tracked in SESSIONS.md per change" suggests this may be more about establishing a repeatable measurement process than writing new engine code — worth clarifying scope (with the person, if genuinely ambiguous) before assuming a large new subsystem is wanted. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-25 (5) — Session 30: Check extensions (Phase 4 continues)
-
-**What was built:** Phase 4's next item, check extensions, added to both `negamax()`'s and `search_root()`'s move loops in `src/search/search.cpp` — the first depth-ADDING technique in this file (every previous Phase 4 item removed depth or skipped moves outright). New `kCheckExtensionPly` constant; a move that gives check gets its child search granted one extra ply. Required hoisting `move_gives_check` out of the `else` (i != 0) branch to right after `make_move()`, since extensions apply even to the first move tried at a node, which previously never computed it. Guarded by `ply + 1 < kMaxPly`, a genuine correctness requirement (fixed-size array bounds), not just an optimization. While wiring this in, a latent gap in LMR's own eligibility condition became visible and was fixed in the same session: LMR never excluded checking moves from reduction, even though it already excluded captures/promotions for the identical reason. Full design and rationale, including why the LMR fix is treated as a confirmed-bug fix bundled with this session's own work rather than an unrelated rewrite, in docs/DECISIONS.md (2026-08-25 (6)). `tests/search_tests.cpp` — one new regression test on a mating line built entirely from checking moves.
-
-**Bugs fixed:** LMR's own eligibility gap (never excluding checking moves) — described above and in docs/DECISIONS.md (2026-08-25 (6)). Not a new defect from a prior session's edit (unlike the last two sessions' bugfixes); a genuine oversight from LMR's original implementation (2026-08-21 (6)) that only became visible while implementing a related technique.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-25 (6)) — check extensions' design (the `kMaxPly` guard, hoisting `move_gives_check`, root-level symmetry) and the bundled LMR fix's own rationale.
-
-**Verification:** No compiler toolchain available in this environment, same as every session. Brace-balance and call-site consistency swept on `search.cpp` (75/75 braces; all 9 `negamax()` call sites confirmed — NMP's null-move probe and ProbCut's verification probe correctly left untouched, since they're not part of the move loop and extensions don't apply to them). This session's own test insertion hit the SAME orphaned-`TEST_CASE` `str_replace` failure documented in the last several sessions' bugfixes (2026-08-25 (2), (3), and an in-session catch in Session 29) — caught and fixed immediately via the same programmatic orphan-scan script, again before ever presenting output. This is now the fourth occurrence of this exact failure mode across recent sessions; the process fix logged in 2026-08-25 (3) (re-viewing edits, treating mid-line anchors as higher-risk) is clearly not fully preventing it, since the failure keeps recurring at the same specific edit shape (inserting a new TEST_CASE immediately before an existing one via a truncated old_str). A more robust fix for a future session: run the orphan-scan script as a mandatory final step after EVERY edit to a tests/ file, not just when suspicion is already raised — the script exists and works every time it's been run, the gap is only in remembering to run it before presenting output rather than after a CI failure.
-
-**Next session start point:** Push `src/search/search.cpp` and `tests/search_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. Confirm a real `ctest` run is fully green on all 6 platforms. If green, Phase 4 continues with its next unchecked item: Singular extensions — read `src/search/search.cpp`'s `negamax()` in full first, specifically this session's own extension/reduction interaction (`extension - reduction` in the PVS cascade) and the TT-probe section near the top of the function (singular extensions need a TT entry with a stored score/depth to test the "is this move singularly better than every alternative" condition against, so it composes with TT lookup logic more than with anything in the move loop itself). Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-25 (4) — Session 29: Delta pruning in quiescence search (Phase 4 continues)
-
-**What was built:** Phase 4's next item, delta pruning, added to `search/quiescence.cpp`'s `quiescence_impl()` candidate loop — the first Phase 4 technique to live in this file rather than `search.cpp`, since delta pruning is inherently a quiescence-specific technique (CPW). New `kDeltaMargin` constant; a node-level `delta_pruning_may_apply` guard (not in check, alpha not mate-range) computed once before the loop; the per-move check itself skips a capture outright — before the existing SEE-pruning check right after it — when the captured piece's value plus the margin can't plausibly close the gap to alpha, using the same en-passant-aware captured-piece-type extraction convention `search/see.cpp` already established. Required adding `#include "eval/psqt.h"` to quiescence.cpp for `eval::material_value()`. Full design and rationale, including why the mate-range guard is a correctness requirement and not just an optimization nicety, in docs/DECISIONS.md (2026-08-25 (5)). `tests/quiescence_tests.cpp` — two new regression tests, following the file's own existing node-count-assertion pattern (not just final-score checks): one isolating delta pruning specifically from SEE pruning, one confirming the mate-range guard actually prevents a wrongly-pruned good capture.
-
-**Bugs fixed:** None this session. (Caught one issue before it became a bug: `eval::material_value()` turned out to live in `eval/psqt.h`, not the already-included `eval/eval.h` — confirmed by checking `search/ordering.cpp`'s own existing include of it before writing code that would have failed to compile.)
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-25 (5)) — delta pruning's design (why it's in quiescence.cpp not search.cpp, the guards, captured-piece-value extraction, margin sizing relative to search.cpp's own futility margins).
-
-**Verification:** No compiler toolchain available in this environment, same as every session. Brace-balance and TEST_CASE-count swept on both touched files (`quiescence.cpp`: 30/30 braces; `quiescence_tests.cpp`: 12/12 braces, 10 TEST_CASE declarations up from 8). This session's test insertions were done as fresh `str_replace` calls against a freshly-fetched, never-before-locally-edited copy of `quiescence_tests.cpp` (unlike `search_tests.cpp`'s repeated corruption in recent sessions, which happened on a file that had already been edited multiple times earlier in the same session before the bad edit) — each edit was re-viewed immediately after applying it this session, per the process fix logged in 2026-08-25 (3).
-
-**Next session start point:** Push `src/search/quiescence.cpp` and `tests/quiescence_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. Confirm a real `ctest` run is fully green on all 6 platforms. If green, Phase 4 continues with its next unchecked item: Check extensions — read `src/search/search.cpp`'s `negamax()` in full first (this is an EXTENSION, not a pruning technique — the first of its kind in Phase 4 — so it adds search depth in some cases rather than removing it; needs to compose carefully with every existing depth-modifying mechanism already in this function: LMR's reduction, NMP's own reduction, ProbCut's verification-search reduction, and IIR, so the exact point in the function where `depth` gets its final adjusted value before recursing needs to be read closely, not assumed from memory of earlier sessions). Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-25 (3) — Session 28: ProbCut (Phase 4 continues)
-
-**What was built:** Phase 4's next item, ProbCut, added to `negamax()` in `src/search/search.cpp` as a new node-level check right after `order_moves()`/`us_in_check`, before the futility-pruning block. New `kProbCutMinDepth`/`kProbCutMargin`/`kProbCutReduction` constants. Unlike futility/razoring (which apply near the leaves), ProbCut applies at moderate-to-high remaining depth: for each capture/promotion in the node's own already-ordered move list, a reduced-depth verification search against a raised, null window checks whether that one move alone already proves the position winning by a large margin, returning immediately (fail-soft, mate-range-clamped, mirroring NMP's own return) if so. Deliberately reuses `order_moves()`'s existing output rather than being self-contained the way razoring is, since it runs after movegen/ordering rather than before. Full design and rationale, including an explicit scope note on why "multi-cut" (ROADMAP's combined checklist line) was not separately implemented this session, in docs/DECISIONS.md (2026-08-25 (4)). `negamax()`'s header comment extended with a ProbCut section. `tests/search_tests.cpp` — one new regression test, reusing the same externally-verified mate-in-3 position used for every prior Phase 4 check, requested at a depth chosen so the check is exercised on the test's very first ply.
-
-**Bugs fixed:** None new this session — but two more instances of the SAME `str_replace`-produces-an-orphaned-`TEST_CASE` failure pattern documented in the previous two sessions' bugfixes occurred again while inserting this session's own new test, and were caught and fixed immediately in-session (before presenting any output) rather than needing a third CI round-trip: a `str_replace` matching a truncated `TEST_CASE(...)` line silently dropped the "mate distance pruning" test's declaration a second time. Fixed by restoring the missing line and re-running the same programmatic orphan-scan script used in the last two sessions' bugfixes. Not logged as its own DECISIONS.md entry since it was caught before ever leaving this session (no CI round-trip needed), but noted here as a reminder that the process fix from 2026-08-25 (3) — treating any mid-line `str_replace` anchor as higher-risk — needs to actually be applied every time a test is inserted into this file, not just after CI catches a miss.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-25 (4)) — ProbCut's design (why it reuses order_moves()'s output, the guards, the reduction/margin sizing, the fail-soft return, and the explicit multi-cut scope note).
-
-**Verification:** No compiler toolchain available in this environment, same as every session. Brace-balance and TEST_CASE-count swept on both touched files (`search.cpp`: 75/75; `search_tests.cpp`: 34/34, 28 TEST_CASE declarations, orphan-scan clean). Given this session's in-session catch of the same corruption pattern documented twice before, extra care is warranted going into the next real CI run — this is the first Phase 4 technique whose test insertion needed a self-correction before ever being presented, which is a good sign the process fix is being applied, not a new problem.
-
-**Next session start point:** Push `src/search/search.cpp` and `tests/search_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. Confirm a real `ctest` run is fully green on all 6 platforms — standard requirement, doubly so given this file's recent history. This session's own repo-wide-grep-before-signature-change process fix wasn't actually needed this time (ProbCut added no new function signatures, only a self-contained block using existing ones), so it remains unverified in practice; the next signature-changing session should be the first real test of whether it prevents a repeat of the `ordering_tests.cpp` gap. If green, Phase 4 continues with its next unchecked item: Delta pruning in quiescence search — read `src/search/quiescence.cpp` in full first (this is the first Phase 4 item that touches quiescence.cpp rather than search.cpp, so don't assume familiarity from this session's own work; the file hasn't been read in several sessions). Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-25 (2) — Session 27: Second CI build failure fixed (ordering_tests.cpp signature drift + repeat TEST_CASE corruption)
-
-**What was built:** Nothing new — this was purely a bugfix session, triggered by a second round of uploaded CI logs showing all 6 platforms still failing to build. Two independent causes, both introduced by Session 26: (1) `tests/ordering_tests.cpp` — a unit-test file for `order_moves()` that Session 26 never discovered or read — still called the function's OLD 6-argument signature at all 11 of its own call sites, since Session 26's own change extended that signature to 9 arguments (`cont_history`/`prev_piece`/`prev_to`) but only updated `search.cpp`'s callers. Fixed by adding a `ContinuationHistoryTable cont_history;` declaration alongside each relevant `HistoryTable` one and updating every call site; also added 5 new dedicated `ContinuationHistoryTable` unit tests (it previously had none of its own, only indirect end-to-end coverage). (2) `tests/search_tests.cpp` had, for a second time, an orphaned `TEST_CASE` fragment — Session 26's own edit inserting the continuation-history test had matched a `str_replace` anchor that ended mid-line, silently dropping the rest of the "mate distance pruning" test's declaration, the same failure class as Session 25's bug, just via a different specific mechanism (a technically-correct-but-too-short anchor rather than a rejected non-unique match). Restored the missing line; re-swept the whole file programmatically (not by eye) to confirm no other instance exists. Full diagnosis, including a two-part process fix for both causes, in docs/DECISIONS.md (2026-08-25 (3)).
-
-**Bugs fixed:** Both described above — neither was a new defect introduced this session; both were carried over from Session 26's own edits and caught only by the second CI run.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-25 (3)) — root cause of both failures and the resulting process changes (repo-wide grep for a function's callers before changing its signature; treating any `str_replace` with a mid-line `old_str` boundary as higher-risk regardless of whether the tool accepts it).
-
-**Verification:** No compiler toolchain available in this environment, same as every session. `tests/ordering_tests.cpp`: brace-balanced (29/29), all 11 `order_moves()` call sites confirmed to pass 9 arguments matching the current signature, `PieceType`/`ContinuationHistoryTable` confirmed in scope via the file's existing `using namespace nightwing::board;`/`using namespace nightwing::search;`. `tests/search_tests.cpp`: brace-balanced (33/33), 27 `TEST_CASE` declarations (up from 26 — the previously-orphaned one now counts correctly), a programmatic scan for any `"[search][...]") {` line lacking a `TEST_CASE(` in its preceding few lines found none. Given this is the second consecutive session-ending bugfix for the exact same class of self-inflicted error, the process fixes logged this session are meant to actually prevent a third occurrence, not just document another one after the fact.
-
-**Next session start point:** Push `tests/ordering_tests.cpp` and `tests/search_tests.cpp`, plus `docs/DECISIONS.md`/`docs/SESSIONS.md` (docs/ROADMAP.md unchanged this session — no task was completed or advanced). Confirm a real `ctest` run is fully green on all 6 platforms before starting any new Phase 4 work — this is now the second session in a row where that confirmation was overdue, so it should be treated as a hard gate, not a suggestion, before "Continue"/"Start" resumes ProbCut/multi-cut pruning (ROADMAP.md's next unchecked Phase 4 item, per Session 26's own next-start-point note, still valid). If the CI run is green, proceed with ProbCut as previously planned. If it's not green, fix whatever it reports before touching anything else.
-
----
-
-## 2026-08-25 (1) — Session 26: CI build failure fixed + Continuation history (Phase 4 continues)
-
-**What was built:** Two things this session. First, a CI build failure reported across all 6 platforms (uploaded GitHub Actions logs) was diagnosed and fixed: Session 25's own edit to `tests/search_tests.cpp` had corrupted a `TEST_CASE` declaration via a `str_replace` retry after an initial non-unique-match error, leaving an orphaned tag fragment with no macro invocation around it. Restored the missing `TEST_CASE(...)` line and its arguments; swept the rest of the file for the same pattern (none found). Full diagnosis in docs/DECISIONS.md (2026-08-25 (2)), including a process note on why the retry wasn't re-viewed before being trusted.
-
-Second, Phase 4's next item, continuation history, was added: a new `ContinuationHistoryTable` (search/ordering.h/.cpp), indexed by `[prev_piece][prev_to][piece][to]`, summed with the existing `HistoryTable` score for quiet moves in `order_moves()`'s scoring. Unlike every other Phase 4 item so far (all pruning), this is purely a move-ordering signal. Required threading new `cont_history`/`prev_piece`/`prev_to` parameters through `negamax()`'s and `search_root()`'s signatures and all 12 of their recursive/child call sites, since knowing "the immediately preceding move" requires information from one level up the call stack that these functions didn't previously carry. `board::PieceType::None` (already existing in board/board.h) serves as the "no real preceding move" sentinel for NMP's null-move child and the true root's own `order_moves()` call. Full design and rationale, including every alternative considered, in docs/DECISIONS.md (2026-08-25 (1)). `tests/search_tests.cpp` — one new regression test, reusing the same externally-verified mate-in-3 position used for every prior Phase 4 check.
-
-**Bugs fixed:** The CI build failure described above (docs/DECISIONS.md, 2026-08-25 (2)) — a corrupted test file from the previous session's own edit, not a new bug introduced this session.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-25 (1) and (2)) — continuation history's design (why it required signature changes, the `PieceType::None` sentinel, why not color-indexed, why summed rather than replacing plain history) and the CI bugfix's root cause/process note.
-
-**Verification:** No compiler toolchain available in this environment, same as every session — this session's CI-log upload is the first real, externally-verified confirmation this project has had of what a `ctest`/build run actually reports, and it caught a real defect immediately, underscoring why the "confirm a real ctest run is green" line has been in every session's own next-start-point instruction. Brace-balance and call-site consistency swept on every touched file (`ordering.h`: 7/7; `ordering.cpp`: 30/30; `search.cpp`: 71/71, all 12 negamax()/search_root() call sites confirmed to thread `cont_history`; `search_tests.cpp`: 33/33, all 26 TEST_CASE declarations confirmed intact with no orphaned fragments). Given this session's own bugfix was for exactly this kind of str_replace-retry mistake, extra care was taken to re-view (not just re-attempt) every edit in this session before trusting it.
-
-**Next session start point:** Push `src/search/ordering.h`, `src/search/ordering.cpp`, `src/search/search.cpp`, `tests/search_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. Confirm a real `ctest` run is fully green on all 6 platforms — this specifically needs a fresh CI run given this session both fixed a build failure and made the largest single-session change (in call-site count) so far. If green, Phase 4 continues with its next unchecked item: ProbCut / multi-cut pruning — read the just-updated `negamax()` in full first (ProbCut typically needs its own shallow verification search, similar in shape to razoring's own quiescence-verification pattern, so it likely slots in as another self-contained node-level block rather than a move-loop check). Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-24 (4) — Session 25: History pruning (Phase 4 continues)
-
-**What was built:** Phase 4's next item, history pruning, added to `negamax()`'s existing `else` branch in `src/search/search.cpp`, checked immediately after last session's LMP check as a fourth cascade step (futility → LMP → history pruning → LMR). New `kHistoryPruningMaxDepth`/`kHistoryPruningThresholds` constants (a fixed lookup table, decreasing with depth, matching this project's existing hand-verification preference); the check itself reuses `move_is_quiet`/`move_gives_check`/`us_in_check` already computed in the branch, and reads the move's own score via `history.score(us, move)` (the existing `HistoryTable`, search/ordering.h — no new state added, just a new consumer of the table `order_moves()` already populates). Full design and rationale, including why this is kept as an independent check rather than folded into LMP's own condition, in docs/DECISIONS.md (2026-08-24 (4)). `negamax()`'s header comment extended with a history pruning section. `tests/search_tests.cpp` — one new regression test, reusing the same externally-verified mate-in-3 position already used for every prior Phase 4 check, confirmed still correct with history pruning active.
-
-**Bugs fixed:** None this session.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-24 (4)) — history pruning's design (guards, why independent of LMP, the threshold table shape, why `order_moves()`'s own history-descending sort doesn't make this redundant with LMP).
-
-**Verification:** No compiler toolchain available in this environment, same as every session. The change was inserted directly after the existing, already-verified LMP block, reusing its local variables rather than redeclaring them, keeping the diff minimal. Brace-balance swept on both touched files (`search.cpp`: 71/71; `search_tests.cpp`: 32/32) — both balanced. Like LMP, this is a per-move (not whole-node) skip, so its blast radius on a guard bug is bounded to individual moves rather than entire subtrees the way razoring's own bug risk would be — but a real `ctest` run checking the existing perft/mate/node-count tests remain green, not just the new `[history_pruning]`-tagged test, is still the standing requirement before this is trusted.
-
-**Next session start point:** Push `src/search/search.cpp` and `tests/search_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. Confirm a real `ctest` run is fully green on all 6 platforms. If green, Phase 4 continues with its next unchecked item: Continuation history — read `src/search/ordering.h`/`.cpp` in full first (this is a new kind of history table, indexed by the PRECEDING move at the previous ply rather than just [color][from][to], so it needs its own class alongside `HistoryTable` rather than an extension of it, and `order_moves()`'s own scoring plus this session's `negamax()` history-pruning check would both plausibly want to consult it once it exists). Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-24 (3) — Session 24: Razoring (Phase 4 continues)
-
-**What was built:** Phase 4's next item, razoring, added to `negamax()` in `src/search/search.cpp` as a new self-contained, node-level check inserted between the existing NMP block and movegen — the earliest point in the function's guard cascade a whole-node skip can happen. New `kRazorMaxDepth`/`kRazorMargins` constants (wider margins than futility's own, since razoring is a more drastic all-or-nothing decision than futility's per-move skip). Implemented as CPW's "razoring with verification": only returns early if a real `quiescence()` call independently confirms the static eval's pessimism (result still `<= alpha`); falls through to the normal move loop otherwise. Full design and rationale, including why this is deliberately self-contained rather than sharing state with futility pruning's own static eval, in docs/DECISIONS.md (2026-08-24 (3)). `negamax()`'s header comment extended with a razoring section. `tests/search_tests.cpp` — one new regression test, reusing the same externally-verified mate-in-3 position already used for the IIR/NMP/LMR/LMP/futility checks, confirmed still correct with razoring active.
-
-**Bugs fixed:** None this session.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-24 (3)) — razoring's design (guards, margin sizing relative to futility's, the verification step, why self-contained).
-
-**Verification:** No compiler toolchain available in this environment, same as every session. The change was inserted as a self-contained block between two pieces of already-verified code (the NMP block above it, the movegen/terminal-check block below it), both confirmed unchanged from their known-correct state before editing. Brace-balance swept on both touched files (`search.cpp`: 69/69; `search_tests.cpp`: 31/31) — both balanced. Razoring is the most drastic Phase 4 technique shipped so far (whole-node skip, not per-move), so a real `ctest` run checking the existing perft/mate/node-count tests remain green matters more here than for futility/LMP's own per-move skips — a guard bug risks silently mis-scoring an entire subtree with only quiescence's own verification step as a safety net, not a per-move fallback to full search the way LMP/futility both retain.
-
-**Next session start point:** Push `src/search/search.cpp` and `tests/search_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. Confirm a real `ctest` run is fully green on all 6 platforms. If green, Phase 4 continues with its next unchecked item: History pruning (skip quiet moves with poor history score at low depth) — read the just-updated `negamax()` move loop in full first, specifically the `else` branch's now-three-deep cascade (futility → LMP → LMR), since history pruning is another per-move quiet-move skip that needs to compose with, not duplicate, LMP's own `quiets_tried`-based logic and the existing `HistoryTable` (search/ordering.h) LMR/move-ordering already reads from. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-24 (2) — Session 23: Futility pruning (Phase 4 continues)
-
-**What was built:** Phase 4's next item, futility pruning, added to `negamax()`'s existing `else` branch in `src/search/search.cpp` as a new first check, ahead of last session's LMP check and the existing LMR eligibility logic. New `kFutilityMaxDepth`/`kFutilityMargins` constants (a fixed lookup table, matching this project's existing hand-verification preference); `futility_may_apply`/`static_eval`/`futility_prune_node` computed once per node (not once per move — the underlying condition doesn't depend on which move is being tried) right after `us_in_check`, gating the `eval::evaluate()` call so it's only paid for at nodes where futility could actually apply; `move_gives_check` hoisted to compute once per move and shared by both the new futility check and the existing LMP check. Full design and rationale in docs/DECISIONS.md (2026-08-24 (2)). `negamax()`'s header comment extended with a futility section. `tests/search_tests.cpp` — one new regression test, reusing the same externally-verified mate-in-3 position already used for the IIR/NMP/LMR/LMP checks, confirmed still correct with futility pruning active.
-
-**Bugs fixed:** None this session.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-24 (2)) — futility pruning's design (guards, why the static eval is node-level not per-move, the margin table, cascade ordering relative to LMP/LMR).
-
-**Verification:** No compiler toolchain available in this environment, same as every session. The change was kept additive to the exact `else` branch LMP itself extended earlier this session (verified unchanged from that known-correct state before editing). Brace-balance swept on both touched files (`search.cpp`: 65/65; `search_tests.cpp`: 30/30) — both balanced. Futility pruning is the third technique in this same branch that can now skip a move's search outright (after LMP), so a real `ctest` run checking the existing perft/mate/node-count tests remain green — not just the new `[futility]`-tagged test — matters here too, and specifically: futility's guard bugs risk pruning a quiet move at EVERY node meeting the depth/eval condition, not just late in a single node's move list the way LMP's threshold does, so an incorrect margin or a missed guard has a broader blast radius than LMP's own mistake would.
-
-**Next session start point:** Push `src/search/search.cpp` and `tests/search_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. Confirm a real `ctest` run is fully green on all 6 platforms. If green, Phase 4 continues with its next unchecked item: Razoring — read the just-updated `negamax()` move loop and its node-level futility-eval computation in full first (razoring is also a node-level, static-eval-based check, typically applied even earlier than futility — before the move loop even starts, dropping straight into quiescence if a very-shallow node's static eval plus a wide margin still can't reach alpha — so it likely composes with, rather than duplicates, the `static_eval`/`futility_may_apply` computation just added, and needs to be careful not to trigger at nodes futility pruning already handles more precisely per-move). Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-24 (1) — Session 22: Late move pruning (Phase 4 continues)
-
-**What was built:** Phase 4's next item, LMP (move-count based pruning), added to `negamax()`'s existing PVS/LMR `else` branch in `src/search/search.cpp`, checked ahead of LMR's own eligibility logic since LMP is strictly more aggressive (skips a quiet move's search entirely rather than just reducing it) and applies to a subset of what LMR would otherwise reduce. New `kLMPMaxDepth`/`kLMPMoveCountLimits` constants (a fixed lookup table, not a formula, matching this project's existing hand-verification preference); a new per-node `quiets_tried` counter (deliberately distinct from the raw move index `i`, since LMP's premise is about how many quiet alternatives have already failed, not where a move sits relative to captures/promotions ahead of it in the ordering); "gives check" determined the same way as everywhere else in this codebase (no dedicated move flag) by reading `in_check(pos)` right after `board::make_move()` applies the candidate move. Full design and rationale in docs/DECISIONS.md (2026-08-24). `negamax()`'s header comment extended with an LMP section mirroring the existing LMR section. `tests/search_tests.cpp` — one new regression test, reusing the same externally-verified mate-in-3 position already used for the IIR/NMP/LMR checks, confirmed still correct with LMP active at a depth comfortably exceeding `kLMPMaxDepth`.
-
-**Bugs fixed:** None this session.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-24) — LMP's design (guards, the `quiets_tried` counter, the threshold table, where it sits relative to LMR in the cascade).
-
-**Verification:** No compiler toolchain available in this environment, same as every session. The change was kept additive to the exact `else` branch LMR itself extended last session (verified unchanged from last session's known-correct state before editing). Brace-balance swept on both touched files (`search.cpp`, `search_tests.cpp`) — balanced (62/62 in search.cpp; a pre-existing, unrelated paren-count artifact confined to comments was confirmed present in the file *before* this session's edit too, so not a symptom of this change). Like LMR and NMP before it, this genuinely changes search-tree shape (a move can now be skipped outright, not just reduced), so a real `ctest` run checking the existing perft/mate/node-count tests remain green — not just the new `[lmp]`-tagged test — matters here too, and specifically: LMP is more aggressive than LMR, so a guard bug here risks silently pruning away a move a forced line actually needed, not just searching it less deeply.
-
-**Next session start point:** Push `src/search/search.cpp` and `tests/search_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. Confirm a real `ctest` run is fully green on all 6 platforms. If green, Phase 4 continues with its next unchecked item: Futility pruning — read the just-updated `negamax()` move loop in full first (futility pruning typically applies its own static-eval-plus-margin check near the top of the move loop or per-move, alongside the LMP check just added, so it needs to compose cleanly with both LMP and LMR's own eligibility logic rather than duplicate their guards). Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-21 (4) — Session 21: Late move reductions (Phase 4 continues)
-
-**What was built:** Phase 4's next item, LMR, integrated directly into `negamax()`'s existing PVS `else` branch (move loop) as one more cascading fallback step rather than a separate mechanism — full design and rationale in docs/DECISIONS.md (2026-08-21 (6)). `src/search/search.cpp` — new `kLMR*` constants (same simple two-tier reduction style as null-move pruning's own constants last session); `us_in_check` now computed once before the move loop and reused for LMR's eligibility check; the reduction/re-verification logic itself. `tests/search_tests.cpp` — one new regression test reusing the same externally-verified mate-in-3 position already used for the IIR and NMP checks, confirmed still correct with LMR active.
-
-**Bugs fixed:** None this session.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-21 (6)) — integrating LMR into the existing PVS cascade rather than as a separate step, the reduction scheme, and why captures/promotions/in-check nodes are excluded from reduction eligibility.
-
-**Verification:** No compiler toolchain available in this environment, same as every session. The change was kept deliberately small and additive to the exact `else` branch this session started from (verified unchanged from last session's known-correct state before editing), specifically to keep it easy to diff against what was already there. Brace-balance swept on both touched files (`search.cpp`, `search_tests.cpp`). Like null-move pruning last session, this genuinely changes search-tree shape (which nodes get visited, not just cache/plumbing), so a real `ctest` run checking the existing perft/mate/node-count tests remain green — not just the new `[lmr]`-tagged test — matters here too.
-
-**Next session start point:** Push `src/search/search.cpp` and `tests/search_tests.cpp`, plus `docs/ROADMAP.md`/`docs/DECISIONS.md`/`docs/SESSIONS.md`. Confirm a real `ctest` run is fully green on all 6 platforms. If green, Phase 4 continues with its next unchecked item: Late move pruning (LMP) / move-count based pruning at low depth — read the just-updated `negamax()` move loop in full first (LMP typically sits right in the same move loop, skipping remaining quiet moves outright once a move-count threshold is hit at low depth, so it needs to compose cleanly with LMR's own eligibility logic rather than duplicate it). Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-21 (3) — Session 20: Pondering deferred to Phase 7; Null-move pruning implemented (Phase 4 begins)
-
-**What was built:** Two things, in order. (1) Flagged before proceeding: Pondering (Phase 3's last item) needs real concurrent search, which the engine doesn't have and which Phase 7's own multithreading work is where it belongs — presented three options, gave a recommendation when asked, and moved ROADMAP.md's "Pondering" line to Phase 7 alongside Lazy SMP. Full reasoning in docs/DECISIONS.md (2026-08-21 (4)). Phase 3 is now complete. (2) Phase 4's first item, Null-move pruning: `src/board/board.h`/`.cpp` — new `make_null_move()`/`unmake_null_move()` primitives (narrow, incrementally-hashed, reusing the existing `UndoInfo` struct as-is). `src/search/search.cpp` — the NMP block in `negamax()` with all of CPW's standard guards (min depth, no-consecutive-null via a new defaulted `allow_null_move` parameter, zugzwang/non-pawn-material check, mate-range-beta guard with score clamping). Full design in docs/DECISIONS.md (2026-08-21 (5)).
-
-`tests/makemove_tests.cpp` — three new tests for the null-move primitives themselves (round-trip restoration + hash-matches-from-scratch-recompute, matching this file's existing convention exactly; an en-passant-clearing case; two-consecutive-nulls). `tests/search_tests.cpp` — two new tests: the externally-verified mate-in-3 position (already used for the IIR regression test) re-confirmed correct with NMP active, and a pure king-and-pawn endgame confirming the zugzwang guard's code path runs without issue.
-
-**Bugs fixed:** None this session — no bug was introduced or found in this session's own new code. (For context: the previous session, 2026-08-21 (2)/Session 19, both introduced and fixed a serious bug from the session before that; this session's null-move code was written with that lesson fresh, hence the deliberately narrow scope of `make_null_move()`/`unmake_null_move()` and the extra guard-completeness discussed in docs/DECISIONS.md.)
-
-**Decisions made:** Both logged in full in docs/DECISIONS.md — the Pondering deferral (2026-08-21 (4)) and Null-move pruning's design (2026-08-21 (5)).
-
-**Verification:** No compiler toolchain available in this environment, same as every session. `make_null_move()`/`unmake_null_move()` specifically got the same rigor as `make_move()`/`unmake_move()`'s own existing tests (hash-matches-independent-recompute, not just self-consistency) precisely because this is exactly the class of hot-path board-state code where the previous session found a real bug elsewhere. Brace-balance swept across every file this session touched (`board.h`, `board.cpp`, `search.cpp`, `makemove_tests.cpp`, `search_tests.cpp`, `ROADMAP.md`). A real `ctest` run is the essential next step, as always — and given this session added new search-tree-shape-changing logic (NMP genuinely changes which nodes get visited, unlike the previous session's pure plumbing/cache work), pay particular attention to whether existing perft/mate-finding/node-count tests still pass, not just the new `[nmp]`-tagged ones.
-
-**Next session start point:** Push all touched/new files (`src/board/board.h`, `src/board/board.cpp`, `src/search/search.cpp`, `tests/makemove_tests.cpp`, `tests/search_tests.cpp`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`). Confirm a real `ctest` run is fully green on all 6 platforms, and this time also confirm the build logs are actually read for compiler warnings (not just grepped for "error"/"FAILED"), per the action item from two sessions ago (docs/DECISIONS.md, 2026-08-21 (3))'s note about CI's sanitizer coverage possibly having blind spots. If green, Phase 4 continues with its next unchecked ROADMAP.md item: Late move reductions (LMR) — read `src/search/ordering.h`/`.cpp` in full first (LMR's reduction decisions typically lean on the same move-ordering signals — history score, move index — already computed there). Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-21 (2) — Session 19: Pawn hash table (Phase 3) — and a critical bug found/fixed along the way
-
-**What was built:** Phase 3's "Pawn hash table" item, now that the previous session's pawn structure eval gives it real values to cache. Full design in docs/DECISIONS.md (2026-08-21 (2)).
-
-**Bugs fixed — lead item this session, not an afterthought:** While threading the new pawn hash table parameter through `negamax()`'s move loop in `src/search/search.cpp`, re-reading its exact current structure surfaced a real, serious bug from the *previous* (repetition-detection) session: a `str_replace` edit had accidentally deleted the `else` separating "first move, full-window search" from "later move, PVS null-window probe," leaving `score` uninitialized (undefined behavior) for every non-first move at every search node. Full root-cause trace, why CI didn't catch it, and an action item about CI's sanitizer coverage are all in docs/DECISIONS.md (2026-08-21 (3)) — that entry is the important one this session, read it in full. Fixed by restoring the original `if`/`else` structure exactly, with the new pawn-hash-table argument added alongside. `search_root()`'s own separate loop was checked and confirmed unaffected.
-
-**What was built (pawn hash table, continued):** `src/board/zobrist.h`/`.cpp` — new `compute_pawn_hash()` (pawn-only hash, computed fresh rather than incrementally maintained in `Position` — a deliberate choice explained in docs/DECISIONS.md, directly informed by the bug above: this session chose not to take on a second, harder-to-verify hot-path change to `make_move()`/`unmake_move()` after already finding one real mistake in well-tested code). `src/eval/pawn_tt.h`/`.cpp` — new `PawnHashTable` class (single-entry-per-slot, unconditional replacement, sized in KB not MB — CPW's standard convention for pawn hash tables specifically, deliberately simpler than the main TT). `src/eval/eval.h`/`.cpp` — `evaluate()` gained an optional `PawnHashTable*` parameter (default `nullptr`), wrapping only the `pawn_structure_value()` term. `src/search/quiescence.h`/`.cpp`, `src/search/search.cpp`/`.h` — threaded through `quiescence()`, `negamax()`, `search_root()`, and both public entry points, each of which now owns a `PawnHashTable` instance (same interim lifetime pattern as the main TT). `tests/pawn_tt_tests.cpp` — new: table sizing/probe/store/collision/clear tests, plus cache-transparency tests confirming `evaluate()`'s answer is identical with or without the table, on both a miss and a cached hit. `src/CMakeLists.txt`/`tests/CMakeLists.txt` — registered the two new files.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md — the bug fix itself (2026-08-21 (3), including an action item about CI's sanitizer coverage that needs following up on) and the pawn hash table's design (2026-08-21 (2), including why it lives in `eval` not `search`, and why the pawn hash isn't incrementally maintained in `Position`).
-
-**Verification:** No compiler toolchain available in this environment, same as every session. Given this session both fixed a bug that a prior "green" CI run had missed AND added significant new plumbing across seven files, this is the session where a real, careful CI review matters most so far — not just "is it green" but actually reading the build logs for compiler warnings this time (prior sessions only grepped for "error"/"FAILED"/"fatal"), since a `-Wmaybe-uninitialized`-class warning is exactly what would have caught the bug above immediately if it had been looked for. The bug fix itself was cross-checked three ways (see docs/DECISIONS.md's entry); the new pawn-hash-table code was reviewed for consistency across every call site by grep, and a brace-balance sweep was run across every file this session touched.
-
-**Next session start point:** Push all touched/new files (`src/search/search.cpp`, `src/search/search.h`, `src/search/quiescence.h`, `src/search/quiescence.cpp`, `src/eval/eval.h`, `src/eval/eval.cpp`, `src/eval/pawn_tt.h`, `src/eval/pawn_tt.cpp`, `src/board/zobrist.h`, `src/board/zobrist.cpp`, `tests/pawn_tt_tests.cpp`, `src/CMakeLists.txt`, `tests/CMakeLists.txt`). Confirm a real `ctest` run is fully green on all 6 platforms, AND this time actually read through the build logs (not just grep for errors) checking for any uninitialized-variable or similar compiler warnings that prior sessions' log reviews might have missed — see docs/DECISIONS.md (2026-08-21 (3))'s action item on this specifically. If green and logs are clean, Phase 3 continues with its next unchecked item: Pondering (search side: handle `go ponder`, continue as real search on `ponderhit`, discard and restart on `stop`+actual move) — read `src/uci/uci.cpp` in full first (the UCI command loop this integrates with), plus `src/search/search.h`/`.cpp` for how a mid-search stop condition would need to interrupt `search_iterative_deepening()`. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-21 (1) — Session 18: Pawn structure eval (Phase 5, out of order) — Pawn hash table's real prerequisite
-
-**What was built:** Flagged before writing any code: ROADMAP.md's next Phase 3 item, "Pawn hash table," exists to cache pawn-structure evaluation, but that evaluation (Phase 5's "Pawn structure" item) didn't exist yet — `eval.cpp` only had material+PSQT. Presented three options; the person chose reordering (implement pawn structure eval now, out of its normal phase, then return to the hash table with real values to cache). Full rationale in docs/DECISIONS.md (2026-08-21 (1)).
-
-`src/eval/pawns.h`/`.cpp` — **new.** `pawn_structure_value(pos)`: passed, isolated, doubled, backward, connected pawns (CPW standard definitions, from-scratch implementation, credited per ARCHITECTURE.md). Own translation unit specifically so the upcoming pawn hash table has one clean function call to wrap. All five terms' constants exposed publicly in `pawns.h` (not file-private) for the future Texel tuner and for `tests/pawns_tests.cpp` to reference by name instead of hardcoded magic numbers.
-
-`src/board/masks.h`/`.cpp` — **modified.** New precomputed `passed_pawn_mask()`/`backward_support_mask()` tables (populated inside the existing `init_masks()`, no new startup call) plus a small `constexpr adjacent_files_mask()` helper.
-
-`src/eval/score.h` — **modified.** Added `Score::operator==`/`operator!=` (missing before; needed for `pawns_tests.cpp`'s exact-value assertions).
-
-`src/eval/eval.cpp`/`.h` — **modified.** `evaluate()` now includes `pawn_structure_value()` in its tapered sum; header comment updated.
-
-`tests/pawns_tests.cpp` — **new**, five tests, each using a minimal hand-constructed position specifically chosen so every contributing term can be traced by hand against `pawns.cpp`'s exact logic (unlike a realistic game position, where every term interacts at once).
-
-`src/CMakeLists.txt`/`tests/CMakeLists.txt` — **modified**, registering `eval/pawns.cpp`/`pawns_tests.cpp`.
-
-**Bugs fixed:** None in existing code — this is new functionality. Two mistakes were caught and fixed during this session's own drafting, before ever reaching the delivered files: (1) the "connected/defended" pawn check initially used the wrong color argument to `pawn_attacks()` in the reverse-pawn-attack trick — caught by working through concrete coordinates by hand (`pawn_attacks(them, sq)`, not `pawn_attacks(c, sq)`, gives the squares a friendly defender would stand on) before it was ever written into the shipped file. (2) An early draft of the backward-pawn test placed a White king and a White support pawn on the same square (e1) across two related test positions — caught while re-reading the draft, fixed by moving the kings off to a1/a8 (pawn-structure eval never looks at king placement, so this has zero effect on the test's already-verified arithmetic).
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-21 (1)) — the phase-reordering decision itself (with the person's explicit choice among three presented options), pawns.h/pawns.cpp as a separate translation unit anticipating the pawn hash table, and exposing the pawn-structure constants publicly.
-
-**Verification:** No compiler toolchain available in this environment, same as every other code-touching session — every test in `pawns_tests.cpp` was hand-traced term-by-term (isolated/doubled/passed/backward/connected checks individually re-derived against `pawns.cpp`'s exact logic for each hand-built position) rather than estimated, and the reverse-pawn-attack trick's color argument was verified against concrete `(file, rank)` coordinates rather than reasoned about abstractly, specifically because that's exactly the kind of subtle directional mistake that's easy to get backwards and hard to catch by re-reading prose. A real `ctest` run is the necessary next step before trusting any of this beyond inspection — this session touched more files (masks.h/.cpp, score.h, eval.cpp/.h, two new files, two CMakeLists) than either of the prior two sessions, so there's more total surface area for something to have been missed despite the term-by-term tracing.
-
-**Next session start point:** Push all eight touched/new files (`src/eval/pawns.h`, `src/eval/pawns.cpp`, `src/board/masks.h`, `src/board/masks.cpp`, `src/eval/score.h`, `src/eval/eval.cpp`, `src/eval/eval.h`, `tests/pawns_tests.cpp`, `src/CMakeLists.txt`, `tests/CMakeLists.txt`); confirm a real `ctest` run is fully green on all 6 platforms — pay particular attention to `[eval][pawns]`-tagged tests, since (like the repetition-detection session's tests) their exact-value assertions were derived by hand-tracing rather than compiler-verified. If green, return to Phase 3's "Pawn hash table" item (small separate TT keyed on pawn structure only, for pawn eval reuse) — `pawn_structure_value()` now exists to give it real values to cache; read `src/search/tt.h`/`.cpp` in full first (closest precedent for table sizing/replacement, even though a pawn hash table's key space and entry contents differ). Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-20 (6) — Session 17: CI results reviewed — one real regression found and fixed (test, not search logic)
-
-**What was built:** No new features. Real CI logs (all 6 platforms: Linux/macOS/Windows × Debug/Release) were uploaded and reviewed for the first time since the mate-distance-pruning and repetition-detection sessions. All 6 builds compiled clean with zero errors/warnings-as-errors. 175/176 (Linux/Windows) or 173/174 (macOS) tests passed on every platform; exactly one test failed, identically, on all 6: `search_iterative_deepening: unlimited time reaches max_depth with the same best move/score as a direct search`, at `REQUIRE(id.best_move == direct.best_move)`. Both new tests added in the repetition-detection session ([search][fifty-move], [search][repetition]) passed everywhere — the hand-traced index arithmetic and FEN construction from that session held up under a real compiler.
-
-**Bugs fixed:** The one failing test was diagnosed as a real, deterministic, previously-unknown consequence of combining repetition detection (path-dependent node scoring) with `search_iterative_deepening()`'s existing TT/killer/history sharing across iterations plus PVS's null-window cutoffs — a specific instance of the "Graph History Interaction" problem, not a coding mistake (full root-cause analysis in docs/DECISIONS.md, 2026-08-20 (5)). `tests/search_tests.cpp` — **modified**: the affected test's `id.best_move == direct.best_move` / `id.score == direct.score` assertions (no longer universally valid once path-dependent draw scoring exists in the tree) were replaced with what's still actually guaranteed — both searches reach the requested depth and return an in-range, non-mate score — with a thorough comment explaining the mechanism and pointing to the DECISIONS.md entry. No search/eval/UCI code changed — the search logic itself isn't wrong, the test's assumption was outdated.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-20 (5)) — relax the test rather than sacrifice TT/killer/history sharing or attempt an unverified PVS-null-window carve-out; this mirrors the project's own prior precedent (the same test's node-count assertion was already relaxed once before, 2026-08-15, for an analogous reason).
-
-**Verification:** This session's fix is a test-only change with no production-code risk — the new assertions are weaker, not exactness-dependent, so there's no equivalent "hand-trace and hope" risk the way the repetition-detection session's new tests carried. The diagnosis itself was cross-checked against all 6 platforms' logs individually (identical failing line, identical assertion, ruling out flakiness/UB) before concluding it was deterministic and mechanism-explainable rather than environment-specific. Still needs a real CI run to confirm the updated test now passes — this specific file (`tests/search_tests.cpp`) is the only thing that changed since the run being reviewed, so the remaining risk is purely "did the new assertions compile and hold," not "did this change alter any other passing test."
-
-**Next session start point:** Push the updated `tests/search_tests.cpp`, confirm a real `ctest` run is fully green (all 6 platforms) with no failures at all this time. If green, Phase 3 continues with the next unchecked ROADMAP.md item: Pawn hash table (a small separate TT keyed on pawn structure only, for pawn eval reuse) — read `src/search/tt.h`/`.cpp` in full before starting, plus `src/eval/eval.cpp` for how pawn structure is currently evaluated. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-20 (5) — Session 16: Repetition detection and 50-move rule, integrated into search + real UCI game history
-
-**What was built:** Phase 3's next item. Full design rationale in docs/DECISIONS.md's matching entry (2026-08-20 (4)) — summarized here.
-
-`src/search/search.h` — **modified.** `search_fixed_depth()` and `search_iterative_deepening()` both gained an optional `std::span<const std::uint64_t> game_history` parameter (default empty, so existing callers/tests are source-compatible unchanged): every ancestor position's Zobrist hash strictly before the position handed to search, oldest to newest.
-
-`src/search/search.cpp` — **modified.** New `is_draw_by_rule()` helper: 50-move rule (`halfmove_clock >= 100`, automatic) and repetition (draw on a position's second occurrence within `halfmove_clock` plies of lookback, not the third — standard engine simplification). `negamax()` calls it immediately after the node-count increment, before mate distance pruning's clamp or the TT probe (deliberately — avoids the Graph History Interaction problem: a stale TT entry from a different path is never consulted for a position this check already recognizes as drawn, and a draw-by-rule score is never itself stored into the TT either, since the early return skips the store at the bottom of the function). `negamax()`/`search_root()` both gained `game_history` and a new `path` parameter (`std::array<std::uint64_t, search::kMaxPly>&`, reusing `search/ordering.h`'s existing `kMaxPly` rather than a new constant) — a per-ply record of the current search path's own hashes, threaded through every recursive call and every `search_root()` call inside iterative deepening's loop, the same per-ply-array-reused-across-the-tree pattern `KillerTable` already uses.
-
-`src/uci/uci.cpp` — **modified.** `apply_uci_moves()` now records `pos.zobrist_hash` immediately before every move it applies, into a `history` out-parameter. `handle_position()` clears that history at the top of every `position` command (a GUI always resends the full move list). `run()` owns the resulting `std::vector<std::uint64_t>` for the loop's lifetime (cleared on `ucinewgame` too) and threads it through `handle_go()` into `search_iterative_deepening()` — so repetition detection sees the real game's history, not just whatever the search recalculates within its own tree, which is what ROADMAP.md's "not just board state" phrasing was flagging.
-
-`tests/search_tests.cpp` — **modified.** New `play_move()` test helper (mirrors `apply_uci_moves()`'s own convention for recording pre-move hashes). Two new tests: (1) a quiet K+R-vs-K position with `halfmove_clock` starting at 99, asserting every root line's score is exactly `kDrawScore` once the clock reaches 100 one ply in; (2) a position where White (down a full queen, otherwise a bare king) has already repeated a king-shuffle sub-position once in real, hand-played moves recorded into `game_history`, asserting the search recognizes replaying that same shuffle move as a draw — `kDrawScore` exactly, and specifically chosen as `best_move` over every other legal move, all of which stay deep in queen-down territory. The second test's score/best_move combination is specific enough (exactly 0, not just "some higher number") to be strong evidence the repetition path was actually found and preferred, not an accident of a material-dominated eval landing near zero.
-
-**Bugs fixed:** None — new behavior, not a fix to existing correctness.
-
-**Decisions made:** Logged in full in docs/DECISIONS.md (2026-08-20 (4)) — second-occurrence-not-third convention, draw check ordered before the TT probe specifically for GHI safety, repetition history kept as two separate structures (`game_history` span + `path` array) rather than one combined/copied buffer, and repetition state deliberately kept OUT of `Position` (`board/board.h`) rather than pushing it past the struct's documented ~3-cache-line budget.
-
-**Verification:** Confirmed by inspection, including a full hand-trace of the second new test's index arithmetic (`game_history`/`path` combined-sequence walk) confirming it lands on the correct prior-occurrence entry at the expected `steps` value, and confirming the Zobrist hash correctly does NOT encode `halfmove_clock` (checked `board/zobrist.h`'s `compute_hash()` doc comment) — which is why a position recorded early in `game_history` (low `halfmove_clock` at the time) still hash-matches the same position reached later in the search (higher `halfmove_clock` by then), exactly matching real FIDE repetition rules (position identity ignores move counters). No compiler toolchain available in this environment — a real build+`ctest` run (Release and Debug/ASan/UBSan) is the necessary next step before trusting any of this beyond inspection, same discipline as every other code-touching session, and especially important here given the hand-traced (not compiler-checked) new tests.
-
-**Next session start point:** Push `src/search/search.h`, `src/search/search.cpp`, `src/uci/uci.cpp`, and `tests/search_tests.cpp`; confirm a real `ctest` run is fully green (Release + Debug/ASan/UBSan) — pay particular attention to the two new `[search][fifty-move]`/`[search][repetition]` test cases, since their exact-score assertions were derived by hand-tracing rather than compiler-verified. Phase 3 continues with the next unchecked ROADMAP.md item: Pawn hash table (a small separate TT keyed on pawn structure only, for pawn eval reuse) — read `src/search/tt.h`/`.cpp` in full before starting (the existing TT is the closest precedent for table sizing/replacement, even though a pawn hash table's key space and entry contents differ), plus `src/eval/eval.cpp` for how pawn structure is currently evaluated. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-20 (4) — Session 15: Mate distance pruning
-
-**What was built:** Phase 3's next item, as queued by the previous session. `src/search/search.cpp` — **modified.** `negamax()` now clamps its incoming `alpha`/`beta` window, right after the node-count increment and before the TT probe or movegen, to the best/worst score actually reachable from the current node given `ply`: `-(kMateScore - ply)` as the floor (the same formula the existing `moves.empty()` terminal branch already uses for "mated right here") and `kMateScore - ply - 1` as the ceiling (the mirror — mate delivered one ply deeper than this node, the fastest possible from here). If that clamp alone collapses `alpha >= beta`, the node returns immediately with no TT probe, movegen, or move-ordering work at all. The function's header comment gained a new paragraph documenting this alongside the existing ply/mate-score explanation. `tests/search_tests.cpp` — **modified**, one new test: the existing back-rank mate-in-1 position re-searched at depth 6 instead of the minimum depth 2, asserting the exact score `kMateScore - 1` (not just `>= kMateThreshold` as the shallower existing test checks) to confirm the clamp doesn't corrupt the returned score or cause the engine to settle for a longer line once mate distance pruning is actually exercised deeper in the tree.
-
-**Bugs fixed:** None — new pruning behavior, not a fix to existing correctness.
-
-**Decisions made:** None requiring a DECISIONS.md entry — mate distance pruning is a well-established, provably-exact CPW technique (same guarantee class as PVS/TT/aspiration windows already in this codebase, unlike IIR's heuristic approximation), applied here in its standard form with no Nightwing-specific design choice to record.
-
-**Verification:** Confirmed by inspection: the clamp is a strict no-op whenever the caller's window is already tighter than the mate-reachability bounds (the common case, away from any nearby forced mate), since `alpha`/`beta` only move when the incoming value is looser than the new bound. The `moves.empty()` terminal branch is unaffected — it returns its own mate score directly without consulting `alpha`/`beta` at all, so a checkmate is always detected and correctly scored regardless of what the clamp did on the way in. No compiler toolchain available in this environment — a real build+`ctest` run (Release and Debug/ASan/UBSan) against the two touched files is the next step before trusting this beyond inspection, same discipline as every other code-touching session.
-
-**Next session start point:** Push `src/search/search.cpp` and `tests/search_tests.cpp`, confirm a real `ctest` run is fully green (Release + Debug/ASan/UBSan) before starting the next task. Phase 3 continues with the next unchecked ROADMAP.md item: Repetition detection (threefold) and 50-move rule handling integrated into search, not just board state — this touches `Position`'s move-history tracking (`board/board.h`/`.cpp`) as well as `negamax()`, so read both in full before starting, not just `search.cpp`. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-20 (3) — CI speed investigation closed: generation-stamp fix confirmed across all three platforms
-
-**What was built:** No code changes this entry — the generation-stamp fix from the previous session was verified against a real 6-job CI run. All three Debug jobs came in below their pre-`uint8_t` baselines: Windows Debug 157.26s (from an original 2732.80s), Linux Debug 118.78s (from 357.50s), macOS Debug 117.27s (from 177.53s, fully recovering the earlier regression). All 173 tests pass on Windows/Linux; 171/171 on macOS (2 fewer are the expected BMI2-gated tests not compiled on ARM64).
-
-**Bugs fixed:** None new — this closes out the multi-session CI-speed investigation.
-
-**Decisions made:** Logged in DECISIONS.md, 2026-08-20 (3) — final confirmed numbers and the investigation summary.
-
-**Verification:** Real CI data across all three platforms, all green, no further action needed on this thread.
-
-**Next session start point:** CI speed investigation is closed. Phase 3 resumes with Mate distance pruning — a small, contained addition to `negamax()`'s alpha/beta bounds at the top of the function.
-
----
-
-## 2026-08-20 (2) — CI: macOS Debug regression from the last fix traced and fixed (generation-stamp, not element-type)
-
-**What was built:** Real 6-job CI logs from the previous session's `std::vector<uint8_t>` fix were analyzed. Windows Debug was fixed as intended (2732.80s → 180.33s), but macOS Debug got roughly twice as slow (177.53s → 326.02s) — flagged by direct observation, then confirmed in the per-test numbers: every `init_all()`-calling test on macOS Debug shows a uniform ~2x jump (e.g. `init_magic_bitboards is idempotent`: 1.71s → 3.50s), spread evenly across all ~89 such tests. Root cause: the previous fix correctly diagnosed `std::vector<bool>` as the MSVC problem but assumed the same element-type swap would help everywhere — on Apple Silicon/Clang, `vector<bool>` was already fine, and `uint8_t`'s 8x larger footprint just added cache pressure to the same O(size) reset. `src/board/attacks.cpp` — **modified**: `find_magic_for_square()`'s `used` array replaced with a generation-stamp scheme (`stamp_at` + an incrementing `stamp` counter), eliminating the O(size) `std::fill()` reset on every candidate attempt entirely, rather than continuing to trade which platform absorbs its cost.
-
-**Bugs fixed:** A ~2x macOS Debug test-time regression introduced by the immediately preceding session's fix — caught by direct observation of the next real CI run, exactly the kind of thing this project's "verify with real data" discipline exists for.
-
-**Decisions made:** Logged in DECISIONS.md, 2026-08-20 (2) — the regression's numbers, the root cause (element-type choice was never the real lever, the repeated reset was), the generation-stamp fix, and why a per-compiler special case was rejected in favor of removing the actual cost.
-
-**Verification:** Confirmed by inspection that the stamp scheme has no off-by-one risk at the shared zero-initial-value boundary, and that `uint32_t` wraparound (~4.3 billion attempts) is many orders of magnitude beyond realistic convergence. Collision-detection logic is otherwise unchanged. No compiler toolchain available in this environment — real confirmation is the next CI run, expected to hold Windows Debug's win and actually improve on the pre-`uint8_t` Linux/macOS baselines (357.50s / 177.53s) rather than merely avoid regressing them.
-
-**Next session start point:** Push `src/board/attacks.cpp` and confirm the next CI run's timings across all three Debug jobs (Windows, Linux, macOS) before considering the CI speed investigation fully closed. If all three look right (Windows ~3 min, Linux/macOS at or below their pre-`uint8_t` baselines), Phase 3 resumes with Mate distance pruning. If any platform still looks off, get the real numbers first rather than guessing at a fourth variant of this fix.
-
----
-
-## 2026-08-20 — CI: Windows Debug speed root cause found and fixed (`std::vector<bool>`, not BMI2)
-
-**What was built:** Real CI logs (uploaded, from the diagnostic added in the previous session) were analyzed directly. The BMI2 hypothesis was ruled out: the Windows runner's own `WARN()` output confirmed full BMI2/POPCNT support, yet every `init_all()`-calling test still cost a near-constant ~29.7-30.4s regardless of workload, unchanged from before the confirmed-working `-O2` override. Source-level investigation of `src/board/attacks.cpp` found the real cause: `find_magic_for_square()`'s random magic-number search runs unconditionally on every square regardless of BMI2 availability, and its innermost retry loop's collision-tracking array was a `std::vector<bool>` — a bit-packed specialization MSVC's `-O2` doesn't optimize nearly as well as GCC/Clang's, explaining why the confirmed-applied optimization override had negligible effect on Windows specifically. `src/board/attacks.cpp` — **modified**: `used` changed from `std::vector<bool>` to `std::vector<std::uint8_t>`, a semantically identical, compiler-agnostic fix. `tests/test_smoke.cpp` — **modified**: the temporary BMI2-investigation `WARN()` removed now that the lead is closed. `.github/workflows/ci.yml` — **modified**: the temporary "Show detected CPU features" diagnostic step removed.
-
-**Bugs fixed:** The actual Windows Debug slowness — a `std::vector<bool>` MSVC-optimization gap inside the magic-number search, not a BMI2 or build-flag issue as the previous three sessions had investigated.
-
-**Decisions made:** Logged in DECISIONS.md, 2026-08-20 — full trace of how the BMI2 lead was closed with real evidence, the source-level root cause, the fix, and an alternative (generation-counter collision check) noted as a possible follow-up if this doesn't fully close the gap.
-
-**Verification:** The `used[index]` read/write sites were confirmed to need no changes (`uint8_t` behaves identically to `bool` at those call sites). Collision-detection control flow is unchanged. No MSVC toolchain available in this environment, so the actual Windows Debug timing improvement is unverified — real confirmation is the next CI run. If the gap doesn't fully close, the Linux/macOS 33.6s→4.0s baseline is available for comparison to isolate any remaining Windows-specific factor.
-
-**Next session start point:** Push all three touched files (`src/board/attacks.cpp`, `tests/test_smoke.cpp`, `.github/workflows/ci.yml`) and confirm the next CI run's Windows Debug job duration before considering this fully closed. If Windows Debug is now fast (comparable to Linux/macOS's ~7-8 min), Phase 3 resumes with Mate distance pruning — a small, contained addition to `negamax()`'s alpha/beta bounds at the top of the function. If a gap remains, the generation-counter alternative noted in DECISIONS.md is the next thing to try, backed by real numbers from the next run rather than another guess.
-
----
-
-## 2026-08-19 (2) — CI: diagnostic confirms -O2 works correctly; new lead is BMI2 runtime availability
-
-**What was built:** The `build.ninja`-dumping diagnostic (previous entry) returned real evidence: `board/attacks.cpp`'s `-O2` override genuinely reaches the compiler and is applied (MSVC's own `D9025` warning confirms it overrode `/Od` as expected). The previous hypothesis — that the flag wasn't applying — was wrong. New lead, supported by evidence already in the codebase: several existing test names reference behavior "when the host CPU supports BMI2" (this project has a runtime BMI2/PEXT dispatch), so this specific Windows runner's CPU may simply not support BMI2, making the slow path algorithmic rather than an optimization-level problem. `tests/test_smoke.cpp` — **modified**: added a temporary `WARN()` to the existing CPU-feature-detection test, since it previously checked non-null but never surfaced what was actually detected. `.github/workflows/ci.yml` — **modified**: the now-answered `build.ninja` diagnostic step replaced with one that runs this specific test directly (bypassing `ctest`, which only shows output for failing tests) with Catch2's `-s` flag to surface the `WARN()`.
-
-**Bugs fixed:** None — continued diagnosis, not a fix yet.
-
-**Decisions made:** Logged in DECISIONS.md, 2026-08-19 (2) — why the diagnostic results overturned the previous hypothesis, and the decision to confirm the BMI2 lead with real evidence before acting on it.
-
-**Verification:** The modified `test_smoke.cpp` was built and run directly: confirmed the `WARN()` correctly prints the detected feature summary under `-s` and stays silent under normal `ctest` runs (no effect on pass/fail for any other CI job). YAML re-validated. What this specific Windows runner's CPU actually reports is unverifiable from this environment — needs the next real CI run.
-
-**Next session start point:** Phase 3's Mate distance pruning remains queued behind this CI investigation. Once the next CI run's CPU-feature output is available, it will confirm or rule out the BMI2 hypothesis directly, enabling a precise fix — at that point, remove both temporary diagnostics (the `ci.yml` step and the `WARN()` in `test_smoke.cpp`) as part of landing it.
-
----
-
-## 2026-08-19 — CI: attempt 3 results analyzed, Node 20 warning fixed, speed gap diagnosed (not guessed at again)
-
-**What was built:** Analyzed real CI logs from the previous fix. Good news: the `D8016` build break is genuinely fixed, Windows Debug now reaches the Test step. Less good: the speedup was much smaller than expected (~50m total vs. the predicted ~7-8min) — per-test times only dropped ~20-25% instead of the ~8x measured on Linux/macOS for the same change. Ruled out Windows process/OS-level overhead as the cause using real data (trivial tests that skip `init_magic_bitboards()` are still instant, exactly like Linux) before concluding the `-O2` override likely isn't reaching the compiler under Ninja+MSVC as expected. Rather than guess a fourth fix, `.github/workflows/ci.yml` — **modified**: added a temporary diagnostic step (Windows Debug only) that dumps the actual generated Ninja build flags for `attacks.cpp`, since Ninja doesn't echo full compile commands and there's currently no way to see ground truth from these logs. Also fixed the returned Node 20 warning for real this time: `ilammy/msvc-dev-cmd@v1` still declares itself Node 20 (an entirely different action than the one already fixed in an earlier session) — swapped for `egor-tensin/vs-shell@v2`, a non-Node alternative doing the same job, verified via a real case of another project making the identical substitution for the identical reason.
-
-**Bugs fixed:** The Node 20 warning's return, fixed at the root (action swap) rather than suppressed.
-
-**Decisions made:** Logged in DECISIONS.md, 2026-08-19 — the diagnostic-before-guessing approach, and the Node 20 fix's reasoning.
-
-**Verification:** YAML re-validated, structure confirmed for both changes. Neither the diagnostic step's actual output nor the Node 20 fix can be confirmed beyond that from this environment — both need the next real CI run.
-
-**Next session start point:** Phase 3's Mate distance pruning remains queued behind this CI investigation. Once the next CI run's diagnostic output is available, it should reveal the actual `attacks.cpp` compile flags under Ninja+MSVC, enabling a precise, evidence-based fix instead of another guess — at that point, remove the temporary diagnostic step as part of landing the real fix.
-
----
-
-## 2026-08-18 (2) — CI fix: Windows Debug speed, third attempt
-
-**What was built:** After a request that Windows Debug's speed actually be fixed rather than left slow-but-working, a more careful fix was developed: `CMakeLists.txt` (top level) — **modified**, MSVC's Debug configuration no longer includes `/RTC1` (the exact flag causing the `D8016` conflict in both prior attempts), removing the conflict at its root rather than trying to override it per-file. `.github/workflows/ci.yml` — **modified**, Windows jobs now build with the Ninja generator instead of Visual Studio's, so `attacks.cpp`'s optimization override reaches the compiler as a plain flag the same way it already does on Linux/macOS, plus two new Windows-only setup steps (`ilammy/msvc-dev-cmd` for `cl.exe` on `PATH`, `pip install ninja` for a reliable Ninja binary). `src/CMakeLists.txt` — **modified**, simplified back to a single `-O2`/`/O2` flag now that there's nothing to counter. Full reasoning, including what was actually wrong with both prior attempts, in DECISIONS.md's 2026-08-18 (2) entry.
-
-**Bugs fixed:** None new — this is the real fix for the Windows Debug slowness the 2026-08-17 speed fix couldn't extend to Windows, after two failed attempts.
-
-**Decisions made:** Logged in DECISIONS.md, 2026-08-18 (2) — the two-part fix, and an explicit, surfaced-before-implementing tradeoff: MSVC Debug builds project-wide lose `/RTC1`'s runtime checks (their only remaining sanitizer-adjacent coverage, since Windows Debug already has zero ASan/UBSan). Linux/macOS Debug are unaffected.
-
-**Verification:** Real build+test cycle against a freshly `codeload`-fetched `main`. The GCC/Clang side was fully verified directly: zero warnings, confirmed via verbose Makefile output that `attacks.cpp` gets the correct trailing `-O2` with full sanitizer flags intact while other files are unaffected, confirmed Release remains untouched, sample tests passed. YAML re-validated for the workflow change. The Windows/MSVC/Ninja path — the actual point of the fix — is unverified from this environment (no MSVC toolchain or Windows runner available); real confirmation is the next CI run.
-
-**Next session start point:** Unchanged from Session 14 — Phase 3 continues with Mate distance pruning, pending confirmation the next CI run shows Windows Debug passing and fast.
-
----
-
-## 2026-08-18 — CI fix: Windows Debug build break from the previous session's speed fix
-
-**What was built:** The previous CI speed fix worked exactly as measured on Linux and macOS in the very next real run, but broke Windows Debug's build outright: MSVC hard-errors on `/O2` combined with its default Debug `/RTC1` runtime checks. `src/CMakeLists.txt` — **modified**: the per-file override now also passes `/RTC-` for MSVC, disabling runtime checks specifically on the one file being optimized. Full details in DECISIONS.md's 2026-08-18 entry.
-
-**Bugs fixed:** One — a build break introduced by the 2026-08-17 CI speed fix, caught by the very next real CI run (exactly the residual risk flagged as unverified in that entry).
-
-**Decisions made:** Logged in DECISIONS.md, 2026-08-18.
-
-**Verification:** Confirmed via verbose Makefile output that the GCC/Clang compile path is completely unaffected by the restructure, and that Release builds remain untouched. The MSVC-specific fix itself couldn't be directly verified (no MSVC toolchain available) — real confirmation is the next CI run's Windows Debug job.
-
-**Next session start point:** Unchanged from Session 14 — Phase 3 continues with Mate distance pruning.
-
----
-
-## 2026-08-17 (2) — Session 14: Internal Iterative Reduction (IIR)
-
-**What was built:** Phase 3's next item. `src/search/search.cpp`, `src/search/search.h` — **modified.** `negamax()` now reduces its own remaining depth by 1 ply whenever a node has no transposition-table entry at all and the unreduced depth is already >= 4, trusting iterative deepening's outer loop to self-correct on a later, deeper iteration rather than spending extra effort up front (the older Internal Iterative Deepening approach). Deliberately not applied at the root. `tests/search_tests.cpp` — **modified**, two new tests: a rigorously-verified forced mate-in-exactly-3 position (independently brute-force-checked with `python-chess`, not recalled from memory) confirming IIR doesn't break tactical correctness across real iterative-deepening depth, and a coarse depth-5 regression/safety-net check.
-
-**Bugs fixed:** None — this is new heuristic search behavior, not a fix to existing correctness.
-
-**Decisions made:** Logged in DECISIONS.md — the reduction condition and thresholds, and critically, a real investigation into a node-count regression an early benchmark surfaced (the start position got up to ~88% *worse* at depth 8) before concluding it was alpha-beta's own known sensitivity to move-ordering perturbations on an atypically symmetric position rather than an implementation bug, backed by a second position (Kiwipete) showing clean, consistent, zero-divergence improvements at every depth tested. Full numbers and reasoning in DECISIONS.md's 2026-08-17 (2) entry — written to include the concerning data, not just the favorable numbers.
-
-**Verification:** Real build+test cycle against a freshly `codeload`-fetched `main`. Release: zero warnings, **all 173 `ctest` cases passed unchanged** (no existing test could have been affected — every existing fixed-depth test requests a depth too shallow for IIR's threshold to ever trigger). Debug (ASan+UBSan): zero warnings, both new tests ran clean. Separately, real depth-4-through-9 node-count comparisons (with vs. without IIR, both compiled at `-O3` outside `ctest`) were run on two positions: the start position (volatile, both wins and losses depending on depth, understood as alpha-beta node-count sensitivity on a highly symmetric position) and Kiwipete (clean, consistent wins at every depth checked, zero score/move divergence anywhere).
-
-**Next session start point:** Phase 3 continues with the next unchecked ROADMAP.md item: Mate distance pruning. This is a smaller, contained addition to `negamax()`'s alpha/beta bounds at the top of the function (clamping the window against the best/worst possible mate score reachable from the current ply, since no score beyond that is meaningful) — should be a quick, low-risk session. Re-read `src/search/search.cpp` in full before touching it again (changed six times now across five sessions). Push this session's two touched files and confirm CI is green before starting. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-17 — CI fix: Debug jobs' 1-hour+ runtime traced and fixed
-
-**What was built:** CI logs (from a real run showing Linux Debug at 1h2m, Windows Debug at 1h10m) were downloaded and analyzed in full rather than guessed at. Root cause traced to one function: `board/attacks.cpp`'s magic bitboard table generation, redone from scratch by every one of 171 tests' own `init_all()` call (each Catch2 `TEST_CASE` runs as its own process in this codebase), costing ~33.6s per call under Debug's `-O0` + ASan/UBSan build — 89 of 171 tests pay this cost, accounting for 99.9%+ of total test time. `src/CMakeLists.txt` — **modified**: `attacks.cpp` now compiles at `-O2` (`/O2` on MSVC) even inside the Debug build, via a `$<CONFIG:Debug>`-guarded `set_source_files_properties()` override, with full ASan/UBSan instrumentation still active on that file. Full investigation, measurements, and rationale for why this narrow fix was chosen over restructuring the test suite's process model, in DECISIONS.md's 2026-08-17 entry.
-
-**Bugs fixed:** None — a performance fix, not a correctness fix.
-
-**Decisions made:** Logged in DECISIONS.md, 2026-08-17 — the diagnosis process, the measured before/after numbers, and why a per-file optimization override was chosen over a bigger test-architecture change.
-
-**Verification:** Confirmed via verbose Makefile output that the compiled command line for `attacks.cpp` correctly ends with `-O2` (overriding the preceding `-O0`) with sanitizer flags intact, and that the Release build's `attacks.cpp` is unaffected (still plain `-O3`). Ran 23 of the 89 previously-slow tests under the real Debug/ASan/UBSan configuration: all passed, averaging 4.45s each (down from ~41-46s), consistent with an isolated measurement of the fixed function alone (33.6s → 4.0s, an 8.3x reduction with zero sanitizer coverage lost). Extrapolated, Linux Debug should drop from ~1h2m to roughly 7-8 minutes. Windows/macOS-specific magnitude not directly verified (no MSVC or Apple Silicon toolchain available) — real confirmation is the next CI run's job durations.
-
-**Next session start point:** Unchanged from Session 13 — Phase 3 continues with Internal Iterative Reduction (IIR). Worth checking the next CI run's actual job durations across all 6 jobs before assuming this fix's Windows/macOS impact matches the measured Linux numbers.
-
----
-
-## 2026-08-16 (4) — CI fix: readable job names
-
-**What was built:** A request (via a screenshot of the Actions run list) came in for the 6 CI jobs to show as "macOS Release," "Linux Debug," etc. instead of GitHub's default "build-and-test (macos-latest, Release)" label. `.github/workflows/ci.yml` — **modified**: matrix switched to an explicit `include` list carrying an `os_name` display field, plus a job-level `name:` expression. No change to what actually runs. Full rationale in DECISIONS.md's 2026-08-16 (4) entry. Not a ROADMAP.md item.
-
-**Bugs fixed:** None — cosmetic/readability change only.
-
-**Decisions made:** Logged in DECISIONS.md, 2026-08-16 (4).
-
-**Verification:** YAML re-validated and parsed structure checked for all 6 intended combinations. Real confirmation is the next push's job list.
-
-**Next session start point:** Unchanged from Session 13 — Phase 3 continues with Internal Iterative Reduction (IIR).
-
----
-
-## 2026-08-16 (3) — Session 13: Quiescence search + SEE
-
-**What was built:** Phase 3's next item, the biggest single addition since the transposition table. `src/search/see.h`, `src/search/see.cpp` — **new.** Static Exchange Evaluation, the classic swap-off algorithm. `src/search/quiescence.h`, `src/search/quiescence.cpp` — **new.** Quiescence search: captures always, check-giving quiets only at the first quiescence ply, SEE-pruned, full evasion search when in check, a defensive 32-ply recursion cap. `src/search/search.cpp`, `src/search/search.h` — **modified.** `negamax()`'s depth <= 0 base case now delegates to `quiescence()` instead of a raw `eval::evaluate()` call; the now-stale PVS `depth == 1` special case was removed (quiescence genuinely respects alpha/beta, unlike the old raw-eval leaf, so the special case's original justification no longer held — real additional pruning unlocked as a result); `++nodes` moved to avoid double-counting with quiescence's own counter. `src/search/ordering.h`, `src/search/ordering.cpp` — **modified, small.** `mvv_lva_score()` exposed publicly (was private to `ordering.cpp`) so quiescence's own capture ordering can reuse it. Full rationale for every decision above, plus two test-construction bugs caught before anything was presented, in DECISIONS.md's 2026-08-16 (3) entry.
-
-- `tests/see_tests.cpp` — **new.** 7 cases, each with an independently hand-computed expected SEE value (undefended capture, losing queen trade, even knight/pawn trades, a good capture despite being "defended," en passant's occupancy edge case, position-unmodified).
-- `tests/quiescence_tests.cpp` — **new.** 8 cases: stand-pat-only, SEE-pruning's actual effect on node count (not just "the search avoids playing a bad move," which alpha-beta alone would already guarantee), a genuinely good capture being searched, `include_checks`'s effect, full evasion search when in check, checkmate/stalemate detection, position-unmodified.
-- `src/CMakeLists.txt`, `tests/CMakeLists.txt` — **modified.** Registered the four new source/test files.
-
-**Bugs fixed:** Two, both in this session's own test files, caught by the real build+test cycle before anything was shipped or pushed — a mislabeled "checkmate" position that was actually one move before mate, and two tests whose node-count assertions were quietly compromised by unrelated quiet checks present in their chosen positions. Full details, including exactly how each was caught, in DECISIONS.md.
-
-**Decisions made:** Logged in DECISIONS.md — checks bounded to the first quiescence ply only, the defensive ply cap given no repetition detection exists yet, quiescence's deliberately narrower scope (no TT/killer/history threading in this pass), the `depth == 1` PVS fix and why root's own equivalent case was deliberately left alone, the node-counting restructure, and the SEE King-value override rationale (2026-08-16 (3)).
-
-**Verification:** New this session: every hand-built test FEN (15 total across both new test files) was independently checked against `python-chess` before the first build attempt — adopted specifically because tactical test positions are easy to get subtly wrong by hand-reasoning alone, which the two caught bugs demonstrate even with this extra step in place. Real build+test cycle against a freshly `codeload`-fetched `main`. Release: zero warnings; the first real run surfaced exactly the two known test bugs above and nothing else (170 other cases green immediately) — after fixing both, **all 171 `ctest` cases passed**, including the depth-1 exact-node-count test unchanged (verified empirically that quiescence contributes zero extra nodes there, not just predicted) and the depth-2 mate-in-1 and depth-3 iterative-deepening-vs-direct tests, no assertion changes needed anywhere. Debug (ASan+UBSan): zero warnings; all new SEE and quiescence tests, plus the depth-1/mate-in-1 search tests, ran to completion clean. A real depth-5 benchmark on the start position, compiled against both this session's code and a fresh pre-quiescence `main`: **15,612 → 10,780 nodes, score and best move both changed (70/e2e4 → 40/b1c3)** — expected and correct, quiescence resolving tactics the old raw-horizon eval couldn't see.
-
-**Next session start point:** Phase 3 continues with the next unchecked ROADMAP.md item: Internal Iterative Reduction (IIR) — reduce depth on nodes with no TT move, the modern replacement for IID. Re-read `src/search/search.cpp` in full before touching it again (changed five times now across four sessions) — this one's a small, contained addition to `negamax()`'s own logic (check for a missing/absent TT move hint right after the probe, before the move loop, and reduce `depth` by some small amount for that node specifically), not a new module. Push this session's eight touched/new files and confirm CI is green before starting. Say "Continue" or "Start" to proceed.
-
----
-
-## 2026-08-16 (2) — Session 12: Aspiration windows
-
-**What was built:** Phase 3's next item. `src/search/search.cpp`, `src/search/search.h` — **modified.** `search_root()` now takes an explicit `(aspiration_alpha, aspiration_beta)` window instead of hardcoding the full range; `search_iterative_deepening()`'s depth >= 2 iterations center a narrow window on the previous iteration's score, widening (doubling the failing side) and retrying on a fail-high/fail-low, with a bypass straight to the full window when the previous score is already in mate-score territory. `negamax()` itself is completely untouched — this is a root-only technique (CPW "Aspiration Windows"). Full design rationale — the four specific decisions, including why `search_root()`'s TT-store classification needed to genuinely generalize from always-`Exact` rather than just get relabeled — in DECISIONS.md's 2026-08-16 (2) entry.
-
-**Bugs fixed:** None — new technique layered onto already-correct code.
-
-**Decisions made:** Logged in DECISIONS.md — root-only scope, symmetric (failing-side-only) widening, the mate-score bypass, and the TT-store bound-classification generalization this change required (2026-08-16 (2)).
-
-**Verification:** Real build+test cycle against a freshly `codeload`-fetched `main` with the two changed files overlaid in. Release: zero warnings, **all 155 `ctest` cases passed unchanged** — no test assertion needed updating this session (unlike the move-ordering session), itself a good sign the exactness guarantee held on the first attempt. Debug (ASan+UBSan): zero warnings; the three most relevant search tests re-verified clean — depth-1 exact node count (confirms depth 1 bypasses aspiration entirely), depth-2 mate-in-1 (confirms the mate-score bypass path), and depth-3 iterative-deepening-vs-direct (the one that actually exercises the new retry loop). Additionally, a real depth-5 benchmark on the start position, compiled and run against both this session's code and a fresh pre-change `main` checkout, showed **19,051 → 15,612 nodes (~18% fewer)** with an identical score and best move — the expected outcome of a correctly-implemented aspiration window.
-
-**Next session start point:** Phase 3 continues with the next unchecked ROADMAP.md item: Quiescence search (captures + checks, with SEE pruning). This is a bigger item than the last few — it adds a genuinely new search routine (not just reordering/windowing an existing one), called from `negamax()`'s current `depth <= 0` base case instead of jumping straight to `eval::evaluate()`, to resolve "horizon effect" tactics (hanging captures right at the search's depth cutoff) before trusting the static eval. Re-read `src/search/search.cpp` in full before touching it (changed four times now across three sessions) and `src/board/movegen.h` for whether a captures-only (or captures+checks-only) move generation mode already exists or needs adding. Push this session's two touched files and confirm CI is green before starting. Say "Continue" or "Start" to proceed.
-
 ---
 
-## 2026-08-16 — CI fix: actions/checkout Node 20 deprecation warnings
+**Session 17**
 
-**What was built:** A screenshot of the Actions run flagged that all 6 green CI jobs carried a "Node.js 20 is deprecated" annotation. `.github/workflows/ci.yml` — **modified**: `actions/checkout@v4` → `actions/checkout@v7` (current latest), which runs on Node 24 natively. No other workflow change; full rationale in DECISIONS.md's 2026-08-16 entry. Not a ROADMAP.md item — a standalone infra fix, doesn't affect Phase 3 progress or the next session's starting point below.
+Built the digest, on-this-day, and storage breakdown (ARCHITECTURE §6). `showDigest()` has had real
+query logic since early on but nothing ever rendered it to `#digest` — fixed, and while fixing it,
+found it also never excluded vault entries from its counts. A "3 notes today" digest counting 1
+public + 2 vault notes would have hinted that vault activity happened, without revealing what — the
+same class of leak Decision 40 (Session 13) already closed for search and autocomplete, just not
+checked against this surface at the time. Fixed the same way: `is_private=0` added to the query.
 
-**Bugs fixed:** The Node 20 deprecation warnings themselves (cosmetic/future-proofing — CI was green throughout, this doesn't fix a failure, it clears an annotation and avoids a harder break once Node 20 is fully removed).
+`onThisDay()` and `storageBreakdown()` are new. Both exclude vault entries for the same reason as
+the digest fix above — neither needed a new decision, just applying Decision 40 somewhere it hadn't
+been checked yet. Storage breakdown reuses `fileactions.js`'s `getSelectableEntries()` for sizes
+rather than computing them a second way; its "clear items older than 30 days" action reuses the
+existing bulk-delete path (soft-delete into the 30-day trash, not permanent).
 
-**Decisions made:** Logged in DECISIONS.md, 2026-08-16 — why v7 specifically (current latest, no breaking changes relevant to this simple workflow) rather than the minimum v5 needed to clear the warning.
+Also cleaned up: `onUnlocked()` was calling `showDigest()`/`showMainTimeline()` and discarding the
+results — actual rendering has always happened via separate functions in `DOMContentLoaded`, so
+those calls did nothing. Removed rather than left as confusing dead code.
 
-**Verification:** YAML re-validated after the edit. Workflow files can't be fully exercised outside GitHub — real confirmation is the next push's Annotations panel.
+Decisions made: none — applying Decision 40 to two surfaces it hadn't been checked against yet, not
+a new design call.
 
-**Next session start point:** Unchanged from Session 11 — Phase 3 continues with Aspiration windows (see that entry below for the specific starting notes on `src/search/search.cpp`).
+Next session start point: same standing items — confirm the CI run is green, Phase 13 still blocked
+on manual OAuth setup, nothing run on an actual device across six sessions of accumulated surface
+now. Remaining Phase 9 items (data-transparency screen, quick-capture widget, expense charts,
+backup-reminder nudge, map view, confidence-confirmation chip) are unblocked whenever picked up.
 
 ---
 
-## 2026-08-15 (2) — Session 11: Transposition table + Move ordering + Release Infrastructure planning
+**Session 16**
 
-**What was built:** Three threads this session, in order. (1) A request came in for how to auto-publish a GitHub Release on every green CI run, covering the 6 build/test jobs plus a WASM+JS build; scoped via 3 clarifying questions (rolling `latest` tag, full UCI-over-stdin/stdout WASM surface, tracked as a new parallel ROADMAP.md section rather than interrupting Phase 3) and logged as a plan only — no `ci.yml`/wasm code written yet, see ROADMAP.md's new "Release & Packaging Infrastructure" section and DECISIONS.md's 2026-08-15 (2) entry. (2) Phase 3's transposition table. (3) Phase 3's move ordering, done immediately after in the same session ("Start"), since it's exactly what the TT work's own deferred root-interaction decision was waiting on.
+Checked whether `credentials.auto_lock_minutes` — a column that's existed since Session 1 — was
+actually enforced anywhere. It wasn't. Built it: `armAppAutoLock()`/`disarmAppAutoLock()`, reset via
+one delegated document-level listener (click/keydown/input) rather than manually calling it from
+every capture/search/browse function — the vault's own auto-lock (Session 13) needed several
+follow-up patches specifically because it relied on remembering to call `armVaultAutoLock()` at every
+touchpoint; this one is built to not repeat that mistake. No-op when quick access is enabled, since
+there's nothing to lock back to.
 
-**Transposition table:**
-- `src/search/tt.h`, `src/search/tt.cpp` — **new.** `TranspositionTable`: power-of-2 bucket count, 4x 16-byte entries per 64-byte bucket, age+depth replacement, mate-distance-adjusted store/probe, portable prefetch (GCC/Clang `__builtin_prefetch`, MSVC `_mm_prefetch`). Full design rationale — especially the per-call (not persistent-global) lifetime decision and why alpha/beta narrowing from a partial probe hit was deliberately left out — in DECISIONS.md's 2026-08-15 (3) entry.
-- `src/board/move.h` — **modified.** Added `Move::from_raw(uint16_t)`, a small additive factory (not a rewrite of existing logic) needed so `TranspositionTable::probe()` can reconstruct a `Move` from its packed storage bits.
-- `tests/tt_tests.cpp` — **new.** 14 cases covering store/probe round-trip, all three Bound types, the mate-distance ply adjustment specifically (the single most common TT bug per CPW — given direct, targeted coverage rather than relying only on `search_tests.cpp`'s indirect mate-in-1 check), the full replacement scheme, same-key refresh rules, `clear()`, and bucket-count sizing/rounding.
+Also found, while working in this area: `privateSessionKey`'s own comment has said "cleared on vault
+lock/background" since the Vault pivot (Session 13), but nothing ever actually listened for the app
+backgrounding — the vault would stay unlocked indefinitely across app-switches if someone left and
+returned within the idle window. Added `@capacitor/app`'s `appStateChange` listener
+(`registerBackgroundLock()`, called once in `bootstrap()`), which now immediately locks both the
+vault and the app-level password screen on backgrounding, not just after idle timeout. New
+dependency: `@capacitor/app`.
 
-**Move ordering (immediately following, same session):**
-- `src/search/ordering.h`, `src/search/ordering.cpp` — **new.** `KillerTable` (2 killers/ply, MRU), `HistoryTable` ([color][from][to], depth²-weighted, capped), and `order_moves()` implementing the score-band scheme: TT move > MVV-LVA captures > non-capture promotions > killers > history-scored quiets. Full rationale, including why root-level TT probe/store was added THIS session (closing last session's explicit deferral now that ordering exists to consume it), in DECISIONS.md's 2026-08-15 (4) entry.
-- `tests/ordering_tests.cpp` — **new.** 19 cases covering `KillerTable`/`HistoryTable` in isolation and `order_moves()`'s full priority scheme (TT-move override, MVV, LVA, captures-over-promotions, promotions-over-quiets, killers-over-history, history-over-untried-quiets, stable tiebreak).
-- `tests/search_tests.cpp` — **modified, one assertion.** `id.nodes > direct.nodes` no longer held (660 vs 880 on the start position, depth 3) now that ordering makes cross-iteration reuse real — the test's own comment had explicitly assumed no such reuse existed (a Phase 2-era premise this session's work deliberately invalidates). Replaced with a weaker sanity bound and a comment explaining why, with the real numbers. Full reasoning in DECISIONS.md's 2026-08-15 (4) entry, third sub-decision — the *only* other test-suite change from either half of this session; every other pre-existing assertion (including the depth-1 exact-node-count and mate-in-1 tests) passed unchanged both times.
+Added a Settings control (`#app-auto-lock-select`) mirroring the vault's existing one.
+
+Decisions made: 45.
+
+Next session start point: same standing items — confirm the CI run is green, Phase 13 still blocked
+on manual OAuth setup, nothing run on an actual device yet. Phase 9's remaining items (digest,
+on-this-day, storage breakdown, expense charts, map view, quick-capture widget,
+confidence-confirmation chip, backup-reminder nudge) are all unblocked, unstarted work for whenever
+device-testing priority (flagged last session) isn't the more pressing choice.
+
+---
+
+**Session 15**
+
+Closed the one item left open from last session: Edit had no UI button anywhere. Wiring it exposed
+two real bugs already sitting in `editEntry()` (fileactions.js), fixed before anything called it:
+
+1. It expected `fields.text` for vault entries but `fields.body_text` for non-vault notes — a
+   mismatch that meant calling it consistently from one UI (which is what building the Edit button
+   required) would have silently no-op'd whichever side didn't match the field name it happened to
+   check. Normalized on `fields.text` for both; non-vault notes map it to `body_text` internally.
+2. Expense/reminder-specific fields (`amount`, `expense_category`, `fire_at`, `repeat_rule`) were
+   checked — to decide whether to call the reminder-reschedule callback — but never actually written
+   to the `updates` object, so editing a reminder's time or an expense's amount would have silently
+   done nothing to the row at all. Fixed by copying any of those four present in `fields` into
+   `updates`, same as `label` already was.
 
-**Shared build wiring:** `src/CMakeLists.txt`, `tests/CMakeLists.txt` — **modified.** Registered `search/tt.cpp`, `search/ordering.cpp` in `nightwing_lib`, and `tests/tt_tests.cpp`, `tests/ordering_tests.cpp` in the test binary. `src/search/search.cpp`, `src/search/search.h` — **modified (twice, once per thread).** `negamax()` now prefetches/probes/stores against a `TranspositionTable&`, calls `order_moves()` before its own loop using the TT probe as a hint, and records killer/history updates on quiet-move cutoffs. Root-move-loop logic extracted into `search_root(pos, depth, tt, killers, history)`, shared by both public entry points, now also probing/storing the TT for its own position and ordering its own move list; `search_fixed_depth()` gives it fresh tables each call, `search_iterative_deepening()` shares one set across its own depth iterations.
+Built the shared `editEntryUI()` prompt flow (label always; text for notes, prefilled from
+`body_text` or, for vault notes, from the in-memory index's `searchableText` — which is already the
+note's own decrypted text; amount/category for expenses; date/time for reminders, parsed and handed
+to `scheduleReminder` via the existing `rescheduleReminder` callback hook). Wired to both the main
+timeline and vault list.
+
+Decisions made: none — bug fixes and UI wiring for an already-flagged gap, not new design calls.
+
+Next session start point: nothing specific left flagged from Phase 4/7/8's UI wiring. Standing items
+unchanged: confirm the CI run is green, Phase 13 still blocked on manual OAuth setup, nothing run on
+an actual device yet — that last one is worth prioritizing once the OAuth setup is done, since a
+meaningful amount of untested surface has accumulated across several sessions now.
+
+---
+
+**Session 14**
+
+Follow-on from the Vault pivot, checking for the same class of gap on the non-vault side and
+finding it: the main app's capture bar had no click listeners at all (only the vault's got wired
+during the pivot), and there was no equivalent of `captureToVault()` for the main app —
+`captureText`/`saveNote` only ever handled typed text, never voice/image/pdf/file.
+
+Built: `captureFile()` (mirrors `captureToVault`, unencrypted, writes to
+`Directory.Data/files/<uuid>.<ext>`, the existing storage convention from Decision 20), wired to the
+main capture bar. Rendered the main timeline for the first time — `showMainTimeline()` has returned
+rows since early on, but nothing ever displayed them or attached the five per-file actions (built in
+Phase 7, unused since) to anything. Now both the main timeline and vault list show Share/Download/
+Download-for-append/Delete per entry, plus tags (one bulk `GROUP_CONCAT` query for the main
+timeline, matching the bulk approach `vault.js`'s index already used for its own tags). Built a
+shared `promptForTags()` — same `prompt()`-based rough edge as other one-offs already flagged
+elsewhere, wired into both main and vault capture (vault capture previously collected no tags at
+all).
 
-**Bugs fixed:** One build error caught before it ever shipped: `tests/ordering_tests.cpp` initially omitted `#include "board/attacks.h"` (needed for `init_magic_bitboards()`), caught by this session's own build-and-test verification step, not by CI — fixed before presenting any files.
+Noted, not fixed: captured images/PDFs have no OCR text yet — that's genuinely Phase 5's job (native
+plugin wiring), not something to fake here. Labels/tags still make everything findable meanwhile.
 
-**Decisions made:** Logged in DECISIONS.md — release-infra scoping (2026-08-15 (2)); four TT sub-decisions: per-call lifetime, mate-distance ply-adjustment formula, no alpha/beta narrowing from a partial probe hit, no root-level TT interaction *yet* (2026-08-15 (3)); and move ordering's score bands, root-level TT interaction now added, and the one updated test assertion with its full justification (2026-08-15 (4)).
+Decisions made: none — this was closing gaps already flagged in ROADMAP (Phase 4/7's missing
+timeline UI), not new design calls.
+
+Next session start point: Edit still has no UI button anywhere (function exists, nothing calls it).
+Same standing items beyond that: confirm the CI run is green, Phase 13 still blocked on manual OAuth
+setup, nothing in the app run on an actual device yet.
+
+---
+
+**Session 13**
+
+Pivot, spanning a large chunk of the app: app-open password made optional; "Private Notes"
+generalized into a full Private Vault covering Text/Voice/Image/PDF/Files, with the explicit goal
+of full functional parity with the main app (same capture, edit, tags, search, trash, five per-file
+actions). Decisions 36–44. New file: `vault.js`. Changed: `db.js`, `backup.js`, `fileactions.js`,
+`app.js`, `index.html`, `style.css`.
+
+Built: `vault.js` (content bundling — note text unchanged, file types get a small JSON envelope of
+base64 bytes + OCR text, encrypted together via the exact same `encryptPrivateNote`/
+`decryptPrivateNote` calls private notes always used; save/load; the in-memory-only search index,
+chosen over a persistent encrypted index specifically to avoid a second on-disk artifact that has
+to stay in sync with the vault's actual contents). Optional app-password flow, including a
+first-run setup screen that — it turned out — never existed before at all, only the check-against-it
+path did. The vault's own trash bin and its own auto-lock timer, independent of the main app's.
+Share/Download reversed to work identically for vault and non-vault entries, on explicit direction
+overriding an earlier, more cautious default. The "Select files" multi-select screen, shared between
+main and vault, category-grouped with per-item size.
+
+Bugs found and fixed, in order of how serious they were:
+1. **Two real privacy leaks**, both pre-existing, surfaced while designing how vault content should
+   be indexed: `insertEntry()` (db.js) and `restoreBackup()` (backup.js) were writing every entry's
+   **label** — not just its body — into `entries_fts` and `label_history` unconditionally, meaning
+   a vault item's title was discoverable via ordinary, no-PIN search and could surface as an
+   autocomplete suggestion in the normal capture bar. Fixed in both places.
+2. **A foundational gap**: nothing anywhere ever toggled screen visibility. `unlock-btn` had no
+   click listener; `main-screen` was never actually shown after a successful unlock. Every UI
+   section built across every session since backup/restore first got a UI has been technically
+   unreachable until `showScreen()` was added this session while wiring the optional-password flow.
+3. Bulk "download for append" would have thrown for every vault item in a multi-select — no PIN was
+   ever collected for that flow. Fixed by prompting once upfront when the action needs it.
+4. Deleting a vault item (single or bulk) never rebuilt the in-memory search index, so a deleted
+   item would keep appearing in vault search/browse until the next unlock. Fixed both call sites.
+5. `saveNote()`'s pre-pivot private-notes path duplicated logic that now belongs to `vault.js` and
+   bypassed it entirely (no index rebuild, no shared save path). Redirected to delegate to
+   `captureToVault()` instead of maintaining two ways to create a private text entry.
+
+Verified before presenting, not just written: every JS file syntax-checked (`node --check`), and
+every `getElementById()` call in `app.js` cross-referenced against `index.html`'s actual ids —
+zero missing.
+
+Decisions made: 36–44.
+
+Next session start point: same standing items — confirm the CI run is green, Phase 13 (Drive)
+still blocked on manual OAuth setup. Nothing in this pivot has been run on an actual device yet,
+same flagged risk as everything else. Vault UI is functional but plain (`prompt()`/`confirm()` for
+capture and some per-item actions) — a real design pass is still Phase 4's job, not done here.
+
+---
+
+**Session 12**
+
+Built: `www/js/fileactions.js` — Phase 7, all five per-file actions. The substantial new piece is
+Download-for-append: rather than inventing a separate sidecar/encryption format, it wraps one entry
+in the exact same payload shape `buildBackupPayload()` already produces for full backups (added an
+`entryIds` filter to that function), encrypts it the same way `encryptBackup()` always has, and zips
+that single JSON file. A `mode` field (`passkey`/`default`/`pin`) travels unencrypted alongside it so
+import knows what to prompt for. The "Append files from download" multi-select screen
+(`importAppendZips()`) is built and wired into `index.html`/`app.js`; it hands each decrypted file
+straight to `backup.js`'s existing `restoreBackup()`, so import shares one dedup engine with local and
+Drive restore rather than a fourth implementation of the same logic.
+
+Resolved the standing zip-library choice with evidence, not habit: checked JSZip against `@zip.js/zip.js`
+on current maintenance data before picking — JSZip's last release was 2022, maintenance score zero;
+zip.js ships regularly, zero dependencies, TypeScript-typed. Added `@zip.js/zip.js` and
+`@capacitor/share` to `package.json`.
+
+Bug fixed, found while designing the private-notes export path (not by hunting for bugs — it fell out
+of actually tracing through the cross-PIN restore code to decide how private-note exports should
+work): Session 5's `restoreBackup` cross-PIN append branch referenced `entry._sourcePinSalt`, a field
+`buildBackupPayload` never set anywhere. Fixed by having `buildBackupPayload` capture the device's one
+`private_pin_salt` once per payload (`payload.privateNotesSalt` — one PIN, one salt, not per-entry)
+and having `restoreBackup` read that instead. Cross-PIN private-notes append was silently broken until
+this fix; ordinary same-PIN append was unaffected.
+
+Share/Download(plain)/Edit/Delete are implemented and callable but have no UI buttons — flagged as a
+Phase 4 gap (no rendered entry list exists yet to attach them to), not left ambiguous as a Phase 7 one.
+
+Decisions made: 33–35.
+
+Next session start point: same standing items — confirm the CI run is green; Phase 13 still blocked
+on the manual Google Cloud Console steps. Phase 7's per-file zip flow and Phase 6/13's UI are all
+testable together once a build succeeds and Phase 4 gets enough of a real timeline to attach
+Share/Download/Edit/Delete buttons to.
+
+---
+
+**Session 11**
+
+Built: the actual UI for both Phase 6 (local backup/restore) and Phase 13's settings (Drive connect,
+auto-backup config, Drive backup list). `index.html` gets a Backup & Restore section and a Google
+Drive section (both plain `<details>` blocks, matching Appearance's existing bare style — no visual
+design pass, Phase 4 still owns that); `style.css` gets minimal supporting styles (checkbox groups,
+a modal-overlay pattern, a warning-text color); `app.js` wires all of it to `backup.js`/`gdrive.js`.
+
+Real design point resolved while wiring, not left implicit: **a due auto-backup can't run fully
+silently**, because the backup passkey is never stored (existing credentials rule) and
+`checkAndRunAutoBackupIfDue()`'s `passphraseGetter` hook has to come from somewhere real. Built a
+small one-tap banner that asks for the passkey only when a backup is actually due, with an explicit
+skip option that leaves the due-date untouched rather than silently deferring a full cycle. Recorded
+as Decision 32 — this is a real behavior a future session could otherwise "simplify" back into an
+unsafe passphrase cache.
+
+Small cleanup along the way: removed `index.html`'s five separate `<script type="module">` tags for
+db.js/crypto.js/intents.js/notifications.js/ads.js — `app.js` already `import`s all of them, so those
+were redundant (harmless, since ES modules execute once per URL regardless, but pure clutter).
+
+Known rough edge, flagged rather than hidden: Drive's restore and manual-backup flows use plain
+`prompt()`/`confirm()` for the passkey and mode choice, while local restore and the auto-backup-due
+check use the nicer purpose-built dialogs. Inconsistent, functional, worth revisiting once Phase 4
+does a real design pass rather than this bare-skeleton styling.
 
-**Verification:** Real build+test cycles against freshly `codeload`-fetched `main` at each stage (TT alone, then TT+ordering together), all files overlaid in fresh checkouts rather than trusting local sandbox state. TT alone: Release zero warnings, 136/136 `ctest`. TT+ordering together: Release zero warnings, **155/155 `ctest`** (136 prior + 19 new ordering tests) — the very first run before fixing the one stale assertion showed exactly that one expected failure and nothing else, confirming the change's blast radius matched DECISIONS.md's prediction precisely. Debug (ASan+UBSan) at each stage: zero warnings both times; all new fast (non-`init_all()`) unit tests (14 TT + 9 Killer/History) ran to completion clean; a meaningful sample of the slower `init_all()`-dependent cases (including, specifically, the depth-1 exact-node-count and mate-in-1 `search_fixed_depth` tests, re-verified clean under ASan+UBSan a second time after the ordering integration) also completed clean before this sandbox's already-documented per-test ASan launch-overhead ceiling — not a new issue, Release's full green runs remain authoritative both times.
+Decisions made: 32.
 
-**Next session start point:** Phase 3 continues with the next unchecked ROADMAP.md item: Aspiration windows. Re-read `src/search/search.cpp` in full before touching it again (changed three times now, across two sessions) — aspiration windows only touch `search_iterative_deepening()`'s per-iteration call into `search_root()` (narrowing the initial alpha/beta around the previous iteration's score, re-searching with a wider window on fail-high/low), not `negamax()` itself, so this should be a comparatively contained change. Push this session's eleven touched/new files and confirm CI is green before starting. Say "Continue" or "Start" to proceed. (The release-infrastructure plan from earlier this session remains available to pick up at any time, independently, per its ROADMAP.md section — not blocking or blocked by this.)
-
+Next session start point: same standing blocker on Phase 13 — none of the Drive UI can be
+device-tested until the manual Google Cloud Console steps are done and a real OAuth client ID
+replaces the placeholder in `capacitor.config.json`. Phase 6's local backup/restore UI has no such
+blocker and can be tested as soon as a build succeeds. Also still standing: confirm the CI run is
+green, and Phase 7's zip-library choice.
+
 ---
-
-## 2026-08-15 — Session 10: PVS (Principal Variation Search)
-
-**What was built:** Phase 3's first item — PVS layered onto the existing negamax alpha-beta search. First confirmed CI was actually green on Session 9's three fixed files before starting, per that session's explicit gate (re-fetched `tests/uci_tests.cpp`/`tests/search_tests.cpp`/`docs/ROADMAP.md` fresh from `main` and confirmed the `attacks.h` include, the two `(void)`-wraps, and the deduplicated Phase 2 lines are all live).
-
-- `src/search/search.cpp` — `negamax()`'s move loop and `search_fixed_depth()`'s root loop both now do PVS: full window on the first move, null-window probe + full-window re-search-on-fail-high for later moves, gated off (straight to full window) when the move's child is a leaf (`depth == 1`) since a null-window probe can't prune a node that never consults alpha/beta. Full rationale, the leaf-gate reasoning, and why it isn't a test-driven hack in DECISIONS.md.
-- `src/search/search.h` — header comment updated to describe PVS's presence and its exactness (same best move/score as plain alpha-beta).
+
+**Session 10**
 
-**Bugs fixed:** None — algorithmic addition to already-correct code, not a fix.
+Built: `www/js/gdrive.js` — the actual Drive backup engine (Session 9 was design + manual-setup docs
+only). Auth via silent `GoogleAuth.signIn()`, folder find-or-create, storage check against Drive's
+`about.get` quota, multipart upload of the exact same encrypted archive `backup.js` produces, a
+read-only preview function, and restore that delegates to `backup.js`'s existing `restoreBackup()`
+rather than duplicating its append/overwrite/dedup logic. Small schema addition: `credentials` gets a
+`last_drive_backup_at` column alongside the existing local `last_backup_at`.
 
-**Decisions made:** Logged in DECISIONS.md — the null-window-probe/full-window-re-search rule, the `depth == 1` leaf gate and why it's a real optimization rather than a workaround, and why PVS was landed ahead of move ordering (correct either way; ordering only affects how much of PVS's benefit is realized).
+Resolved, with evidence rather than assumption, the two things Session 9 left open:
+- **No refresh-token store of our own** (Decision 30) — dropped `grantOfflineAccess` from
+  `capacitor.config.json`; the native SDK's own cached-consent sign-in is enough since every Drive
+  call happens in the foreground.
+- **Auto-backup scheduling mechanism** (Decision 31) — checked `@capacitor/background-runner`
+  against its actual Capacitor 6 documentation before deciding, rather than assuming it would work:
+  its headless environment has no SQLite or Filesystem access, so it literally cannot read entries or
+  build a backup payload. Chose a check-on-app-open/resume design instead
+  (`checkAndRunAutoBackupIfDue()`), consistent with the project's existing preference for local
+  notifications over AlarmManager. Tradeoff stated plainly in the decision: no app open means no
+  auto-backup that cycle — visible and honest rather than a silent background promise that might not
+  hold.
 
-**Verification:** Real build+test cycle against a freshly `codeload`-fetched `main` (not a locally-cached copy) with the two changed files overlaid in. Release: zero warnings, **all 122 `ctest` cases passed**, including the exact-node-count depth-1 test (confirms the leaf gate works as intended) and the depth-2 back-rank-mate-in-1 test (confirms PVS didn't change search correctness). Debug (ASan+UBSan): zero warnings; `ctest -R "search"` completed 5 of 15 cases clean before hitting this sandbox's already-known (see 2026-08-14 entry) per-test ASan launch-overhead ceiling on the command timeout — not a new issue, and Release's full green run is the authoritative confirmation here, same as it was in Session 9.
+Decisions made: 30–31.
 
-**Next session start point:** Phase 3 continues with the next unchecked ROADMAP.md item: the transposition table (Zobrist-keyed, depth/age replacement scheme, cache-line-aligned entries per ARCHITECTURE.md). This is a new module (`src/search/tt.h/.cpp`, per ARCHITECTURE.md's module layout) that `negamax()` will need to probe/store against — worth re-reading `src/search/search.cpp` in full before touching it again (it's the file this session just changed) and `board/zobrist.h` for the existing key accessors, since the TT will key off `pos.zobrist_hash` directly rather than needing new hashing infrastructure. Push this session's two files (`src/search/search.h`, `src/search/search.cpp`) and confirm CI is green before starting the TT work. Say "Continue" or "Start" to proceed.
+Next session start point: unchanged blocker — none of `gdrive.js` can be device-tested until the
+manual Google Cloud Console steps (`android-notes/native-setup.md` §10) are done and the real OAuth
+client ID replaces the placeholder in `capacitor.config.json`. Once that's done: the Settings UI
+(connect/disconnect, manual "Backup now to Drive", frequency picker) and wiring
+`checkAndRunAutoBackupIfDue()` into app startup. Also still standing: confirm the CI run is green,
+and Phase 7's zip-library choice.
 
 ---
 
-## 2026-08-14 — Session 9: CI build-failure bugfix (uci_tests.cpp) + ROADMAP.md duplicate-entry fix
+**Session 9**
 
-**What was built:** No new features — a CI build failure from the end of Session 8 was fixed and, this time, verified against a real `cmake`+Catch2 build rather than a scratch harness; a documentation bug in `docs/ROADMAP.md` was also found and fixed.
+Built: planning + scaffolding for Phase 13 (Google Drive backup), no runtime code yet — this phase
+has real prerequisites (an OAuth client that doesn't exist) the same way Phase 1's signing did.
+`ARCHITECTURE.md` gets a new §4b design section; `capacitor.config.json` gets the `GoogleAuth` plugin
+config block with a placeholder client ID; `package.json` gets
+`@codetrix-studio/capacitor-google-auth` (chosen over the newer Capawesome Google Sign-In plugin
+specifically because it supports Capacitor 6 — the project's current pin — while Capawesome's needs
+Capacitor 8, a separate, larger upgrade not undertaken for this); `android-notes/native-setup.md`
+gets §10, the Google Cloud Console walkthrough (project, Drive API, OAuth consent screen, Android
+OAuth client, SHA-1 from the existing release keystore).
 
-- `tests/uci_tests.cpp` — added the missing `#include "board/attacks.h"` that was causing all 6 CI configs to fail to *build* (`'init_magic_bitboards' was not declared in this scope`). See DECISIONS.md for full cause/fix/why-correct.
-- `tests/search_tests.cpp` — fixed two pre-existing, non-fatal `-Wunused-result` warnings (discarded `[[nodiscard]]` return values in two "leaves the position unmodified" tests), found incidentally during this session's real-build verification pass.
-- `docs/ROADMAP.md` — removed three duplicate, stale unchecked lines in Phase 2 (a documentation bug from earlier sessions' editing process — see DECISIONS.md).
-- **Verification, done properly this time:** installed `cmake` in the sandbox (previously unavailable), fetched the actual current `main`-branch repo fresh via `codeload.github.com` (not a locally-cached copy), reproduced the exact CI compile failure with real CMake + FetchContent'd Catch2, applied the fix, and rebuilt: Release config compiled with zero warnings and **all 122 tests passed via the real `ctest`** (not a stand-in). Debug (ASan+UBSan) config also compiled with zero warnings after the two `search_tests.cpp` fixes; a partial `ctest -R "uci:"` run under that config passed the cases it completed before the sandbox's own command-timeout was hit (ASan process-launch overhead was unusually high in this particular sandbox run — far higher than real CI's per-test times for the same configs — so the full Debug suite wasn't run to completion here, but the fix itself is a compile-time issue, already unambiguously confirmed by the clean build in both configs).
+Researched before committing to any of it: confirmed `drive.file` is Google's non-sensitive scope
+tier (basic verification only, not the restricted-scope security assessment full/readonly Drive
+access needs) and confirmed that a Testing-status consent screen gets 7-day refresh token expiry for
+any non-basic scope — both facts drove Decisions 26–27 and the explicit "publish to Production" step
+in the setup walkthrough. Also confirmed the current recommended Capacitor Google Sign-In plugin
+requires Capacitor 8 before picking the older, Capacitor-6-compatible alternative instead.
 
-**Bugs fixed:**
-1. `uci_tests.cpp` missing `board/attacks.h` — see above and DECISIONS.md.
-2. Two discarded-`[[nodiscard]]` warnings in `search_tests.cpp` — see above and DECISIONS.md.
-3. `ROADMAP.md` Phase 2 duplicate task lines — a documentation bug, not a code bug, but real and worth recording; see DECISIONS.md for the root cause (editing a locally-cached copy of the docs file across turns let drift go unnoticed) and the process change adopted to prevent recurrence.
+"Fully offline" language in `ARCHITECTURE.md` §1/header changed to "offline-first" per this session's
+confirmed direction (Decision 29) — done now, ahead of the feature shipping, since the docs already
+needed to describe an opt-in exception (Decision 25) regardless of when the code lands.
 
-**Decisions made:** Logged in DECISIONS.md — this session's entry covers all three fixes above, plus the process change: `ROADMAP.md` gets re-fetched fresh before editing whenever drift is plausible, not treated as "known for the session" the way Tier 2 source reading is.
+Decisions made: 25–29 (Drive backup is opt-in/additive; `drive.file` scope only; consent screen must
+be Production, not Testing; same encrypted-archive format as local; auto-backup is time-based with
+manual backup always available, plus the offline-language update).
 
-**Next session start point:** Phase 3 — Core Search Strengthening — starts with PVS (Principal Variation Search), the first unchecked ROADMAP.md item. Push this session's three fixed files (`tests/uci_tests.cpp`, `tests/search_tests.cpp`, `docs/ROADMAP.md`) and confirm all 6 CI configs are green — this is the second time in a row CI has needed to actually catch a mistake before it was fixed, so don't start PVS until that real green run is confirmed, not just this session's local (partial, in the Debug/ASan case) verification. Say "Continue" or "Start" to proceed.
+Next session start point: same standing items (confirm the Actions run is green; Phase 6 UI or
+Phase 7's zip-library choice) plus, whenever you've done the manual Google Cloud Console steps in
+`android-notes/native-setup.md` §10: `gdrive.js` (mirrors `backup.js`'s create/restore shape against
+Drive's API instead of the filesystem) and the background-scheduling choice for auto-backup, still
+open per ARCHITECTURE.md §4b.
 
 ---
-
-## 2026-08-13 — Session 8: Eval + search + iterative deepening + UCI loop — Phase 2 complete
-
-**What was built:** All five Phase 2 ROADMAP.md items, in one session.
-
-**Part 1 — material + tapered PSQT eval** (`src/eval/`, new module), built on Tomasz Michniewski's "Simplified Evaluation Function" (CPW) as the PSQT source — see DECISIONS.md for full attribution/rationale and a correction of two transcription bugs found in one cross-checked source along the way.
-
-- `src/eval/score.h` — `Score` (plain `{mg, eg}` int pair, not packed), the CPW "Tapered Eval" game-phase weighting (`kKnightPhase`/`kBishopPhase`/`kRookPhase`/`kQueenPhase`, `kMaxPhase = 24`), and `taper()` (clamped, defensive against out-of-range phase).
-- `src/eval/psqt.h/.cpp` — `material_value()` and `psqt_value()`. Tables are Michniewski's values (pawn/knight/bishop/rook/queen/king-mg/king-eg), LERF-indexed directly (his published array order turned out to already match the project's `a1=0..h8=63` convention — no reindexing needed), Black derived via a vertical mirror (`sq ^ 56`) rather than duplicated tables, since every mirrored table's rows are left-right palindromes. Knight and queen use one shared table for both colors, matching the source. Only the king has a real mg/eg split for now; the other five piece types reuse one table for both phases (per DECISIONS.md, deferred to Phase 5's tuner).
-- `src/eval/eval.h/.cpp` — `evaluate()`: full board scan, White-perspective centipawn score, tapered by a from-scratch `compute_phase()` each call (not yet incrementally accumulated — see DECISIONS.md).
-- `tests/eval_tests.cpp` — starting position balances to exactly 0 (mirror-symmetry check), lone extra pawn favors the right side, a lone extra queen dominates king/psqt noise, `taper()` boundary/clamp behavior, PSQT mirror-equality between White/Black on mirrored squares, king mg-vs-eg centralization direction, and a bare-kings sanity bound.
 
-**Part 2 — plain alpha-beta search, fixed depth** (`src/search/`, new module).
+**Session 8**
 
-- `src/search/search.h/.cpp` — `search_fixed_depth()`: negamax-form alpha-beta, calling `eval::evaluate()` (flipped to side-to-move-relative) at the depth-0 base case, `generate_legal_moves()` everywhere else. Checkmate/stalemate distinguished via a small `in_check()` helper (`is_square_attacked()` on the side-to-move's king square) when `generate_legal_moves()` returns empty. Mate scores decay by ply (`kMateScore - ply`) so shorter forced mates are preferred; alpha/beta use a fixed `kInfinity` sentinel rather than `numeric_limits<int>::max()` to sidestep negamax's negation-overflow trap on `INT_MIN`. Full details and alternatives considered in DECISIONS.md.
-- `tests/search_tests.cpp` — depth-1 node count matches the root's legal-move count exactly (20 from the start position), search leaves the input position byte-for-byte unmodified (make/unmake paired correctly), the returned best move is always a member of the real legal move list, an already-checkmated position (fool's mate FEN) returns a null move and `-kMateScore`, an already-stalemated position (K+Q vs K FEN) returns a null move and a draw score, and a constructed back-rank mate-in-1 position is correctly found at depth 2 (not depth 1 — see search.h's header comment on why mate exactly at the search horizon isn't detected).
+Built: `resources/icon.png` background changed from dark navy to white. Un-mixed the flat, uniform
+original background (`RGB(11,13,27)`, confirmed uniform by sampling) against white per-pixel rather
+than a flat color swap, so soft anti-aliased edges around the folder/shield don't leave a dark fringe.
+Same artwork footprint as Session 7's full-bleed crop — only color changed, not size/position — so no
+regression on the double-padding fix from Decision 24.
 
-**Part 3 — iterative deepening**, extending `src/search/search.{h,cpp}` in place (no new file — see DECISIONS.md for why).
+Note: corners are pure white, but pixels nearer the artwork sit slightly off-white (~231–239) since
+the original art's own soft drop-shadow, previously invisible against the dark canvas, is now a faint
+visible vignette. Left as-is — reads as intentional depth, not a defect — but flagging in case a
+perfectly flat white is wanted instead.
 
-- `search_iterative_deepening()`: repeatedly calls `search_fixed_depth()` at depth 1, 2, 3, ... up to `max_depth`, with an optional `time_limit_ms` wall-clock budget checked between iterations (not mid-search — deferred, see DECISIONS.md). Depth 1 always completes unconditionally first, so there's always a legal move to return even under a near-zero time budget; an already-terminal root position (checkmate/stalemate) short-circuits after depth 1 instead of wastefully re-searching it at every depth.
-- `SearchResult` gained `depth_completed` (set by both search functions); its `nodes` field now means "total across every completed iteration" for the iterative-deepening path specifically (the right basis for future NPS reporting), while staying "that one call's count" for `search_fixed_depth()`.
-- `tests/search_tests.cpp` — new cases: `max_depth=1` matches `search_fixed_depth(pos,1)` exactly (move/score/nodes/depth_completed), unlimited-time `max_depth=3` matches a direct `search_fixed_depth(pos,3)` call's move/score exactly while accumulating strictly more total nodes, an already-checkmated position returns immediately with `depth_completed == 0` and `nodes == 1`, a 1ms time budget against `max_depth=6` reliably stops short of depth 6 without asserting which exact depth was reached (avoids CI-timing flakiness — see the test's comment), plus unmodified-position and legal-move-containment checks matching the existing fixed-depth tests' style. Also added two small `search_fixed_depth()`-specific cases confirming `depth_completed` is set correctly in both the normal and already-terminal paths.
-- Verified locally (this session, ahead of a real CI run): `search.cpp` compiles at `-O3 -Wall -Wextra -Wpedantic` with zero warnings after the extension. All new and pre-existing `search_tests.cpp` assertions were re-run against the real `board`/`fen`/`movegen`/`eval` code (g++ 13, `-fsanitize=address,undefined`) via standalone harnesses mirroring every Catch2 case, confirming both the new iterative-deepening behavior and no regression in the existing fixed-depth tests — all passed (e.g. `search_iterative_deepening(pos, 3)`'s best move/score exactly matches `search_fixed_depth(pos, 3)` while node count is strictly higher; the 1ms-budget case stopped at depth 2 on this sandbox's hardware, satisfying the intentionally-loose `>= 1 && < 6` bound). As with Parts 1–2, this is a strong signal but not a substitute for the real `ctest` run — flagged as this session's test-risk item, consistent with the earlier ones. No `CMakeLists.txt` changes were needed for this part (only already-wired-in files were touched).
+Decisions made: none (cosmetic asset change, not a new rule).
 
-**Part 4 — basic UCI loop** (`src/uci/`, new module), plus `src/main.cpp` rewired to actually run it.
+Next session start point: unchanged — confirm the Actions run is green, then Phase 6 UI or Phase 7's
+zip-library choice. Re-confirm the icon on-device once built, same caveat as Session 7.
 
-- `src/uci/uci.h/.cpp` — `run(std::istream&, std::ostream&)`: parses `uci`/`isready`/`ucinewgame`/`position`/`go`/`quit`; anything else (`stop`, `setoption`, malformed lines) is silently ignored per the UCI spec's robustness expectation, not treated as fatal. `position startpos|fen <fen> [moves ...]` applies each move by matching `Move::to_uci()` against the legal move list at each step, rather than hand-parsing the UCI move grammar (see DECISIONS.md). `go` supports `depth N`, `movetime N`, and `wtime`/`btime`/`winc`/`binc` (a simple `remaining/20 + increment`, capped at `remaining/2`, allocation — no `movestogo`-aware tuning yet); a bare `go` (or `go infinite`, not really supported — see DECISIONS.md) falls back to a small fixed depth (5) rather than an unbounded one, specifically because Phase 2 has no pruning yet and an unbounded fallback would hang the engine — caught via empirical timing (depth 4 ≈ 9ms, depth 5 ≈ 127ms, depth 6 ≈ 1030ms on this sandbox, Release build) before it shipped, not after. `go` runs synchronously to completion; there's no background search thread, so `stop` is parsed but has no effect (documented, not silently faked — see DECISIONS.md).
-- `src/main.cpp` — now runs the mandatory board-subsystem startup sequence, then hands off to `uci::run(std::cin, std::cout)`. The old Phase 0/1 startup-sequence printout it replaced is redundant with `test_smoke.cpp`'s existing CPU-feature-detection test, so nothing lost.
-- `src/CMakeLists.txt` / `tests/CMakeLists.txt` — wired `uci/uci.cpp` into `nightwing_lib`, `uci_tests.cpp` into the test binary.
-- `tests/uci_tests.cpp` — 13 cases: `uci`/`isready` responses, `quit` actually stopping the loop, a bare `go` and a `go depth 1` both returning a legal move, `position ... moves ...` correctly advancing the position before search, an already-checkmated FEN returning `bestmove 0000`, `movetime`- and `wtime`/`btime`-driven `go` both returning promptly, a malformed FEN being ignored rather than crashing, unrecognized commands not being fatal, `ucinewgame` resetting to the start position, and a full multi-turn `uci`/`isready`/`position`/`go` exchange producing exactly two `bestmove` lines.
-- Verified well beyond the unit-test level this time: compiled and linked the actual `nightwing` executable (not just a harness) at `-O3 -Wall -Wextra -Wpedantic`, zero warnings, and ran it through real stdin/stdout (not string streams) via a small external script. One run reached 60 plies — including a real pawn promotion (`b2a1q`) correctly generated and correctly re-applied on the following `position ... moves ...` call — without concluding; a second, shallower-search (depth 2, deliberately weaker play) run reached a genuine checkmate at ply 15, independently re-verified by replaying the exact same move list through `generate_legal_moves()`/`is_square_attacked()` directly (outside the UCI layer entirely) rather than trusting the engine's own `bestmove 0000` output — confirmed 0 legal moves, side-to-move's king in check. This directly validates ROADMAP.md's "engine can play a full legal game against itself via UCI" item, which is why it's checked off in this same session rather than deferred. The 13-case `uci_tests.cpp` suite was also separately verified via a sandbox harness mirroring every case (ASan/UBSan, g++ 13) — all passed. As with the other three parts, real CI confirmation is still the outstanding step (see test-risk note below).
-
-**Bugs fixed:** `search_tests.cpp` was missing the project's per-`TEST_CASE` `init_masks()`/`init_magic_bitboards()`/`init_zobrist_keys()` convention (every other test file calls these at the top of each `TEST_CASE`, since `catch_discover_tests` runs each one as its own process — see DECISIONS.md for the full cause/fix/verification). Caught via the real CI run (all 6 configs red, all 6 `search_tests.cpp` cases SEGV'ing in `attacks.cpp`'s magic-bitboard shift), reproduced exactly in a standalone uninitialized-process harness, fixed by adding a `perft_tests.cpp`-style `init_all()` helper call to each case, and re-verified both via the same harness (now clean) and the full search behavioral suite under ASan/UBSan. (Two transcription bugs were also caught and avoided in an *external source* consulted while transcribing PSQT values earlier this session — see DECISIONS.md; not a Nightwing bug.)
-
-**Decisions made:** Logged in DECISIONS.md — (1) PSQT source (Michniewski's Simplified Evaluation Function, king-only tapered initially, mirror-derived Black tables, transcription cross-check); (2) `Score` as a plain struct rather than packed-int, and full-recompute `evaluate()` rather than an incremental make/unmake accumulator, both scoped as deliberate Phase 2 simplifications; (3) negamax-form search with a fixed `kInfinity` bound (not `numeric_limits::max()`, to avoid negation UB on `INT_MIN`) and ply-decaying mate scores, with fixed-depth-search's horizon-effect limitation (mate exactly at the search horizon isn't detected) explicitly documented rather than left as a surprise; (4) the `search_tests.cpp` init-convention bugfix above, plus a process note on why the sandbox harness missed it and how to avoid the same blind spot for future test files; (5) tried enabling MSVC's native ASan on `windows-latest, Debug` — **reverted the same session** after it hung a smoke test to CTest's 25-minute timeout in real CI, likely an interaction between MSVC ASan and `cpu_features.cpp`'s CPUID intrinsics; `CMakeLists.txt` is back to its original MSVC-skips-sanitizers state, and this isn't being re-attempted without a Windows environment to actually iterate in; (6) iterative deepening extends `search.cpp` in place rather than a new file, checks its time budget only between iterations (not mid-search, deferred to when real UCI time controls exist to exercise it), and accumulates `nodes` across all completed iterations for future NPS accuracy; (7) the UCI loop matches moves by `Move::to_uci()` string rather than hand-parsing UCI move grammar, runs `go` synchronously with no real `stop`/`go infinite` support (deferred, same rationale as (6)), and — caught via empirical timing before shipping, not after — falls back to a small fixed depth (not an unbounded one) when `go` gets no depth or time control at all, since Phase 2's un-pruned search would otherwise hang on a bare `go`.
-
-**Next session start point:** **Phase 2 is complete.** Phase 3 — Core Search Strengthening — begins: PVS (Principal Variation Search), the first unchecked ROADMAP.md item there. This is a real algorithmic change to `negamax()` (search a null window around all moves after the first, re-searching with a full window only if a move beats alpha), so it's worth re-reading `src/search/search.cpp` in full before touching it, and worth checking whether `ARCHITECTURE.md` says anything specific about the planned PVS/TT/move-ordering interplay (Tier 2 doc — already covered earlier this session per the `Go` trigger's read, but PVS is exactly the kind of "debugging/about-to-touch-this-code" case DECISIONS.md's reading-tier rules call out as worth a re-read regardless). One thing still needs confirming from real CI before that work starts: push this session's five new/changed files (`src/uci/uci.h`, `src/uci/uci.cpp`, `src/main.cpp`, `tests/uci_tests.cpp`, plus the `search.h`/`search.cpp`/`search_tests.cpp` and `CMakeLists.txt` changes from earlier this session if not already pushed) and confirm all 6 CI configs are green. Say "Continue" or "Start" to proceed.
-
 ---
 
-## 2026-08-13 — Session 7: Perft bulk-counting + NPS bench — Phase 1 complete
+**Session 7**
 
-**What was built:** The last Phase 1 item. Phase 1 (Board Representation & Move Generation) is now fully checked off; next session starts Phase 2 (eval + search).
+Bugs fixed: app icon rendered visibly smaller than sibling dock icons on-device (user-reported,
+confirmed via screenshot comparison). Cause: the source `resources/icon.png` already carried ~17–20%
+margin (flagged as a risk in Session 6, not yet wrong at that point); `@capacitor/assets` applies its
+own adaptive-icon safe-zone inset on top of whatever source it's given, so the two paddings stacked
+into a double shrink. Fix: re-cropped the same artwork to its actual content bounding box and
+re-centered it full-bleed (~2–6% margin) before handing it to the generator. Why correct: removing
+the redundant margin leaves only the generator's own inset, matching how sibling icons are padded.
 
-- `src/board/perft.h/.cpp` — added `perft_bulk()` alongside the existing `perft()`: the standard bulk-counting optimization (returns the legal move count directly at depth 1 instead of recursing to depth 0 for each leaf). Kept as a separate function rather than a flag on `perft()` — see DECISIONS.md.
-- `src/bench.cpp` + a new `nightwing_bench` executable target (src/CMakeLists.txt) — runs `perft_bulk()` against startpos (depth 6) and Kiwipete (depth 5), printing nodes/time/Mnps. Informational only, not CI-asserted (NPS is machine-dependent) — correctness is what tests/perft_tests.cpp's new equivalence test covers instead.
-- `tests/perft_tests.cpp` — added a cross-check test asserting `perft_bulk()` and `perft()` produce identical node counts across all six reference positions and their tested depths.
-- Sample bench output on this dev machine (Release, BMI2 enabled): **startpos depth 6: 119,060,324 nodes in 0.995s (119.66 Mnps)**, **Kiwipete depth 5: 193,690,690 nodes in 1.115s (173.65 Mnps)** — roughly 3.8-4.9x faster than the equivalent plain `perft()` calls (3.75s/5.43s for the same node counts, from session 6's manual verification). A reasonable movegen throughput baseline to compare against once search-side move ordering and pruning start interacting with movegen call patterns in Phase 3+.
-- Test suite grew from 84 to 85 (Release run, all green); Debug+ASan/UBSan build compiled with zero warnings, and the new bulk-vs-plain equivalence test ran clean under sanitizers.
+Decisions made: 24 (icon source images must be full-bleed; a rule for any future icon swap, not just
+this one).
 
-**Bugs fixed:** None — new-function work built on an already-correct, perft-verified movegen/make-unmake layer.
+Next session start point: same as before this detour — confirm the Actions run is green, then either
+the backup/restore UI (Phase 6) or a zip-library choice for Phase 7. Re-confirm the icon visually
+once a build with the new crop is installed; the fix is based on measurement + the known cause, not a
+second on-device screenshot.
 
-**Decisions made:** Logged in DECISIONS.md — `perft_bulk()` as a separate function rather than a flag/template parameter on `perft()`.
-
-**Next session start point:** Phase 2 begins: material-only + PSQT (piece-square table) evaluation, tapered between middlegame and endgame values. This is the first eval work, so it's a good point to also decide (and log in DECISIONS.md) the PSQT source/attribution — ARCHITECTURE.md and the system prompt both require crediting any borrowed values (e.g. if starting from a well-known public PSQT set like PeSTO's or Ethereal's as a baseline to tune from later, rather than hand-guessing values from scratch) rather than presenting them as original. Say "Continue" or "Start" to proceed.
-
 ---
 
-## 2026-08-13 — Session 6: Perft suite, FEN parser, and two real movegen bugs found + fixed
+**Session 6**
 
-**What was built:** The perft test suite (the last correctness gate before Phase 2's eval/search work), plus the FEN parser it needed, verified against the standard published reference node counts — and, in the process of getting there, two genuine movegen bugs were found and fixed (not hypothetical — perft mismatches don't lie). Full details on both bugs, root cause, and fix are in DECISIONS.md.
+Built: app icon pipeline. Source artwork saved as `resources/icon.png` (1254×1254, no transparency).
+Added `@capacitor/assets` as a devDependency and a `generate-icons` script; `build-android.yml` now
+runs `npx @capacitor/assets generate --android` right after the `android/` platform exists (fresh or
+committed) and before `cap sync`, so every mipmap density and the adaptive-icon layer are generated
+from that one file on every CI run — no per-density PNGs to hand-produce or commit.
 
-- `src/board/fen.h/.cpp` — `parse_fen()`/`to_fen()`. I/O-layer code (uses exceptions on malformed input, per ARCHITECTURE.md's exception policy), built ahead of its originally-planned Phase 2 slot because perft reference positions are conventionally given as FEN and hand-encoding Kiwipete and friends via `place_piece()` calls would have been slow and error-prone by comparison.
-- `src/board/perft.h/.cpp` — plain (non-bulk-counting) `perft()`. Bulk counting is deliberately deferred to its own roadmap item — see perft.h's header comment and DECISIONS.md from session 4/5 for why non-bulk was the right scope here.
-- `tests/fen_tests.cpp` — parser correctness: matches `start_position()`, round-trips through `to_fen()` for a handful of positions (including a couple of terse/edge-case FENs), en passant square parsing, halfmove/fullmove defaulting when those fields are omitted, and malformed-input error cases.
-- `tests/perft_tests.cpp` — the six standard CPW reference positions (startpos through "Position 6"), each to a CI-friendly depth. All match the published node counts exactly. Deeper depths were checked by hand during development and matched too (not committed to CI, to keep runtime reasonable): **startpos to depth 6 = 119,060,324 nodes**, **Kiwipete to depth 5 = 193,690,690 nodes** — both correct, ~4-5s each in Release on this hardware. Worth promoting into the committed suite later if CI time budget allows.
-- **Two bugs fixed in `src/board/movegen.cpp`** (see DECISIONS.md for full root-cause writeups): (1) `between()` was missing an alignment guard, causing it to spuriously "detect" squares between two pieces that shared neither a rank/file nor a diagonal — this silently missed a real diagonal pin. (2) `is_square_attacked()`'s pawn/knight/king terms always read the real `Position`'s piece bitboards regardless of a simulated occupancy passed in, so the original en-passant legality check (a hand-rolled occupancy edit) could still "see" a pawn that was supposed to have been simulated as captured — wrongly rejecting a legal en passant capture. Fixed by simulating en passant via a real `make_move()` on a scratch `Position` copy instead.
-- Both bugs were found by writing an independent, deliberately naive second move generator (scratch/debug tooling, not committed — see DECISIONS.md's "Alternatives considered") and bisecting the game tree for the first position where it disagreed with `generate_legal_moves()`.
-- Test suite grew from 70 to 84 (Release run, all green); Debug+ASan/UBSan build compiled with zero warnings, and all 7 perft tests specifically (the tests exercising both fixes most heavily, across hundreds of thousands to millions of nodes each) ran clean under sanitizers with zero errors.
+Checked (not just assumed): measured the artwork's actual margin against Android's adaptive-icon safe
+zone — ~16–20% on every side, against a ~17% recommended minimum. Close enough that it should survive
+a circular/squircle launcher mask, but this is a measurement against a spec, not a device screenshot;
+flagged as unconfirmed in `android-notes/native-setup.md` §2 and `ROADMAP.md`.
 
-**Bugs fixed:** The two above. Cause/fix/why-correct summary: (1) *cause* — `between()` assumed unaligned rook/bishop ray terms couldn't both produce false-positive overlaps; *fix* — added an explicit rank/file/diagonal alignment check before computing either term; *why correct* — verified via perft node counts matching reference exactly, plus the independent-generator bisection confirming no further move-set divergence at the positions checked. (2) *cause* — a hand-rolled occupancy-only simulation didn't update the real `Position`'s per-piece-type bitboards, which `is_square_attacked()`'s non-sliding terms read directly; *fix* — simulate via `make_move()` on a real (throwaway) `Position` copy instead; *why correct* — `make_move()` updates all piece-type bitboards, the mailbox, and occupancy together atomically, so there's no channel left for this class of mismatch, and it's the same function path the perft suite already exercises at scale.
+Decisions made: 23 (icon generated from one source file via CI, not hand-crafted per density).
 
-**Decisions made:** Logged in DECISIONS.md — both bug root-causes/fixes, and the choice not to keep the independent cross-check generator as permanent CI infrastructure (kept as a debugging technique to reach for again if needed, not a standing test).
+Next session start point: same as before — confirm the Actions run is green (still can't check this
+from here), then either the backup/restore UI screens (Phase 6) or a zip-library choice for Phase 7.
+The app icon can be visually confirmed once any CI build succeeds and the APK is installed.
 
-**Next session start point:** Perft bulk-counting mode — the last Phase 1 item. This adds a fast path that returns `moves.size()` at depth 1 instead of recursing to depth 0 (skipping the final ply's make/unmake), benchmarked against the plain `perft()` already in place as an early NPS (nodes-per-second) sanity check / movegen throughput baseline. Both should return identical counts for the same (position, depth) — that equality is itself a good test to add. After that, Phase 1 is complete and Phase 2 (material+PSQT eval, plain alpha-beta, iterative deepening, basic UCI loop) begins. Say "Continue" or "Start" to proceed.
-
 ---
 
-## 2026-08-12 — Session 5: Make/unmake move, incremental Zobrist hashing
+**Session 5**
 
-**What was built:** The last Phase 1 item before the perft suite, verified with real build+test runs (Release and Debug+ASan/UBSan) rather than only reasoned about — 78 total tests green (up from 62 last session), including 8 new make/unmake tests and cross-checks against `compute_hash()` after every make_move call.
+Built: `www/js/backup.js` — Phase 6 core engine. Create/encrypt/write a full or selective backup
+(`createBackup`), open/decrypt without touching the DB (`openBackupFile`/`decryptBackupPayload`),
+restore in append or overwrite mode with UUID dedup and storage sanity checks (`restoreBackup`), and
+extract a category's raw files + JSON sidecar to device storage with no DB import
+(`extractCategoryToStorage`). No UI wiring yet; not run on a device.
 
-- `src/board/board.h/.cpp` — `make_move()`/`unmake_move()`: applies/reverses a `Move` in place, handling normal moves, captures, en passant (removes the pawn on the actual captured square, not the destination), promotions (including promotion-with-capture), and castling (moves the rook too, in the same call). Updates castling rights (revoked by king moves or a piece leaving/being captured on a corner square — see DECISIONS.md), en passant target, halfmove clock (reset on pawn move or capture), fullmove number, and incrementally XOR-updates `zobrist_hash`. `UndoInfo` (new struct in board.h) carries the captured piece plus the pre-move castling rights/en passant/halfmove-clock/hash, restored verbatim on unmake. Also added `Position::remove_piece()` and `Position::move_piece()` low-level helpers alongside the existing `place_piece()`.
-- `src/board/zobrist.h/.cpp` — four new public key accessors (`piece_square_key()`, `side_to_move_key()`, `castling_right_key()`, `en_passant_file_key()`) so board.cpp's incremental update can XOR against the same tables `compute_hash()` uses, without breaking the zobrist/board module boundary.
-- `tests/makemove_tests.cpp` — 8 new tests: exact restoration of the start position through one make/unmake round-trip, a 5-move realistic opening sequence (1.e4 e5 2.Nf3 Nc6 3.Bb5) with a hash cross-check after every ply and full unwind back to the identical starting `Position`, capture halfmove-clock reset + restore, en passant capture + restore, promotion-with-capture + restore, castling (rook moves too) + rights update + restore, and both ways castling rights get revoked (rook moving off its corner, and an enemy rook being captured on its corner).
-- Test suite grew from 62 to 70 (portable) test cases (Release run); Debug+ASan/UBSan run of all 8 new tests individually confirmed clean (no sanitizer errors).
+Bugs fixed (caught during this session's own build, before commit): `createBackup` initially wrote
+`last_backup_at` to the `meta` table — wrong; `db.js`'s schema keeps it on the single-row
+`credentials` table. Fixed to `UPDATE credentials SET last_backup_at=? WHERE id=1`. Separately, the
+first draft of `buildBackupPayload`/`restoreBackup` ignored that tags are a many-to-many join
+(`entry_tags`), not a column on `entries` — payload now collects each entry's tag names via a join
+query, and restore re-creates the `tags` rows and `entry_tags` links (and updates `label_history`,
+matching what a normal capture does via `insertEntry`, since restore bypasses that helper to preserve
+original `created_at`).
 
-**Bugs fixed:** None — new-file/new-function work, not a fix to existing code.
+Also fixed, pre-existing (Phase 2, not previously flagged): `entry_tags` has `ON DELETE CASCADE`
+foreign keys, but nothing in `db.js` ever sets `PRAGMA foreign_keys = ON`, so hard deletes were
+leaving orphaned `entry_tags` rows. Surfaced by writing overwrite-mode restore's delete step; the
+same gap already existed in `purgeOldTrash`. Fixed both with an explicit `DELETE FROM entry_tags`
+before the parent row delete, rather than relying on a pragma that capacitor-community/sqlite may not
+carry across every connection.
 
-**Decisions made:** Logged in DECISIONS.md — three related choices: (1) unmake restores the saved pre-move hash verbatim rather than reversing the XOR sequence, (2) castling-rights revocation is by square (a1/h1/a8/h8) rather than by checking piece identity, (3) Zobrist keys are exposed from zobrist.h via small accessor functions rather than board.cpp reaching into zobrist.cpp's internals.
+Decisions made: 20–22 (file storage path convention; full backup is a single encrypted JSON, not a
+zip; overwrite restore is destructive only within selected categories, not a full wipe by default).
 
-**Next session start point:** Perft test suite (`tests/perft_tests.cpp`) — the standard reference-depth node-count tests (startpos, Kiwipete, and the other common perft reference positions) that both movegen and make/unmake now exist to support. This is the natural point to also add a minimal FEN parser (`src/board/fen.h/.cpp`, not yet built) since perft reference positions are conventionally given as FEN strings — worth a quick DECISIONS.md note on whether to build that now as a small prerequisite or hand-encode the handful of reference positions via `place_piece()` the way this session's and last session's tests did. Say "Continue" or "Start" to proceed.
+Next session start point: Phase 6 has no UI yet — build the backup/restore screens (category
+checkboxes, mode selector with the two always-shown descriptions, storage-check display, the
+overwrite confirmation dialog). After that, or in parallel if CI is confirmed green by then: Phase 7
+(per-file actions), which needs a zip library decision first (Decision 21 explicitly left this open).
 
 ---
 
-## 2026-08-12 — Session 4: Fully legal move generation + packed move encoding
+**Session 4**
 
-**What was built:** The two remaining Phase 1 items short of make/unmake, verified with a real g++13/CMake/Catch2 build+ctest run (Release, Release+BMI2, and Debug+ASan/UBSan configurations) rather than only reasoned about.
+Bugs fixed: pre-rebrand name "Actioner" (see Decision 12) survived in four places after the app was
+renamed to Dumpzone — `db.js` (header comment, SQLite filename `actioner.db`), `app.js` (global
+`window.Actioner`), `notifications.js` (channel id, channel description, notification title), and
+`android-notes/native-setup.md` (keystore-generation example used alias `actioner`, but the actual
+release keystore generated in Session 3 uses alias `dumpzone`). Cause: rebrand (Decision 12) was
+applied to `index.html`, `package.json`, and `capacitor.config.json` but not swept across `www/js/`
+or `android-notes/`. Fix: renamed all four to `dumpzone`/`Dumpzone` equivalents; `native-setup.md`'s
+keystore section also notes the live keystore already exists under alias `dumpzone`. Why correct:
+matches the app id (`com.dumpzone.app`) and the actually-generated keystore; no live installs exist
+yet so the DB filename and channel id changes have no migration cost.
 
-- `src/board/move.h/.cpp` — `Move`: a `uint16_t`-packed move (6-bit from, 6-bit to, 4-bit flag), flag encoding per the standard CPW "Encoding Moves" table (quiet, double push, king/queen castle, capture, en passant, four promotion kinds x plain-or-capture). Accessors (`from()`, `to()`, `flag()`, `is_capture()`, `is_promotion()`, `promotion_piece_type()`, `is_castle()`, `is_en_passant()`, `is_double_pawn_push()`, `is_null()`) plus `to_uci()` for debug/UCI-I-O. `MoveList`: fixed-size stack array (`kMaxMoves` = 218, the theoretical maximum), no heap allocation, iterator support for range-for.
-- `src/board/movegen.h/.cpp` — `generate_legal_moves()`: fully legal move generation with no separate pseudo-legal-then-filter pass. Checkers/pin detection via the "sniper" bitboard technique (enemy sliders that would reach the king through transparent own pieces, cross-checked against real occupancy for a single blocker); single check restricts non-king moves to a capture-or-block `target_mask`, double check allows only king moves; king moves are checked with the king itself removed from occupancy (avoids the "hide behind itself" bug when stepping back along a check ray); castling checks rights, empty/unattacked transit squares, and not-currently-in-check; en passant legality is resolved by direct occupancy simulation to correctly catch the horizontal-discovered-check edge case. `is_square_attacked()` exposed publicly for future king-safety eval reuse. See DECISIONS.md for the two logged technique decisions (move encoding, mask-based legality approach).
-- `tests/movegen_tests.cpp` — 11 new focused unit tests (not a perft suite — that's next): start-position move count (20) and move-set spot checks, pinned-piece restriction (both the "pinned piece can't move at all" and "pinned piece can still slide within the pin ray" cases), single-check block/capture restriction, the king-step-back-along-check-ray regression case, en passant both illegal (horizontal discovered check) and legal (no discovery) cases, castling generated/blocked-by-attacked-square, and double check allowing only king moves.
-- Test suite grew from 49 to 60 (portable) / 62 (BMI2) test cases.
+Also corrected: ROADMAP.md's Phase 0 checkbox was still unchecked despite both docs and scaffold
+being confirmed committed on `main` — closed it. Phase 1's package-name and signing sub-items
+checked off to match Session 3's completed work.
 
-**Bugs fixed:** None — this was new-file work, not a fix to existing code. One `-Wunused-parameter` warning caught locally before commit (`generate_king_moves` took an unused `us` parameter after refactoring) and fixed by dropping the parameter rather than shipping it.
+Built: nothing new — this was a verification + correction session.
 
-**Decisions made:** Logged in DECISIONS.md — (1) 16-bit packed move encoding following the CPW convention, and (2) mask-based legality (pin/check masks + full-simulation for en passant) chosen over pseudo-legal-generation-then-make/unmake-filter, since make/unmake doesn't exist yet.
+Decisions made: none (bug fixes and a stale-doc correction, not new product/architecture decisions).
 
-**Next session start point:** Make/unmake move, the last Phase 1 item before the perft test suite. This needs: incremental Zobrist hash updates on make/unmake (the "still pending" note from Session 3 — `compute_hash()` exists but incremental XOR-update doesn't yet), incremental handling of castling-rights changes (king/rook moves or rook captures revoking rights), en passant square set/clear, halfmove clock reset-on-pawn-move-or-capture, and a full unmake path (either a `Position` copy-based approach or explicit undo-info struct — worth a DECISIONS.md note on which, since ARCHITECTURE.md's "avoid heap allocation" standard argues for a fixed-size undo stack rather than a `Position` copy per ply once search is in the picture, but a straightforward copy is simplest to get right first and can be revisited before Phase 3's search loop actually needs the performance). Say "Continue" or "Start" to proceed. The perft test suite (`tests/perft_tests.cpp`) is the natural follow-on once make/unmake exists — it needs both movegen (done) and make/unmake to actually walk the tree.
+Next session start point: confirm (manually, via the GitHub Actions tab — not verifiable from here,
+API rate-limited) that the workflow run succeeds end-to-end with the four signing secrets set; this
+finally closes Phase 1's signing sub-item and Phase 11's "not yet confirmed" caveat. Then AdMob
+account + app icon (Phase 1, manual) or start Phase 6 (backup & restore engine), the largest unbuilt
+piece and fully specced already in ARCHITECTURE.md.
 
 ---
-
-## 2026-08-11 — Session 3: Phase 1 board representation complete (bitboards → Zobrist → startup wiring)
 
-**What was built:** Full board-representation layer, verified locally end-to-end with a real C++20 toolchain (g++ 13, real BMI2 hardware) at every step rather than only reasoned about.
+**Session 3**
 
-- `src/board/bitboard.h/.cpp` — `Bitboard`/`Square` types, set/clear/test/toggle bit, `popcount`, `bitscan_forward/reverse`, `pop_lsb` (all `constexpr`, intrinsic-backed via `<bit>`), file/rank/square coordinate helpers, ASCII debug printer.
-- `src/board/attacks.h/.cpp` — magic bitboard rook/bishop/queen attack generation. Portable path: from-scratch sparse-random magic search (masks + attacks-on-the-fly + carry-rippler subset enumeration), no copied magic-number tables. BMI2 fast path: PEXT-indexed tables (no search needed), runtime-dispatched via `support::cpu_has_bmi2()` so a BMI2 binary still runs correctly on older hardware. Test-only hooks force the PEXT path for direct verification.
-- `src/support/rng.h` — shared deterministic xorshift64* PRNG, extracted from `attacks.cpp` for reuse by `zobrist.cpp`.
-- `src/board/board.h/.cpp` — `Position` struct (piece bitboards + mailbox + side to move + castling rights + en passant + move counters + zobrist hash), exactly 192 bytes (3 cache lines, asserted). `start_position()` factory, ASCII printer.
-- `src/board/zobrist.h/.cpp` — key generation (piece-square, side-to-move, castling, en-passant-file) and from-scratch `compute_hash()`.
-- `src/board/masks.h/.cpp` — knight/king/pawn attack tables, `file_mask()`/`rank_mask()`.
-- `src/main.cpp` — wires the mandatory startup sequence (`init_masks()` → `init_magic_bitboards()` → `init_zobrist_keys()`), prints start-position hash + board as a smoke check.
-- Test suite grew from 2 to 49 test cases (portable: 47, BMI2: 49) — `bitboard_tests.cpp`, `attacks_tests.cpp`, `board_tests.cpp`, `zobrist_tests.cpp`, `masks_tests.cpp`.
+Bugs fixed: CI failed at `:app:validateSigningRelease` — cause: the four signing secrets
+(`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`) were never set in the repo (log
+showed them decoding/resolving as empty); separately, the workflow passed the keystore as a bare
+relative filename, which Gradle resolved against the wrong working directory even independent of the
+missing-secrets issue. Fix: `build-android.yml` now passes an absolute path
+(`"$(pwd)/app/release.keystore"`) and fails fast with a clear message if the keystore is empty or any
+of the three password/alias secrets are unset. Why correct: absolute path removes Gradle's ambiguous
+resolution; fail-fast turns a cryptic downstream error into an immediate, actionable one.
 
-**Bugs fixed:**
-- `src/CMakeLists.txt`: `NIGHTWING_ENABLE_BMI2` was being macro-defined even on ARM (latent bug — would've broken the macOS build again the moment BMI2-gated C++ code existed, since `<immintrin.h>`/`__builtin_cpu_supports` don't exist there). Fixed by gating the macro itself to x86/x86_64, not just the `-mbmi2` compile flags.
-- `src/board/attacks.cpp` (portable/non-BMI2 build): `g_use_pext` was unused-variable-warning under `-Wextra` since it's only referenced inside `#if NIGHTWING_ENABLE_BMI2` blocks. Fixed by moving its declaration inside that same `#if`.
-- `src/board/board.h`: `std::array<Piece, 64> piece_on{}` value-initialized every square to `Piece::WhitePawn` (enumerator `0`) instead of `Piece::None`, since `None` isn't 0 in the encoding — caught by `board_tests.cpp`'s mailbox/bitboard consistency check, which showed `start_position()` rendering 5 phantom ranks of white pawns. Fixed with an explicit fill via immediately-invoked lambda rather than relying on zero as an implicit sentinel.
+Built: release keystore generated (alias `dumpzone`, 2048-bit RSA, 10000-day validity) and provided
+to the account holder for safekeeping outside the repo; corresponding values set as the four GitHub
+secrets above.
 
-**Decisions made:** Zobrist en passant hashing uses the simplified file-only scheme (XORs the target square's file key whenever `en_passant_square` is set, regardless of whether a capturing pawn is actually present) — logged in DECISIONS.md with rationale/alternatives.
+Decisions made: none (bug fix + one-time infra step, not a product/architecture decision).
 
-**Next session start point:** Begin the biggest remaining Phase 1 item — fully legal move generation (pins, checks, castling, en passant, promotions) in a new `src/board/movegen.h/.cpp`, with a fixed-size stack-array move list (no heap allocation, per ARCHITECTURE.md). This will need pin/check detection helpers built on the existing `rook_attacks()`/`bishop_attacks()`/`knight_attacks()`/`king_attacks()`/`pawn_attacks()` primitives. Say "Continue" or "Start" to proceed. Perft test suite (`tests/perft_tests.cpp`) is the natural follow-on once movegen exists — don't build it standalone before movegen is in place.
+Next session start point: confirm the workflow run succeeds end-to-end now that secrets are set;
+closes Phase 1's signing sub-item.
 
 ---
 
-## 2026-08-11 — Session 2: Phase 0 complete — build/CI/test skeleton
+**Session 2**
 
-**What was built:** Full Phase 0 skeleton. Root `CMakeLists.txt` (C++20, Release `-O3`+LTO via `check_ipo_supported`, Debug ASan/UBSan on non-MSVC, `NIGHTWING_ENABLE_BMI2`/`NIGHTWING_BUILD_TESTS` options). `src/CMakeLists.txt` builds `nightwing_lib` (static) + `nightwing` executable; BMI2/POPCNT compile flags gated behind the build option so `-DNIGHTWING_ENABLE_BMI2=OFF` gives a portable fallback build. `src/support/cpu_features.{h,cpp}` — runtime BMI2/POPCNT detection (MSVC `__cpuid`/`__cpuidex` path, GCC/Clang `__builtin_cpu_supports` path, safe unknown-compiler fallback), cached, idempotent. `src/main.cpp` — empty-engine skeleton that runs detection and prints the feature summary. `tests/CMakeLists.txt` — Catch2 v3.7.1 via `FetchContent`, `catch_discover_tests` wired to `ctest`. `tests/test_smoke.cpp` — pipeline smoke test. `.github/workflows/ci.yml` — Linux/macOS/Windows × Release/Debug matrix, configure → build → `ctest`.
+Fixed: `build-android.yml` was missing from the delivered zip — the zip command's exclude pattern
+wrongly matched the `.github` folder itself, dropping it entirely. Cause: `-x ".*"` matches any
+top-level path starting with a dot, including directories, not just stray dotfiles. Fix: rebuilt the
+zip without that pattern. Why correct: the workflow file was present on disk the whole time; only the
+packaging step was wrong.
 
-**Bugs fixed:** CI run showed `macos-latest` (Debug + Release) failing to compile: `-mbmi2`/`-mpopcnt` and `__builtin_cpu_supports` are x86-only, but `macos-latest` runners are now Apple Silicon (arm64) and the compiler rejected both outright. Fixed by gating the BMI2 compile flags (`src/CMakeLists.txt`, `CMAKE_SYSTEM_PROCESSOR` check) and the `__builtin_cpu_supports` code path (`src/support/cpu_features.cpp`, `__x86_64__`/`__i386__` check) behind an x86 architecture check, correctly reporting BMI2/POPCNT absent on ARM. Linux and Windows (all configs) passed on the first run.
+Built: dark mode + gradient mode. `www/css/style.css` rewritten with CSS custom-property theme
+tokens (`data-theme`, `data-gradient` attributes) and a blurred glow/spillover background layer.
+`www/js/app.js` adds `getAppearance()`/`setDarkMode()`/`setGradientMode()`, reading/writing the
+existing `meta` table (no schema change). `www/index.html` gets a basic Appearance settings block
+wired to these functions.
 
-**Decisions made:** None new — implementation of decisions already logged in DECISIONS.md/ARCHITECTURE.md (Catch2, BMI2 fast-path + portable fallback, Release/Debug split).
+Decisions made: 18–19 (see DECISIONS.md).
 
-**Next session start point:** Begin Phase 1 — bitboard primitives (`src/board/bitboard.h/.cpp`): set/clear/pop bit, popcount, bitscan, all via compiler intrinsics (no manual bit-loops), plus unit tests in a new `tests/bitboard_tests.cpp`. Say "Continue" or "Start" to proceed.
+Next session start point: Phase 1 (keystore, AdMob account) — manual, needs direct account action.
+Appearance settings still need real UI polish (this session only wired a bare `<details>` block).
 
 ---
 
-## 2026-08-11 — Session 1: Project Founding
+**Session 1**
 
-**What was built:** Project scaffolding only — no code yet. Established the four-doc workflow (ROADMAP.md, DECISIONS.md, SESSIONS.md, ARCHITECTURE.md), repo structure, and Claude Project working instructions (mobile-only, full-file delivery, tiered doc reading, context management protocol).
+Built: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/ROADMAP.md`, `docs/SESSIONS.md`,
+`docs/TRACK.md`. Repo confirmed empty before this session.
 
-**Bugs fixed:** N/A
+Existing local scaffold not yet uploaded: `www/`, `capacitor.config.json`, `package.json`,
+`.github/workflows/build-android.yml`, `android-notes/native-setup.md`.
 
-**Decisions made:**
-- No NNUE, no Syzygy tablebases — hard project constraint
-- Eval: incremental HCE, tunable terms from day one, Texel tuner added in Phase 5
-- Search: single-threaded PVS first, Lazy SMP deferred to Phase 7
-- Endgame: hand-built heuristics, no self-generated tablebases (out of scope)
+Bugs fixed: none (seed session).
 
-(Full rationale in DECISIONS.md)
+Decisions made: 1–17 (see DECISIONS.md).
 
-**Next session start point:** Begin Phase 0 — create the CMake project skeleton (C++20, empty `main.cpp`, `CMakeLists.txt`) and the GitHub Actions CI workflow that runs a build + `ctest` matrix on push. Say "Go" to start.
+Next session start point: upload the scaffold — Phase 0 isn't closed until docs and scaffold are
+both committed. Then Phase 1 (keystore, AdMob account) — manual, needs direct account action.
