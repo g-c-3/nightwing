@@ -31,7 +31,14 @@ on:
       selfplay_search_depth:
         description: "nightwing_selfplay/nightwing_match: fixed search depth used for every move (shared by both tools so training/eval and the strength-comparison match use the same search strength)"
         required: false
-        default: "4"
+        # Was 4; raised to 6 in Session 152 (docs/DECISIONS.md, 2026-09-29
+        # (3)) after Sessions 144-151 traced the mobility/space eval
+        # terms' MG-side sign flip to depth-4 self-play specifically —
+        # SelfPlayConfig::search_depth's own compiled-in default
+        # (src/tuner/selfplay.h) moved to 6 for the same reason, and this
+        # manually-triggered pipeline's default is kept in sync with it
+        # rather than silently regenerating depth-4 corpora going forward.
+        default: "6"
       selfplay_random_opening_plies:
         description: "nightwing_selfplay/nightwing_match: random plies played at the start of each game before real search takes over, for opening variety"
         required: false
@@ -167,6 +174,30 @@ jobs:
         if: matrix.os_name == 'Linux' && matrix.build_type == 'Release'
         working-directory: build
         run: ctest -R bench -V --build-config ${{ matrix.build_type }}
+
+      # Release & Packaging Infrastructure (ROADMAP.md, added 2026-08-15):
+      # the `release` job below needs each platform's Release-config
+      # binary to publish, and a job can only ever consume another job's
+      # output via a real artifact upload/download round-trip (matrix
+      # legs are separate runners; there's no shared filesystem to just
+      # read `build/src/nightwing` off after the fact). Debug legs are
+      # deliberately excluded — this project's own CI/test-only Debug
+      # (ASan/UBSan) builds aren't something an end user should run, per
+      # this same ROADMAP item's own text. `nightwing` is `src/
+      # CMakeLists.txt`'s actual executable target name (`add_executable
+      # (nightwing main.cpp)`) -- the UCI engine binary itself, not
+      # `nightwing_bench`/`nightwing_selfplay`/etc. All three OSes use a
+      # single-config generator here (CMake defaults on Linux/macOS,
+      # Ninja on Windows — see the "Configure CMake" step's own comment),
+      # so the binary always lands directly at `build/src/nightwing[.exe]`
+      # with no `Release/` subfolder to account for.
+      - name: Upload nightwing binary (Release only)
+        if: matrix.build_type == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightwing-binary-${{ matrix.os_name }}
+          path: build/src/nightwing${{ runner.os == 'Windows' && '.exe' || '' }}
+          if-no-files-found: error
 
   # ROADMAP.md Phase 5's final item ("Tuned weights committed, before/after
   # strength comparison logged") needs a real large-scale run: thousands of
@@ -573,3 +604,84 @@ jobs:
             build/tuned_weights.txt
             build/sprt_result.txt
           retention-days: 30
+
+  # ROADMAP.md's "Release & Packaging Infrastructure" section (added
+  # 2026-08-15): a rolling `latest` GitHub Release, re-published on every
+  # green push to `main`, carrying the 3 Release-config native binaries as
+  # assets. Gated with `needs: build-and-test` -- a job-level `needs:` on a
+  # matrixed job waits for EVERY leg of that matrix (all 6: 3 OS x
+  # Release/Debug) to finish, not just the Release ones, which is what
+  # "gated with needs: on all 6 existing build+test matrix jobs" (this
+  # item's own ROADMAP text) actually means in GitHub Actions terms -- a
+  # second job name to depend on isn't needed or possible here, since
+  # build-and-test is already one job with 6 matrix legs, not 6 jobs.
+  # `if:` restricts this to real pushes to `main`, never PRs (a PR's own
+  # build-and-test legs still run and gate merge as normal; they just
+  # don't trigger a release) and never the four `workflow_dispatch`
+  # pipelines above (those are data-generation/verification runs, not
+  # release-worthy commits by themselves).
+  release:
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    name: Publish rolling "latest" release
+    permissions:
+      contents: write
+    steps:
+      - name: Download Linux binary
+        uses: actions/download-artifact@v4
+        with:
+          name: nightwing-binary-Linux
+          path: linux-binary
+
+      - name: Download macOS binary
+        uses: actions/download-artifact@v4
+        with:
+          name: nightwing-binary-macOS
+          path: macos-binary
+
+      - name: Download Windows binary
+        uses: actions/download-artifact@v4
+        with:
+          name: nightwing-binary-Windows
+          path: windows-binary
+
+      # Consistently-named release assets (this item's own ROADMAP text),
+      # distinct from the upload-artifact names above -- those only ever
+      # need to be unique per matrix leg for this workflow's own internal
+      # upload/download round-trip; these are the public, permanent names
+      # an end user downloads from the repo's Releases page.
+      - name: Rename binaries to their release-asset names
+        run: |
+          mkdir -p release-assets
+          cp linux-binary/nightwing release-assets/nightwing-linux
+          cp macos-binary/nightwing release-assets/nightwing-macos
+          cp windows-binary/nightwing.exe release-assets/nightwing-windows.exe
+          chmod +x release-assets/nightwing-linux release-assets/nightwing-macos
+
+      # `gh release`, not a third-party publishing action: it's
+      # preinstalled and pre-authenticated (via GITHUB_TOKEN, which the
+      # `contents: write` permission above grants release-publishing
+      # rights to) on every GitHub-hosted runner, so there's no extra
+      # action version to pin/trust for something this simple. Deleting
+      # any previous `latest` release/tag first (rather than trying to
+      # update one in place) is what makes this a genuine ROLLING
+      # release: `gh release create` alone would fail on the second and
+      # every subsequent run once the `latest` tag already exists.
+      # `|| true` only covers the very first-ever run of this job, where
+      # no `latest` release exists yet to delete -- `gh release delete`
+      # exiting non-zero in that one case is expected, not a real
+      # failure, and must not fail the step.
+      - name: Delete previous "latest" release (if any)
+        run: gh release delete latest --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Publish "latest" release
+        run: |
+          gh release create latest release-assets/* \
+            --title "Nightwing (rolling latest)" \
+            --notes "Automatically published from commit ${{ github.sha }} on $(date -u +'%Y-%m-%d %H:%M UTC'). This is a rolling release: it always reflects the latest green build on main, not a fixed version." \
+            --target "${{ github.sha }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
