@@ -4,6 +4,24 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-09-29 (7) — Paused the EG-instability investigation after 5 sessions of diminishing returns; picked up ci.yml's release job instead; gh CLI over a third-party release action
+
+**Decision:** The EG-term identifiability/instability investigation (Sessions 151-155) is paused, not closed — the ROADMAP item stays open and undecided, but no further isolated micro-experiments will be run on it without a deliberate reason to resume. Session 156 instead picked up `ci.yml`'s rolling `latest` release job, the next concrete and fully unblocked item in ROADMAP.md's Release & Packaging Infrastructure section.
+
+**Rationale:** five consecutive sessions each narrowed the EG-instability question further without closing it, and each result raised a new sub-question rather than converging — a pattern flagged explicitly at the end of Session 155. Continuing that pattern indefinitely without a fresh angle would not be a good use of session time relative to other genuinely unblocked ROADMAP work sitting untouched. The release job, by contrast, was fully specified, unblocked, and completable in one session.
+
+**Implementation choices:** `gh release create`/`gh release delete` (the GitHub CLI, preinstalled and pre-authenticated via `GITHUB_TOKEN` on every GitHub-hosted runner) was used instead of a third-party publishing action (e.g. `softprops/action-gh-release`) — this avoids pinning and trusting an extra action's version/behavior for something `gh` already does directly, and makes the "rolling" (delete-then-recreate) semantics explicit and auditable rather than relying on a specific action's undocumented upsert behavior for a repeated tag. `needs: build-and-test` (the job name) was used rather than trying to name all 6 matrix legs individually — GitHub Actions' own `needs:` semantics already wait for every leg of a matrixed job when the job name itself is the dependency, which is what the ROADMAP item's "gated with needs: on all 6 existing build+test matrix jobs" text meant by "6 jobs" (6 matrix legs of one job).
+
+**Also fixed while in the file:** `workflow_dispatch`'s `selfplay_search_depth` default input was still 4, unsynced with Session 152's `SelfPlayConfig::search_depth` default change to 6 — updated to 6 so the manually-triggered tuning/SPRT pipelines match the compiled-in default rather than silently regenerating depth-4 corpora.
+
+**Scope of what this does NOT yet establish:** the release job has been YAML-validated and structurally checked, but not run for real — it needs to actually execute against a push to `main` before it's trusted as working, which is recorded as this item's explicit next check rather than assumed from local validation.
+
+**Alternatives considered:**
+- Continuing the EG-instability investigation with a sixth session (e.g. testing material's EG-side stability under the same controlled method) — rejected for now: the diminishing-returns pattern was explicit enough by Session 155's end to warrant a deliberate pause rather than reflexive continuation; can be resumed later with a specific reason.
+- Third-party release-publishing actions (`softprops/action-gh-release`, `ncipollo/release-action`) — rejected in favor of `gh` CLI directly, per the rationale above.
+
+---
+
 ### 2026-09-29 (6) — Size-matched comparison shows both corpus size and search depth independently affect EG/MG-term stability, for different terms
 
 **Decision:** Session 154's size-vs-depth ambiguity is resolved as "both matter" rather than either being ruled out. The EG/MG-instability ROADMAP item is reframed as term-and-configuration-specific rather than attributable to one root cause, and stays open under that framing.

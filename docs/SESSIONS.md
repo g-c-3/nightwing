@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+### Session 156 — 2026-09-29 — "Continue with whatever feels correct": paused the EG-instability investigation (5 sessions deep, diminishing returns), moved to `ci.yml`'s release job instead
+
+Triggered by "Continue with whatever feels correct" after Session 155 explicitly flagged the choice between another micro-experiment and other ROADMAP work. Chose to pause the EG-instability investigation (documented as such, not abandoned) and pick up the next concrete, unblocked ROADMAP item: `ci.yml`'s rolling `latest` GitHub Release job.
+
+**Built:** `.github/workflows/ci.yml`: (1) `build-and-test`'s Release-only legs (3 of the 6 matrix legs) now upload `build/src/nightwing${{ '.exe' on Windows }}` as `nightwing-binary-${{ matrix.os_name }}` via `actions/upload-artifact@v4`; (2) a new `release` job, `needs: build-and-test` (waits for all 6 matrix legs), gated to real pushes to `main` only (`if: github.event_name == 'push' && github.ref == 'refs/heads/main'`), `permissions: contents: write`, downloads the 3 Release binaries, renames them to their public asset names (`nightwing-linux`, `nightwing-macos`, `nightwing-windows.exe`), deletes any previous `latest` release/tag (`|| true` for the first-ever run), and publishes a fresh `latest` release via the preinstalled `gh` CLI with the commit SHA and a UTC timestamp in the release notes. (3) While in the file: `workflow_dispatch`'s `selfplay_search_depth` input default was stale at 4 — updated to 6 to match Session 152's `SelfPlayConfig::search_depth` default change, so the manually-triggered tuning/SPRT pipelines don't silently keep regenerating depth-4 corpora going forward.
+
+**Verification:** the YAML was parsed successfully with Python's `yaml.safe_load` and the `release` job's `needs`/`if`/`permissions` fields and the new upload step were checked programmatically against the parsed structure. This is NOT the same as a real GitHub Actions run — the job has not yet been exercised against an actual push to `main`, which is this item's own explicit next check, not assumed to work from local validation alone.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-29 (7).
+
+**Next session start point:** after this is committed and pushed, verify the `release` job actually runs and publishes correctly on the next green push to `main` — check the Releases page for a `latest` release with all 3 binaries attached and correct notes. If that's confirmed working, the EG-instability item (docs/ROADMAP.md, still open, paused this session) or the WASM packaging items in this same ROADMAP section are the next reasonable candidates.
+
+---
+
 ### Session 155 — 2026-09-29 — "Continue": size-matched depth-6 vs. depth-8 comparison — both size and depth independently affect stability, no single clean cause
 
 Triggered by "Continue", resuming Session 154's own stated next step: a size-matched depth-6-vs-depth-8 comparison to separate the two confounded variables.
