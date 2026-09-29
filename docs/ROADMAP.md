@@ -1489,7 +1489,7 @@ Priority Fixes section above).
           pre-existing 20-iteration version of this same fixture,
           never flipped). Full swept tables and reasoning in
           docs/DECISIONS.md, 2026-09-27.
-    - [ ] **The actual fix for the sign flip** (filed Session 144,
+    - [x] **The actual fix for the sign flip** (filed Session 144,
           split out from the item above once regularization/learning-
           rate were confirmed NOT to be it): `tune_term()`'s own
           single-term-isolation design (material and every other eval
@@ -1594,6 +1594,115 @@ Priority Fixes section above).
           `queen_eg=+66`). K was therefore a real, partial contributor.
           Remaining: PSQT sweep at fitted K, larger/EG-stratified corpus,
           and the sign-flip item above stays open.
+          FOURTH FINDING (Session 150, "Continue" then "Start"):
+          direction (a) (co-tuning) is now EXHAUSTED across every
+          remaining term-family candidate, at the fitted K=1069.17.
+          Two more throwaway joint runs (100 iterations, lr=53000,
+          same 6015-position corpus): (i) mobility + threats + pawns
+          co-tuned together (PSQT/space/king-safety/material frozen):
+          `knight_mg=-23.6`, `bishop_eg=-50.6`, `queen_eg=+65.3` --
+          essentially unchanged from every isolated/previously-joint
+          run. (ii) mobility + material co-tuned together (pawn_mg/
+          pawn_eg still anchored, PSQT/space/threats/pawns/king-safety
+          frozen): `knight_mg=-22.5`, `bishop_eg=-51.1`, `queen_eg=+65.0`
+          -- material converged to sane, non-degenerate values
+          (knight 305/322, bishop 322/319, rook 500/506, queen 906/904)
+          and the mobility flips persisted regardless. Every term family
+          this engine has (PSQT via Session 147, threats+pawns via this
+          session, material via this session) has now been co-tuned
+          with mobility without resolving the flip, so a frozen-term
+          confound in the sense direction (a) targets is no longer a
+          credible explanation. Direction (a) is considered closed as a
+          line of investigation; direction (b) (corpus/sampling: e.g.
+          the depth-4 quiet-filtered self-play corpus itself encoding a
+          real, depth-4-specific anti-correlation between knight/bishop
+          mobility and outcome, or genuinely needing a deeper/larger/
+          more diverse corpus to identify these terms correctly) is now
+          the only unexplored direction and needs real design work
+          (which sampling change, how to validate it) before the next
+          attempt. See docs/DECISIONS.md, 2026-09-29.
+          FIFTH FINDING (Session 151, "Continue"): direction (b) tested
+          and largely CONFIRMED as the real cause of the MG sign flip.
+          Design: hold the isolated-mobility-tuning pipeline (`--mobility
+          ... fit`, same code, fitted K per corpus) fixed and vary only
+          the self-play search depth used to generate the corpus and its
+          result labels -- depth 4 (existing, 6015 positions, K=1069),
+          depth 6 (new, 150 games/8761 positions, K=685), depth 8 (new,
+          50 games/3308 positions, K=321). Result: `knight_mg` is -21.1
+          at depth 4 but +12.6 at BOTH depth 6 and depth 8; `bishop_mg`
+          is -3.9 at depth 4 but +9.5 (depth 6) / +30.8 (depth 8) -- the
+          expected positive sign, reproduced at two independent deeper
+          depths, not a one-off. `bishop_eg` stays negative at all three
+          depths (-40.3/-23.5/-24.1) and other EG terms remain noisy,
+          matching Session 147's own EG-instability finding -- so this
+          result explains the MG flip specifically, not the separate EG
+          identifiability problem, which stays open. Also notable: the
+          fitted K itself drops sharply with depth (1069 -> 685 -> 321),
+          i.e. deeper self-play labels are less miscalibrated relative to
+          static eval, consistent with the depth-4-corpus-is-the-problem
+          reading. PROPOSED FIX (not yet applied to any shipped default):
+          generate future tuning corpora (this term and any future term/
+          PSQT work) at search depth >= 6, not depth 4 -- `tuner/
+          selfplay.h`'s own default depth and every prior session's
+          corpus-generation examples used depth 4 throughout Sessions
+          144-150, which this finding indicates was the actual root
+          cause of the MG-side flip, not the tuner architecture. Still
+          open before closing this item entirely: (1) confirm on a
+          larger depth-6/8 corpus (this session's depth-8 corpus was
+          intentionally small, 50 games, for sandbox runtime reasons);
+          (2) decide whether to change `tuner/selfplay.h`'s shipped
+          default depth or only the corpora used for actual tuning runs;
+          (3) the still-unresolved EG instability is a separate item, not
+          fixed by this. See docs/DECISIONS.md, 2026-09-29 (2).
+          SIXTH FINDING / FIX APPLIED (Session 152, "Continue"): the
+          depth-6 result was confirmed at ~3x scale (450 games/26328
+          positions combined across 3 seeds; K refit to 685.3, stable
+          vs. the smaller run's 685.0) and at ~2x scale for depth 8
+          (100 games/6605 positions; K=285.5) -- `knight_mg`/`bishop_mg`
+          stayed positive at both scales (depth 6: +10.5/+7.5; depth 8:
+          +13.7/+26.7). Depth 6 was then applied as the actual fix:
+          `src/tuner/selfplay.h`'s `SelfPlayConfig::search_depth`
+          default raised from 4 to 6 (chosen over 8 for ~8x less
+          self-play wall-clock time per game at the same corrected
+          sign), full local build clean, all 703 tests still pass. The
+          full term sweep was re-run on the corrected large depth-6
+          corpus to check for any OTHER term's sign issues the old
+          depth-4 corpus might have been masking: `--space` flip also
+          resolved (`square_mg` +21.5, was -22.5 at depth 4);
+          `--threats`, `--king-safety`, `--pawns` all converged to
+          sensible, non-flipped signs (penalties negative, passed-pawn
+          bonuses positive and monotonically increasing with rank,
+          `semi_open_file_mg`/`attack_unit_mg` negative as Session 149
+          already found) -- no new flips surfaced. One value worth a
+          second look later, out of this item's scope: `connected_mg`
+          tuned to -18.0 (pawns), where a positive "connected pawns are
+          good" sign might be expected; not investigated this session.
+          MG-side sign flip is considered FIXED (root cause: depth-4
+          self-play corpus, direction (b); fix: search_depth 4 -> 6 in
+          selfplay.h). EG instability (bishop_eg/queen_eg etc., still
+          swinging sign and magnitude across corpora even at depth 6 --
+          this session's depth-6 run: `bishop_eg=-21.3`) remains open as
+          its own item, NOT resolved by the depth change. See
+          docs/DECISIONS.md, 2026-09-29 (3).
+    - [ ] **EG-term identifiability/instability** (split out from the
+          sign-flip item above, Session 152, once the MG-side flip was
+          confirmed fixed and this was confirmed NOT fixed by the same
+          change): several endgame-phase term values (`bishop_eg`,
+          `queen_eg` and others across mobility and other term
+          families) swing in both sign and magnitude across independent
+          corpora/seeds even at the corrected depth-6 self-play depth,
+          unlike the now-stable MG-side values. First observed Session
+          147 (three depth-4 corpora: `queen_eg` +45/-77/-40); still
+          present in Sessions 150-152's depth-6/8 runs. Root cause not
+          yet investigated: candidates include insufficient endgame-
+          phase position coverage in self-play games (games may not
+          reach enough true endgames before hitting `max_plies` or
+          ending earlier), a genuine identifiability problem (too few
+          distinct endgame configurations to pin down 8 separate EG
+          parameters from result labels alone), or something else
+          entirely. Needs real scoping (a specific, falsifiable
+          hypothesis and how to test it) before another experiment, the
+          same standard the sign-flip item held itself to.
 
 ## Priority Fixes (external code review, 2026-09-17)
 

@@ -4,6 +4,49 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-09-29 (3) — `SelfPlayConfig::search_depth` default raised from 4 to 6; mobility/space MG sign flip closed; EG instability split into its own open item
+
+**Decision:** `src/tuner/selfplay.h`'s `SelfPlayConfig::search_depth` default is changed from 4 to 6, effective for all future tuning-corpus generation. The mobility/space MG-side sign-flip ROADMAP item (filed Session 144) is marked resolved. A new item, EG-term identifiability/instability, is split out to track the still-open EG-side problem separately.
+
+**Rationale:** Session 151's small-scale depth-6/8 finding (knight_mg/bishop_mg flip to the theoretically-correct positive sign at deeper self-play depths) was confirmed this session at ~3x scale for depth 6 (450 games) and ~2x scale for depth 8 (100 games) — both held. Depth 6 was chosen as the new default over depth 8 because it reproduced the same corrected sign at roughly 8x less self-play wall-clock time per game in this investigation's own measurements; depth 8 is not shown to be worse, just less practical as a routine default. A full re-sweep of every other term family (space, threats, king-safety, pawns) on the corrected large depth-6 corpus found space had the same flip (now fixed) and found no other term family's sign hidden by the old depth-4 corpus.
+
+**Scope:** this fix addresses the MG-side flip only. EG-side values (`bishop_eg`, `queen_eg`, and likely others) remain unstable across corpora/seeds even at depth 6, a problem first observed Session 147 and not touched by this change — tracked as its own new ROADMAP item rather than folded into the (now closed) sign-flip item, since conflating a fixed problem with an open one in the same checklist entry would make the item's status ambiguous.
+
+**Alternatives considered:**
+- Raising the default straight to 8 instead of 6 — rejected: no evidence depth 8 fixes anything depth 6 doesn't, at meaningfully higher cost per game; can be revisited if depth 6 is later found insufficient for some other term.
+- Leaving the shipped default at 4 and only changing the corpora used for ad hoc tuning runs — rejected: the default exists specifically to guide future corpus generation, and leaving a known-bad default in place would just reproduce this exact bug for the next person/session that generates a corpus without knowing this history.
+- Immediately investigating the pawns `connected_mg=-18.0` value noticed during the re-sweep — deferred: out of this item's original scope (mobility/space MG flip), flagged for a future quick look rather than chased now.
+
+---
+
+### 2026-09-29 (2) — Mobility MG sign flip traced to depth-4 self-play corpus generation, not the tuner; deeper-depth corpora reproduce the expected sign
+
+**Decision:** The mobility sign-flip investigation's working theory shifts from "tuner architecture bug" (direction (a), closed earlier today) to "depth-4 self-play corpus artifact" (direction (b)). Future tuning corpora should be generated at search depth 6 or deeper, not depth 4, once this is confirmed at scale.
+
+**Rationale:** Holding the isolated-mobility-tuning pipeline fixed and varying only self-play search depth isolates the corpus as the variable. `knight_mg`/`bishop_mg` were reliably negative across every depth-4 corpus tried in Sessions 144-150 (three independent seeds) but flipped to the theoretically-expected positive sign at BOTH a depth-6 corpus (150 games) and an independent depth-8 corpus (50 games, two seeds) this session. Two independent deeper-depth corpora agreeing rules out a one-off fluke. The fitted sigmoid-scale K also fell monotonically with depth (1069 at depth 4, 685 at depth 6, 321 at depth 8), meaning deeper self-play results are less miscalibrated relative to the static eval — the same direction a "depth-4 search is too shallow to label positions correctly" explanation would predict.
+
+**Scope of what this does NOT yet establish:** `bishop_eg` stayed negative at all three depths, so this finding explains the MG-side flip only, not the EG-instability problem Session 147 identified (which remains open and unaffected). This session's depth-8 corpus was intentionally small (50 games) for sandbox runtime reasons — a larger-scale confirmation is still needed before the sign-flip item is closed outright or `tuner/selfplay.h`'s default depth is actually changed.
+
+**Alternatives considered:**
+- Jumping straight to changing `tuner/selfplay.h`'s shipped default depth this session — rejected: one small-scale confirmatory result, however clean, is not enough to change a shipped default; needs a larger-corpus re-check first, per this file's and ROADMAP's standing rule against under-verified "quick fixes."
+- Testing intermediate depths (5, 7) for a finer-grained curve — deferred, not rejected: two points (6 and 8) both agreeing with the hypothesis was enough signal to report now; a fuller depth curve is a reasonable next step if more precision is wanted later.
+
+---
+
+### 2026-09-29 — Direction (a) (co-tuning) closed as an explanation for the mobility sign flip; every term family now ruled out jointly
+
+**Decision:** No further co-tuning experiments will be run to chase the mobility sign flip (direction (a), filed Session 144). Every eval term family the engine has has now been jointly co-tuned with mobility at the Session 149 fitted K without resolving `knight_mg`/`bishop_eg`/etc.'s unexpected sign: PSQT (Session 147, 768 cells via an analytic gradient), threats + pawns (this session, 83 parameters via finite difference), and material (this session, 8 non-anchored parameters via finite difference, pawn_mg/pawn_eg still anchored per `tune()`'s own convention). All three joint runs reproduce essentially the same flipped values as the fully isolated single-term runs.
+
+**Rationale:** direction (a)'s hypothesis was that `tune_term()`'s single-term-isolation design lets a frozen term's own fixed value create a spurious gradient correlation for the term being tuned. With every other term family now demonstrably NOT the source of that correlation (co-tuning them away changes nothing), the confound direction (a) targets does not explain the observed flip. Continuing to test term-family combinations already ruled out piecewise would not add information.
+
+**Result:** the sign-flip ROADMAP item remains open, with direction (b) (corpus/sampling) now the only unexplored explanation — a genuine depth-4-self-play-specific correlation, or insufficient/undiverse data to identify these terms, rather than a tuner-architecture confound.
+
+**Alternatives considered:**
+- A full pairwise sweep of every two-term-family combination not yet tried — rejected: with all six families now covered by at least one joint run against mobility (PSQT, threats, pawns, material directly; space and king-safety via Session 146's three-way run), the marginal information from further combinations is low relative to the cost of another harness and corpus run.
+- Moving straight to a direction-(b) experiment this session — rejected: direction (b) needs a specific, falsifiable sampling change scoped first (this file's and ROADMAP's own standing rule against undersigned "quick follow-up" work applies here too), not another ad hoc harness.
+
+---
+
 ### 2026-09-28 — Texel K-fit implemented as a standalone pre-step; grid scan plus golden section; learning rate scaled by K/400 only when not given explicitly
 
 **Decision:** The sigmoid scale K is now fitted from the corpus before tuning (CPW two-step recipe) instead of being fixed at 400. `fit_sigmoid_scale()` evaluates every position once at compiled-in default weights and minimizes the Texel loss over K in [50, 10000] using a 41-point log-spaced grid scan (bracketing, robust to any non-unimodality) followed by golden-section refinement in log(K). `nightwing_tune --fit-k` prints the fitted value; the sigmoid_scale slot of any mode accepts `fit`. When K is fitted and the learning rate is not given explicitly, the mode's default learning rate is multiplied by K/400.

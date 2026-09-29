@@ -4,6 +4,54 @@ Newest entry at top.
 
 ---
 
+### Session 152 — 2026-09-29 — "Continue": mobility sign flip confirmed at scale and FIXED (search_depth 4 -> 6 in selfplay.h); full term re-sweep finds no other flips; EG instability split out as its own open item
+
+Triggered by "Continue", resuming Session 151's own stated next step: confirm the depth-6/8 finding at scale, apply the actual fix, and re-run the full term sweep.
+
+**Built:** three more depth-6 self-play batches (150 games each, seeds 2/5/6, combined into a 450-game/26328-position corpus) and two more depth-8 batches (25 games each, seeds 5/6, combined with the prior batches into a 100-game/6605-position corpus) — all via the existing `nightwing_selfplay` binary, no code changes. `src/tuner/selfplay.h`: `SelfPlayConfig::search_depth` default changed from 4 to 6, with a doc comment recording the investigation and why 6 was chosen over 8 (comparable corrected sign, ~8x less wall-clock time per game). Full re-sweep of `--space`/`--threats`/`--king-safety`/`--pawns` on the large corrected depth-6 corpus (mobility itself already re-checked in this same corpus last session).
+
+**Findings:** the depth-6 flip fix held at ~3x scale (`knight_mg=+10.5`, `bishop_mg=+7.5`, K refit to 685.3 — stable vs. the smaller run's 685.0) and depth-8 held at ~2x scale (`knight_mg=+13.7`, `bishop_mg=+26.7`, K=285.5). `--space` also flipped to the correct sign at depth 6 (`square_mg=+21.5`, was -22.5 at depth 4). `--threats`, `--king-safety`, `--pawns` all converged to sensible, non-flipped values on the corrected corpus (king-safety's `semi_open_file_mg`/`attack_unit_mg` stayed negative, matching Session 149's own K-fit finding; pawns' passed-pawn bonuses increase monotonically by rank as expected) — no other term family showed a hidden flip the old depth-4 corpus had been masking. One value flagged but not investigated: pawns' `connected_mg=-18.0`, where a positive sign might intuitively be expected. Mobility/space's EG-side values remain unstable (`bishop_eg=-21.3` this session) exactly as Session 147 first found — the depth change fixes the MG-side flip specifically, not this separate problem.
+
+**Verification:** full local Release build, zero warnings; full `ctest` 703/703 after the `selfplay.h` change (only a struct default changed, no logic).
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-29 (3).
+
+**Next session start point:** the mobility/space MG sign-flip item is closed (marked `[x]` in ROADMAP.md). A new item, "EG-term identifiability/instability," is split out and open — it needs real scoping (a specific falsifiable hypothesis: insufficient endgame position coverage vs. a genuine identifiability problem vs. something else) before another experiment is run, not another ad hoc harness. The pawns `connected_mg` sign is a minor loose end worth a quick look first if convenient.
+
+---
+
+### Session 151 — 2026-09-29 — "Continue": direction (b) confirmed — the mobility MG sign flip is a depth-4-self-play artifact, not a tuner bug; knight_mg/bishop_mg flip to the correct sign at depth 6 and depth 8
+
+Triggered by "Continue", resuming Session 150's own stated next step: scope and run a direction (b) (corpus/sampling) experiment for the mobility sign flip.
+
+**Built:** two new self-play corpora via the existing `nightwing_selfplay` binary (no code changes) — depth 6 (150 games, seed 2, 8761 quiet positions) and depth 8 (2 batches of 25 games, seeds 3/4, 3308 quiet positions combined; kept small because depth-8 self-play is slow in this sandbox, ~9.3s/game vs. depth 6's ~1.2s/game). K was fitted per corpus with the existing `nightwing_tune --fit-k`, then isolated mobility tuning (`--mobility ... fit`, unmodified pipeline) was run on each at its own fitted K, 100 iterations.
+
+**Findings:** `knight_mg` was -21.1 at depth 4 (fitted K=1069) but +12.6 at BOTH depth 6 (K=685) and depth 8 (K=321) — the textbook-expected positive sign, reproduced independently at two deeper depths. `bishop_mg` likewise flipped from -3.9 (depth 4) to +9.5/+30.8 (depth 6/8). `bishop_eg` stayed negative at all three depths (-40.3/-23.5/-24.1), so this result explains the MG-side flip specifically and does not touch the separate EG-instability problem Session 147 already found. The fitted K itself also fell sharply with depth (1069 -> 685 -> 321): deeper self-play labels are less miscalibrated relative to the static eval, which is consistent with depth-4 self-play being the actual problem rather than the tuner architecture.
+
+**Verification:** no shipped code changed this session (corpus generation and tuning both used existing binaries unmodified); existing test suite unaffected, not re-run for that reason.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-29 (2).
+
+**Next session start point:** the sign-flip item is not yet fully closed. Next: (1) regenerate a larger depth-6 or depth-8 corpus (this session's depth-8 corpus was deliberately small) to confirm the flip stays fixed at scale; (2) decide and apply the actual fix — most likely raising the search depth used when generating tuning corpora (`tuner/selfplay.h`) from 4 to 6+ for all future tuning work — and re-run the full mobility/space/threats/king-safety/pawns sweep on the corrected corpus; (3) the EG-instability problem remains separately open and untouched by this finding.
+
+---
+
+### Session 150 — 2026-09-29 — "Continue" then "Start": direction (a) (co-tuning) exhausted for the mobility sign flip — threats+pawns and material both ruled out jointly
+
+Triggered by "Continue" (resumed mid-session-149 ROADMAP scan) then "Start" (advanced to the top open item, the sign-flip investigation).
+
+**Built:** two throwaway harnesses (sandbox only, not shipped to the repo, matching the Session 146/147 convention) at the Session 149 fitted K=1069.17, same 6015-position corpus, 100 iterations, lr=53000: (1) mobility + threats + pawns co-tuned in one shared finite-difference loop, PSQT/space/king-safety/material frozen; (2) mobility + material co-tuned, pawn_mg/pawn_eg still anchored (tune()'s own convention), PSQT/space/threats/pawns/king-safety frozen.
+
+**Findings:** neither run resolved the sign flips. Run (1): `knight_mg=-23.6`, `bishop_eg=-50.6`, `queen_eg=+65.3`. Run (2): `knight_mg=-22.5`, `bishop_eg=-51.1`, `queen_eg=+65.0`, with material itself converging to sane values (knight 305/322, bishop 322/319, rook 500/506, queen 906/904) rather than drifting. Every term family in the engine (PSQT: Session 147; threats+pawns and material: this session) has now been co-tuned jointly with mobility without removing the flip, so direction (a) (a frozen-term confound in `tune_term()`'s isolation design) is closed as a line of investigation.
+
+**Verification:** both harnesses built against the existing `libnightwing_lib.a`/`tune.cpp` with no changes to shipped code; no repo files touched other than docs, so the existing test suite is unaffected (not re-run this session for that reason).
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-29.
+
+**Next session start point:** direction (a) is exhausted; the sign-flip item's only remaining open direction is (b), corpus/sampling (does the depth-4 quiet-filtered self-play corpus itself encode a real depth-4-specific anti-correlation between knight/bishop mobility and outcome, and/or is a larger/deeper/more diverse corpus needed to identify these terms). This needs real design work (which sampling change, how to validate it against a null hypothesis) before another experiment — scope that design first, rather than jumping straight to another throwaway harness.
+
+---
+
 ### Session 149 — 2026-09-28 — Texel K-fit step implemented (`fit_sigmoid_scale()`, `nightwing_tune --fit-k` / `fit`); sign flips only partly resolved at fitted K
 
 Triggered by "Go" (fresh session, full docs read). The top open ROADMAP item was the K-fit step filed in Session 148.
