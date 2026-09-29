@@ -627,6 +627,18 @@ jobs:
     name: Publish rolling "latest" release
     permissions:
       contents: write
+    # `gh` resolves which repo to talk to from an explicit `GH_REPO`/`-R`
+    # first, falling back to inferring it from the current directory's git
+    # remote only if that's absent -- this job has no `actions/checkout`
+    # step (it only ever touches downloaded artifacts, never the repo's
+    # source), so there is no `.git` directory to infer from, which is
+    # exactly what broke the first real run of this job (see
+    # docs/SESSIONS.md, Session 157: `gh release delete`/`gh release
+    # create` both failed with "fatal: not a git repository"). Setting
+    # `GH_REPO` here, once, covers every `gh` call in every step below
+    # without adding a checkout step this job doesn't otherwise need.
+    env:
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: Download Linux binary
         uses: actions/download-artifact@v4
