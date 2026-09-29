@@ -4,6 +4,48 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-09-29 (6) — Size-matched comparison shows both corpus size and search depth independently affect EG/MG-term stability, for different terms
+
+**Decision:** Session 154's size-vs-depth ambiguity is resolved as "both matter" rather than either being ruled out. The EG/MG-instability ROADMAP item is reframed as term-and-configuration-specific rather than attributable to one root cause, and stays open under that framing.
+
+**Rationale:** with corpus size held fixed at 1650 positions across four depth-6 and four depth-8 seed corpora, `queen_eg` stayed reliably positive at depth 6 but flipped sign at depth 8 — a genuine depth effect, not explained by size. Simultaneously, `bishop_mg` — stable at both full-size depth 6 and every depth-8 size tested — flipped sign in one of the four size-matched (small) depth-6 subsets, a size effect not present at the larger depth-6 scale. Two different terms were destabilized by two different variables in the same experiment, which rules out a single-cause explanation for "EG/MG instability" as a category.
+
+**Scope of what this does NOT yet establish:** which specific mechanism (search-depth-dependent label noise, phase-mix composition, raw sample count, something else) drives instability for a given term at a given configuration — this session establishes that both variables matter, not why. Material and the other term families remain untested under this controlled method.
+
+**Alternatives considered:**
+- Concluding "size explains everything" or "depth explains everything" from a partial read of the data — rejected: both readings are contradicted by at least one of the four terms tracked this session.
+- Continuing indefinitely with more isolated micro-experiments (depth 10, other sizes, other seeds) — flagged as a genuine open question for the next session rather than decided here: five sessions (151-155) have now gone into this investigation, and whether further micro-experiments are the best use of the next session's time, versus a larger-scale corpus effort or moving on to other ROADMAP work, is worth a deliberate decision rather than reflexively continuing the same pattern.
+
+---
+
+### 2026-09-29 (5) — Depth-8 seed-isolation test finds queen_eg instability, but corpus size (not depth) is an unruled-out alternative explanation
+
+**Decision:** The depth-8 repeat of Session 153's same-depth/different-seed test is recorded as inconclusive on its own about whether depth 8 specifically destabilizes `queen_eg` — corpus size was not held constant between the depth-6 comparison (~8.7-8.8k positions/seed) and this depth-8 one (~1650 positions/seed), so size is an equally plausible explanation and must be ruled out before either is trusted.
+
+**Rationale:** `knight_mg` and `bishop_eg` replicated the depth-6 pattern (consistent sign across all four seeds) at depth 8, but `queen_eg` flipped sign across two of the four depth-8 seeds, unlike its consistent depth-6 result. Reporting this as "depth 8 is worse for queen_eg" without controlling for the ~5x smaller corpus size at depth 8 would repeat exactly the kind of confounded comparison Session 153 already flagged in Session 147's original depth-4/4/2 comparison. The honest reading is: an effect was found, and its cause (depth vs. size) is not yet isolated.
+
+**Scope of what this does NOT yet establish:** whether queen_eg specifically, or EG terms generally, are less identifiable at depth 8, at small corpus sizes, or both. Not addressed this session: material and other term families under this same controlled test.
+
+**Alternatives considered:**
+- Reporting the depth-8 result as a standalone finding ("EG instability returns at depth 8") without the size caveat — rejected: this is exactly the confound this investigation's own tightened standard (Session 153) exists to catch; recording it uncritically here would undermine that standard the very next session after adopting it.
+- Regenerating four larger, size-matched depth-8 corpora this session instead of flagging the gap — deferred: depth-8 self-play in this sandbox runs at roughly 8-9x the wall-clock cost of depth 6 per game, making four ~8.7k-position depth-8 corpora impractical within a single session's budget; a depth-6-subsampled-to-match-size comparison is the cheaper, more practical next step.
+
+---
+
+### 2026-09-29 (4) — EG-instability re-scoped: Session 147's cross-corpus comparison conflated depth with seed; depth-held-fixed re-test shows low seed-to-seed variance but real phase-mix sensitivity
+
+**Decision:** The EG-term "instability" finding (Session 147) is not taken at face value going forward. Session 147's three comparison corpora differed in search depth (4/4/2) as well as seed, so the reported swings cannot be attributed to seed/identifiability alone. A properly controlled re-test (same depth, different seeds) is now the standard for any future claim about EG-term variance.
+
+**Rationale:** Repeating Session 147's comparison with depth held fixed at 6 (Session 152's three seed corpora) produced consistently signed, closely matched `bishop_eg`/`queen_eg` values across all three seeds — the opposite of what "instability/identifiability problem" would predict. A follow-up test restricting each of the same three corpora to endgame-only positions (phase fraction <= 0.4 via `eval::compute_phase()`) also gave consistent cross-seed results, but with `queen_eg` flipping sign relative to the unfiltered corpus — the value depends systematically on the corpus's phase mix (full-spectrum vs. endgame-only), not on noise.
+
+**Scope of what this does NOT yet establish:** this is one term family (mobility) at one depth (6). Material and the other term families' EG-side behavior under the same controlled test, and whether the pattern holds at depth 8, are both still open. The ROADMAP item is narrowed, not closed.
+
+**Alternatives considered:**
+- Declaring the EG-instability item resolved outright based on this one test — rejected: a single term family at a single depth is not enough to retire a multi-session-old finding; the item stays open with updated scope.
+- Ignoring the phase-mix sensitivity result as expected/uninteresting — rejected: it was not previously measured directly, and it has a concrete implication (results depend on which phase mix a corpus happens to have) worth recording explicitly rather than leaving implicit.
+
+---
+
 ### 2026-09-29 (3) — `SelfPlayConfig::search_depth` default raised from 4 to 6; mobility/space MG sign flip closed; EG instability split into its own open item
 
 **Decision:** `src/tuner/selfplay.h`'s `SelfPlayConfig::search_depth` default is changed from 4 to 6, effective for all future tuning-corpus generation. The mobility/space MG-side sign-flip ROADMAP item (filed Session 144) is marked resolved. A new item, EG-term identifiability/instability, is split out to track the still-open EG-side problem separately.

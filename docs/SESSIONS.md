@@ -4,6 +4,56 @@ Newest entry at top.
 
 ---
 
+### Session 155 — 2026-09-29 — "Continue": size-matched depth-6 vs. depth-8 comparison — both size and depth independently affect stability, no single clean cause
+
+Triggered by "Continue", resuming Session 154's own stated next step: a size-matched depth-6-vs-depth-8 comparison to separate the two confounded variables.
+
+**Built:** one new small depth-6 batch (30 games, seed 7, 1770 positions) to reach four depth-6 seed points matching the four existing depth-8 seeds. All four depth-6 seed corpora (the three existing large ones plus this new one) were uniform-randomly subsampled (no replacement, fixed per-file seed) down to exactly 1650 positions each — the same size as the existing depth-8 seed corpora. Isolated mobility tuning (fitted K) was run on each of the four size-matched depth-6 subsets.
+
+**Findings:** the result does not cleanly support either "it's depth" or "it's size" — both matter, for different terms. `queen_eg` stayed consistently positive across all four size-matched depth-6 subsets (+9.7/+11.4/+4.3/+23.4), unlike depth 8's mixed-sign result at the identical corpus size — so depth 8 itself, not just corpus size, is implicated in that specific instability. But `bishop_mg` — stable and positive at both full-size depth 6 and all four depth-8 sizes — flipped sign in one of the four size-matched depth-6 subsets (-8.5, vs. +13.0/+10.5/+26.9 for the other three), an instability neither prior comparison surfaced on its own. `knight_mg` stayed positive throughout but with a visibly wider spread at this smaller size than the full-size depth-6 corpora showed.
+
+**Verification:** no shipped code changed; existing test suite unaffected, not re-run for that reason.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-29 (6).
+
+**Next session start point:** the size-vs-depth ambiguity from Session 154 is resolved (both matter, for different terms) but the underlying EG/MG-instability item is not closed — it now reads as "term-and-configuration-specific instability" rather than one root cause. Material and the other term families still haven't been run through this same controlled testing at all. A reasonable next step: decide whether this item has reached the point of diminishing returns for further isolated micro-experiments, versus needing a different kind of investigation (e.g. a much larger corpus across the board, or accepting current-scale corpora as inherently noisy for low-signal terms and focusing effort elsewhere in ROADMAP.md instead).
+
+---
+
+### Session 154 — 2026-09-29 — "Continue": depth-8 repeat of the seed-isolation test — knight_mg/bishop_eg stay stable, but queen_eg now flips across seeds, with corpus size an unmatched confound
+
+Triggered by "Continue", resuming Session 153's own stated next step: repeat the same-depth/different-seed isolation test at depth 8.
+
+**Built:** nothing new — reused the four individual single-seed depth-8 corpora already generated in Sessions 151/152 (seeds 3/4/5/6, ~1650 positions each) rather than regenerating, and ran the same isolated mobility tuning (fitted K per corpus) Session 153 used at depth 6.
+
+**Findings:** `knight_mg` (+8.5/+14.5/+13.6/+14.5) and `bishop_eg` (-26.4/-19.7/-21.0/-29.8) held a consistent sign across all four depth-8 seeds, matching the depth-6 pattern. `queen_eg`, however, flips sign across seeds at depth 8 (+8.6/+8.6/-5.4/-1.1), unlike depth 6's consistently-positive result. This does NOT cleanly confirm a depth-8-specific instability, because the depth-8 seed corpora (~1650 positions) are about 5x smaller than the depth-6 ones compared previously (~8.7-8.8k) — corpus size, not depth, may be the actual driver of this particular flip. That comparison was not size-matched and is flagged as the concrete next step rather than treated as resolved.
+
+**Verification:** no shipped code changed; existing test suite unaffected, not re-run for that reason.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-29 (5).
+
+**Next session start point:** run a size-matched depth-6-vs-depth-8 comparison (e.g. four ~1650-position depth-6 subsets, sampled from the existing large depth-6 corpora, vs. the existing ~1650-position depth-8 corpora) to isolate whether `queen_eg`'s depth-8 instability is really about depth or just about corpus size. Material/other term families' EG-side stability under this same controlled test is still untested and remains open too.
+
+---
+
+### Session 153 — 2026-09-29 — "Continue": EG-instability re-tested with depth held fixed — seed-to-seed variance is actually low; Session 147's swings mostly attributed to comparing across depths; connected_mg flip confirmed genuine
+
+Triggered by "Continue", resuming Session 152's own stated next step: scope the EG-instability investigation properly, and take a quick look at pawns' `connected_mg`.
+
+**Quick look — `connected_mg`:** confirmed as a genuine flip, not a misread convention: `eval/pawns.h`'s compiled-in default `kConnectedPawnBonus = {5, 8}` is positive, so the Session 152 tuned value of -18.0 is a real sign flip on this one isolated pawns term. Not investigated further — flagged for a future session.
+
+**Built:** two throwaway probes (not shipped): a game-phase classifier over `eval::compute_phase()` (found the existing depth-6 corpus's phase distribution: 31.6% MG, 27.6% mid, 28.9% EG, 11.9% deep EG — not obviously endgame-starved), and a phase-fraction filter that passes through only positions at or below a given phase fraction. Used the filter to build three endgame-only (phase fraction <= 0.4) subsets, one per Session 152's three depth-6 seed corpora (~3.5-3.6k positions each, down from ~8.7-8.8k).
+
+**Findings:** Session 147's original EG-instability report compared three corpora that differed in DEPTH (4/4/2), not just seed — a confound this item's own standard requires ruling out before trusting "instability" as the diagnosis. Re-run properly this session: isolated mobility tuning (fitted K) on the three INDIVIDUAL depth-6 seed corpora (same depth, different seeds) gives `bishop_eg` -23.5/-20.6/-19.6 and `queen_eg` +6.9/+5.6/+6.5 — close and consistently signed across all three, not the wild swings previously reported. A second test on the endgame-only-filtered subsets of the same three seeds found `bishop_eg` still consistent (-22.5/-20.5/-20.7) but `queen_eg` flips to consistently negative (-5.3/-4.8/-4.3, still stable across seeds) — so a term's fitted EG value can depend systematically on the corpus's phase mix, not just be noisy.
+
+**Verification:** no shipped code changed; existing test suite unaffected, not re-run for that reason.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-29 (4).
+
+**Next session start point:** the EG-instability item is narrowed but not closed. Remaining: (1) repeat this same same-depth/different-seed isolation test at depth 8 to confirm the pattern holds there too; (2) run the same controlled test on material and the other term families' EG-side values, not just mobility; (3) decide whether/how to account for phase-mix sensitivity in future tuning (a phase-stratified corpus, or reporting results per phase bucket); (4) `connected_mg`'s flip remains uninvestigated and could be picked up as a smaller, separate task if convenient.
+
+---
+
 ### Session 152 — 2026-09-29 — "Continue": mobility sign flip confirmed at scale and FIXED (search_depth 4 -> 6 in selfplay.h); full term re-sweep finds no other flips; EG instability split out as its own open item
 
 Triggered by "Continue", resuming Session 151's own stated next step: confirm the depth-6/8 finding at scale, apply the actual fix, and re-run the full term sweep.

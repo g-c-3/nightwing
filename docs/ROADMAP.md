@@ -1677,6 +1677,13 @@ Priority Fixes section above).
           second look later, out of this item's scope: `connected_mg`
           tuned to -18.0 (pawns), where a positive "connected pawns are
           good" sign might be expected; not investigated this session.
+          Confirmed genuine (Session 153, quick look): the compiled-in
+          default `kConnectedPawnBonus = {5, 8}` (eval/pawns.h) is
+          positive, so -18.0 is a real sign flip on this isolated term,
+          not a misreading of the convention. Root cause not
+          investigated -- flagged for a future isolated-pawns-term
+          session, out of scope for both the sign-flip item and the
+          EG-instability item above.
           MG-side sign flip is considered FIXED (root cause: depth-4
           self-play corpus, direction (b); fix: search_depth 4 -> 6 in
           selfplay.h). EG instability (bishop_eg/queen_eg etc., still
@@ -1690,19 +1697,95 @@ Priority Fixes section above).
           change): several endgame-phase term values (`bishop_eg`,
           `queen_eg` and others across mobility and other term
           families) swing in both sign and magnitude across independent
-          corpora/seeds even at the corrected depth-6 self-play depth,
-          unlike the now-stable MG-side values. First observed Session
-          147 (three depth-4 corpora: `queen_eg` +45/-77/-40); still
-          present in Sessions 150-152's depth-6/8 runs. Root cause not
-          yet investigated: candidates include insufficient endgame-
-          phase position coverage in self-play games (games may not
-          reach enough true endgames before hitting `max_plies` or
-          ending earlier), a genuine identifiability problem (too few
-          distinct endgame configurations to pin down 8 separate EG
-          parameters from result labels alone), or something else
-          entirely. Needs real scoping (a specific, falsifiable
-          hypothesis and how to test it) before another experiment, the
-          same standard the sign-flip item held itself to.
+          corpora/seeds. First observed Session 147 (three corpora:
+          depth-4/depth-4/depth-2, `queen_eg` +45/-77/-40).
+          SEVENTH FINDING (Session 153, "Continue"): Session 147's own
+          three corpora differed in DEPTH (4/4/2), not just seed, so
+          that finding conflated a depth effect (already known to
+          matter, per the MG-side fix) with genuine seed-to-seed
+          variance -- a confound this item's own standard (a specific,
+          falsifiable hypothesis) requires ruling out. Re-tested properly
+          this session: isolated mobility tuning (fitted K) on the three
+          INDIVIDUAL depth-6 seed corpora from Session 152 (seeds 2/5/6,
+          ~8.7-8.8k positions each, same generation parameters otherwise)
+          gives `bishop_eg` -23.5/-20.6/-19.6 and `queen_eg`
+          +6.9/+5.6/+6.5 -- consistent sign AND close magnitude across
+          all three, not the wild swings Session 147 reported. At fixed
+          depth, seed-to-seed EG variance is LOW; most of Session 147's
+          instability is now attributed to comparing across depths
+          instead. A second test (phase-filtering each seed corpus down
+          to endgame-only positions, phase fraction <= 0.4, via
+          `eval::compute_phase()`, ~3.5-3.6k positions per seed) found
+          `bishop_eg` stays consistent (-22.5/-20.5/-20.7) but `queen_eg`
+          FLIPS to consistently negative (-5.3/-4.8/-4.3, still stable
+          across seeds) -- so a term's fitted EG value can depend
+          systematically on the corpus's phase MIX (full spectrum vs.
+          endgame-only), not just be noisy; expected in principle (a
+          different phase mix reweights the tapered loss differently)
+          but not previously measured directly. Root cause narrowed:
+          the "instability" label itself may have overstated a genuine
+          identifiability problem; what's confirmed is (a) depth matters
+          for EG terms too, same as MG, and (b) phase-mix sensitivity is
+          real and should be accounted for (e.g. a stratified/
+          phase-balanced corpus, or reporting EG-term results per phase
+          mix rather than a single number) in any future EG-term tuning
+          work. Not yet done: material/other term families' EG-side
+          stability under the same controlled (same-depth,
+          different-seed) test this item's own standard now requires.
+          See docs/DECISIONS.md, 2026-09-29 (4).
+          EIGHTH FINDING (Session 154, "Continue"): the depth-8 repeat
+          of this same seed-isolation test was run (four individual
+          single-seed depth-8 corpora, Sessions 151/152's own seeds
+          3/4/5/6, ~1650 positions each -- notably smaller than depth
+          6's ~8.7-8.8k-position seed corpora, an unmatched variable
+          flagged below). `knight_mg` (+8.5/+14.5/+13.6/+14.5) and
+          `bishop_eg` (-26.4/-19.7/-21.0/-29.8) stayed consistently
+          signed across all four seeds, same pattern as depth 6.
+          `bishop_mg` also stayed positive but with wider relative
+          spread (+19.7 to +34.6) than depth 6 showed. `queen_eg`,
+          however, FLIPS sign across seeds at depth 8 (+8.6/+8.6/-5.4/
+          -1.1) -- genuine seed-to-seed instability, unlike depth 6's
+          consistently-positive +6.9/+5.6/+6.5. Because the depth-8
+          seed corpora (~1650 positions) are roughly 5x SMALLER than
+          the depth-6 ones (~8.7-8.8k) compared in the Seventh Finding,
+          corpus SIZE is now a live, unmatched confound alongside depth
+          itself -- this result does not yet distinguish "queen_eg is
+          less identifiable at depth 8 specifically" from "queen_eg is
+          less identifiable on ~1650-position corpora generally,
+          regardless of depth." Next concrete step: a depth-8 vs.
+          depth-6 comparison at MATCHED corpus size (e.g. four ~1650-
+          position depth-6 subsets, or four ~8.7k-position depth-8
+          corpora if runtime allows) to isolate depth from size before
+          drawing a depth-specific conclusion. See docs/DECISIONS.md,
+          2026-09-29 (5).
+          NINTH FINDING (Session 155, "Continue"): the size-matched
+          comparison was run -- four depth-6 seed corpora subsampled
+          (uniform random, no replacement) down to exactly 1650
+          positions each (one new small seed-7 batch generated to reach
+          four depth-6 points, matching the four existing depth-8
+          seeds), then isolated mobility tuning (fitted K) on each.
+          Result is genuinely mixed, not a clean "it's depth" or "it's
+          size" verdict: `queen_eg` stayed consistently POSITIVE across
+          all four size-matched depth-6 subsets (+9.7/+11.4/+4.3/+23.4)
+          -- unlike depth 8's mixed-sign result at the SAME corpus size
+          -- so `queen_eg`'s depth-8 instability is NOT explained by
+          size alone; depth 8 itself is implicated. At the same time,
+          `bishop_mg` -- consistently positive at BOTH full-size depth 6
+          (Finding Seven) and all four depth-8 sizes (Finding Eight) --
+          flips sign in one of the four size-matched depth-6 subsets
+          (+13.0/+10.5/-8.5/+26.9), something neither the full-size
+          depth-6 nor the depth-8 comparison showed on its own. `knight_
+          mg` stayed positive throughout but with visibly wider spread
+          at this smaller size (+11.7 to +35.8) than the full-size
+          depth-6 corpora showed (+9.5 to +12.6). Reading: BOTH corpus
+          size and search depth independently affect which EG/MG terms
+          become unstable, and which term is affected depends on the
+          specific combination -- there is no single scalar "more data
+          fixes everything" or "deeper search fixes everything" story
+          here. This closes the immediate size-vs-depth ambiguity
+          Finding Eight raised (both matter, for different terms) but
+          does not fully resolve the EG/MG-instability item itself,
+          which stays open. See docs/DECISIONS.md, 2026-09-29 (6).
 
 ## Priority Fixes (external code review, 2026-09-17)
 
