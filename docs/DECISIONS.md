@@ -4,6 +4,20 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-09-29 (8) — `release` job's first real run failed on `gh` repo resolution; fixed with an explicit `GH_REPO`, not a checkout step
+
+**Decision:** `.github/workflows/ci.yml`'s `release` job gets `env: GH_REPO: ${{ github.repository }}` at job level, rather than adding an `actions/checkout` step to give `gh` a `.git` directory to infer the repo from.
+
+**Rationale:** the job's first real run (Session 156's commit) failed both `gh` calls with "fatal: not a git repository," because `gh` only falls back to git-remote inference when no explicit repo target is given, and this job has no checkout. Setting `GH_REPO` addresses the actual resolution path `gh` uses, rather than adding a checkout step purely as a side effect to satisfy a fallback the job doesn't otherwise need — the job never touches repo source (it downloads binaries and calls `gh`), so a checkout would be unused weight added only to work around this failure indirectly.
+
+**Scope:** every other part of the first real run (all 6 `build-and-test` legs, the 3 Release-only artifact uploads) succeeded with no changes needed. This fix has not yet been verified by a real run of its own — that happens on the next push to `main` that includes it.
+
+**Alternatives considered:**
+- Adding `actions/checkout@v7` to the `release` job — rejected: works (gives `gh` a `.git` dir to infer from) but does unrelated work (clones repo source) this job has no other use for, just to satisfy a fallback path that `GH_REPO` addresses directly.
+- Passing `-R ${{ github.repository }}` on each individual `gh` call instead of a job-level `env` — rejected: functionally equivalent but repeats the same value on both `gh` steps instead of stating it once.
+
+---
+
 ### 2026-09-29 (7) — Paused the EG-instability investigation after 5 sessions of diminishing returns; picked up ci.yml's release job instead; gh CLI over a third-party release action
 
 **Decision:** The EG-term identifiability/instability investigation (Sessions 151-155) is paused, not closed — the ROADMAP item stays open and undecided, but no further isolated micro-experiments will be run on it without a deliberate reason to resume. Session 156 instead picked up `ci.yml`'s rolling `latest` release job, the next concrete and fully unblocked item in ROADMAP.md's Release & Packaging Infrastructure section.

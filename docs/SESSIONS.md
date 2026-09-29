@@ -4,6 +4,26 @@ Newest entry at top.
 
 ---
 
+### Session 157 — 2026-09-29 — CI logs uploaded from the first real run of ci.yml's `release` job: 6/6 build-and-test legs and artifact uploads green, `release` itself failed on `gh` resolving the repo without a checkout; fixed with `GH_REPO`
+
+Triggered by an uploaded CI log archive (a GitHub Actions run's downloaded logs, no accompanying message) for the push that carried Session 156's `ci.yml` changes.
+
+**Investigated:** all 6 `build-and-test` matrix legs (Linux/macOS/Windows x Release/Debug) and the 3 Release-only artifact-upload steps completed with no errors. The new `release` job's `Delete previous "latest" release (if any)` and `Publish "latest" release` steps both failed identically: `failed to run git: fatal: not a git repository (or any of the parent directories): .git`.
+
+**Cause:** `gh` resolves which repository to operate on from an explicit `GH_REPO` environment variable or `-R` flag first, falling back to inferring it from the current directory's git remote only when neither is set. The `release` job never runs `actions/checkout` (deliberately — it only touches downloaded build artifacts, never repo source), so there is no `.git` directory for that fallback to find.
+
+**Fix:** `.github/workflows/ci.yml`: `env: GH_REPO: ${{ github.repository }}` added at the `release` job level, covering both `gh release delete` and `gh release create` without adding an unnecessary checkout step.
+
+**Why correct:** supplying `GH_REPO` directly satisfies `gh`'s own first-priority resolution path, sidestepping the git-remote fallback entirely rather than working around its absence.
+
+**Verification:** YAML re-validated with `yaml.safe_load`; the job's `env` and step list checked programmatically. The fix itself has not yet been exercised by a real CI run — that only happens on the next push to `main` that includes it, which is this item's explicit next check.
+
+**Decisions made:** none beyond the fix itself; no alternatives were seriously considered (the failure mode and correct fix were unambiguous from the error message).
+
+**Next session start point:** after this fix is committed and pushed, confirm from the resulting Actions run that `release` now succeeds and that a `latest` release appears on the repo's Releases page with all 3 binaries and correct notes. If that holds, the release-job ROADMAP item is fully verified end-to-end and either the EG-instability item or the WASM packaging items are the next candidates.
+
+---
+
 ### Session 156 — 2026-09-29 — "Continue with whatever feels correct": paused the EG-instability investigation (5 sessions deep, diminishing returns), moved to `ci.yml`'s release job instead
 
 Triggered by "Continue with whatever feels correct" after Session 155 explicitly flagged the choice between another micro-experiment and other ROADMAP work. Chose to pause the EG-instability investigation (documented as such, not abandoned) and pick up the next concrete, unblocked ROADMAP item: `ci.yml`'s rolling `latest` GitHub Release job.
