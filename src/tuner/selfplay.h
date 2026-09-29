@@ -154,14 +154,28 @@ struct SelfPlayConfig {
     /// tests/bench_tests.cpp's own header comment already gives for
     /// using search_fixed_depth() over a time-limited search in a
     /// context where reproducibility matters more than search strength
-    /// per move. Default (4) is intentionally shallow — CPW's own
-    /// Texel's Tuning Method discussion notes fast/shallow self-play is
-    /// standard practice for tuning-corpus generation (position
-    /// diversity and corpus SIZE matter more than any one game's
-    /// individual move quality, unlike a real competitive game), and a
-    /// shallow depth keeps a large self-play run's overall runtime
-    /// practical.
-    int search_depth = 4;
+    /// per move. CPW's own Texel's Tuning Method discussion notes fast/
+    /// shallow self-play is standard practice for tuning-corpus
+    /// generation (position diversity and corpus SIZE matter more than
+    /// any one game's individual move quality, unlike a real
+    /// competitive game), which is why this stays a fixed shallow depth
+    /// rather than a real time-limited search, and why it is not raised
+    /// all the way to a competitive-strength depth.
+    ///
+    /// Default was 4 through Sessions 144-150; raised to 6 in Session
+    /// 152 (docs/DECISIONS.md, 2026-09-29 (3)) after Session 151 traced
+    /// the mobility term's MG-side sign flip (docs/ROADMAP.md, the
+    /// Tier 0 sign-flip item) to depth-4 self-play specifically:
+    /// `knight_mg`/`bishop_mg` tuned negative (the wrong sign) on every
+    /// depth-4 corpus tried across seven sessions, but positive (the
+    /// expected sign) on independent depth-6 AND depth-8 corpora, at
+    /// both a small and a ~3x-larger scale for depth 6. Depth 6 was
+    /// chosen over depth 8 as the new default because it reproduced the
+    /// same corrected sign at roughly 8x less self-play wall-clock time
+    /// per game in this investigation's own measurements — depth 8 is
+    /// not ruled out as an even better corpus, just not the more
+    /// practical default for routine large-corpus generation.
+    int search_depth = 6;
 
     /// Number of plies at the start of each game played as a uniformly
     /// random legal move rather than search_fixed_depth()'s choice —
