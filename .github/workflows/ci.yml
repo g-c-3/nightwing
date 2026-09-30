@@ -606,6 +606,70 @@ jobs:
           retention-days: 30
 
   # ROADMAP.md's "Release & Packaging Infrastructure" section (added
+  # 2026-08-15), Emscripten toolchain integration item. Builds the
+  # `nightwing` UCI engine (only -- see NIGHTWING_BUILD_WASM's own doc
+  # comment, root CMakeLists.txt, for why the other 5 tools are excluded)
+  # as WebAssembly, using the official emsdk via mymindstorm/setup-emsdk
+  # -- NOT the ad hoc, dependency-conflict-forced, years-old apt package
+  # this item's own local development and testing had to fall back to in
+  # a sandbox without access to the official emsdk's own download servers
+  # (docs/SESSIONS.md, Session 158). That gap matters concretely: local
+  # testing surfaced a real cross-compile bug (BMI2/PEXT code compiling
+  # in under Emscripten, now fixed in src/CMakeLists.txt) and a real
+  # Node/fetch incompatibility (now fixed via -sWASM_ASYNC_COMPILATION=0),
+  # both already folded into the CMake config below -- but it ALSO hit a
+  # third, unresolved symptom (the compiled binary running but executing
+  # no UCI logic at all) that could not be conclusively root-caused
+  # within that session's budget, and might be specific to that one
+  # broken local toolchain rather than a real defect here. The smoke-test
+  # step below exists specifically to catch that exact failure mode (or
+  # confirm its absence) against the real, properly-obtained toolchain a
+  # CI runner gets -- this job's own output is the actual verification
+  # that toolchain-integration item needed and didn't have.
+  wasm-build:
+    name: WebAssembly build (Emscripten)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+
+      - name: Configure CMake (wasm)
+        run: emcmake cmake -B build-wasm -DNIGHTWING_BUILD_WASM=ON -DNIGHTWING_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release .
+
+      - name: Build
+        run: cmake --build build-wasm -j$(nproc)
+
+      # This is the check that actually matters for this item: a build
+      # that merely "succeeds" (exit code 0, files produced) is not
+      # evidence the binary DOES anything -- Session 158's own local
+      # testing produced exactly such a silently-inert binary. Piping a
+      # real short UCI session through Node and requiring both "uciok"
+      # and a "bestmove" line in the output is the minimum check that
+      # would have caught that failure immediately instead of shipping
+      # on trust.
+      - name: Smoke-test the UCI loop under Node
+        working-directory: build-wasm/src
+        run: |
+          printf 'uci\nisready\nposition startpos\ngo depth 5\nquit\n' > /tmp/uci_smoke.txt
+          OUTPUT="$(timeout 30 node nightwing.js < /tmp/uci_smoke.txt)"
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -q "uciok" || { echo "::error::wasm build produced no 'uciok' -- the UCI loop did not run"; exit 1; }
+          echo "$OUTPUT" | grep -q "^bestmove " || { echo "::error::wasm build produced no 'bestmove' -- search did not run"; exit 1; }
+
+      - name: Upload wasm artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightwing-wasm
+          path: |
+            build-wasm/src/nightwing.js
+            build-wasm/src/nightwing.wasm
+          if-no-files-found: error
+
+  # ROADMAP.md's "Release & Packaging Infrastructure" section (added
   # 2026-08-15): a rolling `latest` GitHub Release, re-published on every
   # green push to `main`, carrying the 3 Release-config native binaries as
   # assets. Gated with `needs: build-and-test` -- a job-level `needs:` on a
