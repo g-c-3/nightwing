@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 158 — 2026-09-29 — "Continue": Emscripten/WASM toolchain integration built and locally tested; 2 real cross-compile bugs found and fixed; 1 unresolved symptom flagged with a CI smoke test as the real verification
+
+Triggered by "Continue", picking up the WASM packaging item from ROADMAP.md's "Release & Packaging Infrastructure" section, chosen as the next reasonable candidate after the previous session's release-job fix was confirmed working.
+
+**Built:** `NIGHTWING_BUILD_WASM` CMake option (root CMakeLists.txt) with a fast-fail guard requiring `emcmake`; `src/CMakeLists.txt` builds only the `nightwing` UCI engine target under this option (the 5 auxiliary tools are excluded, matching this item's own scope) and applies `-sENVIRONMENT=node -sEXIT_RUNTIME=1 -sALLOW_MEMORY_GROWTH=1 -sWASM_ASYNC_COMPILATION=0`. `.github/workflows/ci.yml`: new `wasm-build` job using the official emsdk via `mymindstorm/setup-emsdk`, with a smoke-test step that pipes a short UCI session through Node and requires both `uciok` and a `bestmove` line in the output before uploading artifacts.
+
+**What made this session unusual:** the sandbox had no network access to the official emsdk's own servers, so `apt`'s Emscripten package (3.1.6, from 2024) was force-installed past a real dependency conflict with the system's newer Node.js, to get SOME local Emscripten toolchain to actually test against rather than shipping blind CMake/CI changes. That local testing caught two real, general bugs early: (1) `NIGHTWING_ENABLE_BMI2`'s `CMAKE_SYSTEM_PROCESSOR` guard (src/CMakeLists.txt) matched under this Emscripten toolchain too, because it reports `CMAKE_SYSTEM_PROCESSOR` as `"x86"` rather than `"wasm32"` — fixed with an explicit `CMAKE_SYSTEM_NAME STREQUAL "Emscripten"` exclusion. (2) This Emscripten version's `instantiateAsync()` checks for a global `fetch` function without checking the environment first, breaking under Node 18+'s built-in `fetch` — fixed with `-sWASM_ASYNC_COMPILATION=0`.
+
+**What was NOT resolved:** a third symptom — the compiled binary ran cleanly (exit 0) but executed no UCI logic at all, traced (via bisection against a working single-invocation `em++` build, `llvm-nm` symbol inspection, and a `-save-temps` reproduction) to CMake's ordinary separate-compile-then-link of `main.cpp` producing an object defining `__main_argc_argv` rather than a linkable `main` entry point, something a single combined em++ invocation did not exhibit. Root cause not found within the session's budget. Given how this session's whole toolchain was itself a forced, non-standard, years-old substitute for the real thing, this was judged more likely to be an artifact of that specific broken local install than a defect in the CMake setup itself — but that judgment is exactly the kind of thing that needs checking against the real toolchain, not assumed. Rather than ship the CMake/CI changes on trust, `wasm-build`'s smoke-test step was added specifically to catch this exact failure mode (or confirm its absence) the first time real CI, with the official emsdk, runs it.
+
+**Verification:** the native (non-wasm) build was re-verified unaffected by the CMake edits (clean Release build, same as before). The wasm build itself was extensively tested locally as described above, with the known caveat that the local toolchain was non-standard. The `ci.yml` YAML was validated with `yaml.safe_load` and the new job's step list checked programmatically. Not yet done: an actual CI run.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-29 (10).
+
+**Next session start point:** after this is committed and pushed, check the `wasm-build` job's actual CI result — specifically whether the smoke-test step passes. If it fails with the same "no uciok/bestmove" symptom found locally, that confirms the bug is real and general, not an artifact of Session 158's local toolchain, and needs the root-cause investigation this session couldn't complete (candidates to try first: an explicit `-sEXPORTED_FUNCTIONS`/`-sINVOKE_RUN` flag, or restructuring the wasm link step as a custom CMake command that invokes em++ combining source and library directly rather than CMake's normal two-phase compile-then-link). If it passes, this item is fully closed and the next WASM-section checklist item ("WASM JS surface: full UCI loop over stdin/stdout") or the EG-instability item are the next candidates.
+
+---
+
 ### Session 157 — 2026-09-29 — CI logs uploaded from the first real run of ci.yml's `release` job: 6/6 build-and-test legs and artifact uploads green, `release` itself failed on `gh` resolving the repo without a checkout; fixed with `GH_REPO`
 
 Triggered by an uploaded CI log archive (a GitHub Actions run's downloaded logs, no accompanying message) for the push that carried Session 156's `ci.yml` changes.

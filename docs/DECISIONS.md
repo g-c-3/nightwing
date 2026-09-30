@@ -4,6 +4,23 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-09-29 (9) — Emscripten/WASM toolchain integration: two real cross-compile bugs fixed via local testing against a forced substitute toolchain; a third, unresolved symptom addressed with a CI smoke test rather than a local fix
+
+**Decision:** `NIGHTWING_BUILD_WASM` (CMakeLists.txt/src/CMakeLists.txt) and `.github/workflows/ci.yml`'s new `wasm-build` job are added, building only the `nightwing` UCI engine as WebAssembly via the official emsdk. Two bugs this work surfaced are fixed directly in the CMake config. A third, unresolved symptom is not locally fixed; instead, `wasm-build`'s smoke-test step (require `uciok` and a `bestmove` line from a real UCI session piped through Node) is the mechanism that will catch it for real, against the real toolchain, rather than a local guess being trusted.
+
+**Rationale:** this session's sandbox had no network access to the official emsdk's servers, so `apt`'s Emscripten package (3.1.6, from 2024) was force-installed past a real dependency conflict with the system's Node.js, specifically so the CMake/CI changes could be tested against SOMETHING before being shipped blind — following the same precedent Session 157 set (the `release` job's `GH_REPO` bug was only found because a real run was checked, not assumed working from YAML validation alone). That local testing paid off twice: `NIGHTWING_ENABLE_BMI2`'s `CMAKE_SYSTEM_PROCESSOR` guard matched under this Emscripten toolchain (it reports `"x86"`, not `"wasm32"`), and this Emscripten version's `instantiateAsync()` breaks under Node 18+'s built-in `fetch`. Both are real, general problems with an obvious, low-risk fix, so both are fixed directly.
+
+**Why the third symptom was NOT fixed the same way:** the compiled binary ran with no error but executed no UCI logic, traced to CMake's ordinary separate-compile-then-link of `main.cpp` (unavoidable under CMake/Ninja/Make) producing an object defining `__main_argc_argv` rather than a callable `main`, while a single combined em++ invocation did not have this problem. Root cause not found within budget. Because this session's ENTIRE toolchain was itself a forced, non-standard, years-old substitute for what real CI will actually use, applying a fix based on trial-and-error against that one broken install risked fixing a problem specific to this sandbox while leaving the real toolchain's actual behavior (which could differ or not have the bug at all) unverified. A smoke test that fails loudly on the real toolchain if the problem is real, structured the same way the `release` job's own first real run caught the `GH_REPO` bug, was judged more honest than either (a) shipping a local-only guess as if it were a verified fix, or (b) shipping the wasm build with no functional verification at all.
+
+**Scope of what this does NOT yet establish:** whether the third symptom is real on the official emsdk toolchain. That's exactly what the next CI run of `wasm-build` will show.
+
+**Alternatives considered:**
+- Applying a speculative fix for the third symptom (e.g. an explicit `-sEXPORTED_FUNCTIONS`/`-sINVOKE_RUN` flag, guessed rather than verified to address the actual mechanism) and shipping it without being able to confirm it worked — rejected: an unverified guess dressed up as a fix is worse than an honestly-flagged open risk with a real safety net.
+- Restructuring the wasm link step as a custom CMake command invoking em++ directly on source+library (matching what worked locally) instead of CMake's normal two-phase compile/link — deferred, not rejected: a bigger, more invasive change than this item's scope justified before even knowing whether the real toolchain has the problem at all.
+- Skipping local testing entirely given the sandbox's network limitations, and just writing "plausible" CMake/CI based on general Emscripten knowledge — rejected: this is exactly the "ship blind, let CI find it" pattern Session 157 already showed produces real, avoidable bugs; local testing against SOME toolchain, even an imperfect one, caught two genuine issues before they reached CI.
+
+---
+
 ### 2026-09-29 (8) — `release` job's first real run failed on `gh` repo resolution; fixed with an explicit `GH_REPO`, not a checkout step
 
 **Decision:** `.github/workflows/ci.yml`'s `release` job gets `env: GH_REPO: ${{ github.repository }}` at job level, rather than adding an `actions/checkout` step to give `gh` a `.git` directory to infer the repo from.
