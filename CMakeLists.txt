@@ -15,6 +15,46 @@ option(NIGHTWING_ENABLE_LTO "Enable link-time optimization in Release builds" ON
 option(NIGHTWING_ENABLE_BMI2 "Compile with BMI2/POPCNT instructions enabled (fast path). Disable for a portable fallback build." ON)
 option(NIGHTWING_BUILD_TESTS "Build the Catch2 test suite" ON)
 
+# --- WebAssembly build (ROADMAP.md "Release & Packaging Infrastructure",
+#     added 2026-08-15) ---
+#
+# ON builds ONLY the `nightwing` UCI engine executable (as `nightwing.wasm`
+# + `nightwing.js`) -- src/CMakeLists.txt skips nightwing_bench/
+# nightwing_selfplay/nightwing_tune/nightwing_match/nightwing_sprt entirely
+# under this option, and tests/ is skipped too (see NIGHTWING_BUILD_TESTS's
+# own interaction below). None of those tools are release-asset candidates
+# for the wasm target (this ROADMAP item's own text: "producing
+# nightwing.wasm + nightwing.js glue" -- singular, the engine binary only),
+# and Catch2's test runner is not something this project has verified runs
+# meaningfully under a wasm/Node target at all.
+#
+# This option alone does NOT select the Emscripten toolchain -- that's
+# `emcmake`'s job (it sets CMAKE_TOOLCHAIN_FILE to Emscripten's own
+# Emscripten.cmake, which in turn sets CMAKE_SYSTEM_NAME to "Emscripten").
+# The FATAL_ERROR guard just below exists so turning this ON without also
+# invoking `emcmake` fails fast with a clear message, rather than silently
+# attempting (and likely half-succeeding, in some confusing way) to apply
+# wasm-only target properties under a native host compiler.
+option(NIGHTWING_BUILD_WASM "Build the nightwing UCI engine (only) as WebAssembly via Emscripten. Must be configured with emcmake, e.g.: emcmake cmake -B build-wasm -DNIGHTWING_BUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release .." OFF)
+if(NIGHTWING_BUILD_WASM AND NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+    message(FATAL_ERROR "Nightwing: NIGHTWING_BUILD_WASM requires the Emscripten toolchain -- configure with 'emcmake cmake ...', not a plain 'cmake ...' invocation with this option bolted on.")
+endif()
+if(NIGHTWING_BUILD_WASM)
+    # Debug (target attribute is $<CONFIG:Debug> in per-file overrides
+    # below) is untested under Emscripten's own sanitizer support and not
+    # a real release-asset scenario either way -- this project's wasm
+    # target is meant to ship one Release build, not a full 6-leg
+    # native-style Debug+Release matrix. NIGHTWING_BUILD_TESTS is left as
+    # whatever the caller passed rather than force-disabled here, but
+    # tests/CMakeLists.txt's own Catch2 FetchContent step is expected to
+    # be slow-to-unverified under Emscripten; the CI job added for this
+    # (.github/workflows/ci.yml, wasm-build) explicitly passes
+    # -DNIGHTWING_BUILD_TESTS=OFF rather than relying on a default here.
+    if(NOT CMAKE_BUILD_TYPE)
+        set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+    endif()
+endif()
+
 # --- Profile-Guided Optimization (PGO), ROADMAP.md Phase 8's "PGO build
 #     pipeline" item ---
 #
