@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 161 — 2026-09-30 — "Continue": WASM JS surface item closed (already true by construction); UCI protocol smoke test expanded to 7 real checks; 3 new local symptoms found, none yet confirmed — same "let real CI decide" discipline as Session 158
+
+Triggered by "Continue", picking the WASM JS surface checklist item as a quick check first (per Session 160's own suggestion), then moving to the more substantial "verify against UCI test suite" item.
+
+**WASM JS surface — closed, no changes needed:** the item asks for a UCI loop over stdin/stdout with no bespoke JS API, which Session 158's implementation already is by construction (`main.cpp`'s own unmodified `std::cin`/`std::cout` loop, no exported JS functions). Marked done.
+
+**UCI protocol verification — expanded, not yet fully closed:** `wasm-build`'s single canned smoke-test scenario was replaced with 7 independent checks, each drawn from a specific `tests/uci_tests.cpp` case name: uci handshake, isready, position+moves+go, a real checkmate FEN returning `bestmove 0000`, `MultiPV`'s N distinct `multipv` lines, Hash clamping on an absurd value, and malformed-input resilience — a genuine partial cross-check against native behavior, not a full Catch2 port.
+
+**What local testing found:** running the new checks against the same known-unreliable forced Emscripten substitute from Session 158 (not the real official emsdk) surfaced three new symptoms: the checkmate check aborted instead of returning `bestmove 0000` (native handles this FEN correctly); the Hash-clamp check crashed with "memory access out of bounds"; and no `info` lines appeared in any local run at all, including otherwise-passing ones. None of these are treated as confirmed real bugs — Session 158 already established this exact local toolchain produces misleading results (the "main() never executes" symptom that real CI proved was toolchain-specific, not a real defect). Rather than spend further budget trying to diagnose symptoms in an already-proven-unreliable environment, all three checks were shipped to CI as-is, so the real toolchain gives the real answer.
+
+**Verification:** the expanded check script's syntax and logic were tested locally (working against a known-good local wasm build for the first 4 checks, which passed; the FEN used for the checkmate check was independently verified correct — a textbook Fool's Mate position — and confirmed to produce `bestmove 0000` correctly on the NATIVE build). The YAML was validated with `yaml.safe_load` and the job's step list checked programmatically.
+
+**Decisions made:** none beyond what's recorded in this entry and the ROADMAP item itself — no fix was applied to anything, since nothing was confirmed as a real bug to fix.
+
+**Next session start point:** check the next real CI run's `wasm-build` result. If all 7 checks pass, this item is fully closed. If any fail with the same symptoms found locally, that's real signal (unlike Session 158's false alarm) and becomes the priority to actually root-cause — starting with the missing `info` lines, since that would affect every wasm UCI session, not just edge cases.
+
+---
+
 ### Session 160 — 2026-09-30 — User screenshots confirm both open CI questions: versioned releases publish correctly, and the wasm smoke test passes on real CI
 
 Triggered by two screenshots: the repo's Releases page showing `Nightwing v0.1.0-630` published with all 5 expected assets alongside the still-working `latest` release, and an Actions run page showing a `nightwing-wasm` artifact (125 KB) in that run's Artifacts list.
