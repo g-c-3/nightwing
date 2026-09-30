@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 159 — 2026-09-30 — User request (screenshot of the working "latest" release): added a second, distinct, immutable versioned release alongside the rolling "latest" one
+
+Triggered by a screenshot showing the "latest" release working correctly on GitHub (5 assets: the 3 binaries plus GitHub's own automatic source-code zip/tar.gz), with a request for an additional, proper versioned release to be published automatically every time, alongside the existing rolling one.
+
+**Built:** `.github/workflows/ci.yml`'s `release` job extended with: a sparse `actions/checkout` of just `CMakeLists.txt` (the job otherwise never touches repo source), a step parsing `project(nightwing VERSION X.Y.Z ...)` out of it via `grep -oP`, and a new `gh release create` call tagging the result `v<VERSION>-<github.run_number>` (e.g. `v0.1.0-42`) — distinct from and never overwriting `latest`, since `run_number` is unique and strictly increasing per workflow run, so no delete-first step is needed the way `latest`'s own republish requires.
+
+**Design notes:** reused `CMakeLists.txt`'s existing `project(... VERSION ...)` as the version source of truth (it already feeds the UCI `id name` string via `src/version.h.in`) rather than inventing a second, disconnected version scheme — bumping that VERSION and this release tag stay in sync automatically. `run_number` (not a date or the commit SHA) was chosen as the disambiguator because a plain, small, monotonically-increasing integer reads naturally appended to a semantic version (`v0.1.0-42`) the way a date or a full SHA wouldn't as cleanly, and it's already a built-in GitHub Actions value needing no extra computation.
+
+**Verification:** the version-extraction regex was tested directly against the real `CMakeLists.txt` locally and correctly parsed `0.1.0`. The job's step list was checked programmatically after the YAML edit. Not yet verified against a real CI run — that happens on the next push to `main`.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-09-30 (1).
+
+**Next session start point:** confirm on the next CI run that both releases publish correctly — `latest` still republishing/overwriting as before, and a new `v0.1.0-<N>` release appearing distinctly and persisting (not deleted) across multiple runs.
+
+---
+
 ### Session 158 — 2026-09-29 — "Continue": Emscripten/WASM toolchain integration built and locally tested; 2 real cross-compile bugs found and fixed; 1 unresolved symptom flagged with a CI smoke test as the real verification
 
 Triggered by "Continue", picking up the WASM packaging item from ROADMAP.md's "Release & Packaging Infrastructure" section, chosen as the next reasonable candidate after the previous session's release-job fix was confirmed working.

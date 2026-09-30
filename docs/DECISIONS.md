@@ -4,6 +4,21 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-09-30 (1) — A second, immutable, uniquely-tagged release is published alongside the rolling "latest" one, reusing CMakeLists.txt's own VERSION as its base
+
+**Decision:** `.github/workflows/ci.yml`'s `release` job now publishes two releases per qualifying run: the existing rolling `latest` (unchanged, still deleted and recreated each time) and a new, distinct release tagged `v<CMakeLists.txt VERSION>-<github.run_number>`, never deleted or overwritten.
+
+**Rationale:** a rolling release alone has no way to reference or download a specific past build once a newer one replaces it. A second, immutable release solves that without touching `latest`'s own behavior. `CMakeLists.txt`'s existing `project(nightwing VERSION X.Y.Z ...)` was reused as the tag's version component rather than introducing an unrelated versioning scheme, since it already feeds the UCI `id name` string — the release tag and the engine's own self-reported version stay consistent automatically. Because nothing in this workflow has a basis for deciding a semantic major/minor/patch bump (that's an intentional human decision), `github.run_number` — unique, monotonically increasing, already provided by GitHub Actions with no extra computation — disambiguates same-VERSION runs.
+
+**Scope of what this does NOT yet establish:** whether the sparse checkout, the regex extraction, and the new `gh release create` call work correctly on a real CI run — validated locally (regex tested against the real file, job structure checked programmatically) but not yet executed for real, consistent with this session's and Sessions 157-158's standing practice of treating local/YAML validation as necessary but not sufficient.
+
+**Alternatives considered:**
+- Using the commit SHA or a UTC date/time as the disambiguator instead of `run_number` — rejected: both are already present in the release notes text; `run_number` reads more naturally appended directly to a semantic version tag (`v0.1.0-42` vs. `v0.1.0-a1b2c3d` or `v0.1.0-20260930`), and is simpler to compute.
+- Auto-incrementing `CMakeLists.txt`'s own VERSION on every push (true automatic semantic versioning) — rejected: deciding whether a given change is a patch, minor, or major bump requires human judgment about the change's actual content, not something this workflow can infer safely; an auto-bumped version number would be meaningless at best and misleading at worst.
+- A separate job instead of extending the existing `release` job — rejected: would need to re-download the same 3 artifacts a second time for no benefit; extending the existing job's steps is simpler and keeps both releases' publication visibly grouped together.
+
+---
+
 ### 2026-09-29 (9) — Emscripten/WASM toolchain integration: two real cross-compile bugs fixed via local testing against a forced substitute toolchain; a third, unresolved symptom addressed with a CI smoke test rather than a local fix
 
 **Decision:** `NIGHTWING_BUILD_WASM` (CMakeLists.txt/src/CMakeLists.txt) and `.github/workflows/ci.yml`'s new `wasm-build` job are added, building only the `nightwing` UCI engine as WebAssembly via the official emsdk. Two bugs this work surfaced are fixed directly in the CMake config. A third, unresolved symptom is not locally fixed; instead, `wasm-build`'s smoke-test step (require `uciok` and a `bestmove` line from a real UCI session piped through Node) is the mechanism that will catch it for real, against the real toolchain, rather than a local guess being trusted.
