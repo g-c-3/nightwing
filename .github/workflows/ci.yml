@@ -646,19 +646,78 @@ jobs:
       # This is the check that actually matters for this item: a build
       # that merely "succeeds" (exit code 0, files produced) is not
       # evidence the binary DOES anything -- Session 158's own local
-      # testing produced exactly such a silently-inert binary. Piping a
-      # real short UCI session through Node and requiring both "uciok"
-      # and a "bestmove" line in the output is the minimum check that
-      # would have caught that failure immediately instead of shipping
-      # on trust.
-      - name: Smoke-test the UCI loop under Node
+      # testing produced exactly such a silently-inert binary.
+      #
+      # ROADMAP.md's "Verify the wasm build against the existing UCI
+      # test suite (or an equivalent subset runnable under Node) before
+      # it's trusted as a real release asset, not just 'compiles'" item
+      # (Session 161): a single scenario (the original version of this
+      # step) only proved the loop ran at all, not that the actual UCI
+      # protocol surface worked. Porting tests/uci_tests.cpp's full
+      # Catch2 suite to run under Node is a much bigger undertaking than
+      # this item's own "or an equivalent subset" wording asks for, so
+      # this step instead runs several independent short UCI sessions,
+      # each checking ONE behavior also covered natively by
+      # tests/uci_tests.cpp (named in each comment below) -- a real,
+      # if partial, cross-check that the wasm build's UCI behavior
+      # matches the native build's, not just that it starts up.
+      - name: Verify the wasm UCI protocol surface under Node
         working-directory: build-wasm/src
         run: |
-          printf 'uci\nisready\nposition startpos\ngo depth 5\nquit\n' > /tmp/uci_smoke.txt
-          OUTPUT="$(timeout 30 node nightwing.js < /tmp/uci_smoke.txt)"
-          echo "$OUTPUT"
-          echo "$OUTPUT" | grep -q "uciok" || { echo "::error::wasm build produced no 'uciok' -- the UCI loop did not run"; exit 1; }
-          echo "$OUTPUT" | grep -q "^bestmove " || { echo "::error::wasm build produced no 'bestmove' -- search did not run"; exit 1; }
+          check() {
+            local desc="$1" input="$2" pattern="$3"
+            local output
+            output="$(printf "%b" "$input" | timeout 30 node nightwing.js)"
+            if ! echo "$output" | grep -qE "$pattern"; then
+              echo "$output"
+              echo "::error::wasm UCI check failed: $desc (expected to match /$pattern/)"
+              exit 1
+            fi
+          }
+
+          # tests/uci_tests.cpp: "'uci' command responds with id and uciok"
+          check "uci handshake" 'uci\nquit\n' '^uciok$'
+
+          # tests/uci_tests.cpp: "'isready' responds with readyok"
+          check "isready" 'isready\nquit\n' '^readyok$'
+
+          # tests/uci_tests.cpp: "'position startpos moves ...' applies
+          # the moves before searching"
+          check "position + moves + go" \
+            'position startpos moves e2e4 e7e5\ngo depth 3\nquit\n' \
+            '^bestmove [a-h][1-8][a-h][1-8]'
+
+          # tests/uci_tests.cpp: "'position fen ...' for an already-
+          # checkmated position returns bestmove 0000"
+          check "checkmate position" \
+            'position fen rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3\ngo depth 3\nquit\n' \
+            '^bestmove 0000$'
+
+          # tests/uci_tests.cpp: "'setoption name MultiPV value N'
+          # followed by 'go' emits N distinct 'multipv' lines"
+          check "MultiPV 3" \
+            'setoption name MultiPV value 3\nposition startpos\ngo depth 3\nquit\n' \
+            'multipv 3'
+
+          # tests/uci_tests.cpp: "an out-of-range 'setoption name Hash
+          # value ...' is clamped, not rejected"
+          check "out-of-range Hash is clamped, not rejected" \
+            'setoption name Hash value 999999\nisready\nquit\n' \
+            '^readyok$'
+
+          # tests/uci_tests.cpp: "'ucinewgame' resets to the starting
+          # position"
+          check "ucinewgame + go" \
+            'position startpos moves e2e4\nucinewgame\ngo depth 2\nquit\n' \
+            '^bestmove [a-h][1-8][a-h][1-8]'
+
+          # tests/uci_tests.cpp: "unrecognized commands are silently
+          # ignored, not fatal"
+          check "malformed input doesn't break later commands" \
+            'not a real uci command\nisready\nquit\n' \
+            '^readyok$'
+
+          echo "All wasm UCI protocol checks passed."
 
       - name: Upload wasm artifacts
         uses: actions/upload-artifact@v4
