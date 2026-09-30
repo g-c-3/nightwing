@@ -704,6 +704,18 @@ jobs:
     env:
       GH_REPO: ${{ github.repository }}
     steps:
+      # Needed only to read the project's version number out of
+      # CMakeLists.txt for the versioned-release tag below -- sparse
+      # checkout of just that one file keeps this fast and avoids
+      # pulling the whole repo into a job that otherwise never touches
+      # source (it only handles downloaded binaries and calls `gh`).
+      - name: Checkout CMakeLists.txt (for version number)
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: |
+            CMakeLists.txt
+          sparse-checkout-cone-mode: false
+
       - name: Download Linux binary
         uses: actions/download-artifact@v4
         with:
@@ -758,6 +770,49 @@ jobs:
           gh release create latest release-assets/* \
             --title "Nightwing (rolling latest)" \
             --notes "Automatically published from commit ${{ github.sha }} on $(date -u +'%Y-%m-%d %H:%M UTC'). This is a rolling release: it always reflects the latest green build on main, not a fixed version." \
+            --target "${{ github.sha }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      # A second, DISTINCT release alongside "latest" above: an
+      # immutable, uniquely-tagged versioned release, created fresh every
+      # time (never deleted/overwritten, unlike "latest") so past builds
+      # stay individually downloadable and referenceable by tag.
+      #
+      # `project(nightwing VERSION X.Y.Z ...)` (CMakeLists.txt, line 2)
+      # is this project's one existing source of truth for a version
+      # number -- it already feeds `src/version.h.in` (this same file's
+      # `configure_file` call) into the UCI `id name` string, so reusing
+      # it here rather than inventing a second, disconnected version
+      # scheme keeps "the UCI id string" and "the release tag" in sync
+      # automatically whenever CMakeLists.txt's VERSION is bumped.
+      #
+      # That X.Y.Z alone isn't unique per CI run, though (nothing here
+      # auto-bumps it -- deciding a major/minor/patch bump is a human,
+      # semantic judgment this workflow has no basis to make), so
+      # `github.run_number` (a plain integer, unique and strictly
+      # increasing for every run of this workflow) is appended to make
+      # each tag distinct: `v0.1.0-1`, `v0.1.0-2`, ... `v0.2.0-47`, ...
+      # if CMakeLists.txt's VERSION is later bumped to 0.2.0, run_number
+      # simply keeps counting rather than resetting, which is fine — the
+      # tags still sort and read sensibly, and staying monotonic across
+      # the whole run history (not per-version) is what keeps this a
+      # single `run_number`-per-tag scheme rather than needing per-
+      # version counters tracked somewhere.
+      - name: Compute version tag
+        id: version
+        run: |
+          RAW_VERSION=$(grep -oP 'project\(nightwing VERSION \K[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt)
+          echo "tag=v${RAW_VERSION}-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      # No delete-first step here (unlike "latest" above) -- this tag is
+      # unique by construction (run_number never repeats), so `gh
+      # release create` on it can never collide with a prior run.
+      - name: Publish versioned release
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" release-assets/* \
+            --title "Nightwing ${{ steps.version.outputs.tag }}" \
+            --notes "Commit ${{ github.sha }}, built $(date -u +'%Y-%m-%d %H:%M UTC'). This is an immutable, uniquely-tagged release; see the 'latest' release for the rolling always-current build instead." \
             --target "${{ github.sha }}"
         env:
           GH_TOKEN: ${{ github.token }}
