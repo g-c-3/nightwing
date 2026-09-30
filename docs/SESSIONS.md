@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 160 — 2026-09-30 — User screenshots confirm both open CI questions: versioned releases publish correctly, and the wasm smoke test passes on real CI
+
+Triggered by two screenshots: the repo's Releases page showing `Nightwing v0.1.0-630` published with all 5 expected assets alongside the still-working `latest` release, and an Actions run page showing a `nightwing-wasm` artifact (125 KB) in that run's Artifacts list.
+
+**Confirmed, no code changes:**
+- Session 159's versioned-release addition works end-to-end: `v0.1.0-630` (matching `CMakeLists.txt`'s `VERSION 0.1.0` plus that run's `github.run_number`, 630) published with the 3 renamed binaries, GitHub's automatic source zip/tar.gz, and the correct commit/date release notes — while `latest` continues publishing separately, unaffected.
+- Session 158's open question — whether the "binary runs but executes no UCI logic" symptom found against a forced/broken local Emscripten substitute was real or an artifact of that local toolchain — is resolved. The `nightwing-wasm` artifact's presence in the run's Artifacts list is proof the smoke-test step passed (a failed step blocks the upload step after it in this job, by default), using the real, official emsdk toolchain. The symptom did not occur for real; Session 158's own judgment that it was local-toolchain-specific was correct.
+
+**Verification:** both confirmations come directly from real CI run evidence (the screenshots), not local testing or assumption — consistent with this project's standing practice (Sessions 157-159) of treating CI-based confirmation as the actual bar, not local/YAML validation alone.
+
+**Decisions made:** none — this session records confirmations of prior decisions, not new ones.
+
+**Next session start point:** both the "Release & Packaging Infrastructure" checklist items touched across Sessions 156-160 (rolling latest, versioned releases, wasm toolchain integration) are now fully closed and verified. Reasonable next candidates: the next WASM-section checklist item ("WASM JS surface: full UCI loop over stdin/stdout" — likely already satisfied in substance by the smoke test, worth a quick review rather than assuming), or resuming the EG-instability investigation (paused since Session 156) with a fresh angle.
+
+---
+
 ### Session 159 — 2026-09-30 — User request (screenshot of the working "latest" release): added a second, distinct, immutable versioned release alongside the rolling "latest" one
 
 Triggered by a screenshot showing the "latest" release working correctly on GitHub (5 assets: the 3 binaries plus GitHub's own automatic source-code zip/tar.gz), with a request for an additional, proper versioned release to be published automatically every time, alongside the existing rolling one.
