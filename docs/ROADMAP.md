@@ -2181,6 +2181,37 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
   lines ever" from "info lines exist but something about count/content
   is wrong" on the next real run, since the existing MultiPV check
   can't tell those apart by itself. See docs/DECISIONS.md, 2026-10-01 (2).
+  SESSION 165 RESULT (user-uploaded CI logs): the pthread fix held --
+  `uci handshake`/`isready`/`position + moves + go`/`checkmate position`
+  ALL passed. The new diagnostic check confirmed "zero info lines
+  EVER", not a narrower count/content issue -- `info` output is
+  completely absent under wasm, still unexplained, still not fixed.
+  BONUS finding from the collect-all-results change: the script
+  continued past the info-lines failures and reached the Hash-clamp
+  check, which crashed hard (`bad_alloc`, `Aborted()`) -- this time
+  with a FULLY EXPLAINED, confirmed-real cause, not a guess: `kMaxHashMB`
+  (2048 MB) is EXACTLY wasm32's hard 2 GiB total-linear-memory ceiling
+  (an architectural fact, not a tunable setting) -- clamping
+  `setoption name Hash value 999999` down to 2048 per the existing,
+  CORRECT clamp logic then requests the entire address space for the
+  hash table alone, leaving nothing for code/stack/book/everything
+  else. FIX APPLIED: `kMaxHashMB` is now `256` under
+  `#if defined(__EMSCRIPTEN__)` (src/uci/uci.cpp), leaving ~1.75 GiB
+  headroom within the hard ceiling; unchanged (2048) natively. The UCI
+  option's own advertised max (`option name Hash ... max <N>`) already
+  read this constant directly, so it correctly reflects 256 under wasm
+  with no separate edit needed. Full local Release build + 703/703
+  tests confirmed unaffected. ALSO FIXED: the verify script's `set -e`
+  was silently killing the WHOLE job the instant any check's `node`
+  process crashed outright (as opposed to just printing wrong output),
+  skipping every later check without any indication why -- `|| true`
+  added to the `node` invocation so a crash is treated as a normal
+  failure (empty/partial output, caught by the existing pattern check)
+  rather than an undiagnosable early exit. STILL UNKNOWN: whether
+  `ucinewgame + go` and `malformed input` pass, since the Hash crash
+  cut the run short before reaching them -- the next real CI run is
+  what finally answers that, now that the crash itself won't cut
+  anything short again. See docs/DECISIONS.md, 2026-10-01 (3).
 
 Added 2026-09-18 (Session 112/113). Not part of the sequential phase
 order above — can be picked up in any session without waiting for

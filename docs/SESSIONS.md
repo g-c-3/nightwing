@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+### Session 165 — 2026-10-01 — User-uploaded CI logs: pthread fix fully confirmed holding; missing-info-lines confirmed as total absence (still unexplained); Hash-clamp crash fully explained and fixed (wasm32's 2 GiB ceiling); CI script's silent early-exit-on-crash bug also fixed
+
+Triggered by uploaded CI logs for the push carrying Session 164's collect-all-results script change and new diagnostic check.
+
+**pthread fix confirmed:** `uci handshake`, `isready`, `position + moves + go`, and `checkmate position` all passed again, consistent with Session 164's result — `go` commands genuinely work now.
+
+**Info-lines mystery narrowed, not solved:** the new diagnostic check (`'^info '` on a plain `go depth 3`) also failed — confirming total absence of `info` output, not a narrower multipv-count-specific issue. Still no working theory for why, given `info` and `bestmove` are documented as coming from the same thread through the same mutex-protected stream. Not fixed this session.
+
+**Unexpected bonus finding:** the collect-all-results change (Session 164) let the script continue past the info-lines failures and actually reach the Hash-clamp check, which crashed hard with `bad_alloc`/`Aborted()`. Unlike the info-lines puzzle, this one has a complete, confirmed explanation: `kMaxHashMB` (2048 MB) is EXACTLY wasm32's hard 2 GiB total-linear-memory ceiling — an architectural fact (`-sMAXIMUM_MEMORY` cannot exceed it), not a tunable setting. The existing clamp logic is correct and portable (uses `long long`, unaffected by pointer width); the bug is that the clamped value itself (2048 MB) leaves zero room for anything else the wasm32 program needs once requested.
+
+**Fix applied (src/uci/uci.cpp):** `kMaxHashMB` is `256` under `#if defined(__EMSCRIPTEN__)`, leaving ~1.75 GiB headroom within the hard ceiling; unchanged (2048) natively. The UCI option's own advertised max already reads this constant directly, so no separate edit was needed there. This mirrors a documented precedent in the same constant's own history (`kMaxHashMB` was previously lowered from 65536 to 2048 after real CI evidence showed native platforms also fail unrecoverably on values that are merely "in bounds" but unrealistic — the same lesson, a different, wasm-specific ceiling this time).
+
+**Also fixed (ci.yml):** the verify script's `set -e` was silently killing the whole job the instant any check's underlying `node` process crashed outright (as distinct from a check merely producing wrong output) — exactly what happened here, cutting the run short before `ucinewgame + go` and `malformed input` ever ran. `|| true` added to the `node` invocation so a crash now correctly shows up as a normal failure (empty/partial output caught by the existing pattern match) instead of an undiagnosable early exit.
+
+**Verification:** full local Release build and `ctest` (703/703) re-confirmed unaffected by the `uci.cpp` change. The actual wasm fix could not be tested locally (same old-toolchain limitation as every wasm session since 158). YAML re-validated with `yaml.safe_load`.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-10-01 (3).
+
+**Next session start point:** check the next real CI run. With the crash-cutting-the-run-short bug also fixed, this run should finally show whether `ucinewgame + go` and `malformed input` pass — genuinely unknown until now. The info-lines mystery remains open with no theory; worth a fresh look if the other 6 checks all pass cleanly.
+
+---
+
 ### Session 164 — 2026-10-01 — User-uploaded CI logs: pthread fix confirmed working (go now runs correctly); new confirmed-real puzzle found (info lines missing, bestmove not) — no fix attempted, CI script made more informative instead
 
 Triggered by uploaded CI logs for the push carrying Session 163's `-pthread`/`PTHREAD_POOL_SIZE` fix.

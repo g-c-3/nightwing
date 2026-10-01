@@ -4,6 +4,24 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-01 (3) — wasm Hash ceiling lowered to 256 MB (wasm32's 2 GiB total memory is an architectural fact, not a tunable); CI script no longer silently truncates on a check's crash
+
+**Decision:** `src/uci/uci.cpp`'s `kMaxHashMB` is `256` under `#if defined(__EMSCRIPTEN__)`, `2048` (unchanged) otherwise. `.github/workflows/ci.yml`'s verify step gets `|| true` on its `node` invocation so a crashing check no longer silently terminates the entire job.
+
+**Rationale:** a real CI run's Hash-clamp check crashed with `bad_alloc`. Unlike every other symptom chased this investigation, this one has a complete, non-speculative explanation: 2048 MB (the existing native ceiling) is EXACTLY wasm32's architectural 2 GiB total-linear-memory limit, which no build flag can raise. Clamping an out-of-range Hash request down to that value doesn't request "a lot of memory, platform's choice how to handle it" under wasm the way it does on native 64-bit platforms — it requests the ENTIRE address space for the hash table alone, leaving nothing for code, stack, book data, or anything else the program needs. This is the same category of lesson `kMaxHashMB`'s own history already recorded once (lowered from 65536 to 2048 after real CI evidence that native platforms also fail unrecoverably on in-bounds-but-unrealistic values) — applied here to a different, platform-specific ceiling.
+
+**Why 256, specifically:** leaves roughly 1.75 GiB of headroom within the hard 2 GiB ceiling for everything else (code, the 8 MiB stack per thread across 4 pthread workers, book data, search-internal allocations), while staying far above the UCI option's own 16 MB default — ordinary use would never approach this lower ceiling closely enough to notice it exists.
+
+**CI script fix:** separately, the same real run revealed `set -e` was silently killing the whole job the moment any check's `node` process crashed outright, rather than just producing wrong output — exactly what the Hash-clamp crash did, cutting the run short before two later checks (`ucinewgame + go`, `malformed input`) ever executed. `|| true` on the `node` invocation itself fixes this: a crash now produces empty/partial `$output`, which the existing pattern-match logic already treats as a normal, reported failure.
+
+**Scope of what this does NOT yet establish:** whether 256 MB is itself problem-free under wasm (not tested locally, same toolchain limitation as every other wasm fix this investigation), and whether `ucinewgame + go`/`malformed input` pass — genuinely unknown until the next real run, now that nothing should cut it short prematurely.
+
+**Alternatives considered:**
+- A single, lower `kMaxHashMB` for all platforms (abandoning the native/wasm split) — rejected: native platforms have no such ceiling and 2048 MB has its own documented, CI-verified rationale already; lowering it everywhere would be a regression for native use to fix a wasm-specific problem.
+- Making the wasm ceiling a runtime/CMake-configurable value instead of a compile-time `#if defined(__EMSCRIPTEN__)` constant — rejected as unnecessary complexity for what is a fixed architectural fact (wasm32's 2 GiB limit), not a value that benefits from being tunable.
+
+---
+
 ### 2026-10-01 (2) — No fix shipped for the missing-info-lines puzzle; CI script changed to collect all check results instead of stopping at the first failure
 
 **Decision:** no code or CMake change this session for the new `info`-lines-missing symptom. `.github/workflows/ci.yml`'s verify step is changed to run every check and report all results, rather than exiting at the first failure, and gains one new diagnostic-only check.
