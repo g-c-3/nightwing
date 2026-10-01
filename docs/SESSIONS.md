@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+### Session 167 — 2026-10-02 — User-uploaded CI logs: Session 166's fix confirmed; wasm verification item closed
+
+Triggered by uploaded CI logs for the push carrying Session 166's `ci.yml` change.
+
+**CI result:** every job green. wasm-build: all 9 protocol checks passed, including `any info line appears during an ordinary search` and `MultiPV 3`, which confirms the opening-book diagnosis from Session 166. Native: Linux Debug/Release 703/703, Windows Debug/Release 703/703, macOS Debug/Release 701/701. The release-publishing job log showed no errors.
+
+**Roadmap:** "Verify the wasm build against the existing UCI test suite (or an equivalent subset)" checked off. No source, workflow, or decision changes were needed.
+
+**Decisions made:** none.
+
+**Next session start point:** the next open Release Automation item is the standalone `nightwing.min.js` bundle (wasm binary inlined as base64), followed by publishing both wasm artifacts as assets on the rolling `latest` release.
+
+---
+
 ### Session 166 — 2026-10-02 — User-uploaded CI logs: Hash fix confirmed; the "missing info lines" puzzle resolved as an opening-book artifact of the CI checks, not a wasm bug
 
 Triggered by uploaded CI logs for the push carrying Session 165's Hash-ceiling and `|| true` changes.
