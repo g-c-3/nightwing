@@ -4,6 +4,26 @@ Newest entry at top.
 
 ---
 
+### Session 164 — 2026-10-01 — User-uploaded CI logs: pthread fix confirmed working (go now runs correctly); new confirmed-real puzzle found (info lines missing, bestmove not) — no fix attempted, CI script made more informative instead
+
+Triggered by uploaded CI logs for the push carrying Session 163's `-pthread`/`PTHREAD_POOL_SIZE` fix.
+
+**Good news:** the pthread fix worked. `uci handshake`, `isready`, `position + moves + go`, and `checkmate position` all passed on real CI for the first time in this whole investigation — `go` commands now actually run under wasm.
+
+**New problem found:** `MultiPV 3` failed with a new symptom — `bestmove e2e4` printed correctly, but zero `info` lines appeared anywhere in the output. This is confirmed real (happened on the actual official emsdk toolchain), not a local-toolchain artifact. It's genuinely puzzling: `src/uci/uci.cpp`'s own documentation states both `info` lines and the final `bestmove` are written from the SAME background search thread through the SAME mutex-protected stream — if this were a worker-thread-stdout-isolation issue (the most obvious theory given `-pthread` was just added), both should be equally affected, not just one.
+
+**No fix attempted:** unlike the stack-size and pthread fixes, no single explanation here was well-reasoned enough to justify shipping a guess — this session chose not to speculate further rather than burn another CI round-trip on a low-confidence attempt.
+
+**What was done instead:** `.github/workflows/ci.yml`'s verify step no longer stops at the first failing check — it now collects and reports every check's result in one run (`PASS`/`::error::` per check, failure list at the end). Three consecutive sessions (162, 163, 164) each only discovered the next problem after fixing the previous one because the script stopped early; this should meaningfully cut future round-trips. One new diagnostic-only check was also added (`'^info '` on a plain `go depth 3`) specifically to distinguish "zero info lines ever" from "info lines exist but something about their count/content is wrong" on the next real run, since the existing `MultiPV 3` check can't tell those apart by itself.
+
+**Verification:** YAML re-validated with `yaml.safe_load`, job step list checked programmatically. No code/CMake changes this session, so no build verification needed.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-10-01 (2).
+
+**Next session start point:** check the next real CI run's full results (all checks now visible in one run). The new diagnostic check's result is the key piece of new information — if it also fails, info output is completely broken under wasm; if it passes, the issue is specifically about `multipv`-related content/count, a narrower and more tractable problem.
+
+---
+
 ### Session 163 — 2026-10-01 — User-uploaded CI logs: Session 162's stack-size fix was the wrong diagnosis; ASSERTIONS=1 revealed the real cause (missing pthread support for go/ponder's unconditional background threads) — fixed, unverified by necessity
 
 Triggered by uploaded CI logs for the push carrying Session 162's `-sSTACK_SIZE`/`-sASSERTIONS` fix.

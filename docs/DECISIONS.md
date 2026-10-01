@@ -4,6 +4,20 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-01 (2) — No fix shipped for the missing-info-lines puzzle; CI script changed to collect all check results instead of stopping at the first failure
+
+**Decision:** no code or CMake change this session for the new `info`-lines-missing symptom. `.github/workflows/ci.yml`'s verify step is changed to run every check and report all results, rather than exiting at the first failure, and gains one new diagnostic-only check.
+
+**Rationale:** Sessions 162, 163, and 164 have now each spent a full CI round-trip discovering only the NEXT problem after fixing the previous one, because the verify script stopped at the first failure. Collecting all results costs nothing and directly addresses that pattern going forward. For the actual bug: `info` lines and `bestmove` are documented as coming from the same thread through the same mutex-protected stream, so the most available explanation (worker-thread stdout isolation, the natural next guess after just fixing pthread support) does not cleanly predict the observed asymmetry (one output path working, the other not, from the same thread). Shipping a fix without a theory that actually explains the observed behavior would be a guess dressed up as a diagnosis — exactly what this project's standing practice has avoided every other time a fix WAS shipped (the stack-size and pthread fixes both had a specific, named mechanism connecting the failure signature to the change). This is the first time in the investigation that no such mechanism was found, so no fix was shipped.
+
+**Scope of what this does NOT yet establish:** why `info` lines specifically fail to appear. The new diagnostic check (`'^info '` matched against a plain `go depth 3`) is designed to narrow this on the next real run — whether info output is completely absent or merely wrong in count/content are different bugs with different likely fixes.
+
+**Alternatives considered:**
+- Guessing anyway (e.g., trying `-sPROXY_TO_PTHREAD=1`, a large, behavior-changing flag that restructures how the whole program's main thread relates to Emscripten's pthread model) — rejected: a flag that big, shipped without a specific reason to believe it addresses THIS asymmetry specifically, risks introducing new problems while not even being confident it's the right fix.
+- Leaving the verify script as fail-fast and accepting another blind round-trip — rejected: the collect-all-results change is strictly better with no real downside, independent of whatever caused this specific bug.
+
+---
+
 ### 2026-10-01 (1) — Corrected diagnosis: wasm-build's real failure was missing pthread support for go/ponder's background threads, not stack exhaustion; -pthread and a bounded worker pool added
 
 **Decision:** `nightwing_lib` gains `-pthread` (PUBLIC, compile and link) under `NIGHTWING_BUILD_WASM`, and `nightwing`'s wasm link options gain `-sPTHREAD_POOL_SIZE=4`. Session 162's `-sSTACK_SIZE=8388608` is kept but its code comment corrected to no longer claim it was the fix for the real CI abort.
