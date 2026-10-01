@@ -664,14 +664,25 @@ jobs:
       - name: Verify the wasm UCI protocol surface under Node
         working-directory: build-wasm/src
         run: |
+          # Collects every failure instead of stopping at the first one
+          # (ROADMAP.md's sign-flip investigation and this very item's
+          # own Sessions 162-163 learned the same lesson the hard way:
+          # each real-CI round-trip here costs a full session, so a
+          # single run should report everything it can, not just the
+          # first failure, cutting the number of round-trips needed to
+          # see the full picture). FAILED accumulates short descriptions;
+          # the job still fails at the end if it's non-empty.
+          FAILED=()
           check() {
             local desc="$1" input="$2" pattern="$3"
             local output
             output="$(printf "%b" "$input" | timeout 30 node nightwing.js)"
-            if ! echo "$output" | grep -qE "$pattern"; then
+            if echo "$output" | grep -qE "$pattern"; then
+              echo "PASS: $desc"
+            else
               echo "$output"
               echo "::error::wasm UCI check failed: $desc (expected to match /$pattern/)"
-              exit 1
+              FAILED+=("$desc")
             fi
           }
 
@@ -692,6 +703,23 @@ jobs:
           check "checkmate position" \
             'position fen rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3\ngo depth 3\nquit\n' \
             '^bestmove 0000$'
+
+          # Diagnostic only, not from tests/uci_tests.cpp: Session 163's
+          # real CI run showed `bestmove` printing correctly but NO
+          # `info` lines at all from an ordinary `go depth 3` -- both are
+          # documented (src/uci/uci.cpp) as written from the SAME
+          # background search thread through the SAME mutex-protected
+          # stream, which makes that asymmetry genuinely puzzling rather
+          # than something this project has a confident fix for yet
+          # (docs/ROADMAP.md has the full writeup). This check exists to
+          # narrow the next real CI result down precisely -- "zero info
+          # lines ever" vs. "info lines exist but something about their
+          # content/count is wrong" are different bugs with different
+          # fixes, and the MultiPV check two lines down can't tell them
+          # apart on its own.
+          check "any info line appears during an ordinary search" \
+            'position startpos\ngo depth 3\nquit\n' \
+            '^info '
 
           # tests/uci_tests.cpp: "'setoption name MultiPV value N'
           # followed by 'go' emits N distinct 'multipv' lines"
@@ -717,7 +745,12 @@ jobs:
             'not a real uci command\nisready\nquit\n' \
             '^readyok$'
 
-          echo "All wasm UCI protocol checks passed."
+          if [ ${#FAILED[@]} -eq 0 ]; then
+            echo "All wasm UCI protocol checks passed."
+          else
+            echo "::error::${#FAILED[@]} wasm UCI check(s) failed: ${FAILED[*]}"
+            exit 1
+          fi
 
       - name: Upload wasm artifacts
         uses: actions/upload-artifact@v4
