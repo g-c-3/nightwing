@@ -728,14 +728,23 @@ jobs:
           # content/count is wrong" are different bugs with different
           # fixes, and the MultiPV check two lines down can't tell them
           # apart on its own.
+          # RESOLVED (Session 166): the "puzzle" was never a wasm bug.
+          # start_go() (src/uci/uci.cpp) consults the opening book
+          # (src/book/book.h) BEFORE any search thread exists, and
+          # `position startpos` is book-covered -- a book hit prints
+          # `bestmove` immediately with no search and therefore no
+          # `info` lines, natively and under wasm alike (reproduced
+          # natively). This check and the MultiPV one below therefore
+          # use a deliberately out-of-book position (the standard
+          # "Kiwipete" perft position, CPW) so a real search runs.
           check "any info line appears during an ordinary search" \
-            'position startpos\ngo depth 3\nquit\n' \
+            'position fen r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1\ngo depth 3\nquit\n' \
             '^info '
 
           # tests/uci_tests.cpp: "'setoption name MultiPV value N'
           # followed by 'go' emits N distinct 'multipv' lines"
           check "MultiPV 3" \
-            'setoption name MultiPV value 3\nposition startpos\ngo depth 3\nquit\n' \
+            'setoption name MultiPV value 3\nposition fen r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1\ngo depth 3\nquit\n' \
             'multipv 3'
 
           # tests/uci_tests.cpp: "an out-of-range 'setoption name Hash
