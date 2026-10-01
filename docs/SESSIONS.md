@@ -4,6 +4,26 @@ Newest entry at top.
 
 ---
 
+### Session 162 — 2026-09-30 — User-uploaded CI logs: wasm-build fails for real (immediate abort in callMain, every check) — likely wasm stack-size exhaustion; fix shipped unverified; separately, Session 158's old mystery fully explained (main-signature-specific, local-toolchain-only)
+
+Triggered by uploaded CI logs for the push carrying Session 161's expanded UCI protocol checks.
+
+**Real failure found:** `wasm-build` failed on the real official emsdk toolchain — every one of the 7 checks aborted immediately inside `callMain()`, before any output at all, with a bare "Aborted(). Build with -sASSERTIONS for more info." This is a different, and for the first time in this whole investigation, CONFIRMED-REAL symptom (not a local-toolchain artifact) — it happened on the actual toolchain CI uses.
+
+**Diagnosis:** could not be reproduced locally despite extensive attempts (the old local Emscripten substitute fails differently or not at all on every variant of `main.cpp` tried). Reasoning from the failure signature alone: a bare, immediate, unspecific "Aborted()" with no prior output is the standard signature of Emscripten's default wasm stack size (as low as 64 KB in older releases) being exhausted by C++ code that never had reason to think about stack size on a native build.
+
+**Fix applied (src/CMakeLists.txt):** `-sSTACK_SIZE=8388608` (8 MiB, generous headroom) and permanent `-sASSERTIONS=1` (so any future failure like this produces an actual diagnostic instead of a bare "Aborted()", worth its modest cost given there's no way to attach a native debugger to a wasm crash). Explicitly NOT verified locally — shipped on reasoning about the failure signature, not empirical reproduction, and documented as such in the code comment.
+
+**Separately, fully explained (not just confirmed, this time with a precise mechanism) the old Session 158 mystery:** bisecting further revealed the real trigger was never "two-step vs one-step compilation" as Session 158 guessed — it's specifically `main.cpp`'s `int main(int argc, char** argv)` signature (needed for the `./nightwing bench` argv check), which compiles to a `__main_argc_argv` symbol this one old Emscripten 3.1.6 toolchain's linker driver fails to wrap into a callable entry point, producing a ~9 KB stub that "succeeds" but runs nothing. The zero-argument `int main()` form links and runs correctly every time, same library, same flags. This confirms (with much more precision than Session 158 had) that the symptom was entirely an artifact of that one old toolchain, consistent with Session 160's real-CI confirmation.
+
+**Verification:** native build re-confirmed unaffected (clean Release build). The new wasm flags were validated locally using the legacy `TOTAL_STACK` alias (this old toolchain doesn't recognize the modern `STACK_SIZE` name) against a workaround build using the zero-argument `main()` form, confirming the flags themselves introduce no new regressions on what could be tested locally — but this does NOT validate the actual fix against the actual bug, since the bug itself never reproduced locally. YAML/CMake structure checked programmatically.
+
+**Decisions made:** none beyond the fix itself.
+
+**Next session start point:** confirm on the next CI run whether `wasm-build` now passes. If the abort persists, the stack-size theory is wrong and needs a different diagnosis (next candidates: an uncaught C++ exception path given Emscripten's exception-to-abort conversion, or a genuine out-of-bounds/UB issue specific to wasm32's 32-bit address space). If it passes, check which of the 7 UCI checks specifically pass or fail, since Session 161's three local-only guesses (checkmate abort, Hash-clamp crash, missing info lines) are still unconfirmed either way.
+
+---
+
 ### Session 161 — 2026-09-30 — "Continue": WASM JS surface item closed (already true by construction); UCI protocol smoke test expanded to 7 real checks; 3 new local symptoms found, none yet confirmed — same "let real CI decide" discipline as Session 158
 
 Triggered by "Continue", picking the WASM JS surface checklist item as a quick check first (per Session 160's own suggestion), then moving to the more substantial "verify against UCI test suite" item.

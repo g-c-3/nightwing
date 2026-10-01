@@ -4,6 +4,22 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-09-30 (2) — wasm stack size raised and ASSERTIONS made permanent, in response to a real (not local-toolchain-artifact) CI failure; fix shipped unverified by necessity
+
+**Decision:** `nightwing`'s wasm link options (src/CMakeLists.txt) gain `-sSTACK_SIZE=8388608` and a permanent `-sASSERTIONS=1`, in direct response to a real `wasm-build` CI failure (every UCI check aborting immediately inside `callMain`).
+
+**Rationale:** this is the first symptom in the entire wasm investigation (Sessions 158-162) confirmed real on the actual official emsdk toolchain, rather than an artifact of this project's own broken local substitute — the distinction matters because every other local finding so far has turned out to be local-toolchain-specific. A bare, immediate "Aborted()" with zero prior output is the textbook signature of wasm stack exhaustion under Emscripten's historically small default stack; raising it is the standard, low-cost, well-precedented first fix for exactly this failure shape. `-sASSERTIONS=1` is made permanent (not a one-off debug flag) specifically because this failure's own diagnostic was useless without it — a future similar failure should not cost another full investigation just to get an actionable error message.
+
+**Honest limitation:** this fix could not be validated against the actual bug locally — the old local Emscripten substitute (apt's 3.1.6) does not reproduce this symptom on any tested variant of `main.cpp`, so the fix is shipped on reasoning from the failure signature, not empirical proof. This is consistent with, not a departure from, this project's established practice (Sessions 157-161) of treating local validation as necessary-but-insufficient and real CI as the actual bar — the only difference here is that no local validation of the ACTUAL fix was even possible, which is recorded plainly rather than implied otherwise.
+
+**Separate finding, same session:** Session 158's old "main() never executes" symptom now has a precise, confirmed mechanism (not just an educated guess) — it's specific to `int main(int argc, char** argv)` producing a `__main_argc_argv` symbol this one old toolchain fails to wrap, not a two-step-compilation issue as originally guessed. This doesn't change any shipped behavior (Session 160 already confirmed the real toolchain doesn't have this problem); it only replaces a vague, unconfirmed guess with a precise, confirmed one in the historical record.
+
+**Alternatives considered:**
+- Guessing at a different cause (e.g. an exception-handling issue, a memory layout problem) without a specific failure-signature match — rejected: stack exhaustion's signature (bare immediate abort, no partial output, works fine natively) is specific and well-documented enough to justify trying it first.
+- Waiting for a way to reproduce locally before shipping any fix — rejected: this local toolchain has now failed to reproduce TWO different real-CI-relevant scenarios (the original callMain issue, confirmed fine; this stack issue, status unknown), suggesting further time spent trying to force local reproduction has poor expected return; shipping a well-reasoned fix for real CI to judge is more productive.
+
+---
+
 ### 2026-09-30 (1) — A second, immutable, uniquely-tagged release is published alongside the rolling "latest" one, reusing CMakeLists.txt's own VERSION as its base
 
 **Decision:** `.github/workflows/ci.yml`'s `release` job now publishes two releases per qualifying run: the existing rolling `latest` (unchanged, still deleted and recreated each time) and a new, distinct release tagged `v<CMakeLists.txt VERSION>-<github.run_number>`, never deleted or overwritten.
