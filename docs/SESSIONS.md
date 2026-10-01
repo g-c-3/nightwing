@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 166 — 2026-10-02 — User-uploaded CI logs: Hash fix confirmed; the "missing info lines" puzzle resolved as an opening-book artifact of the CI checks, not a wasm bug
+
+Triggered by uploaded CI logs for the push carrying Session 165's Hash-ceiling and `|| true` changes.
+
+**CI result:** all native jobs green (Linux Debug/Release 703/703, Windows Debug/Release 703/703, macOS Debug/Release 701/701 — the 701 vs 703 count on macOS is consistent across both macOS jobs and was not investigated). wasm-build: 6 of 8 checks passed, including `out-of-range Hash is clamped`, `ucinewgame + go`, and `malformed input` (all three previously unknown or crashing). Only the `info`-line diagnostic and `MultiPV 3` failed.
+
+**Root cause (info lines):** `start_go()` consults the opening book before creating any search thread. `position startpos` is book-covered, so `go depth 3` printed `bestmove e2e4` immediately with no search and therefore no `info` lines. Reproduced with a native Release build: startpos produced `bestmove` alone; the Kiwipete FEN produced three `info` lines plus `bestmove`, and `MultiPV 3` produced three `multipv 3` lines. The behavior is identical natively and under wasm.
+
+**Fix (.github/workflows/ci.yml only):** the `info`-line check and the `MultiPV 3` check use the out-of-book Kiwipete FEN (`r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1`, CPW). YAML re-validated with `yaml.safe_load`. No engine source changed.
+
+**Noted weakness (not changed):** the `position + moves + go` and `ucinewgame + go` checks also pass via the book, so they do not by themselves exercise wasm search.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-10-02 (1).
+
+**Next session start point:** check the next real CI run — all 8 wasm checks are expected to pass. If so, close the wasm build/verification item in ROADMAP.md's Release Automation phase; if either repaired check still fails, the cause is then a genuine wasm search-output problem and the first step is the raw `$output` printed by the failing check.
+
+---
+
 ### Session 165 — 2026-10-01 — User-uploaded CI logs: pthread fix fully confirmed holding; missing-info-lines confirmed as total absence (still unexplained); Hash-clamp crash fully explained and fixed (wasm32's 2 GiB ceiling); CI script's silent early-exit-on-crash bug also fixed
 
 Triggered by uploaded CI logs for the push carrying Session 164's collect-all-results script change and new diagnostic check.

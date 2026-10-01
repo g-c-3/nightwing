@@ -2212,6 +2212,23 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
   cut the run short before reaching them -- the next real CI run is
   what finally answers that, now that the crash itself won't cut
   anything short again. See docs/DECISIONS.md, 2026-10-01 (3).
+  SESSION 166 RESULT (user-uploaded CI logs): the Hash fix held --
+  `out-of-range Hash is clamped`, `ucinewgame + go`, and `malformed
+  input` all PASSED; 6 of 8 wasm checks green, the only two failures
+  being the `info`-line diagnostic and `MultiPV 3`. ROOT CAUSE OF THE
+  "MISSING INFO LINES" PUZZLE FOUND, AND IT WAS NEVER A WASM BUG:
+  start_go() (src/uci/uci.cpp) consults the opening book
+  (src/book/book.h) synchronously before any search thread exists, and
+  `position startpos` (also `startpos moves e2e4 e7e5`) is book-
+  covered, so `go` answers with `bestmove` immediately -- no search, no
+  `info` lines. Reproduced natively (startpos: `bestmove e2e4` alone;
+  Kiwipete FEN: full `info` lines and 3 `multipv` lines). FIX APPLIED
+  (.github/workflows/ci.yml only, no engine change): the `info`-line
+  and `MultiPV 3` checks now use the out-of-book Kiwipete position.
+  Caveat on record: the `position + moves + go` and `ucinewgame + go`
+  checks also pass via the book, so on their own they do not exercise
+  wasm search; the two repaired checks are what do. Expected next CI
+  result: all 8 wasm checks pass. See docs/DECISIONS.md, 2026-10-02 (1).
 
 Added 2026-09-18 (Session 112/113). Not part of the sequential phase
 order above — can be picked up in any session without waiting for

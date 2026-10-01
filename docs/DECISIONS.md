@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-02 (1) — Missing-`info`-lines puzzle closed as an opening-book artifact; wasm CI checks switched to an out-of-book position, no engine change
+
+- **Finding:** `start_go()` answers book-covered positions with an immediate `bestmove` and no search thread, hence no `info` output. `position startpos` is book-covered. Reproduced natively; wasm behavior was identical to native, so no wasm-specific defect existed.
+- **Decision:** the two wasm CI checks that depend on `info`/`multipv` output (`any info line appears during an ordinary search`, `MultiPV 3`) use the Kiwipete position (CPW), which is far outside any opening book. The engine's book behavior (always on, no `OwnBook` toggle, per 2026-09-03 (4)) is unchanged.
+- **Rationale:** the engine was behaving as designed; the test input was wrong. Three sessions (163–165) were spent hypothesizing a thread/stream defect for output that was never going to be produced.
+- **Alternatives considered:**
+  - Adding an `OwnBook` UCI option so checks could disable the book — rejected as an engine change made only to suit a CI script; the deferral in 2026-09-03 (4) stands.
+  - Leaving `startpos` checks and weakening the assertions to `bestmove` only — rejected, since that would leave wasm search output entirely unverified.
+- **Recorded caveat:** `position + moves + go` and `ucinewgame + go` also resolve through the book, so they verify protocol plumbing only, not search.
+
+---
+
 ### 2026-10-01 (3) — wasm Hash ceiling lowered to 256 MB (wasm32's 2 GiB total memory is an architectural fact, not a tunable); CI script no longer silently truncates on a check's crash
 
 **Decision:** `src/uci/uci.cpp`'s `kMaxHashMB` is `256` under `#if defined(__EMSCRIPTEN__)`, `2048` (unchanged) otherwise. `.github/workflows/ci.yml`'s verify step gets `|| true` on its `node` invocation so a crashing check no longer silently terminates the entire job.
