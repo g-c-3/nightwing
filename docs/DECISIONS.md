@@ -4,6 +4,22 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-01 (1) — Corrected diagnosis: wasm-build's real failure was missing pthread support for go/ponder's background threads, not stack exhaustion; -pthread and a bounded worker pool added
+
+**Decision:** `nightwing_lib` gains `-pthread` (PUBLIC, compile and link) under `NIGHTWING_BUILD_WASM`, and `nightwing`'s wasm link options gain `-sPTHREAD_POOL_SIZE=4`. Session 162's `-sSTACK_SIZE=8388608` is kept but its code comment corrected to no longer claim it was the fix for the real CI abort.
+
+**Rationale:** enabling `-sASSERTIONS=1` (Session 162's other change) is what actually mattered — the next real CI run produced "thread constructor failed" instead of a bare "Aborted()", immediately pointing at `src/uci/uci.cpp`'s unconditional `go`/`ponder` background-thread construction (used for the standard async-search UCI architecture, not search parallelism) as the real cause. Two prior sessions' code comments (158 and 162) both incorrectly assumed a default single-threaded configuration needed no real pthread support — that assumption was never actually checked against the `go`/`ponder` threads specifically, only against Lazy SMP's helper threads, and was wrong. `-pthread` must apply to the whole program (`nightwing_lib` PUBLIC), not just the final link, because Emscripten's threading ABI requires consistency across every translation unit. `PTHREAD_POOL_SIZE=4` was sized from this project's own documented invariant (`uci.cpp`'s own comment: at most one of `go`/`ponder` in flight at a time) plus headroom for the brief ponder+watchdog overlap `handle_ponderhit()` can create — not an arbitrary guess.
+
+**Honest limitation, same as Session 162:** this fix could not be validated locally. The old local Emscripten substitute fails before reaching link time for an unrelated reason (it doesn't recognize the modern `-sSTACK_SIZE` setting name), so this session's actual fix was never exercised against a working local build. Compile-time syntax was confirmed clean (every file compiled successfully with `-pthread` added) but that is a much weaker check than a real run.
+
+**Scope of what this does NOT yet establish:** whether `PTHREAD_POOL_SIZE=4` is sufficient, whether `Threads` above 1 works at all under wasm (untested, out of scope), and whether any of Session 161's three local-only guesses (checkmate abort, Hash-clamp crash, missing info lines) are real — none of that could be checked while the basic `go` command itself was broken.
+
+**Alternatives considered:**
+- Trying another local workaround to force this specific old toolchain to accept `-sSTACK_SIZE` (e.g. substituting the legacy `-sTOTAL_STACK` name just for local validation) — rejected this time: the actual bug this session is fixing is about `-pthread`/thread construction, not stack size, and the old toolchain's inability to even reach that code path means a workaround here still wouldn't validate the real fix.
+- Reverting `-sSTACK_SIZE` since it wasn't the actual fix — rejected: it's harmless, cheap insurance against genuine stack exhaustion under heavier search, no reason to remove something that cost nothing and might still matter later.
+
+---
+
 ### 2026-09-30 (2) — wasm stack size raised and ASSERTIONS made permanent, in response to a real (not local-toolchain-artifact) CI failure; fix shipped unverified by necessity
 
 **Decision:** `nightwing`'s wasm link options (src/CMakeLists.txt) gain `-sSTACK_SIZE=8388608` and a permanent `-sASSERTIONS=1`, in direct response to a real `wasm-build` CI failure (every UCI check aborting immediately inside `callMain`).

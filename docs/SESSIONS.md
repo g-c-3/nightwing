@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 163 — 2026-10-01 — User-uploaded CI logs: Session 162's stack-size fix was the wrong diagnosis; ASSERTIONS=1 revealed the real cause (missing pthread support for go/ponder's unconditional background threads) — fixed, unverified by necessity
+
+Triggered by uploaded CI logs for the push carrying Session 162's `-sSTACK_SIZE`/`-sASSERTIONS` fix.
+
+**What the logs showed:** `wasm-build` still failed, but with a precise error this time (thanks to `-sASSERTIONS=1` finally being on): `system_error was thrown in -fno-exceptions mode with error 138 and message "thread constructor failed"`, immediately followed by `Aborted(native code called abort())`.
+
+**Real cause found:** `src/uci/uci.cpp`'s `go` and `go ponder` command handlers construct a real `std::thread` UNCONDITIONALLY for every single `go`/`ponder` command — the standard UCI architecture where the search runs in the background while the main thread keeps reading stdin for `stop`. This is NOT gated by the `Threads` UCI option the way Lazy SMP's helper threads are. Session 158's and Session 162's own code comments both wrongly assumed a default (`Threads=1`) configuration needed no real pthread support at all — wrong: ANY `go` command needs one, regardless of `Threads`.
+
+**Fix applied (src/CMakeLists.txt):** `-pthread` added to `nightwing_lib` (PUBLIC, so it reaches every translation unit and the final executable — Emscripten's threading ABI needs this consistently across the whole program) and `-sPTHREAD_POOL_SIZE=4` (Emscripten pre-spins a bounded Node worker-thread pool for wasm pthreads; sized for this project's own documented at-most-one-of-go/ponder-in-flight invariant plus headroom for a brief ponder+watchdog overlap). `Threads` above 1 (Lazy SMP) remains untested under this pool size, deliberately out of scope. Session 162's STACK_SIZE change is kept (harmless, cheap insurance) but corrected in the comments to no longer claim it was the actual fix — `-sASSERTIONS=1` was the change that actually mattered, turning an opaque "Aborted()" into a precise, one-line diagnosis on the very next CI run.
+
+**Verification:** could not be tested locally — the same known-broken old Emscripten substitute used throughout this investigation fails before reaching link time for an unrelated old-toolchain reason (it doesn't recognize the modern `-sSTACK_SIZE` setting name at all), so none of this session's actual fix could be exercised locally. The compile step (everything up to that link-time failure) succeeded cleanly with `-pthread` added to every file, which at least confirms no basic syntax error. Native build re-confirmed unaffected.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-10-01 (1).
+
+**Next session start point:** check the next real CI run's `wasm-build` result. If it passes, check which of the 7 UCI checks specifically pass (Session 161's three local-only guesses — checkmate abort, Hash-clamp crash, missing info lines — are all still unconfirmed on real CI and worth checking individually now that the basic `go` command itself should work). If it still fails, the pthread/PTHREAD_POOL_SIZE fix itself needs reexamination — this old local toolchain gives no way to iterate further locally, so each attempt costs a full CI round-trip.
+
+---
+
 ### Session 162 — 2026-09-30 — User-uploaded CI logs: wasm-build fails for real (immediate abort in callMain, every check) — likely wasm stack-size exhaustion; fix shipped unverified; separately, Session 158's old mystery fully explained (main-signature-specific, local-toolchain-only)
 
 Triggered by uploaded CI logs for the push carrying Session 161's expanded UCI protocol checks.
