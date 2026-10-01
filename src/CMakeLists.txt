@@ -200,21 +200,41 @@ if(NIGHTWING_BUILD_WASM)
     #   UCI process run from a local file actually wants: streaming
     #   compilation only helps a browser start executing before a
     #   network download finishes.
-    # Threads: deliberately NOT enabled here (-pthread/-sUSE_PTHREADS are
-    # absent). nightwing_lib's Threads::Threads link requirement (Lazy
-    # SMP, this same file's own comment above) still resolves fine under
-    # Emscripten's sysroot, and search::search_iterative_deepening()'s
-    # own effective_threads<=1 path (src/search/search.cpp) never
-    # actually constructs a std::thread when UCI `Threads` is left at its
-    # default of 1 (src/uci/uci.cpp, kMinThreads=1) -- so a default-
-    # configuration wasm session works with no pthread support at all.
-    # Setting UCI `Threads` above 1 under this build WILL fail at
-    # runtime (Emscripten aborts std::thread's constructor without
-    # -pthread) -- a known, currently-unaddressed limitation, not a
-    # silent behavior change; enabling real multithreading under wasm
-    # (-pthread plus Node's own worker-thread requirements) is left for a
-    # future session if it's ever actually wanted, rather than bolted on
-    # speculatively here.
+    # Threads: REAL pthread support, not disabled. Session 162's actual
+    # ASSERTIONS-enabled error (`-sASSERTIONS` added below) revealed the
+    # true cause behind the real CI abort this same session found: "system
+    # error ... thread constructor failed" -- a prior version of this
+    # comment assumed `go`/`ponder`'s background search threads (src/uci/
+    # uci.cpp, `go.thread = std::thread(...)`, `ponder.thread = std::
+    # thread(...)`, plus a detached watchdog thread inside
+    # handle_ponderhit()) were gated the same way Lazy SMP's helper
+    # threads are (only constructed when UCI `Threads` > 1) -- WRONG:
+    # those two are UNCONDITIONAL, constructed for every single `go`/`go
+    # ponder` command regardless of the `Threads` option's value, because
+    # they implement the standard "search runs in the background while
+    # the main thread keeps reading stdin for `stop`" UCI architecture,
+    # not search parallelism. That means EVERY `go` command needs real OS
+    # thread support, not just a multi-threaded (`Threads` > 1)
+    # configuration -- the previous "-pthread absent, default
+    # configuration still works" reasoning was accordingly also wrong.
+    # `-pthread` is now applied to `nightwing_lib` (PUBLIC, so it reaches
+    # every translation unit and `nightwing` itself) -- Emscripten's
+    # threading ABI needs this consistently across the whole program, not
+    # just at final link, the same way a native build would need
+    # consistent `-pthread` across translation units if the compiler
+    # didn't default it on already. `-sPTHREAD_POOL_SIZE=4` pre-spins a
+    # small, bounded Node worker-thread pool (Emscripten's own requirement
+    # for wasm pthreads -- unlike native threads, a wasm worker can't be
+    # spun up fully on demand) sized for this project's own documented
+    # invariant that at most one of `go`/`ponder` is ever in flight at a
+    # time (src/uci/uci.cpp's own comment on the `stop` handler), plus
+    # headroom for the brief ponder-thread-plus-watchdog overlap
+    # `handle_ponderhit()` can create. `Threads` above 1 (Lazy SMP helper
+    # threads) remains UNTESTED under this pool size and is not addressed
+    # this session -- scoped out deliberately, not forgotten; revisit the
+    # pool size if that's ever actually wanted under wasm.
+    target_compile_options(nightwing_lib PUBLIC "-pthread")
+    target_link_options(nightwing_lib PUBLIC "-pthread")
     set_target_properties(nightwing PROPERTIES SUFFIX ".js")
     target_link_options(nightwing PRIVATE
         "-sENVIRONMENT=node"
@@ -223,6 +243,7 @@ if(NIGHTWING_BUILD_WASM)
         "-sWASM_ASYNC_COMPILATION=0"
         "-sSTACK_SIZE=8388608"
         "-sASSERTIONS=1"
+        "-sPTHREAD_POOL_SIZE=4"
     )
     # RESOLVED (Session 160, real CI run; root cause clarified further
     # Session 162): Session 158's own locally-found "main() never
@@ -243,33 +264,25 @@ if(NIGHTWING_BUILD_WASM)
     # `version: latest` actually uses) has long since not had this
     # particular gap, consistent with Session 160's real-CI result.
     #
-    # STACK_SIZE / ASSERTIONS: a SEPARATE, CONFIRMED REAL bug found
-    # Session 162 -- unlike the one above, THIS one reproduced on the
-    # real official emsdk toolchain in real CI (docs/SESSIONS.md, Session
-    # 161/162): every one of `wasm-build`'s UCI protocol checks aborted
-    # immediately inside `callMain()`, before any output at all -- not a
-    # specific check's behavior being wrong, the program never got
-    # anywhere. `-sASSERTIONS` was OFF, so the only diagnostic was a bare
-    # "Aborted(). Build with -sASSERTIONS for more info." -- exactly the
-    # generic signature of Emscripten's small default wasm stack (as low
-    # as 64KB in older Emscripten releases, far below a native thread's
-    # usual multi-MB default) being exhausted by ordinary C++ code that
-    # never needed to think about stack size on a native build. Raised to
-    # 8 MiB (generous headroom, cheap relative to this project's overall
-    # binary/memory budget) as the standard, well-precedented first fix
-    # for this exact failure signature. `-sASSERTIONS=1` is now also
-    # permanent (not just a one-off local debugging flag) specifically so
-    # a future failure like this one produces an actual diagnostic instead
-    # of a bare "Aborted()" that costs a full debugging session to even
-    # attempt a diagnosis for -- worth its modest size/perf cost given
-    # this project has no way to attach a native debugger to a wasm
-    # crash. NOT YET CONFIRMED on real CI as of this comment -- Session
-    # 162's own local testing could not reproduce this bug at all
-    # (the same local toolchain substitute behaves differently yet again,
-    # consistent with it being broken in its own, separate ways), so this
-    # fix is shipped on reasoning from the failure signature, not
-    # empirical local reproduction -- the next real CI run is what
-    # actually confirms or refutes it.
+    # STACK_SIZE / ASSERTIONS / PTHREAD: Session 162's real CI run found
+    # a genuine abort (every `wasm-build` UCI check aborting immediately
+    # inside `callMain()`), initially (mis)diagnosed as wasm stack
+    # exhaustion given a bare, uninformative "Aborted()" with
+    # `-sASSERTIONS` off. Raising `-sSTACK_SIZE` to 8 MiB was shipped as
+    # that first guess -- harmless, cheap insurance, kept in place -- but
+    # turning `-sASSERTIONS=1` ALSO on (the real fix for the "no
+    # diagnostic" problem) is what actually revealed the true error on
+    # the VERY NEXT CI run: "system_error was thrown ... thread
+    # constructor failed", immediately identifying missing pthread
+    # support as the real cause (see this block's own "Threads" comment,
+    # above, for the full explanation and the fix actually applied for
+    # it). `-sASSERTIONS=1` stays permanent regardless -- it is what
+    # turned an opaque multi-session mystery into a one-line diagnosis
+    # the moment it was available, which is worth its modest size/perf
+    # cost on its own. NOT YET CONFIRMED on real CI as of this comment --
+    # this old local toolchain substitute could not reproduce ANY of
+    # these symptoms to test the pthread fix against directly; the next
+    # real CI run is what actually confirms or refutes it.
 endif()
 
 # The 5 auxiliary tools below (bench/selfplay/tune/match/sprt) are not
