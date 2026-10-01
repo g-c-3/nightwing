@@ -341,7 +341,38 @@ constexpr int kMaxThreads = 1024;
 /// substitute for keeping this ceiling itself realistic, since under
 /// ASan specifically it cannot run at all.
 constexpr int kMinHashMB = 1;
+/// Under Emscripten specifically, `kMaxHashMB` stays far below the
+/// native 2048 figure above -- not a second instance of the same
+/// "sanity ceiling with no real relationship to what any actual
+/// machine can satisfy" mistake this constant's own history already
+/// records once, but a genuine, fixed architectural fact: wasm32 has a
+/// hard 2 GiB (2147483648 byte) total linear-memory ceiling no
+/// `-sMAXIMUM_MEMORY` setting can raise, and that 2 GiB has to cover
+/// everything the program needs -- code, the stack (8 MiB per thread,
+/// src/CMakeLists.txt's `-sSTACK_SIZE`), each of the 4 pre-spun pthread
+/// workers' own stack, book data, every other heap allocation, AND the
+/// TT -- not the TT alone. 2048 MB (native's own value) is EXACTLY that
+/// 2 GiB ceiling, so clamping to it under wasm doesn't request "a lot
+/// of memory, platform's choice how to handle it" the way it does
+/// natively -- it requests the entire address space for the hash table
+/// alone, leaving literally nothing for anything else the program
+/// needs, which is exactly what a real CI run of `wasm-build` hit
+/// (docs/SESSIONS.md, Session 165): `setoption name Hash value 999999`
+/// correctly clamped to 2048 per the logic below, then `bad_alloc` from
+/// Emscripten's own `_emscripten_resize_heap` immediately on the actual
+/// allocation attempt, aborting the whole process (not a catchable,
+/// recoverable failure under `-fno-exceptions` wasm, matching this
+/// constant's own prior, differently-caused CI lesson above about
+/// treating "in bounds" and "safe" as the same thing). 256 MB leaves
+/// generous (~1.75 GiB) headroom within the hard ceiling for everything
+/// else, while remaining far above the UCI option's own 16 MB default
+/// -- a real user would need to deliberately request a large Hash
+/// value to notice this lower ceiling at all.
+#if defined(__EMSCRIPTEN__)
+constexpr int kMaxHashMB = 256;
+#else
 constexpr int kMaxHashMB = 2048;
+#endif
 
 /// Bounds for the `Move Overhead` UCI option (ROADMAP.md Phase 8, "Full
 /// UCI option set"), in milliseconds -- a fixed safety margin subtracted
