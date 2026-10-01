@@ -221,26 +221,55 @@ if(NIGHTWING_BUILD_WASM)
         "-sEXIT_RUNTIME=1"
         "-sALLOW_MEMORY_GROWTH=1"
         "-sWASM_ASYNC_COMPILATION=0"
+        "-sSTACK_SIZE=8388608"
+        "-sASSERTIONS=1"
     )
-    # KNOWN OPEN RISK (Session 158, docs/SESSIONS.md and docs/DECISIONS.md,
-    # 2026-09-29 (9)): local testing against a forced/non-standard old
-    # Emscripten install (this session's sandbox had no network access to
-    # the official emsdk, so an apt package from 2024 was used instead,
-    # installed past a real dependency conflict) produced a build where
-    # CMake's normal separate-compile-then-link of main.cpp -- unavoidable
-    # under CMake/Ninja/Make, which always compile each source file to its
-    # own object file before linking -- silently dropped the program's
-    # actual entry point: the resulting nightwing.wasm ran (exit code 0,
-    # no error) but executed no UCI logic at all. A single em++ invocation
-    # compiling main.cpp and linking the library together in one step
-    # (not what CMake does) worked correctly. Root cause NOT found within
-    # this session's budget -- it may be specific to that one old,
-    # improperly-installed toolchain rather than a real defect in this
-    # CMake setup; the official emsdk toolchain a real CI job would use is
-    # untested here. The ci.yml wasm-build job's own smoke-test step
-    # (added the same session) exists specifically so CI itself catches
-    # this failure mode immediately, with a real, properly-obtained
-    # toolchain, rather than this being shipped on trust.
+    # RESOLVED (Session 160, real CI run; root cause clarified further
+    # Session 162): Session 158's own locally-found "main() never
+    # executes" symptom did NOT reproduce on the real official emsdk
+    # toolchain in real CI -- a real run's `nightwing-wasm` artifact was
+    # present, proving the gated smoke-test step it depends on had
+    # passed. Session 162 additionally isolated the actual mechanism
+    # behind that LOCAL symptom (this old apt-packaged Emscripten 3.1.6
+    # substitute specifically, not a general issue): `main.cpp`'s
+    # `int main(int argc, char** argv)` signature (needed for the
+    # `./nightwing bench` argv check) compiles to a `__main_argc_argv`
+    # symbol that this old toolchain's linker driver fails to wrap into
+    # a real callable entry point, producing a near-empty ~9 KB stub
+    # that "succeeds" (exit 0) but runs nothing -- while the zero-
+    # argument `int main()` form (`__main_void`) links and runs
+    # correctly every time, on the same library, same flags, same
+    # process. A modern Emscripten release (what `wasm-build`'s
+    # `version: latest` actually uses) has long since not had this
+    # particular gap, consistent with Session 160's real-CI result.
+    #
+    # STACK_SIZE / ASSERTIONS: a SEPARATE, CONFIRMED REAL bug found
+    # Session 162 -- unlike the one above, THIS one reproduced on the
+    # real official emsdk toolchain in real CI (docs/SESSIONS.md, Session
+    # 161/162): every one of `wasm-build`'s UCI protocol checks aborted
+    # immediately inside `callMain()`, before any output at all -- not a
+    # specific check's behavior being wrong, the program never got
+    # anywhere. `-sASSERTIONS` was OFF, so the only diagnostic was a bare
+    # "Aborted(). Build with -sASSERTIONS for more info." -- exactly the
+    # generic signature of Emscripten's small default wasm stack (as low
+    # as 64KB in older Emscripten releases, far below a native thread's
+    # usual multi-MB default) being exhausted by ordinary C++ code that
+    # never needed to think about stack size on a native build. Raised to
+    # 8 MiB (generous headroom, cheap relative to this project's overall
+    # binary/memory budget) as the standard, well-precedented first fix
+    # for this exact failure signature. `-sASSERTIONS=1` is now also
+    # permanent (not just a one-off local debugging flag) specifically so
+    # a future failure like this one produces an actual diagnostic instead
+    # of a bare "Aborted()" that costs a full debugging session to even
+    # attempt a diagnosis for -- worth its modest size/perf cost given
+    # this project has no way to attach a native debugger to a wasm
+    # crash. NOT YET CONFIRMED on real CI as of this comment -- Session
+    # 162's own local testing could not reproduce this bug at all
+    # (the same local toolchain substitute behaves differently yet again,
+    # consistent with it being broken in its own, separate ways), so this
+    # fix is shipped on reasoning from the failure signature, not
+    # empirical local reproduction -- the next real CI run is what
+    # actually confirms or refutes it.
 endif()
 
 # The 5 auxiliary tools below (bench/selfplay/tune/match/sprt) are not
