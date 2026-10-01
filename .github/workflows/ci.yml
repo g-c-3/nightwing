@@ -671,12 +671,23 @@ jobs:
           # single run should report everything it can, not just the
           # first failure, cutting the number of round-trips needed to
           # see the full picture). FAILED accumulates short descriptions;
-          # the job still fails at the end if it's non-empty.
+          # the job still fails at the end if it's non-empty. `|| true`
+          # on the `node` invocation itself (Session 165, after a real
+          # run showed `set -e` silently killing the WHOLE script,
+          # skipping every check after the one whose `node` process
+          # crashed outright -- a wrong-output failure, caught by this
+          # function's own `if`, is NOT the same as the underlying
+          # process itself dying with a non-zero exit code, which
+          # bypasses this function's own error handling entirely via
+          # bash's own `set -e` on the assignment statement) -- a
+          # crashed check still produces empty/partial `$output`, so it
+          # correctly shows up as a normal failure below rather than
+          # silently amputating every check that would have run after it.
           FAILED=()
           check() {
             local desc="$1" input="$2" pattern="$3"
             local output
-            output="$(printf "%b" "$input" | timeout 30 node nightwing.js)"
+            output="$(printf "%b" "$input" | timeout 30 node nightwing.js)" || true
             if echo "$output" | grep -qE "$pattern"; then
               echo "PASS: $desc"
             else
