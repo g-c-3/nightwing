@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+### Session 170 — 2026-10-02 — User-uploaded CI logs: single-file wasm bundle and wasm release assets confirmed
+
+Triggered by uploaded CI logs for the push carrying Session 169's changes.
+
+**CI result:** every job green. Native: Linux Debug/Release 710/710, Windows Debug/Release 710/710, macOS Debug/Release 708/708 (the predicted counts after the 7 `OwnBook` tests). wasm-build: the original 9 protocol checks passed; `build-wasm-single` produced `nightwing.min.js` (448,547 bytes, one line, no `.wasm` emitted) and all 6 standalone checks passed from an empty directory, including both real searches that exercise pthread workers under `SINGLE_FILE`. Release job: `release-assets` held all 6 files, and both the `latest` release and the versioned release `v0.1.0-652` were published.
+
+**Roadmap:** "Standalone `nightwing.min.js`" and "Both wasm artifacts published as release assets" checked off. This also confirms the OwnBook change on all platforms. No source, workflow, or decision changes were needed; the DECISIONS.md entry 2026-10-02 (3) stays accurate (its "unconfirmed" status line is superseded by this entry).
+
+**Not checked:** the bundle was verified only under the CI runner's Node; no browser use is supported (`ENVIRONMENT=node`), and the contents of the published release page were inferred from the job's file listing and the release URLs, not viewed.
+
+**Next session start point:** the next incomplete ROADMAP item. The remaining open items are the engine-vs-engine match infrastructure for search changes (with its follow-on Step 3b use case), then the hygiene list (LICENSE and `.gitignore`, test-coverage audit, ThreadSanitizer coverage, non-isolated test run).
+
+---
+
 ### Session 169 — 2026-10-02 — Standalone `nightwing.min.js` bundle and wasm release assets implemented (awaiting CI)
 
 Started with the "Start" trigger; the next incomplete ROADMAP item was the standalone `nightwing.min.js` bundle.
