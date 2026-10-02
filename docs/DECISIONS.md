@@ -4,6 +4,17 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-02 (5) — The Step 3b UCI-match workflow uses its own prefixed inputs and a fourth pipeline choice, and takes refs as inputs instead of hard-coding commits
+
+- **Decision:** the manually triggered strength comparison for search-code changes is a fourth value (`uci-match`) of the existing `pipeline` choice input, with its own `ucimatch_*` inputs rather than reuse of the existing `sprt_*` inputs. Baseline and candidate are git refs supplied as inputs; the runner binary is always built from the dispatched ref.
+- **Why separate inputs:** the existing `sprt_elo0`/`sprt_elo1` inputs default to 0 and 5 for the eval-weight SPRT pipeline, whereas this comparison needs -5 and 5; sharing them would silently change one pipeline's defaults or make the other's wrong. Separate prefixed inputs also let each setting (refs, depth, bounds, alpha/beta, game cap, time limit, opening plies, game length, seed, movetime) be changed individually. Total inputs are 24 against GitHub's limit of 25, so further inputs for this pipeline would need consolidation.
+- **Why refs are inputs:** the pre-Step-2b commit is a fixed fact (`b7d0be8165c1f470c2fd5a2b298e06a6b2f986b3`) but the same job is intended for every later search change; hard-coding it would make the job single-use. Full commit SHAs are the documented form because a shallow checkout cannot fetch an abbreviated SHA.
+- **Safety:** every input reaches the shell through `env:` variables, never by interpolation into the script text, so a free-text input such as a ref cannot inject commands.
+- **Limits recorded:** the default pair (Step 2b parent versus current `main`) measures all changes since 2026-09-19 rather than Step 2b alone; Step 2b is a speed-oriented change and a fixed-depth match cannot show a pure speed-up, so the optional `movetime` control exists for that purpose.
+- **Alternatives considered:** a matrix of parallel shards combined by a final job (not built; would give more games per hour on multi-core runners but needs a combining step the CLI does not have); reusing the `sprt` pipeline choice (rejected: it is wired to the self-play/tune steps).
+
+---
+
 ### 2026-10-02 (4) — Search-code strength comparisons use a two-process UCI-vs-UCI runner, in its own library, with the runner (not the engines) owning the game state
 
 - **Decision:** the engine-vs-engine infrastructure for search-code changes is a genuine two-process runner (`src/tuner/uci_match.h/.cpp`, CLI `nightwing_uci_match`) that spawns two separate engine executables and referees games over UCI pipes. The smaller-lift in-process option (a per-side search-variant toggle inside `negamax()`) was not built.
