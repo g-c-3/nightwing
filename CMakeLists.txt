@@ -39,6 +39,20 @@ option(NIGHTWING_BUILD_WASM "Build the nightwing UCI engine (only) as WebAssembl
 if(NIGHTWING_BUILD_WASM AND NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
     message(FATAL_ERROR "Nightwing: NIGHTWING_BUILD_WASM requires the Emscripten toolchain -- configure with 'emcmake cmake ...', not a plain 'cmake ...' invocation with this option bolted on.")
 endif()
+# ROADMAP.md "Release & Packaging Infrastructure": "Standalone
+# `nightwing.min.js`: single self-contained minified bundle (wasm binary
+# inlined as base64, not a separate `.wasm` file to host/serve) for
+# drop-in use without asset-path configuration". OFF (the default) keeps
+# the two-file `nightwing.js` + `nightwing.wasm` output; ON switches the
+# wasm target to Emscripten's own `-sSINGLE_FILE=1` and renames its
+# output to `nightwing.min.js` (src/CMakeLists.txt). Only meaningful
+# together with NIGHTWING_BUILD_WASM -- a native build has no wasm binary
+# to inline -- so, like that option's own toolchain guard just above, it
+# fails fast instead of being silently ignored.
+option(NIGHTWING_WASM_SINGLE_FILE "With NIGHTWING_BUILD_WASM: emit one self-contained nightwing.min.js (wasm inlined as base64) instead of nightwing.js + nightwing.wasm." OFF)
+if(NIGHTWING_WASM_SINGLE_FILE AND NOT NIGHTWING_BUILD_WASM)
+    message(FATAL_ERROR "Nightwing: NIGHTWING_WASM_SINGLE_FILE requires NIGHTWING_BUILD_WASM=ON (there is no wasm binary to inline in a native build).")
+endif()
 if(NIGHTWING_BUILD_WASM)
     # Debug (target attribute is $<CONFIG:Debug> in per-file overrides
     # below) is untested under Emscripten's own sanitizer support and not
