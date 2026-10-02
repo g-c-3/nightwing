@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+### Session 172 — 2026-10-02 — First two UCI-match runs recorded
+
+Two manually dispatched `uci-match` runs were read from their CI logs. All other CI jobs in both runs completed with no errors (Linux Debug 716/716).
+
+**Run 1:** baseline `b7d0be8165c1f470c2fd5a2b298e06a6b2f986b3` (parent of the Step 2b commit) against candidate `main` (`2f20308681c00b2680d6d04cfbec1ab9b9e6c2ed`), fixed depth 6, SPRT -5/5, alpha = beta = 0.05, 10000-game cap. The SPRT accepted H1 at game 1566 (LLR 2.999 against bound 2.944): candidate 740 wins, 178 draws, 648 losses, about +20 Elo with roughly ±16 at 95%. Runtime about 17 minutes (about 1.5 games per second on the hosted runner, faster than the earlier local estimate).
+
+**Run 2:** baseline `cdbe1a68f47005a1ffcca1412001d0ce69d0f88c` (the Step 2b commit itself) against candidate `main`, `movetime` 100, same SPRT settings. Stopped by the 300-minute limit (exit code 124, handled as inconclusive) after 1574 games: candidate 663 wins, 284 draws, 627 losses, about +8 Elo with roughly ±16 at 95%, LLR 1.27 against bound 2.944. About 11 seconds per game.
+
+**Interpretation:** neither run compares Step 2b with its parent, so neither completes Step 3b. Run 1 shows that `main` plays stronger than the 2026-09-19 build at equal depth (all changes since, including search and eval work). Run 2 shows no resolvable difference between the Step 2b commit and `main` at equal time per move. The gap between the two results is within statistical noise, so no conclusion about speed costs in later changes is supported. The workflow, time-limit handling, summary output and artifact upload all worked as designed in real CI.
+
+**Next session start point:** dispatch `uci-match` with `ucimatch_baseline_ref` = `b7d0be8165c1f470c2fd5a2b298e06a6b2f986b3` and `ucimatch_candidate_ref` = `cdbe1a68f47005a1ffcca1412001d0ce69d0f88c`: first at fixed depth 6 (`ucimatch_movetime_ms` = 0), then with `ucimatch_movetime_ms` = 100. Record both results against Step 3b in ROADMAP.md.
+
+---
+
 ### Session 171 — 2026-10-02 — Two-process UCI-vs-UCI match runner implemented (awaiting CI)
 
 Started with the "Go" trigger; the next incomplete ROADMAP item was the engine-vs-engine match infrastructure for search-code changes. The larger-lift two-process option was chosen (see docs/DECISIONS.md, 2026-10-02 (4)).
