@@ -57,8 +57,28 @@ add_executable(nightwing_tests
     contempt_tests.cpp
     thread_regression_tests.cpp
     persistent_tt_tests.cpp
+    uci_match_tests.cpp
 )
-target_link_libraries(nightwing_tests PRIVATE nightwing_lib Catch2::Catch2WithMain)
+target_link_libraries(nightwing_tests PRIVATE nightwing_lib nightwing_uci_match_lib Catch2::Catch2WithMain)
+
+# tests/uci_match_tests.cpp launches the real engine and a scripted fake
+# engine as child processes, so both must be built first and their paths
+# handed to the test. The paths are converted to CMake style (forward
+# slashes) so a Windows path survives being embedded in a C++ string
+# literal; $<PATH:...> needs CMake 3.24+, older versions fall back to the
+# raw path (fine on Linux/macOS).
+add_executable(nightwing_fake_uci_engine fake_uci_engine.cpp)
+add_dependencies(nightwing_tests nightwing nightwing_fake_uci_engine)
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+    set(NW_ENGINE_PATH_EXPR "$<PATH:CMAKE_PATH,NORMALIZE,$<TARGET_FILE:nightwing>>")
+    set(NW_FAKE_PATH_EXPR "$<PATH:CMAKE_PATH,NORMALIZE,$<TARGET_FILE:nightwing_fake_uci_engine>>")
+else()
+    set(NW_ENGINE_PATH_EXPR "$<TARGET_FILE:nightwing>")
+    set(NW_FAKE_PATH_EXPR "$<TARGET_FILE:nightwing_fake_uci_engine>")
+endif()
+target_compile_definitions(nightwing_tests PRIVATE
+    NIGHTWING_ENGINE_PATH="${NW_ENGINE_PATH_EXPR}"
+    NIGHTWING_FAKE_ENGINE_PATH="${NW_FAKE_PATH_EXPR}")
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(CTest)
