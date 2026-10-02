@@ -14,6 +14,8 @@ Two manually dispatched `uci-match` runs were read from their CI logs. All other
 
 **Interpretation:** neither run compares Step 2b with its parent, so neither completes Step 3b. Run 1 shows that `main` plays stronger than the 2026-09-19 build at equal depth (all changes since, including search and eval work). Run 2 shows no resolvable difference between the Step 2b commit and `main` at equal time per move. The gap between the two results is within statistical noise, so no conclusion about speed costs in later changes is supported. The workflow, time-limit handling, summary output and artifact upload all worked as designed in real CI.
 
+**Also done while the Step 3b run was in progress:** a CI step running the raw `nightwing_tests` binary once in a single process (Linux Release only) was added to `.github/workflows/ci.yml`, and a `.gitignore` was written. Locally, the direct run passed (716 test cases, 691236 assertions, about 12 seconds); the step has not yet run in CI. The workflow has no `concurrency` setting, so pushing commits cannot cancel a running match. LICENSE remains open pending a license choice.
+
 **Next session start point:** dispatch `uci-match` with `ucimatch_baseline_ref` = `b7d0be8165c1f470c2fd5a2b298e06a6b2f986b3` and `ucimatch_candidate_ref` = `cdbe1a68f47005a1ffcca1412001d0ce69d0f88c`: first at fixed depth 6 (`ucimatch_movetime_ms` = 0), then with `ucimatch_movetime_ms` = 100. Record both results against Step 3b in ROADMAP.md.
 
 ---

@@ -2983,11 +2983,12 @@ Not part of the report's own ordering, appended here:
       the pawn(s) actually touched by the move just made) would remove
       this real O(pawn-count)-per-node cost. Profile before spending
       time on either — the report's own caution, not lowered.
-- [ ] **Add a LICENSE and a `.gitignore`** (finding 13) — neither exists
+- [~] **Add a LICENSE and a `.gitignore`** (finding 13) — neither exists
       in the repository today (confirmed absent). The README has a
       documented attribution policy but nothing governs actual reuse
       terms; whoever operates this repository should pick a license
       (not this repo-assistant's call to make) before this is closed.
+      PARTIAL (Session 172): `.gitignore` written (build directories, compiled objects, editor and OS files) and checked against the tracked file list (no tracked file matches). LICENSE still open: the choice of license is for whoever operates this repository, not for the repo assistant.
 - [ ] **Audit fixed-depth vs. production-path test coverage** (finding
       12, a methodology observation, not a bug by itself) — Internal
       Iterative Reduction (`negamax()`'s own `if (!probe.hit && depth >=
@@ -3042,11 +3043,12 @@ Not part of the report's own ordering, appended here:
       were the "2 pre-existing sandbox-specific failures" recorded
       since Session 133 — that attribution was wrong. See docs/
       DECISIONS.md, 2026-09-27 (2).
-- [ ] **CI: also run the raw `nightwing_tests` binary once, non-isolated**
+- [x] **CI: also run the raw `nightwing_tests` binary once, non-isolated**
       (report suggestion 2, filed Session 145) — catches cross-test
       global-state contamination (the book bug above was exactly this
       class) that `ctest`'s per-process isolation hides. Now feasible
       since the direct run is green.
+      DONE (Session 172, awaiting its first CI run): a step "Test, raw binary in a single process (Linux Release only)" was added to `build-and-test` in `.github/workflows/ci.yml`, running `./tests/nightwing_tests` once after `ctest`. Verified locally only: the direct run passes (716 test cases, 691236 assertions, about 12 seconds, Linux Release). Windows, macOS and Debug are deliberately not covered ("once").
 - [ ] **ThreadSanitizer coverage** (report finding 3d, filed Session 145)
       — `CMakeLists.txt` has no `-fsanitize=thread` option; the
       sanitizer matrix is ASan/UBSan only, a gap docs/DECISIONS.md
