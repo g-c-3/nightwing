@@ -224,6 +224,17 @@ jobs:
       # than repeated six times: the bench numbers are read by a human
       # updating docs/SESSIONS.md, not asserted on by any test, so one
       # copy of them is all that's ever actually useful.
+      # ROADMAP.md Priority Fixes (2026-09-22), "CI: also run the raw
+      # `nightwing_tests` binary once, non-isolated": ctest runs every test
+      # case in its own process, which hides cross-test global-state
+      # contamination (the opening-book bug was this class). One direct run
+      # of the whole binary in a single process catches it. Linux Release
+      # only ("once"): the run takes about 12 seconds there.
+      - name: Test, raw binary in a single process (Linux Release only)
+        if: matrix.os_name == 'Linux' && matrix.build_type == 'Release'
+        working-directory: build
+        run: ./tests/nightwing_tests
+
       - name: Print regression bench (Linux Release only — see comment above)
         if: matrix.os_name == 'Linux' && matrix.build_type == 'Release'
         working-directory: build
