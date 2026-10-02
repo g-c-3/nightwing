@@ -23,6 +23,7 @@ on:
           - tuning
           - pgo
           - sprt
+          - uci-match
         default: tuning
       selfplay_games:
         description: "nightwing_selfplay: number of self-play games to generate training data from"
@@ -71,6 +72,59 @@ on:
         description: "nightwing_sprt: hard safety cap on total games if neither SPRT bound is ever crossed"
         required: false
         default: "2000"
+
+      ucimatch_baseline_ref:
+        description: "uci-match: baseline (engine A) git ref -- full 40-char commit SHA, branch, or tag. Default is the parent of the commit that introduced Step 2b (b7d0be8)"
+        required: false
+        default: "b7d0be8165c1f470c2fd5a2b298e06a6b2f986b3"
+      ucimatch_candidate_ref:
+        description: "uci-match: candidate (engine B) git ref -- full 40-char commit SHA, branch, or tag. Default main = current main. For Step 2b ALONE, use cdbe1a68f47005a1ffcca1412001d0ce69d0f88c (the Step 2b commit itself)"
+        required: false
+        default: "main"
+      ucimatch_depth:
+        description: "uci-match: fixed search depth sent to both engines as `go depth N`"
+        required: false
+        default: "6"
+      ucimatch_movetime_ms:
+        description: "uci-match: optional. 0 = fixed depth (ucimatch_depth). Above 0 = `go movetime N` instead, so engine SPEED counts toward strength (a fixed-depth match cannot show a pure speed-up)"
+        required: false
+        default: "0"
+      ucimatch_elo0:
+        description: "uci-match: SPRT H0 Elo bound (candidate no better than this)"
+        required: false
+        default: "-5"
+      ucimatch_elo1:
+        description: "uci-match: SPRT H1 Elo bound (candidate at least this good)"
+        required: false
+        default: "5"
+      ucimatch_alpha:
+        description: "uci-match: SPRT alpha (false-positive rate)"
+        required: false
+        default: "0.05"
+      ucimatch_beta:
+        description: "uci-match: SPRT beta (false-negative rate)"
+        required: false
+        default: "0.05"
+      ucimatch_max_games:
+        description: "uci-match: hard cap on games if neither SPRT bound is crossed"
+        required: false
+        default: "4000"
+      ucimatch_time_limit_min:
+        description: "uci-match: wall-clock limit for the match in minutes (job stops cleanly and reports the partial tally; hosted-runner jobs are capped at 360 minutes in total including builds)"
+        required: false
+        default: "300"
+      ucimatch_opening_plies:
+        description: "uci-match: random opening plies per game"
+        required: false
+        default: "8"
+      ucimatch_max_plies:
+        description: "uci-match: game-length cap in plies (a game reaching it is a draw)"
+        required: false
+        default: "300"
+      ucimatch_seed:
+        description: "uci-match: base seed for the random openings"
+        required: false
+        default: "1"
 
 jobs:
   build-and-test:
@@ -603,6 +657,133 @@ jobs:
             build/training_data.txt
             build/tuned_weights.txt
             build/sprt_result.txt
+          retention-days: 30
+
+  # ROADMAP.md Priority Fixes (2026-09-22), "Engine-vs-engine match
+  # infrastructure for search-code changes" -- first real use: the
+  # "Staged / lazy move generation" item's Step 3b. Manually triggered only
+  # (`workflow_dispatch`, same rationale as `sprt-test`). Unlike `sprt-test`,
+  # which compares eval weights inside ONE binary, this builds TWO separate
+  # engine binaries from two git refs and plays them against each other
+  # over UCI with `nightwing_uci_match` (src/tuner/uci_match_main.cpp), so
+  # it can compare two versions of the search code itself. The runner tool
+  # is always built from the ref this workflow was dispatched on; the two
+  # engines are built from `ucimatch_baseline_ref` / `ucimatch_candidate_ref`.
+  # All settings arrive as `env:` values rather than being interpolated into
+  # the script text, so a free-text input cannot inject shell commands.
+  uci-match-test:
+    if: github.event_name == 'workflow_dispatch' && inputs.pipeline == 'uci-match'
+    runs-on: ubuntu-latest
+    name: UCI match (baseline vs. candidate, SPRT)
+    timeout-minutes: 355
+
+    env:
+      BASELINE_REF: ${{ inputs.ucimatch_baseline_ref }}
+      CANDIDATE_REF: ${{ inputs.ucimatch_candidate_ref }}
+      DEPTH: ${{ inputs.ucimatch_depth }}
+      MOVETIME_MS: ${{ inputs.ucimatch_movetime_ms }}
+      ELO0: ${{ inputs.ucimatch_elo0 }}
+      ELO1: ${{ inputs.ucimatch_elo1 }}
+      ALPHA: ${{ inputs.ucimatch_alpha }}
+      BETA: ${{ inputs.ucimatch_beta }}
+      MAX_GAMES: ${{ inputs.ucimatch_max_games }}
+      TIME_LIMIT_MIN: ${{ inputs.ucimatch_time_limit_min }}
+      OPENING_PLIES: ${{ inputs.ucimatch_opening_plies }}
+      MAX_PLIES: ${{ inputs.ucimatch_max_plies }}
+      SEED: ${{ inputs.ucimatch_seed }}
+
+    steps:
+      - name: Checkout runner (the ref this workflow was dispatched on)
+        uses: actions/checkout@v7
+        with:
+          path: runner
+
+      - name: Checkout baseline (engine A)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ucimatch_baseline_ref }}
+          path: baseline
+
+      - name: Checkout candidate (engine B)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ucimatch_candidate_ref }}
+          path: candidate
+
+      - name: Show the three commits
+        run: |
+          echo "runner   : $(git -C runner log -1 --format='%H %s')"
+          echo "baseline : $(git -C baseline log -1 --format='%H %s')"
+          echo "candidate: $(git -C candidate log -1 --format='%H %s')"
+
+      - name: Build runner
+        run: |
+          cmake -S runner -B runner/build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF
+          cmake --build runner/build --config Release --parallel --target nightwing_uci_match_cli
+
+      - name: Build baseline engine
+        run: |
+          cmake -S baseline -B baseline/build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF
+          cmake --build baseline/build --config Release --parallel --target nightwing
+
+      - name: Build candidate engine
+        run: |
+          cmake -S candidate -B candidate/build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF
+          cmake --build candidate/build --config Release --parallel --target nightwing
+
+      # Engine A = baseline, engine B = candidate: nightwing_uci_match
+      # reports the SPRT from B's side, so AcceptH1 means the candidate
+      # is better. Exit code 124 is `timeout` stopping the match at the
+      # wall-clock limit: that is an inconclusive result, not a failure,
+      # and the partial tally is recovered from the progress log below.
+      # Exit code 3 is the runner reporting an engine crash/timeout.
+      - name: Run UCI match
+        run: |
+          set +e
+          CONTROL=(--depth "$DEPTH")
+          if [ "$MOVETIME_MS" -gt 0 ]; then
+            CONTROL=(--movetime "$MOVETIME_MS")
+          fi
+          timeout --signal=TERM "${TIME_LIMIT_MIN}m" \
+            ./runner/build/src/nightwing_uci_match \
+            "$PWD/baseline/build/src/nightwing" "$PWD/candidate/build/src/nightwing" \
+            --games "$MAX_GAMES" "${CONTROL[@]}" \
+            --opening-plies "$OPENING_PLIES" --max-plies "$MAX_PLIES" --seed "$SEED" \
+            --sprt "$ELO0" "$ELO1" "$ALPHA" "$BETA" \
+            > match_result.txt 2> >(tee match_progress.log >&2)
+          rc=$?
+          set -e
+          echo "runner exit code: $rc"
+          {
+            echo "## UCI match: baseline vs. candidate (SPRT ${ELO0} / ${ELO1}, alpha ${ALPHA}, beta ${BETA}, ${CONTROL[*]})"
+            echo
+            echo "- baseline : \`$(git -C baseline rev-parse HEAD)\`"
+            echo "- candidate: \`$(git -C candidate rev-parse HEAD)\`"
+            echo
+            if [ "$rc" -eq 124 ]; then
+              echo "**Stopped at the ${TIME_LIMIT_MIN}-minute limit -- inconclusive.** Last progress lines:"
+              echo '```'
+              tail -n 4 match_progress.log
+              echo '```'
+            else
+              echo '```'
+              cat match_result.txt
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat match_result.txt
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
+            exit "$rc"
+          fi
+
+      - name: Upload match results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uci-match-results
+          path: |
+            match_result.txt
+            match_progress.log
           retention-days: 30
 
   # ROADMAP.md's "Release & Packaging Infrastructure" section (added
