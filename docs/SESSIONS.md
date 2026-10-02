@@ -16,6 +16,8 @@ Started with the "Go" trigger; the next incomplete ROADMAP item was the engine-v
 
 **Roadmap:** the larger-lift match-runner item checked off; the in-process option marked not built; the Step 3b retroactive-use item remains open.
 
+**Roadmap additions (later in the same session):** a review of the supplied "modern HCE alternatives to NNUE" document against the engine's current state found two items not on the roadmap, and both were added to Phase 9 on approval: an SPSA tuner and restricted nonlinear feature interactions in the evaluator. Counter-move ordering was initially listed as a gap but is already covered by the 1-ply continuation ("counter-move") history. The review also found that the Tier 0 tuning work has never changed a shipped value (defaults retained after both production runs) and that several recent search changes have no match evidence.
+
 **Decisions made:** see docs/DECISIONS.md, 2026-10-02 (4).
 
 **Next session start point:** read the next CI logs for the expected 716-test count on Linux and Windows (macOS expected 714) and fix any Windows process-layer failure first. Then apply the new runner to the "Staged / lazy move generation" item's Step 3b: build the commit before Step 2b of `negamax()` as the baseline binary and the current `main` as the candidate, and run `nightwing_uci_match <baseline> <candidate> --sprt -5 5 --depth 6` (or a movetime control) in a `workflow_dispatch` CI job.
