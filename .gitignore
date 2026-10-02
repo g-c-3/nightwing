@@ -1,0 +1,44 @@
+# Nightwing .gitignore
+#
+# Build output: all building happens in GitHub Actions (build/ is the
+# directory the workflow uses), but local or sandbox builds create the
+# same directories and must never be committed.
+build/
+build-*/
+cmake-build-*/
+out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+_deps/
+
+# Compiled objects, libraries, and executables
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.gcda
+*.gcno
+*.profraw
+*.profdata
+
+# Editor and OS files
+.vscode/
+.idea/
+.cache/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Downloaded or generated test dependencies and scratch data
+repo.tar.gz
