@@ -1273,3 +1273,88 @@ TEST_CASE("uci: a 'position ... moves' list with every move legal reports NO 'in
     REQUIRE_FALSE(contains(out, "info string position:"));
 }
 
+// ---------------------------------------------------------------------------
+// OwnBook UCI option (ROADMAP.md's "OwnBook UCI option" item,
+// docs/DECISIONS.md 2026-10-02 (2)). Each case calls init_book() itself:
+// every TEST_CASE is its own process (init_all()'s own doc comment).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("uci: 'uci' advertises 'OwnBook' as a check option defaulting to true", "[uci][ownbook]") {
+    init_all();
+    const std::string out = run_uci({"uci", "quit"});
+    REQUIRE(contains(out, "option name OwnBook type check default true"));
+}
+
+TEST_CASE("uci: by default (OwnBook never set), a book-covered startpos 'go' answers from the "
+          "book -- 'bestmove' with no 'info' lines",
+          "[uci][ownbook]") {
+    init_all();
+    nightwing::book::init_book();
+    const std::string out = run_uci({"position startpos", "go depth 3", "quit"});
+    REQUIRE(contains(out, "bestmove e2e4"));
+    REQUIRE_FALSE(contains(out, "info depth"));
+}
+
+TEST_CASE("uci: 'setoption name OwnBook value true' behaves exactly like the default", "[uci][ownbook]") {
+    init_all();
+    nightwing::book::init_book();
+    const std::string out = run_uci(
+        {"setoption name OwnBook value true", "position startpos", "go depth 3", "quit"});
+    REQUIRE(contains(out, "bestmove e2e4"));
+    REQUIRE_FALSE(contains(out, "info depth"));
+}
+
+TEST_CASE("uci: 'setoption name OwnBook value false' makes a book-covered startpos 'go' run a "
+          "real search ('info depth' lines, then a legal bestmove)",
+          "[uci][ownbook]") {
+    init_all();
+    nightwing::book::init_book();
+    const std::string out = run_uci(
+        {"setoption name OwnBook value false", "position startpos", "go depth 3", "quit"});
+    REQUIRE(contains(out, "info depth 1 "));
+    REQUIRE(contains(out, "info depth 3 "));
+    const std::size_t info_idx = out.find("info depth");
+    const std::size_t best_idx = out.find("bestmove ");
+    REQUIRE(best_idx != std::string::npos);
+    REQUIRE(info_idx < best_idx);
+    REQUIRE_FALSE(contains(out, "bestmove 0000"));
+}
+
+TEST_CASE("uci: OwnBook value is matched case-insensitively and can be switched back on",
+          "[uci][ownbook]") {
+    init_all();
+    nightwing::book::init_book();
+    const std::string off = run_uci(
+        {"setoption name OwnBook value FALSE", "position startpos", "go depth 2", "quit"});
+    REQUIRE(contains(off, "info depth"));
+    const std::string on = run_uci({"setoption name OwnBook value false",
+                                    "setoption name OwnBook value True", "position startpos",
+                                    "go depth 2", "quit"});
+    REQUIRE(contains(on, "bestmove e2e4"));
+    REQUIRE_FALSE(contains(on, "info depth"));
+}
+
+TEST_CASE("uci: a malformed OwnBook value is ignored, leaving the previous setting unchanged",
+          "[uci][ownbook]") {
+    init_all();
+    nightwing::book::init_book();
+    // Default (on) stays on after a garbage value ...
+    const std::string still_on = run_uci(
+        {"setoption name OwnBook value maybe", "position startpos", "go depth 2", "quit"});
+    REQUIRE(contains(still_on, "bestmove e2e4"));
+    REQUIRE_FALSE(contains(still_on, "info depth"));
+    // ... and an explicit off stays off after one.
+    const std::string still_off =
+        run_uci({"setoption name OwnBook value false", "setoption name OwnBook value 42",
+                 "position startpos", "go depth 2", "quit"});
+    REQUIRE(contains(still_off, "info depth"));
+}
+
+TEST_CASE("uci: OwnBook survives 'ucinewgame' (session-lifetime option, like every other)",
+          "[uci][ownbook]") {
+    init_all();
+    nightwing::book::init_book();
+    const std::string out = run_uci({"setoption name OwnBook value false", "ucinewgame",
+                                     "position startpos", "go depth 2", "quit"});
+    REQUIRE(contains(out, "info depth"));
+}
