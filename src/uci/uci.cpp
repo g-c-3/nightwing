@@ -65,17 +65,22 @@
 // `go` now also consults src/book/book.h's small curated opening book
 // FIRST, before any of the above depth/time-control logic even runs
 // (start_go(), below) -- ROADMAP.md's optional "small curated opening
-// book" item. This one has no `setoption`-driven toggle either (an
-// "OwnBook"-style option was considered alongside `Threads` above and
-// deferred -- see docs/DECISIONS.md, 2026-09-03 (4)) -- book usage stays
-// simply always on; see book.h's own header comment for why an opening
-// book, unlike a tablebase, doesn't need one to stay consistent with
-// this project's hard no-tablebase constraint.
+// book" item. The `OwnBook` UCI option (standard `check` type, default
+// `true`; ROADMAP.md's "OwnBook UCI option" item, docs/DECISIONS.md,
+// 2026-10-02 (2), which supersedes the 2026-09-03 (4) deferral) gates
+// that consultation: `setoption name OwnBook value false` makes every
+// `go` run a real search even on a book-covered position, as engine-vs-
+// engine testing and events that forbid an engine's own book require.
+// Left at its default, behavior is identical to before the option
+// existed. See book.h's own header comment for why an opening book,
+// unlike a tablebase, is compatible with this project's hard
+// no-tablebase constraint.
 
 #include "uci/uci.h"
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -991,7 +996,10 @@ void emplace_persistent_tt(std::optional<search::TranspositionTable>& tt,
 /// "Contempt / draw score adjustment" item -- src/search/search.h's
 /// own search_iterative_deepening()/search_fixed_depth() doc comments
 /// on their `contempt_cp` parameter have the full design;
-/// kMinContemptCp/kMaxContemptCp bound it the same way). `Ponder`
+/// kMinContemptCp/kMaxContemptCp bound it the same way), and `OwnBook`
+/// (ROADMAP.md's "OwnBook UCI option" item; a `check` option -- value
+/// `true` or `false`, matched case-insensitively, any other value
+/// ignored and leaving `own_book` unchanged). `Ponder`
 /// (ROADMAP.md Phase 8, "Pondering — protocol side") is also
 /// RECOGNIZED, in the sense that it's advertised in the `uci` response
 /// above and accepted here without complaint, but deliberately has NO
@@ -1017,7 +1025,7 @@ void emplace_persistent_tt(std::optional<search::TranspositionTable>& tt,
 /// GUI or script shouldn't crash the engine or corrupt otherwise-good
 /// prior state.
 void handle_setoption(int& num_threads, std::size_t& hash_size_mb, int& move_overhead_ms,
-                       int& multi_pv, int& skill_level, int& contempt_cp,
+                       int& multi_pv, int& skill_level, int& contempt_cp, bool& own_book,
                        const std::vector<std::string>& tokens) {
     std::size_t name_start = 0;
     std::size_t name_end = 0;
@@ -1115,6 +1123,17 @@ void handle_setoption(int& num_threads, std::size_t& hash_size_mb, int& move_ove
         } catch (const std::exception&) {
             // Non-integer value -- ignore, leaving contempt_cp unchanged.
         }
+    } else if (name == "OwnBook") {
+        std::string value = tokens[value_start];
+        for (char& c : value) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        if (value == "true") {
+            own_book = true;
+        } else if (value == "false") {
+            own_book = false;
+        }
+        // Any other value -- ignore, leaving own_book unchanged.
     }
     // Any other option name: silently ignored (this function's own doc comment).
 }
@@ -1307,6 +1326,10 @@ void abandon_go(GoState& go) {
 /// pick_skill_move() (called below) draws nothing from `skill_rng` at
 /// all in that case (both functions' own doc comments, search/skill.h).
 ///
+/// `own_book` (ROADMAP.md's "OwnBook UCI option" item): run()'s own
+/// session-lifetime, `setoption`-driven state, defaulting to `true`;
+/// `false` skips the opening-book lookup below entirely.
+///
 /// `contempt_cp` (ROADMAP.md Phase 8, "Contempt / draw score
 /// adjustment"): run()'s own session-lifetime state, set via
 /// `setoption name Contempt value <N>` (handle_setoption() above) and
@@ -1334,8 +1357,8 @@ void abandon_go(GoState& go) {
 void start_go(Position& pos, const std::vector<std::uint64_t>& game_history,
               const std::vector<std::string>& tokens, int num_threads, std::size_t hash_size_mb,
               int move_overhead_ms, int multi_pv, int skill_level, std::mt19937_64& skill_rng,
-              int contempt_cp, search::TranspositionTable& persistent_tt, std::ostream& out,
-              std::mutex& out_mutex, GoState& go) {
+              int contempt_cp, bool own_book, search::TranspositionTable& persistent_tt,
+              std::ostream& out, std::mutex& out_mutex, GoState& go) {
     abandon_go(go); // Defensive: see this function's own doc comment above.
 
     // Opening book (src/book/book.h, ROADMAP.md's optional "small
@@ -1344,8 +1367,11 @@ void start_go(Position& pos, const std::vector<std::uint64_t>& game_history,
     // created -- a book hit answers immediately, with no search and no
     // `info` line, exactly matching this function's pre-async behavior
     // for this case, and avoids spinning up a thread that would do
-    // nothing anyway.
-    const std::optional<std::string> book_move = book::book_move(pos);
+    // nothing anyway. Skipped entirely when `own_book` is false (the
+    // `OwnBook` UCI option, handle_setoption() above): the search then
+    // runs and reports `info` lines like on any out-of-book position.
+    const std::optional<std::string> book_move =
+        own_book ? book::book_move(pos) : std::optional<std::string>{};
     if (book_move.has_value()) {
         std::lock_guard<std::mutex> lock(out_mutex);
         out << "bestmove " << *book_move << '\n';
@@ -1598,9 +1624,10 @@ void abandon_pondering(PonderState& ponder) {
 /// (search::search_iterative_deepening()'s new `external_stop`
 /// parameter, search.h). Deliberately does NOT consult the opening
 /// book (src/book/book.h) the way start_go() does — pondering on a
-/// book-covered position would have nothing to actually search, and
-/// this project's book has no toggle to check first without also
-/// gating this call's own behavior on it; see docs/DECISIONS.md for
+/// book-covered position would have nothing to actually search. With
+/// the `OwnBook` option (handle_setoption()) off, start_go() searches
+/// book positions too, so pondering and `go` then agree; with it on,
+/// this function's behavior is unchanged. See docs/DECISIONS.md for
 /// the full rationale.
 ///
 /// The REAL time budget for the eventual answer — what an ordinary
@@ -2030,6 +2057,12 @@ void run(std::istream& in, std::ostream& out) {
     // for the identical reason `skill_level`/`multi_pv` above already
     // aren't (those two parameters' own comments, just above).
     int contempt_cp = 0;
+    // `OwnBook` (ROADMAP.md's "OwnBook UCI option" item): same session-
+    // lifetime, `setoption`-driven, not-reset-by-`ucinewgame` convention
+    // as every option above. Defaults to true -- the opening book stays
+    // on, exactly as before this option existed. Read only by start_go()
+    // (start_pondering() never consults the book at all).
+    bool own_book = true;
     // Pondering state (ROADMAP.md Phase 7) — session-lifetime, like
     // `num_threads` above, though its own contents (the background
     // thread, the stop flag) are reset per `go ponder` by
@@ -2136,6 +2169,13 @@ void run(std::istream& in, std::ostream& out) {
             // pondering support is unconditional, matching how many
             // established engines implement this specific option.
             out << "option name Ponder type check default true\n";
+            // `OwnBook` (ROADMAP.md's "OwnBook UCI option" item): standard
+            // UCI `check` option, default `true` -- the curated opening
+            // book (src/book/book.h) answers book positions instantly, as
+            // it always has. `false` makes `go` search every position,
+            // for engine-vs-engine testing and events that disallow an
+            // engine's own book.
+            out << "option name OwnBook type check default true\n";
             out << "uciok\n";
             out.flush();
         } else if (cmd == "isready") {
@@ -2174,7 +2214,7 @@ void run(std::istream& in, std::ostream& out) {
         } else if (cmd == "setoption") {
             const std::size_t previous_hash_size_mb = hash_size_mb;
             handle_setoption(num_threads, hash_size_mb, move_overhead_ms, multi_pv, skill_level,
-                              contempt_cp, tokens);
+                              contempt_cp, own_book, tokens);
             if (hash_size_mb != previous_hash_size_mb) {
                 // Rebuilding persistent_tt below destroys the old
                 // object outright and replaces it with a fresh one at
@@ -2209,8 +2249,8 @@ void run(std::istream& in, std::ostream& out) {
             } else {
                 abandon_pondering(ponder); // Out-of-protocol otherwise; see abandon_pondering()'s own doc comment.
                 start_go(pos, game_history, tokens, num_threads, hash_size_mb, move_overhead_ms,
-                         multi_pv, skill_level, skill_rng, contempt_cp, *persistent_tt, out,
-                         out_mutex, go);
+                         multi_pv, skill_level, skill_rng, contempt_cp, own_book, *persistent_tt,
+                         out, out_mutex, go);
             }
         } else if (cmd == "ponderhit") {
             handle_ponderhit(ponder);
