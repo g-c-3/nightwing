@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 171 — 2026-10-02 — Two-process UCI-vs-UCI match runner implemented (awaiting CI)
+
+Started with the "Go" trigger; the next incomplete ROADMAP item was the engine-vs-engine match infrastructure for search-code changes. The larger-lift two-process option was chosen (see docs/DECISIONS.md, 2026-10-02 (4)).
+
+**Built:** `src/tuner/uci_match.h/.cpp` — `UciMatchSession` (launches both engines once, `ucinewgame` + `isready` between games, alternating colors, random openings), `play_uci_match()`, `parse_bestmove_line()`, and an internal `Process` wrapper with time-limited line reads (POSIX `fork`/`exec`/`poll`; Windows `CreateProcess` plus pipes). The referee validates every `bestmove` against the board layer's legal move generator and adjudicates mate, stalemate, the 50-move rule, threefold repetition, insufficient material and a `max_plies` cap. An illegal move forfeits one game; a crash, closed pipe or timeout aborts the match. `src/tuner/uci_match_main.cpp` — the `nightwing_uci_match` CLI (baseline = engine A, candidate = engine B; optional `--sprt` via the existing `compute_sprt()`). `src/CMakeLists.txt` — new `nightwing_uci_match_lib` (outside `nightwing_lib`, inside the existing non-wasm block) and CLI target. `tests/uci_match_tests.cpp` (6 cases) and `tests/fake_uci_engine.cpp` (scripted `illegal`/`crash`/`hang` engine); `tests/CMakeLists.txt` links the library, builds the fake engine, and passes both executable paths as compile definitions.
+
+**Verified locally (Linux, GCC 13.3, Release):** build with no warnings; the 6 new tests pass; full suite 716/716 (710 before); a 60-game run of the engine against itself at depth 2 gave 24 wins / 12 draws / 24 losses with no illegal moves and no leftover child processes. A first 6-game identical-engine run scored 1–5, which a 60-game rerun showed to be sample noise, not a color or state-leak bias.
+
+**Not verified:** Windows and macOS builds (the Windows process layer was written without a compiler to test it), Debug/sanitizer builds, wasm (the new library is excluded from wasm by construction), and any match between two differently built binaries. On CMake older than 3.24 the test-path conversion falls back to the raw path, which could break on Windows; CI runners use a newer CMake.
+
+**Roadmap:** the larger-lift match-runner item checked off; the in-process option marked not built; the Step 3b retroactive-use item remains open.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-10-02 (4).
+
+**Next session start point:** read the next CI logs for the expected 716-test count on Linux and Windows (macOS expected 714) and fix any Windows process-layer failure first. Then apply the new runner to the "Staged / lazy move generation" item's Step 3b: build the commit before Step 2b of `negamax()` as the baseline binary and the current `main` as the candidate, and run `nightwing_uci_match <baseline> <candidate> --sprt -5 5 --depth 6` (or a movetime control) in a `workflow_dispatch` CI job.
+
+---
+
 ### Session 170 — 2026-10-02 — User-uploaded CI logs: single-file wasm bundle and wasm release assets confirmed
 
 Triggered by uploaded CI logs for the push carrying Session 169's changes.

@@ -69,6 +69,8 @@ src/
 ├── tuner/
 │   ├── tune.cpp/.h              # Texel tuning
 │   ├── selfplay.cpp/.h, match.cpp/.h, sprt.cpp/.h  # self-play/match/SPRT harness
+│   ├── uci_match.cpp/.h, uci_match_main.cpp         # two-process UCI-vs-UCI match runner (own library,
+│   │                                                # nightwing_uci_match_lib; never built under wasm)
 │   └── *_main.cpp                # standalone entry points for each tuner tool
 ├── support/
 │   └── cpu_features.cpp/.h      # BMI2/POPCNT runtime detection

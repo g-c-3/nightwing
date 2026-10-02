@@ -4,6 +4,20 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-02 (4) — Search-code strength comparisons use a two-process UCI-vs-UCI runner, in its own library, with the runner (not the engines) owning the game state
+
+- **Decision:** the engine-vs-engine infrastructure for search-code changes is a genuine two-process runner (`src/tuner/uci_match.h/.cpp`, CLI `nightwing_uci_match`) that spawns two separate engine executables and referees games over UCI pipes. The smaller-lift in-process option (a per-side search-variant toggle inside `negamax()`) was not built.
+- **Referee ownership:** the runner keeps its own `Position`, validates every `bestmove` against its own legal move generator, and adjudicates all game ends itself, so a buggy engine cannot mis-score a game by misreporting its result. Illegal moves forfeit one game; crashes, closed pipes and timeouts abort the match, because the engine's protocol state is then unknown.
+- **Packaging:** the runner lives in `nightwing_uci_match_lib`, separate from `nightwing_lib`, because process spawning is irrelevant to the engine proper and cannot be built under Emscripten. Platform code is POSIX `fork`/`exec`/`poll` and Windows `CreateProcess` with pipes, with no third-party dependency.
+- **Defaults:** `OwnBook false` is sent to both engines (otherwise the always-on opening book, per the 2026-10-02 (2) entry, would replace search in many early positions); fixed depth is the default control, with `movetime` available; colors alternate each game; the SPRT convention matches `nightwing_sprt` (engine A baseline, engine B candidate, statistic from B's side).
+- **Rationale:** a two-process runner is the only option that compares two commits or binaries directly, which is exactly the Step 3b need (pre- versus post-Step-2b `negamax()`), and it adds no permanent toggle or duplicated old code path to the hot search function. It also matches how external testing frameworks work, so the engine could later be checked against them. The in-process option would have required keeping both versions of `negamax()` compilable in one binary.
+- **Alternatives considered:**
+  - In-process per-side search-variant toggle — not built: it permanently adds branching or duplicated code to `negamax()` to serve a test tool.
+  - Shelling out to an external tool such as cutechess-cli or fastchess — rejected as an external dependency that CI would have to fetch, and the repository's convention is self-contained tooling.
+- **Status:** verified on Linux only (716/716 native tests, a 60-game identical-engine run). The Windows process layer, macOS, and Debug/sanitizer builds were unconfirmed at the time of writing.
+
+---
+
 ### 2026-10-02 (3) — Single-file wasm bundle via Emscripten `SINGLE_FILE`; wasm files published as release assets; `release` gated on `wasm-build`
 
 - **Decision:** `nightwing.min.js` is produced by a second CMake configuration of the same wasm target (`NIGHTWING_WASM_SINGLE_FILE=ON`), using Emscripten's built-in `-sSINGLE_FILE=1`, not by a post-processing script that stitches base64 into the glue. The two wasm files keep their build names (`nightwing.js`, `nightwing.wasm`) as release assets, because the glue loads the wasm by that exact filename.
