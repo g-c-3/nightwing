@@ -245,6 +245,25 @@ if(NIGHTWING_BUILD_WASM)
         "-sASSERTIONS=1"
         "-sPTHREAD_POOL_SIZE=4"
     )
+    # NIGHTWING_WASM_SINGLE_FILE (ROADMAP.md "Standalone `nightwing.min.js`"
+    # item, Session 169): `-sSINGLE_FILE=1` makes Emscripten embed the
+    # wasm binary in the JS glue as base64, so the one emitted file needs
+    # no `.wasm` sibling and no asset-path configuration to run. The
+    # output is renamed to `nightwing.min.js` (OUTPUT_NAME + the ".js"
+    # SUFFIX set above). "Minified" here means whatever Emscripten's own
+    # link step does to a Release (-O3, no -g) build's JS -- whitespace
+    # minification -- not an extra post-processing pass (no Closure, no
+    # separate minifier), which is left out deliberately: Closure/
+    # property-mangling is a classic way to break Emscripten glue, and
+    # this item's value is the drop-in single file, not a few more KB.
+    # Pthread workers (every `go` spawns one, see the "Threads" comment
+    # above) re-load this same file as their worker script under Node, so
+    # the single-file form is exercised by `wasm-build`'s own checks, not
+    # assumed to work.
+    if(NIGHTWING_WASM_SINGLE_FILE)
+        target_link_options(nightwing PRIVATE "-sSINGLE_FILE=1")
+        set_target_properties(nightwing PROPERTIES OUTPUT_NAME "nightwing.min")
+    endif()
     # RESOLVED (Session 160, real CI run; root cause clarified further
     # Session 162): Session 158's own locally-found "main() never
     # executes" symptom did NOT reproduce on the real official emsdk
