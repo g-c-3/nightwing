@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-02 (2) — `OwnBook` UCI option added; supersedes the 2026-09-03 (4) deferral
+
+- **Decision:** a standard UCI `check` option `OwnBook`, default `true`, gates the opening-book lookup in `start_go()`. Off means every `go` searches, including book-covered positions.
+- **Rationale:** the always-on book prevented fair engine-vs-engine testing (shared opening suites), produced `bestmove` with no `info` lines on book positions for analysis GUIs, and conflicts with events that disallow an engine's own book. Session 166's wasm CI confusion was a direct consequence. The default of `true` keeps playing behavior identical to before.
+- **Scope:** `start_pondering()` never consulted the book and is unchanged; with `OwnBook` off, `go` and pondering therefore agree. The option is session-lifetime and survives `ucinewgame`, like every other option. Values are matched case-insensitively and unrecognized values are ignored, consistent with the file's robustness convention.
+- **Alternatives considered:**
+  - Default `false` — rejected, as it would silently weaken play for every GUI user that never sets the option.
+  - Making pondering consult the book when `OwnBook` is true — rejected as a behavior change outside the request's scope.
+  - Removing the book entirely — rejected, since the book saves clock time and avoids misjudged opening lines.
+
+---
+
 ### 2026-10-02 (1) — Missing-`info`-lines puzzle closed as an opening-book artifact; wasm CI checks switched to an out-of-book position, no engine change
 
 - **Finding:** `start_go()` answers book-covered positions with an immediate `bestmove` and no search thread, hence no `info` output. `position startpos` is book-covered. Reproduced natively; wasm behavior was identical to native, so no wasm-specific defect existed.

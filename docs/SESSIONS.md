@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+### Session 168 — 2026-10-02 — `OwnBook` UCI option added
+
+An `OwnBook` option was requested after the opening book's always-on behavior was identified as a gap for engine-vs-engine testing and for events that disallow an engine's own book.
+
+**Built:** `option name OwnBook type check default true` advertised in the `uci` handshake; `handle_setoption()` parses `true`/`false` case-insensitively and ignores any other value; `run()` holds the session-lifetime `own_book` state (not reset by `ucinewgame`); `start_go()` skips `book::book_move()` when it is false. `start_pondering()` was left unchanged because it never consulted the book. Header and doc comments in uci.cpp that stated the book had no toggle were updated.
+
+**Tests:** 7 new cases in tests/uci_tests.cpp (option advertised; default book hit with no `info` lines; explicit `true`; `false` runs a real search with `info` lines before `bestmove`; case-insensitivity and switching back on; malformed value ignored; persistence across `ucinewgame`). Native Release build with no warnings; full suite 710/710 (703 before). Not run: Debug/sanitizer, macOS, Windows, and wasm builds, which are left to CI.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-10-02 (2).
+
+**Next session start point:** check the next CI run for the 710-test count across platforms (macOS is expected at 708). Optionally switch the wasm `position + moves + go` and `ucinewgame + go` checks to `setoption name OwnBook value false` so that all nine wasm checks exercise search. Then continue with the standalone `nightwing.min.js` bundle (wasm binary inlined as base64) in the Release Automation phase.
+
+---
+
 ### Session 167 — 2026-10-02 — User-uploaded CI logs: Session 166's fix confirmed; wasm verification item closed
 
 Triggered by uploaded CI logs for the push carrying Session 166's `ci.yml` change.
