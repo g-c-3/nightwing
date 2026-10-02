@@ -4,6 +4,20 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-02 (3) — Single-file wasm bundle via Emscripten `SINGLE_FILE`; wasm files published as release assets; `release` gated on `wasm-build`
+
+- **Decision:** `nightwing.min.js` is produced by a second CMake configuration of the same wasm target (`NIGHTWING_WASM_SINGLE_FILE=ON`), using Emscripten's built-in `-sSINGLE_FILE=1`, not by a post-processing script that stitches base64 into the glue. The two wasm files keep their build names (`nightwing.js`, `nightwing.wasm`) as release assets, because the glue loads the wasm by that exact filename.
+- **Minification:** limited to Emscripten's own whitespace minification on Release builds. No Closure Compiler and no external minifier.
+- **Release gating:** `release` now needs both `build-and-test` and `wasm-build`, so a release never ships unverified wasm files. The cost is that a wasm failure (for example from a newer `emsdk: latest`) also blocks the native binaries.
+- **Rationale:** a built-in flag is maintained by the toolchain, while hand-stitching base64 into generated glue is fragile across Emscripten versions. Closure and property mangling are a known source of broken Emscripten output, for a size gain that is secondary to the drop-in single file. Gating keeps the earlier requirement that wasm be verified before being trusted as a release asset.
+- **Alternatives considered:**
+  - Post-process `nightwing.js` plus `nightwing.wasm` into one file with a script — rejected as fragile.
+  - Terser or Closure minification — rejected for the breakage risk noted above.
+  - Publishing wasm assets without gating `release` on `wasm-build` — rejected, as it would allow unverified assets; the gate can be relaxed later if wasm flakiness proves costly.
+- **Status:** unconfirmed on real CI at the time of writing.
+
+---
+
 ### 2026-10-02 (2) — `OwnBook` UCI option added; supersedes the 2026-09-03 (4) deferral
 
 - **Decision:** a standard UCI `check` option `OwnBook`, default `true`, gates the opening-book lookup in `start_go()`. Off means every `go` searches, including book-covered positions.

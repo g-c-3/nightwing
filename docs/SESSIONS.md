@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+### Session 169 — 2026-10-02 — Standalone `nightwing.min.js` bundle and wasm release assets implemented (awaiting CI)
+
+Started with the "Start" trigger; the next incomplete ROADMAP item was the standalone `nightwing.min.js` bundle.
+
+**Built:** `NIGHTWING_WASM_SINGLE_FILE` CMake option (root CMakeLists.txt, with a fail-fast guard when used without `NIGHTWING_BUILD_WASM`; src/CMakeLists.txt applies `-sSINGLE_FILE=1` and renames the output to `nightwing.min.js`). In `ci.yml`: a second wasm build directory; a verify step that runs the bundle alone from an empty directory (6 checks); a staging step that uploads `nightwing.js`, `nightwing.wasm` and `nightwing.min.js` flat in the `nightwing-wasm` artifact; the `release` job downloads that artifact and publishes the three files with the native binaries on both the `latest` and versioned releases, and now depends on `wasm-build`.
+
+**Verified locally:** the new CMake guard (configure fails with the intended message natively) and the default native configure (unchanged); `ci.yml` parses as YAML and the new step's script passes `bash -n`. **Not verified:** the wasm build itself (no Emscripten toolchain available in the sandbox) — all wasm behavior is left to the next CI run. Native source and tests were not touched; the 710-test native suite is unaffected.
+
+**Decisions made:** see docs/DECISIONS.md, 2026-10-02 (3).
+
+**Next session start point:** read the next CI logs. Expected: `All single-file wasm checks passed.` and a `latest` release with 6 assets. If the single-file `go` checks fail, the likely cause is pthread worker loading under `SINGLE_FILE`; the printed output of the failing check is the first thing to read. On success, check off both items.
+
+---
+
 ### Session 168 — 2026-10-02 — `OwnBook` UCI option added
 
 An `OwnBook` option was requested after the opening book's always-on behavior was identified as a gap for engine-vs-engine testing and for events that disallow an engine's own book.
