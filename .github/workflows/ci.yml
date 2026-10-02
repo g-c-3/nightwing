@@ -772,13 +772,89 @@ jobs:
             exit 1
           fi
 
+      # ROADMAP.md's "Standalone `nightwing.min.js`" item (Session 169):
+      # a second, separate build of the same wasm target with
+      # NIGHTWING_WASM_SINGLE_FILE=ON (wasm inlined as base64 in one JS
+      # file). Its own build directory keeps the two-file build above
+      # untouched.
+      - name: Configure CMake (wasm, single file)
+        run: emcmake cmake -B build-wasm-single -DNIGHTWING_BUILD_WASM=ON -DNIGHTWING_WASM_SINGLE_FILE=ON -DNIGHTWING_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release .
+
+      - name: Build (wasm, single file)
+        run: cmake --build build-wasm-single -j$(nproc)
+
+      # What makes this bundle worth shipping is that ONE file runs with
+      # no asset-path configuration, so this step copies it ALONE into an
+      # otherwise empty directory (no `.wasm`, no `nightwing.js`) and
+      # runs it from there. The `go` checks matter most: every `go`
+      # starts a pthread worker, which re-loads this same file as its
+      # worker script, so they exercise the inlined-wasm + threads
+      # combination rather than assuming it works. The checks reuse the
+      # out-of-book Kiwipete position (see the `info`-line check above)
+      # so a real search runs.
+      - name: Verify the single-file bundle runs standalone
+        run: |
+          set -u
+          test ! -e build-wasm-single/src/nightwing.wasm || { echo "::error::single-file build still emitted a separate .wasm"; exit 1; }
+          test -f build-wasm-single/src/nightwing.min.js || { echo "::error::nightwing.min.js was not produced"; exit 1; }
+          ls -l build-wasm-single/src/nightwing.min.js
+          echo "line count (informational, minification check): $(wc -l < build-wasm-single/src/nightwing.min.js)"
+          rm -rf /tmp/dropin && mkdir /tmp/dropin
+          cp build-wasm-single/src/nightwing.min.js /tmp/dropin/
+          cd /tmp/dropin
+          ls
+          FAILED=()
+          check() {
+            local desc="$1" input="$2" pattern="$3"
+            local output
+            output="$(printf "%b" "$input" | timeout 60 node nightwing.min.js)" || true
+            if echo "$output" | grep -qE "$pattern"; then
+              echo "PASS: $desc"
+            else
+              echo "$output"
+              echo "::error::single-file wasm check failed: $desc (expected to match /$pattern/)"
+              FAILED+=("$desc")
+            fi
+          }
+          check "uci handshake" 'uci\nquit\n' '^uciok$'
+          check "isready" 'isready\nquit\n' '^readyok$'
+          check "real search emits info lines (worker thread from single file)" \
+            'position fen r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1\ngo depth 3\nquit\n' \
+            '^info '
+          check "search ends with a bestmove" \
+            'position fen r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1\ngo depth 3\nquit\n' \
+            '^bestmove [a-h][1-8][a-h][1-8]'
+          check "OwnBook false forces a real search from startpos" \
+            'setoption name OwnBook value false\nposition startpos\ngo depth 3\nquit\n' \
+            '^info '
+          check "out-of-range Hash is clamped, not rejected" \
+            'setoption name Hash value 99999\nisready\nquit\n' \
+            '^readyok$'
+          if [ ${#FAILED[@]} -eq 0 ]; then
+            echo "All single-file wasm checks passed."
+          else
+            echo "::error::${#FAILED[@]} single-file wasm check(s) failed: ${FAILED[*]}"
+            exit 1
+          fi
+
+      # Both wasm builds are staged into one flat directory so the
+      # artifact has a predictable layout (upload-artifact otherwise
+      # preserves the common-ancestor path of its inputs, which would
+      # bury these under build-*/src/). The release job below downloads
+      # this artifact. `nightwing.js` finds `nightwing.wasm` by that exact
+      # filename (Emscripten's glue), so those two keep their names.
+      - name: Stage wasm artifacts
+        run: |
+          mkdir -p wasm-assets
+          cp build-wasm/src/nightwing.js build-wasm/src/nightwing.wasm wasm-assets/
+          cp build-wasm-single/src/nightwing.min.js wasm-assets/
+          ls -l wasm-assets
+
       - name: Upload wasm artifacts
         uses: actions/upload-artifact@v4
         with:
           name: nightwing-wasm
-          path: |
-            build-wasm/src/nightwing.js
-            build-wasm/src/nightwing.wasm
+          path: wasm-assets/
           if-no-files-found: error
 
   # ROADMAP.md's "Release & Packaging Infrastructure" section (added
@@ -797,7 +873,11 @@ jobs:
   # pipelines above (those are data-generation/verification runs, not
   # release-worthy commits by themselves).
   release:
-    needs: build-and-test
+    # Also gated on `wasm-build` (Session 169): the wasm files are now
+    # release assets, and ROADMAP.md requires the wasm build to be
+    # verified before it is trusted as one. A failing wasm build
+    # therefore blocks publishing (the native binaries included).
+    needs: [build-and-test, wasm-build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     name: Publish rolling "latest" release
@@ -846,6 +926,12 @@ jobs:
           name: nightwing-binary-Windows
           path: windows-binary
 
+      - name: Download wasm files
+        uses: actions/download-artifact@v4
+        with:
+          name: nightwing-wasm
+          path: wasm-files
+
       # Consistently-named release assets (this item's own ROADMAP text),
       # distinct from the upload-artifact names above -- those only ever
       # need to be unique per matrix leg for this workflow's own internal
@@ -858,6 +944,11 @@ jobs:
           cp macos-binary/nightwing release-assets/nightwing-macos
           cp windows-binary/nightwing.exe release-assets/nightwing-windows.exe
           chmod +x release-assets/nightwing-linux release-assets/nightwing-macos
+          # wasm assets keep their build names: nightwing.js loads
+          # nightwing.wasm by that exact filename, so the pair must
+          # stay together; nightwing.min.js is the standalone bundle.
+          cp wasm-files/nightwing.js wasm-files/nightwing.wasm wasm-files/nightwing.min.js release-assets/
+          ls -l release-assets
 
       # `gh release`, not a third-party publishing action: it's
       # preinstalled and pre-authenticated (via GITHUB_TOKEN, which the
