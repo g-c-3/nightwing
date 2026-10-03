@@ -118,6 +118,10 @@ implementation, the corresponding source file's own comments credit it
 specifically, consistent with this project's own attribution policy
 (`docs/ARCHITECTURE.md`).
 
+## Author
+
+Gokul Chandar, CBE, TN, IN
+
 ## License
 
 Nightwing is free software, licensed under the
