@@ -27,7 +27,9 @@ Newest entry at top.
 
 **Startup time fixed:** `init_magic_bitboards()` in `src/board/attacks.cpp` now skips the magic-number search when the PEXT path is active. Startup (`uci`+`isready`+`quit`, Release without LTO, median of 7) dropped from 291 ms to 12 ms. Full suite 716/716 (691236 assertions) on the default build, 714/714 on a BMI2-OFF build (startup unchanged at about 300 ms there, as intended), depth-9 search output identical before and after on two positions. Not verified: a BMI2 binary on a CPU without BMI2, and Windows/macOS builds. See DECISIONS.md, 2026-10-03 (2). Test risk: the portable magic path is no longer exercised on x86 CI legs; the macOS arm64 legs and the BMI2-OFF configuration cover it.
 
-**Open:** The LICENSE choice is awaiting a decision.
+**License added:** The repository owner chose GPL-3.0-or-later and added `LICENSE` (GPLv3 text) and a README License section. The `LICENSE` text was verified against Stockfish's `Copying.txt` after whitespace normalization (differences: "(C)" versus the copyright sign, and one FSF URL path). The ROADMAP LICENSE item was marked done. See DECISIONS.md, 2026-10-03 (3).
+
+**Open:** None carried from this session besides the CI runs noted in the start point below.
 
 **Next session start point:** Read the first CI run after the `attacks.cpp` change (all six legs). If green, take the test-coverage audit ("Audit fixed-depth vs. production-path test coverage") next.
 

@@ -3066,12 +3066,21 @@ Not part of the report's own ordering, appended here:
       path is no longer exercised on x86 CI legs (the `[attacks]` tests
       already routed through PEXT there); it stays covered by the macOS
       (arm64) legs and the BMI2-OFF configuration.
-- [~] **Add a LICENSE and a `.gitignore`** (finding 13) — neither exists
-      in the repository today (confirmed absent). The README has a
-      documented attribution policy but nothing governs actual reuse
-      terms; whoever operates this repository should pick a license
-      (not this repo-assistant's call to make) before this is closed.
-      PARTIAL (Session 172): `.gitignore` written (build directories, compiled objects, editor and OS files) and checked against the tracked file list (no tracked file matches). LICENSE still open: the choice of license is for whoever operates this repository, not for the repo assistant.
+- [x] **Add a LICENSE and a `.gitignore`** (finding 13) — neither existed
+      in the repository (confirmed absent). The README has a documented
+      attribution policy, but nothing governed actual reuse terms; the
+      choice of license belonged to the repository owner, not the
+      repo-assistant.
+      DONE: `.gitignore` written in Session 172 (build directories,
+      compiled objects, editor and OS files) and checked against the tracked
+      file list (no tracked file matches). In Session 173 the repository
+      owner chose GPL-3.0-or-later; the official GPLv3 text was added as
+      `LICENSE` at the repo root and a License section (with the SPDX
+      identifier) was added to `README.md`. The `LICENSE` text was compared
+      against Stockfish's `Copying.txt` after whitespace normalization and
+      differs only in the "(C)" sign and one FSF URL path, consistent with
+      the current FSF wording. Not done: per-file SPDX/copyright headers in
+      `src/` and `tests/` (optional, not requested).
 - [ ] **Audit fixed-depth vs. production-path test coverage** (finding
       12, a methodology observation, not a bug by itself) — Internal
       Iterative Reduction (`negamax()`'s own `if (!probe.hit && depth >=

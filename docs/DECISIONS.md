@@ -4,6 +4,16 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-03 (3) — Nightwing is licensed GPL-3.0-or-later
+
+**Decision:** The project is released under the GNU General Public License, version 3 or (at the licensee's option) any later version (SPDX: `GPL-3.0-or-later`). The unmodified GPLv3 text is the `LICENSE` file at the repository root, and `README.md` carries a License section stating the terms.
+
+**Rationale:** GPL is the prevailing license among strong open-source chess engines, including Stockfish and Ethereal, whose techniques the project credits. It requires distributed derivatives to publish their source with notices intact, which protects a from-scratch engine against closed-source relicensing and fits the project's attribution policy. The only third-party dependency known to the repository, Catch2, is test-only under the Boost license, which is compatible. The choice was made by the repository owner.
+
+**Alternatives considered:** MIT (rejected: permits closed-source reuse with no obligation); GPL-3.0-only (rejected: "or later" is the more common choice and was preferred).
+
+---
+
 ### 2026-10-03 (2) — The magic-number search is skipped at startup when the PEXT path is active; the per-node work item is closed without an optimization
 
 **Decision:** (1) `init_magic_bitboards()` runs `find_magic_for_square()` only when the PEXT path is not going to be used (`!g_use_pext` on BMI2 builds, always on non-BMI2 builds). (2) The "Reduce redundant per-node work" ROADMAP item was closed without code changes.
