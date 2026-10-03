@@ -96,8 +96,9 @@ nightwing/
 │   └── SESSIONS.md       — a session-by-session development log
 ├── src/                  — engine source (board/, search/, eval/, uci/, tuner/, book/)
 ├── tests/                — the Catch2 test suite
-└── .github/workflows/    — CI (build+test on every push; PGO/tuning/SPRT
-                             pipelines available via manual dispatch)
+├── .github/workflows/    — CI (build+test on every push; PGO/tuning/SPRT
+│                            pipelines available via manual dispatch)
+└── LICENSE               — GNU GPL v3 or later (GPL-3.0-or-later)
 ```
 
 `docs/` is this project's own memory across development sessions — every
