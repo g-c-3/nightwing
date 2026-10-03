@@ -10,7 +10,10 @@
 //      carry-rippler trick) — technique per Chess Programming Wiki,
 //      "Looking for Magics" (see attacks.h header comment for links);
 //      no magic-number tables or search code copied from any source.
-//      This is the portable path, always built.
+//      This is the portable path. It is built whenever the PEXT path (4,
+//      below) is not active, and skipped when it is, since it would never
+//      be read (init_magic_bitboards() below; ROADMAP.md, "Engine startup
+//      takes about 300 ms").
 //   4. A BMI2 PEXT-indexed table, built only when compiled with
 //      NIGHTWING_ENABLE_BMI2 (see root/src CMakeLists.txt — only ever
 //      defined on x86/x86_64) AND, since ROADMAP.md Priority Fixes
@@ -354,11 +357,25 @@ void init_magic_bitboards() {
     // Fixed seed: reproducible magics/tables across every run and platform.
     nightwing::support::Xorshift64Star rng(0x9E3779B97F4A7C15ULL);
 
+    // The magic-number search (~128 squares, the bulk of startup time) is
+    // only needed by the portable fallback path in rook_attacks()/
+    // bishop_attacks(). When the PEXT path is active (BMI2 compiled in AND
+    // supported by the running CPU) that fallback is never reached, so the
+    // search is skipped (ROADMAP.md "Engine startup takes about 300 ms").
+    // The RNG is used only by the search, so skipping it changes nothing else.
+#if defined(NIGHTWING_ENABLE_BMI2)
+    const bool need_magic = !g_use_pext;
+#else
+    const bool need_magic = true;
+#endif
+
     for (Square sq = 0; sq < kNumSquares; ++sq) {
         g_rook_mask[sq] = relevant_occupancy_mask(sq, kRookDeltas);
         g_rook_bits[sq] = popcount(g_rook_mask[sq]);
         const SubsetData data = enumerate_subsets(sq, g_rook_mask[sq], kRookDeltas);
-        g_rook_magic[sq] = find_magic_for_square(g_rook_mask[sq], data, rng, g_rook_table[sq]);
+        if (need_magic) {
+            g_rook_magic[sq] = find_magic_for_square(g_rook_mask[sq], data, rng, g_rook_table[sq]);
+        }
 #if defined(NIGHTWING_ENABLE_BMI2)
         if (g_use_pext) {
             g_rook_pext_table[sq] = build_pext_table(g_rook_mask[sq], data);
@@ -370,7 +387,9 @@ void init_magic_bitboards() {
         g_bishop_mask[sq] = relevant_occupancy_mask(sq, kBishopDeltas);
         g_bishop_bits[sq] = popcount(g_bishop_mask[sq]);
         const SubsetData data = enumerate_subsets(sq, g_bishop_mask[sq], kBishopDeltas);
-        g_bishop_magic[sq] = find_magic_for_square(g_bishop_mask[sq], data, rng, g_bishop_table[sq]);
+        if (need_magic) {
+            g_bishop_magic[sq] = find_magic_for_square(g_bishop_mask[sq], data, rng, g_bishop_table[sq]);
+        }
 #if defined(NIGHTWING_ENABLE_BMI2)
         if (g_use_pext) {
             g_bishop_pext_table[sq] = build_pext_table(g_bishop_mask[sq], data);
