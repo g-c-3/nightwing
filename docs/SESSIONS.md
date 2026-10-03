@@ -14,9 +14,14 @@ Newest entry at top.
 
 **Decisions made:** See DECISIONS.md, 2026-10-03 (1).
 
-**Open from Session 172 (unchanged):** Step 3b `uci-match` dispatch (baseline `b7d0be8165c1f470c2fd5a2b298e06a6b2f986b3`, candidate `cdbe1a68f47005a1ffcca1412001d0ce69d0f88c`, `ucimatch_movetime_ms` 0 and 100) requires a manual dispatch from the Actions tab. The LICENSE choice is awaiting a decision.
+**Step 3b results recorded:** Two uploaded CI logs of the `uci-match` pipeline (baseline `b7d0be8165c1f470c2fd5a2b298e06a6b2f986b3`, candidate `cdbe1a68f47005a1ffcca1412001d0ce69d0f88c`, runner `4ecf9c155683f85643b385b9260ea809cbd0c0e0`, depth 6, 8 opening plies, seed 1, SPRT -5/5, alpha = beta = 0.05) were read. All other CI jobs in both runs were green (716/716 on the full-suite legs); neither run included the `tsan-test` job, so that job has not yet run.
+- Fixed depth 6: 10000 games, 4458 wins / 1088 draws / 4454 losses for the candidate, +0.1 Elo (about +-6), LLR 0.129, no SPRT decision at the cap. Equal-depth quality unchanged.
+- `movetime` 100 ms: SPRT accepted H0 at game 808; 283 / 160 / 365, -35.4 Elo (about +-21), LLR -2.981. The candidate (Step 2b) was weaker at equal time, contrary to the expected speed benefit. Caveats: single seed, shared hosted runners, early-stopped SPRT overstates magnitude, and Session 172's `cdbe1a6`-versus-`main` `movetime` 100 run (+8, inconclusive) does not clearly agree. Nodes per second of the two binaries was not measured.
+- Both runs had zero illegal moves from either engine.
 
-**Next session start point:** Read the first CI run of the `tsan-test` job. If green, update the ROADMAP item to `[x]` for the verified parts and consider adding a short multi-threaded `go`/`go ponder` UCI session to the leg; if it reports a race, fix the race before any other work. Then resume Step 3b once its two `uci-match` runs have been dispatched.
+**Open:** The LICENSE choice is awaiting a decision.
+
+**Next session start point:** Read the first CI run of the `tsan-test` job. If green, update the ROADMAP item to `[x]` for the verified parts and consider adding a short multi-threaded `go`/`go ponder` UCI session to the leg; if it reports a race, fix the race before any other work. Then measure nodes per second of the baseline `b7d0be8` and candidate `cdbe1a6` binaries (bench) to determine whether Step 2b lowered speed, and rerun the `movetime` 100 comparison with a different seed if the nps figures do not explain the -35.4 Elo result.
 
 ---
 
