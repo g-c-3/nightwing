@@ -98,6 +98,8 @@ nightwing/
 ├── tests/                — the Catch2 test suite
 ├── .github/workflows/    — CI (build+test on every push; PGO/tuning/SPRT
 │                            pipelines available via manual dispatch)
+├── CMakeLists.txt        — root build configuration (options: see Building above)
+├── .gitignore            — build directories, compiled objects, editor/OS files
 └── LICENSE               — GNU GPL v3 or later (GPL-3.0-or-later)
 ```
 
