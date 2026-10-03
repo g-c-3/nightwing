@@ -21,9 +21,11 @@ Newest entry at top.
 
 **Nodes per second, `b7d0be8` against `cdbe1a6`:** Both commits were built (Release, same flags) in the sandbox and compared with alternated runs. Default `bench`: equal nps within noise; candidate 38679 nodes against 37287 (+3.7%). UCI fixed-depth on 4 off-book positions: depth 9 nps ratio 1.033 (time-to-depth 0.955); depth 11 nps ratio 1.097 (time-to-depth 0.977). Equal-depth node counts differ per position in both directions and one bestmove differs (kiwipete at depth 11). Result: Step 2b is not slower per node, so lower speed does not explain the -35.4 Elo at `movetime` 100. Limits: sandbox hardware rather than the hosted runner, 4 positions, short searches, wall-clock timing on a shared 1-core machine. The `movetime` 100 result stays unexplained and may be noise or a seed effect. No further runs of this comparison were requested; Step 3b is closed.
 
+**ThreadSanitizer CI result:** The first CI run containing the `tsan-test` job (uploaded logs, 2026-10-03, hosted `ubuntu-latest`) was read. Configure and build were clean, and the test step reported "All tests passed (331 assertions in 126 test cases)" with zero ThreadSanitizer reports, in about 68 seconds. All six `build-and-test` legs (716/716 on Linux and Windows, 714/714 on macOS), the wasm build and the release publish step also completed. No data race was found. The ROADMAP item stays `[~]` for three remaining gaps: the excluded `[hash]` tests, a `go`/`go ponder` session in the leg, and the full suite under TSan.
+
 **Open:** The LICENSE choice is awaiting a decision.
 
-**Next session start point:** Read the first CI run of the `tsan-test` job. If green, update the ROADMAP item to `[x]` for the verified parts and consider adding a short multi-threaded `go`/`go ponder` UCI session to the leg; if it reports a race, fix the race before any other work. Then take the next incomplete item in ROADMAP.md (Step 3b needs no further work).
+**Next session start point:** Take the next incomplete item in ROADMAP.md that does not need a manual dispatch; the ThreadSanitizer item may be extended later with the three remaining gaps listed above, and Step 3b needs no further work.
 
 ---
 

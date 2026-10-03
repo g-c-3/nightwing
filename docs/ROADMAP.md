@@ -3095,20 +3095,25 @@ Not part of the report's own ordering, appended here:
       sanitizer matrix was ASan/UBSan only, a gap docs/DECISIONS.md
       already acknowledged. Largest unverified area (Lazy SMP, lock-free
       TT, background `go`/ponder threads).
-      DONE (Session 173, awaiting its first CI run): a `NIGHTWING_ENABLE_TSAN`
+      DONE (Session 173, CI-verified): a `NIGHTWING_ENABLE_TSAN`
       CMake option (default OFF) was added; when ON, Debug builds use
       `-fsanitize=thread` at `-O1` in place of ASan/UBSan. A `tsan-test` job
       (Linux Debug) was added to `.github/workflows/ci.yml`, running the
       raw test binary on tags `[smp]`, `[thread_regression]`,
       `[persistent_tt]`, `[tt]`, `[pondering]`, `[hashfull]` and
-      `[uci]~[hash]` (126 test cases) with `halt_on_error=1`. Verified
-      locally only (single-core sandbox, GCC 13): the build is clean and
-      the tag groups run with zero ThreadSanitizer reports.
-      REMAINING: (1) confirm the first CI run is green; (2) the `[hash]`
-      tests were OOM-killed in the 4 GB sandbox and are excluded, whether a
-      hosted runner can run them is unverified; (3) a short multi-threaded
-      `go`/`go ponder` session driven through the UCI loop is not yet part
-      of the leg; (4) the full suite has not been run under TSan.
+      `[uci]~[hash]` (126 test cases) with `halt_on_error=1`. Local result
+      (single-core sandbox, GCC 13): clean build, zero ThreadSanitizer
+      reports. First CI run (2026-10-03, hosted `ubuntu-latest`): configure
+      and build clean, "All tests passed (331 assertions in 126 test
+      cases)", zero ThreadSanitizer reports, test step about 68 seconds;
+      all six `build-and-test` legs and the wasm build were green in the
+      same run (716/716 on Linux and Windows, 714/714 on macOS).
+      REMAINING: (1) the `[hash]` tests were OOM-killed in the 4 GB local
+      sandbox and are excluded; whether a hosted runner can run them under
+      TSan is untried; (2) a short multi-threaded `go`/`go ponder` session
+      driven through the UCI loop is not yet part of the leg; (3) the full
+      suite has not been run under TSan. A clean TSan run shows no race on
+      the interleavings that occurred, not the absence of races.
 
 ## Phase 9 — Advanced / Stretch Goals (beyond great-engine baseline)
 - [ ] SPSA tuner (Simultaneous Perturbation Stochastic Approximation) — added 2026-10-02 from the modern-HCE alternatives review. The existing tuner is Texel-style (finite-difference/analytic gradient descent on a static labeled-position corpus); SPSA instead optimizes parameters directly against game results, which sidesteps the label-fit versus playing-strength gap and the endgame-term identifiability problem (Tier 0's open item) because strength is measured by play, not by a loss surface. Scope: perturb a parameter vector by a random ±delta per iteration, play a short match between the plus and minus vectors, and step along the observed score gradient with the standard decaying gain schedules (Spall's SPSA; CPW — Chess Programming Wiki, "SPSA"). Applies to eval constants and to search constants (margins, reduction coefficients, pruning depths) alike. Planned to reuse the existing `ParameterRef<Weights>` machinery for the parameter list and either `tuner::play_match()` (eval constants, in-process) or the two-process runner `nightwing_uci_match` (search constants, which need separately built binaries or a UCI option), plus SPRT gating before any tuned value is committed, as for every tuner output. No NNUE, no neural nets; the evaluator stays fully handcrafted. Design decisions (parameter exposure over UCI versus in-process, game count per iteration, time control) to be logged in docs/DECISIONS.md when the item is started.
