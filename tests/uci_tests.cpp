@@ -9,6 +9,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -77,6 +78,14 @@ TEST_CASE("uci: 'uci' command responds with id and uciok", "[uci]") {
     REQUIRE(contains(out, "id name Nightwing"));
     REQUIRE(contains(out, "id author"));
     REQUIRE(contains(out, "uciok"));
+}
+
+TEST_CASE("uci: 'id name' carries a MAJOR.MINOR.BUILD version and 'id author' names the author",
+          "[uci][version]") {
+    init_all();
+    const std::string out = run_uci({"uci", "quit"});
+    REQUIRE(std::regex_search(out, std::regex("id name Nightwing [0-9]+\\.[0-9]+\\.[0-9]+\n")));
+    REQUIRE(contains(out, "id author Gokul Chandar\n"));
 }
 
 TEST_CASE("uci: 'isready' responds with readyok", "[uci]") {
