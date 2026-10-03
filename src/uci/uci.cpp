@@ -82,6 +82,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -1582,7 +1583,40 @@ struct PonderState {
     /// comment for how it's applied. 0 means "no real time budget"
     /// (compute_search_budget()'s own doc comment).
     int saved_time_limit_ms = 0;
+
+    /// Timed-stop watchdog started by handle_ponderhit() (a sleep that
+    /// then raises `stop`). Owned and joinable, NOT detached: a detached
+    /// watchdog could outlive run() (e.g. `ponderhit` followed by `stop`,
+    /// or a search that finishes before the budget) and then write to a
+    /// destroyed PonderState, or to a LATER search's `stop` flag --
+    /// found by the ThreadSanitizer CI leg (ROADMAP.md, Session 173).
+    /// Always cancelled and joined via cancel_watchdog() below.
+    std::thread watchdog;
+
+    /// Guards `watchdog_cancel`; `watchdog_cv` wakes the sleeping
+    /// watchdog early so cancel_watchdog() never waits out the budget.
+    std::mutex watchdog_mutex;
+    std::condition_variable watchdog_cv;
+    bool watchdog_cancel = false;
 };
+
+/// Cancels and joins the ponderhit watchdog, if any. A cancelled
+/// watchdog never raises `stop`. Safe to call when no watchdog exists,
+/// and safe to call repeatedly. Every path that ends or replaces a
+/// ponder search calls this (abandon_pondering(), handle_stop(),
+/// finish_pondering()), so the watchdog can never outlive PonderState.
+void cancel_watchdog(PonderState& ponder) {
+    {
+        std::lock_guard<std::mutex> lock(ponder.watchdog_mutex);
+        ponder.watchdog_cancel = true;
+    }
+    ponder.watchdog_cv.notify_all();
+    if (ponder.watchdog.joinable()) {
+        ponder.watchdog.join();
+    }
+    std::lock_guard<std::mutex> lock(ponder.watchdog_mutex);
+    ponder.watchdog_cancel = false;
+}
 
 /// Unconditionally stops and joins any in-flight pondering search,
 /// discarding its result (never writing `bestmove`) — the defensive
@@ -1599,6 +1633,7 @@ struct PonderState {
 /// std::terminate() on a still-joinable thread, so this is a hard
 /// correctness requirement, not just tidiness.
 void abandon_pondering(PonderState& ponder) {
+    cancel_watchdog(ponder); // Before the early return: a watchdog can outlive a joined thread.
     if (!ponder.thread.joinable()) {
         return;
     }
@@ -1798,8 +1833,8 @@ void start_pondering(Position& pos, const std::vector<std::uint64_t>& game_histo
 /// Because search::search_iterative_deepening()'s own deadline (when it
 /// has one at all) is fixed at the moment that call starts and can't be
 /// adjusted on an already-in-flight call, the budget is applied via a
-/// small, short-lived, detached watchdog thread that sleeps for the
-/// budgeted duration and then raises `ponder.stop` — the exact same
+/// small, cancellable, joinable watchdog thread (PonderState::watchdog)
+/// that sleeps for the budgeted duration and then raises `ponder.stop` — the exact same
 /// flag the background search is already checking. This is an accepted
 /// simplification (see docs/DECISIONS.md for the full writeup): the
 /// budget applied is the one `go ponder`'s own `wtime`/`btime`/
@@ -1833,22 +1868,19 @@ void handle_ponderhit(PonderState& ponder) {
         return;
     }
 
-    std::atomic<bool>* stop_ptr = &ponder.stop;
     const int delay_ms = ponder.saved_time_limit_ms;
-    std::thread watchdog([stop_ptr, delay_ms]() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
-        stop_ptr->store(true, std::memory_order_relaxed);
+    cancel_watchdog(ponder); // Defensive: never leave two watchdogs for one state.
+    // Joinable member thread (see PonderState::watchdog): sleeps for the
+    // budget on a condition variable, so cancel_watchdog() can wake it
+    // immediately, then raises `stop` only if it was not cancelled.
+    ponder.watchdog = std::thread([&ponder, delay_ms]() {
+        std::unique_lock<std::mutex> lock(ponder.watchdog_mutex);
+        const bool cancelled = ponder.watchdog_cv.wait_for(
+            lock, std::chrono::milliseconds(delay_ms), [&ponder]() { return ponder.watchdog_cancel; });
+        if (!cancelled) {
+            ponder.stop.store(true, std::memory_order_relaxed);
+        }
     });
-    // Detached, not joined: this thread's only job is a timed sleep
-    // followed by one atomic store, touching nothing that isn't kept
-    // alive for run()'s whole lifetime (`ponder.stop` itself) — and
-    // by the time it actually fires, the background search it signals
-    // is guaranteed to still be running (that's what makes it stop),
-    // which in turn is what run()'s own final abandon_pondering() call
-    // blocks on joining before run() can return — so this watchdog is
-    // always long gone (its own store already happened, its thread
-    // already exited) before `ponder.stop` could ever be destroyed.
-    watchdog.detach();
 }
 
 /// Handles `stop` while a pondering search is in flight — "discard and
@@ -1874,6 +1906,7 @@ void handle_ponderhit(PonderState& ponder) {
 /// synchronous, one-command-fully-handled-before-the-next-line-is-read
 /// convention for every OTHER command besides `go ponder` itself.
 void handle_stop(PonderState& ponder) {
+    cancel_watchdog(ponder); // Before the early return: see abandon_pondering().
     if (!ponder.thread.joinable()) {
         return;
     }
@@ -1909,8 +1942,11 @@ void finish_pondering(PonderState& ponder) {
     if (ponder.active) {
         abandon_pondering(ponder);
     } else if (ponder.thread.joinable()) {
+        // Join the search FIRST: in the `ponderhit` case the watchdog is
+        // what ends it, so it must be left running until then.
         ponder.thread.join();
     }
+    cancel_watchdog(ponder); // The search is over; the watchdog must not outlive PonderState.
 }
 
 } // namespace
