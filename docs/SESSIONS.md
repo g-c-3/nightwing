@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 173 — 2026-10-03 — ThreadSanitizer option and CI leg added
+
+**Built:** A `NIGHTWING_ENABLE_TSAN` CMake option (default OFF) was added to `CMakeLists.txt`. When enabled, Debug builds use `-fsanitize=thread -O1` instead of `-fsanitize=address,undefined -O0`, since the two sanitizer families cannot be combined. A `tsan-test` job (Linux Debug) was added to `.github/workflows/ci.yml`.
+
+**Local verification (Linux, GCC 13, single-core 4 GB sandbox):** The test binary built cleanly under TSan. Zero ThreadSanitizer reports on: `[smp]`, `[thread_regression]`, `[persistent_tt]` (24 cases); `[tt]` (18); `[pondering]` (16); `[hashfull]` (4); `[uci]~[hash]` (80). The combined filter used in CI matches 126 test cases. The two `[hash]` test cases were OOM-killed (exit 137) and are excluded; the out-of-range Hash test is the suspected cause, which was not confirmed. A single core time-slices threads, so fewer interleavings were exercised than a multi-core runner would produce.
+
+**Bugs fixed:** None. No data race was detected.
+
+**Decisions made:** See DECISIONS.md, 2026-10-03 (1).
+
+**Open from Session 172 (unchanged):** Step 3b `uci-match` dispatch (baseline `b7d0be8165c1f470c2fd5a2b298e06a6b2f986b3`, candidate `cdbe1a68f47005a1ffcca1412001d0ce69d0f88c`, `ucimatch_movetime_ms` 0 and 100) requires a manual dispatch from the Actions tab. The LICENSE choice is awaiting a decision.
+
+**Next session start point:** Read the first CI run of the `tsan-test` job. If green, update the ROADMAP item to `[x]` for the verified parts and consider adding a short multi-threaded `go`/`go ponder` UCI session to the leg; if it reports a race, fix the race before any other work. Then resume Step 3b once its two `uci-match` runs have been dispatched.
+
+---
+
 ### Session 172 — 2026-10-02 — First two UCI-match runs recorded
 
 Two manually dispatched `uci-match` runs were read from their CI logs. All other CI jobs in both runs completed with no errors (Linux Debug 716/716).

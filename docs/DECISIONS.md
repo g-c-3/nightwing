@@ -4,6 +4,16 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-03 (1) — ThreadSanitizer is a separate opt-in CMake option and a dedicated Linux CI job, not part of the Debug matrix
+
+**Decision:** `NIGHTWING_ENABLE_TSAN` (default OFF) switches Debug builds from ASan/UBSan to `-fsanitize=thread` at `-O1`. A separate `tsan-test` job in `ci.yml` builds with it and runs the thread-touching test tags through the raw test binary on Linux only, with `halt_on_error=1`. The `[hash]`-tagged tests are excluded.
+
+**Rationale:** ThreadSanitizer cannot be combined with AddressSanitizer, so a separate configuration is unavoidable; keeping it opt-in leaves the existing Debug matrix unchanged. `-O1` was chosen over `-O0` because TSan at `-O0` is markedly slower without improving detection, while stack traces remain readable. Linux only, since macOS runner support is unreliable and MSVC has none. The raw binary is used rather than `ctest` so that all selected cases share one process, which exercises shared global state. `[hash]` is excluded because its out-of-range Hash test was OOM-killed under TSan shadow-memory overhead locally; this is unverified on hosted runners.
+
+**Alternatives considered:** Adding a TSan entry to the existing build matrix (rejected: the matrix varies OS and build type, and the sanitizer flags conflict with ASan/UBSan in Debug); running the full suite under TSan (deferred: run time and memory in the sandbox were prohibitive).
+
+---
+
 ### 2026-10-02 (5) — The Step 3b UCI-match workflow uses its own prefixed inputs and a fourth pipeline choice, and takes refs as inputs instead of hard-coding commits
 
 - **Decision:** the manually triggered strength comparison for search-code changes is a fourth value (`uci-match`) of the existing `pipeline` choice input, with its own `ucimatch_*` inputs rather than reuse of the existing `sprt_*` inputs. Baseline and candidate are git refs supplied as inputs; the runner binary is always built from the dispatched ref.
