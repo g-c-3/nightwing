@@ -34,12 +34,15 @@
 // the engine would compute for the same position, the way a
 // hand-maintained table of raw hash values could.
 //
-// No UCI "OwnBook"-style toggle exists to disable book usage — see
-// docs/DECISIONS.md for why: this project has no setoption/UCI-options
-// infrastructure at all yet (src/uci/uci.cpp's own header comment),
-// and book usage is unconditional as a result, a deliberately scoped
-// simplification for a "small curated" book rather than the start of a
-// larger options system.
+// Disabling the book: book_move() itself is unconditional — it answers
+// for any known book position and has no on/off state of its own. The
+// engine's `OwnBook` UCI option (a standard `check` option, default
+// `true`) is applied by the CALLER: src/uci/uci.cpp's start_go() only
+// consults book_move() when that option is on, so
+// `setoption name OwnBook value false` makes every `go` run a real
+// search even on a book position (see docs/DECISIONS.md, 2026-10-02 (2),
+// which supersedes the earlier 2026-09-03 (4) decision to defer such a
+// toggle, back when no options infrastructure existed).
 
 #include <cstdint>
 #include <optional>
