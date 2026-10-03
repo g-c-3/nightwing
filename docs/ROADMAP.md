@@ -3007,7 +3007,7 @@ it either way.
 
 Not part of the report's own ordering, appended here:
 
-- [~] **Reduce redundant per-node work** (finding 7, lower priority —
+- [x] **Reduce redundant per-node work** (finding 7, lower priority —
       report's own framing: "probably a cheap NPS gain," profile first)
       — `eval::evaluate()` is called up to 4 separate times per
       `negamax()` node (node static eval, reverse futility, razoring,
@@ -3040,26 +3040,32 @@ Not part of the report's own ordering, appended here:
       `negamax()`); an incremental pawn hash would add work to every
       `make_move`/`unmake_move` (about 8% of time together) to remove at
       most that 1.2%, with real regression risk to perft and Zobrist tests.
-      Conclusion: neither change is a worthwhile NPS gain. Caveats: gprof's
+      Conclusion: neither change is a worthwhile NPS gain. CLOSED
+      (Session 173, approved) without an optimization. Caveats: gprof's
       per-caller call counts were inconsistent with the direct counters
       (inlining and identical-code folding), so only the self-time shares
       and the counters were relied on; one machine, four positions; the
       1,680,744 evaluate calls with the cache unusable are suspected to be
       quiescence calls with a lazy window, which was inferred and not
       confirmed. Side finding: see the startup-time item below.
-- [ ] **Engine startup takes about 300 ms** (found Session 173 while
-      profiling) — `board/attacks.cpp` runs `find_magic_for_square()` for
-      all 128 rook/bishop squares at every process start, apparently even
-      when BMI2/PEXT is active (the PEXT tables are built in addition, and
-      `g_use_pext` only selects which table `rook_attacks()` reads).
-      Measured: `uci`+`isready`+`quit` takes 285-320 ms wall in the sandbox
-      (non-LTO Release); gprof attributed about 0.21 s per process to
-      `find_magic_for_square` under `-pg`. Matters only for process-spawning
-      workloads (the `uci-match` runner, GUIs that restart the engine, the
-      raw test binary), not search speed. Not yet confirmed that magic
-      generation is skippable on the PEXT path without breaking the
-      non-BMI2 fallback or the tests; read `attacks.cpp` fully before
-      changing it. Not started.
+- [x] **Engine startup takes about 300 ms** (found Session 173 while
+      profiling) — DONE (Session 173, awaiting CI): `board/attacks.cpp`
+      ran `find_magic_for_square()` for all 128 rook/bishop squares at every
+      process start, even when BMI2/PEXT was active and the magic tables
+      were never read. `init_magic_bitboards()` now skips the search when
+      the PEXT path is active (`need_magic = !g_use_pext` on BMI2 builds;
+      always true on non-BMI2 builds). Measured locally (Release, no LTO,
+      median of 7 runs of `uci`+`isready`+`quit`): 291 ms before, 12 ms
+      after. Verified locally: full suite 716/716 (691236 assertions, same
+      counts as before) on the default BMI2 build; a BMI2-OFF build passes
+      714/714 and still takes about 300 ms to start (magic search still runs
+      there, as intended); depth-9 search output is identical before and
+      after on two positions. NOT verified: a BMI2-compiled binary on a CPU
+      without BMI2 (the fallback runs the search, by construction, but no
+      such CPU was available); Windows and macOS builds. The portable magic
+      path is no longer exercised on x86 CI legs (the `[attacks]` tests
+      already routed through PEXT there); it stays covered by the macOS
+      (arm64) legs and the BMI2-OFF configuration.
 - [~] **Add a LICENSE and a `.gitignore`** (finding 13) — neither exists
       in the repository today (confirmed absent). The README has a
       documented attribution policy but nothing governs actual reuse

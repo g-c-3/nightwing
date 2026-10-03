@@ -4,6 +4,16 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-03 (2) — The magic-number search is skipped at startup when the PEXT path is active; the per-node work item is closed without an optimization
+
+**Decision:** (1) `init_magic_bitboards()` runs `find_magic_for_square()` only when the PEXT path is not going to be used (`!g_use_pext` on BMI2 builds, always on non-BMI2 builds). (2) The "Reduce redundant per-node work" ROADMAP item was closed without code changes.
+
+**Rationale:** (1) With PEXT active, `rook_attacks()`/`bishop_attacks()` never read the magic tables, so generating them was pure startup cost: 291 ms before and 12 ms after in a local Release measurement. The RNG feeds only the search, so skipping it affects nothing else; search output was identical before and after. A BMI2-compiled binary on a CPU without BMI2 still takes the search path because `g_use_pext` is false there. (2) Profiling showed 76% of cache-eligible `evaluate()` calls already hit `EvalCache`, and `compute_pawn_hash()` is about 1.2% of time; an incremental pawn hash would add cost to every make/unmake and risk the Zobrist/perft tests for at most that 1.2%.
+
+**Alternatives considered:** Lazy per-square magic generation (rejected: more complex and unnecessary once the whole search is skipped on the common path); embedding precomputed magic tables (rejected: contradicts the file's from-scratch, no-copied-tables policy and would still be unused on the PEXT path); implementing the incremental pawn hash anyway (rejected for the cost-benefit above).
+
+---
+
 ### 2026-10-03 (1) — ThreadSanitizer is a separate opt-in CMake option and a dedicated Linux CI job, not part of the Debug matrix
 
 **Decision:** `NIGHTWING_ENABLE_TSAN` (default OFF) switches Debug builds from ASan/UBSan to `-fsanitize=thread` at `-O1`. A separate `tsan-test` job in `ci.yml` builds with it and runs the thread-touching test tags through the raw test binary on Linux only, with `halt_on_error=1`. The `[hash]`-tagged tests are excluded.
