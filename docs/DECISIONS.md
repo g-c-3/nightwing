@@ -4,6 +4,16 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-03 (4) — The ponderhit watchdog is a joinable, cancellable member thread, not a detached one
+
+**Decision:** `handle_ponderhit()` no longer detaches its timed-stop watchdog. The watchdog is `PonderState::watchdog`, waits on a condition variable, and is cancelled and joined by `cancel_watchdog()` from `abandon_pondering()`, `handle_stop()` and `finish_pondering()`. A cancelled watchdog never sets `ponder.stop`.
+
+**Rationale:** The ThreadSanitizer CI leg reported a data race between the detached watchdog's store and a later `PonderState` constructed at the same stack address. The earlier design relied on the claim that the background search always outlives the watchdog, but a search ending on a node limit (or by mate or depth) finishes first, so `run()` could return while the watchdog was still sleeping and then write to a destroyed object, or raise `stop` on a later search. Owning and joining the thread makes the lifetime explicit and removes the invariant that was being assumed. Cancelling through a condition variable means shutdown never waits out the budget.
+
+**Alternatives considered:** Keeping the detached thread with a `shared_ptr` to the stop flag (rejected: removes the dangling write but a stale watchdog could still stop a later search); a generation counter checked by the detached thread (rejected: more state and the thread would still outlive `run()`); a single long-lived timer thread (rejected: larger change than the defect warrants).
+
+---
+
 ### 2026-10-03 (3) — Nightwing is licensed GPL-3.0-or-later
 
 **Decision:** The project is released under the GNU General Public License, version 3 or (at the licensee's option) any later version (SPDX: `GPL-3.0-or-later`). The unmodified GPLv3 text is the `LICENSE` file at the repository root, and `README.md` carries a License section stating the terms.
