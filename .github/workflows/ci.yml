@@ -264,6 +264,36 @@ jobs:
           path: build/src/nightwing${{ runner.os == 'Windows' && '.exe' || '' }}
           if-no-files-found: error
 
+  # ROADMAP.md Priority Fixes (2026-09-22), "ThreadSanitizer coverage":
+  # Lazy SMP, the lock-free TT and the background `go`/ponder threads were
+  # only ever exercised under ASan/UBSan, which cannot detect data races.
+  # This leg builds Debug with -DNIGHTWING_ENABLE_TSAN=ON (-fsanitize=thread,
+  # mutually exclusive with ASan/UBSan, hence a separate job rather than a
+  # matrix entry) and runs the thread-touching test tags directly via the raw
+  # binary. Linux only: TSan support on macOS runners is unreliable and MSVC
+  # has none. `[hash]` is excluded: its out-of-range Hash test requests an
+  # enormous table and is OOM-killed under TSan's shadow-memory overhead
+  # (observed locally in a 4 GB sandbox; unverified on a hosted runner).
+  # halt_on_error=1 so a detected race fails the job rather than only logging.
+  tsan-test:
+    runs-on: ubuntu-latest
+    name: Linux Debug (ThreadSanitizer)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure CMake
+        run: cmake -B build_tsan -DCMAKE_BUILD_TYPE=Debug -DNIGHTWING_ENABLE_TSAN=ON -DNIGHTWING_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build_tsan --parallel
+
+      - name: Test (thread-touching tags)
+        working-directory: build_tsan
+        env:
+          TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1
+        run: ./tests/nightwing_tests "[smp],[thread_regression],[persistent_tt],[tt],[pondering],[hashfull],[uci]~[hash]"
+
   # ROADMAP.md Phase 5's final item ("Tuned weights committed, before/after
   # strength comparison logged") needs a real large-scale run: thousands of
   # nightwing_selfplay games piped into nightwing_tune, then a
