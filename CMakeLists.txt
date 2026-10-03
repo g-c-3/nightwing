@@ -14,6 +14,7 @@ endif()
 option(NIGHTWING_ENABLE_LTO "Enable link-time optimization in Release builds" ON)
 option(NIGHTWING_ENABLE_BMI2 "Compile with BMI2/POPCNT instructions enabled (fast path). Disable for a portable fallback build." ON)
 option(NIGHTWING_BUILD_TESTS "Build the Catch2 test suite" ON)
+option(NIGHTWING_ENABLE_TSAN "Debug builds use ThreadSanitizer (-fsanitize=thread) instead of ASan/UBSan (the two are mutually exclusive). GCC/Clang only; ignored on MSVC and under wasm." OFF)
 
 # --- WebAssembly build (ROADMAP.md "Release & Packaging Infrastructure",
 #     added 2026-08-15) ---
@@ -214,8 +215,20 @@ endif()
 #     docs/DECISIONS.md for the observed failure and why this wasn't pursued
 #     further from a sandbox with no MSVC toolchain to debug it live.) ---
 if(NOT MSVC)
-    set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer")
-    set(CMAKE_EXE_LINKER_FLAGS_DEBUG "-fsanitize=address,undefined")
+    if(NIGHTWING_ENABLE_TSAN)
+        # ThreadSanitizer (ROADMAP.md Priority Fixes 2026-09-22, "ThreadSanitizer
+        # coverage"). TSan cannot be combined with ASan, so this REPLACES the
+        # ASan/UBSan flags for Debug when requested; the default Debug config
+        # is unchanged. -O1 rather than -O0: TSan at -O0 is several times slower
+        # for no extra detection benefit, and -O1 keeps stack traces readable.
+        # Intended for a dedicated CI leg running the Lazy SMP / TT / pondering
+        # tests, not for the regular build matrix.
+        set(CMAKE_CXX_FLAGS_DEBUG "-g -O1 -fsanitize=thread -fno-omit-frame-pointer")
+        set(CMAKE_EXE_LINKER_FLAGS_DEBUG "-fsanitize=thread")
+    else()
+        set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer")
+        set(CMAKE_EXE_LINKER_FLAGS_DEBUG "-fsanitize=address,undefined")
+    endif()
 else()
     # CMake's own MSVC Debug default is "/MDd /Zi /Ob0 /Od /RTC1" --
     # reproduced here identically MINUS /RTC1 (runtime stack-frame and
