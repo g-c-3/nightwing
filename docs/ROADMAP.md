@@ -3113,21 +3113,35 @@ Not part of the report's own ordering, appended here:
       differs only in the "(C)" sign and one FSF URL path, consistent with
       the current FSF wording. Not done: per-file SPDX/copyright headers in
       `src/` and `tests/` (optional, not requested).
-- [ ] **Audit fixed-depth vs. production-path test coverage** (finding
-      12, a methodology observation, not a bug by itself) — Internal
-      Iterative Reduction (`negamax()`'s own `if (!probe.hit && depth >=
-      kIIRMinDepth && limits != nullptr)` gate, confirmed) only fires
-      when `limits != nullptr`, i.e. only on the real
-      `search_iterative_deepening()` production path, never on
-      `search_fixed_depth()` — and 10 test files call
-      `search_fixed_depth()` against only 6 that call
-      `search_iterative_deepening()` (confirmed counts), so the
-      majority of this project's own search tests do not exercise IIR
-      at all. This is documented, deliberate behavior (`limits` gating
-      IIR is intentional, not an oversight) — the actionable item is
-      making sure test coverage's own balance is a conscious choice
-      going forward, not silently skewing further toward the path that
-      exercises less of production `negamax()` as new tests get added.
+- [x] **Audit fixed-depth vs. production-path test coverage** (finding
+      12, a methodology observation, not a bug by itself) — DONE
+      (Session 174, awaiting its first CI run). Audit result: the file
+      counts originally cited (10 files calling `search_fixed_depth()`
+      against 6 calling `search_iterative_deepening()`) were already
+      stale; the production path has since gained many direct tests
+      (`search_tests.cpp` alone has 52 `search_iterative_deepening()`
+      calls). The only `limits`-gated behavior that changes the search
+      TREE is Internal Iterative Reduction (`negamax()`,
+      `!probe.hit && depth >= kIIRMinDepth && limits != nullptr`); every
+      other `limits` use (stop flag, deadline, node limit, seldepth) only
+      matters once a search has been stopped. IIR already has dedicated
+      production-path tests (`search_tests.cpp` `[iir]`,
+      `persistent_tt_tests.cpp` `[iir]`). The real remaining gap was
+      `tests/endgame_suite_tests.cpp`: all 11 of its "full engine" cases
+      ran through `search_fixed_depth()`, so endgame judgment was never
+      checked under IIR, a warm TT or aspiration windows. Fix: new
+      `tests/production_path_tests.cpp` (10 test cases, tag
+      `[production_path]`) re-runs the same 9 endgame positions with the
+      same loose assertions through `search_iterative_deepening()` with
+      `time_limit_ms = 0`, plus a determinism test (three identical runs
+      agree on score, best move and node count). Verified locally:
+      full suite 727/727 under `ctest` and the raw binary (691257
+      assertions), Linux Release, GCC 13; Debug/ASan, Windows and macOS
+      not run locally. A balance policy was added to ARCHITECTURE.md
+      "Testing Policy" (docs/DECISIONS.md, 2026-10-03 (6)). Side finding
+      recorded in the new file's comments: the opposite-colored-bishops
+      pair flips order at depth 8 on the production path too (margin
+      -36), the same artifact documented for the fixed-depth path.
 - [ ] **Widen the singular-extension isolation match's sample size**
       (filed 2026-09-24, from item 4's own match results above) — the
       combined and null-move-gate-only matches (200 and 90 games) gave a

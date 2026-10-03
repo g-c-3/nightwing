@@ -4,6 +4,26 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-03 (6) — The endgame suite is mirrored on the production search path in a separate file, and a balance policy is recorded, rather than converting or duplicating tests wholesale
+
+**Decision:** A new `tests/production_path_tests.cpp` re-runs the positions and the deliberately loose assertions of `tests/endgame_suite_tests.cpp` through `search_iterative_deepening()` with no time limit. The original fixed-depth suite is kept unchanged. A balance policy was added to ARCHITECTURE.md "Testing Policy": tests of search behavior or full-engine judgment default to the production path, and `search_fixed_depth()` is kept for technique isolation, cold-versus-warm TT comparisons and unit-level checks.
+
+**Rationale:** The audit (ROADMAP, Priority Fixes 2026-09-22, finding 12) found that counting test files per entry point is a poor measure: the cited 10-versus-6 split was already out of date, and the production path has many direct tests. What matters is which tree-affecting behavior each path reaches. In `negamax()` the only `limits`-gated behavior that changes the tree is Internal Iterative Reduction; the other `limits` uses matter only once a search is stopped. IIR was already covered on the production path. The uncovered area was the full-engine endgame suite, whose purpose is to exercise the whole engine end to end, yet whose 11 cases never ran IIR, a warm TT or aspiration windows. The two paths do search differently (measured node counts on the same positions at the same depth, fixed versus iterative deepening: Lucena 107108 versus 19057, KPK unstoppable 138103 versus 46116), so a production-only regression in endgame judgment was possible and invisible. The production path with `time_limit_ms = 0` and one thread was confirmed deterministic (three identical runs, node count included), so the new assertions are stable regression tests; a dedicated determinism test guards that assumption.
+
+**Measured before asserting:** all nine positions satisfy the same loose bounds on the production path at the same depths as the fixed-depth suite (KPK unstoppable -962, KPK rook pawn 0, KBPK wrong bishop 0, KNK 0, KRK 741, KBNK 909, Lucena 581 with g1c1, Philidor 135, opposite-colored bishops 222 versus same-colored 310 at depth 7). Exact scores are not asserted, matching the existing suite's policy.
+
+**Finding recorded, not acted on:** the opposite-colored versus same-colored bishop ordering is not monotone in depth on the production path either. Depth 8 gives 312 versus 276 (wrong direction, margin -36); depths 5, 6, 7, 9 and 10 keep the expected order (margins 99, 33, 88, 32, 63). Depth 7 was chosen (margin 88). This matches the fixed-depth artifact in 2026-09-23 (3) and is search-score non-monotonicity, not an evaluation defect.
+
+**Alternatives considered:**
+- Converting the existing endgame suite to the production path in place: rejected, because the fixed-depth cases are an established, passing regression record, and having both paths agree on the same positions is itself informative; a path-specific failure now points directly at IIR, the warm TT or aspiration windows.
+- Adding IIR-on versus IIR-off comparisons: rejected, because IIR already has dedicated tests and a heuristic's effect on score is not a stable assertion; strength questions belong to the two-process match runner.
+- A node-count-differs guard between the paths: rejected, because iterative deepening populates the TT from shallower iterations, so counts would differ even without IIR and the test would not isolate the gate it names.
+- Measuring "balance" by file or call counts as the original item did: rejected as a poor proxy, per the rationale above.
+
+**Not established:** Debug/ASan, Windows and macOS behavior of the new file (local verification was Linux Release only); the first CI run is the confirmation. Search tests beyond the endgame suite (for example the 31 fixed-depth cases in `search_tests.cpp`) were not individually reviewed for production-path duplication.
+
+---
+
 ### 2026-10-03 (5) — Version scheme is `MAJOR.MINOR.BUILD` with the CI run number as BUILD; the UCI author string is the engine author's full name
 
 **Decision:** Release tags and the UCI `id name` version use `MAJOR.MINOR.BUILD` (for example `v1.0.680` and `Nightwing 1.0.680`). MAJOR.MINOR is the hand-edited `project(nightwing VERSION ...)` value in `CMakeLists.txt`; BUILD is the GitHub Actions run number, read by CMake from `GITHUB_RUN_NUMBER` and by the release workflow from `github.run_number`. Builds outside CI use BUILD 0. The UCI `id author` string is the engine author's full name instead of the repository handle.

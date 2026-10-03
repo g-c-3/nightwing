@@ -4,6 +4,26 @@ Newest entry at top.
 
 ---
 
+### Session 174 — 2026-10-03 — Fixed-depth versus production-path test coverage audited; endgame suite mirrored on the production path
+
+**Built:** `tests/production_path_tests.cpp` (new, 10 test cases, tag `[production_path]`) and its registration in `tests/CMakeLists.txt`. The file re-runs the nine endgame-suite positions (KPK unstoppable, KPK rook pawn, KBPK wrong bishop, KNK, KRK, KBNK, Lucena, Philidor, opposite-colored bishops) with the same loose assertions through `search_iterative_deepening()` with `time_limit_ms = 0`, plus a determinism test.
+
+**Audit findings:** The ROADMAP item's file counts were stale; `search_tests.cpp` alone has 52 `search_iterative_deepening()` calls. The only `limits`-gated behavior that changes the search tree is Internal Iterative Reduction, which already has production-path tests. The uncovered area was the full-engine endgame suite, which ran only through `search_fixed_depth()`.
+
+**Local verification (Linux Release, GCC 13, single-core sandbox):** new tests 10/10 (19 assertions); full suite 727/727 under `ctest` and 727 test cases (691257 assertions) on the raw binary; no new warnings. Not run locally: Debug/ASan, Windows, macOS. Production-path search confirmed deterministic (three identical runs of the Lucena position, node count included).
+
+**Bugs fixed:** None. No engine behavior changed; no `src/` file was touched.
+
+**Decisions made:** See DECISIONS.md, 2026-10-03 (6). A balance policy line was added to ARCHITECTURE.md "Testing Policy".
+
+**Finding:** The opposite-colored versus same-colored bishop ordering flips at depth 8 on the production path (312 versus 276), as it does on the fixed-depth path; depth 7 is used (margin 88). Search-score non-monotonicity, not an evaluation defect.
+
+**Open:** First CI run of `production_path_tests.cpp` on all six legs; a cross-platform score difference (unlikely, since evaluation and search are integer and single-threaded here) would show up there. ThreadSanitizer item remains `[~]` (three gaps: excluded `[hash]` tests, a `go`/`go ponder` session in the leg, full suite under TSan). `tsan-test` has had one clean run since the watchdog fix.
+
+**Next session start point:** Close the first ThreadSanitizer gap that is cheap and concrete: add a UCI session containing `go`, `go ponder` with `ponderhit`, and `stop` to the `tsan-test` job's test selection (new test cases if the existing tags do not cover it), run it under TSan locally, and update the ROADMAP item. First check the CI logs for `production_path_tests.cpp` and `tsan-test`; if either failed, fix that before anything else.
+
+---
+
 ### Session 173 — 2026-10-03 — ThreadSanitizer option and CI leg added
 
 **Built:** A `NIGHTWING_ENABLE_TSAN` CMake option (default OFF) was added to `CMakeLists.txt`. When enabled, Debug builds use `-fsanitize=thread -O1` instead of `-fsanitize=address,undefined -O0`, since the two sanitizer families cannot be combined. A `tsan-test` job (Linux Debug) was added to `.github/workflows/ci.yml`.

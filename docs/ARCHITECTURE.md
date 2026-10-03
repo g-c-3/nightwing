@@ -133,6 +133,7 @@ Since this project deliberately avoids NNUE/tablebases and leans on classical te
 - Every movegen change must pass perft to known depth/node-count references (standard perft suite: startpos, Kiwipete, etc.)
 - Every search change must pass existing search regression tests (no more than X% node count regression without justification — track in DECISIONS.md when this happens)
 - Every Phase 6 endgame-theory change must pass the dedicated endgame test suite (`endgame_suite_tests.cpp`) — curated known-correct K+P and rook-ending positions, kept separate from perft/search/eval regression tests since it validates correctness of algorithmic judgment, not node counts or bulk legality
+- Production-path balance: tests whose subject is search behavior or full-engine judgment use `search_iterative_deepening()` (the path UCI `go` takes: warm TT across iterations, Internal Iterative Reduction, aspiration windows) unless fixed-depth semantics are specifically needed. `search_fixed_depth()` stays the right tool for isolating a single pruning/extension technique, for cold-versus-warm TT comparisons, and for unit-level checks. `production_path_tests.cpp` mirrors the endgame suite on the production path
 - `ctest` must be fully green before any file is considered committable
 
 ## Development Environment (assistant sandbox)
