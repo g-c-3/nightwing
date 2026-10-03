@@ -3233,12 +3233,50 @@ Not part of the report's own ordering, appended here:
       assertions in 127 test cases, zero ThreadSanitizer reports. One clean
       run does not establish the fix, given the earlier intermittent
       failure.
-      REMAINING: (1) confirm further `tsan-test` runs stay clean (one so
-      far after the fix); (2) the `[hash]` tests were OOM-killed in the 4 GB
-      local sandbox and are excluded, and whether a hosted runner can run
-      them under TSan is untried; (3) the full suite has not been run under
-      TSan. A clean TSan run shows no race on the interleavings that
-      occurred, not the absence of races.
+      SESSION 175: the CI run of the Session 174 commit (`v1.0.697`) was
+      the second clean `tsan-test` run after the fix (333 assertions in
+      127 test cases, zero reports). The `go`/`go ponder` + `ponderhit` +
+      `stop` coverage listed as a gap in the Session 174 notes was
+      already present: the job's tags included `[pondering]` and
+      `[uci]~[hash]` from the start (the Session 174 note was wrong). The
+      full suite except `[hash]` (719 of 727 test cases, 691240
+      assertions) was then run under TSan locally (Debug, single-core
+      sandbox, `halt_on_error=1`): all passed, zero reports. The `tsan-test`
+      step in `.github/workflows/ci.yml` was widened from the seven
+      thread-touching tags to `"~[hash]"` accordingly (step renamed "Test
+      (full suite except [hash])"; the job name is unchanged). Test risk:
+      the hosted run has not happened yet; the longer TSan run time is the
+      only expected cost, and a race in a test that does not touch
+      threads directly would now fail the job (which is the point).
+      REMAINING: (1) confirm the first CI run of the widened step is clean
+      and note its wall-clock time; (2) the 8 `[hash]` test cases were
+      OOM-killed in the 4 GB local sandbox and remain excluded; whether a
+      hosted runner can run them under TSan is untried (a
+      non-gating trial step with `continue-on-error: true` is the cheap
+      way to find out). A clean TSan run shows no race on the
+      interleavings that occurred, not the absence of races.
+
+- [ ] **Apple Clang `-Wsign-conversion` warnings in first-party code**
+      (found Session 175 from the macOS CI logs; non-gating, no behavior
+      change). Both macOS legs (Release and Debug) of the CI run for
+      `v1.0.697` print 78 `-Wsign-conversion` warning lines in six
+      first-party files: `src/board/attacks.cpp`, `src/board/masks.cpp`,
+      `src/eval/psqt.cpp`, `src/tuner/tune.h` (lines 210 and 217, the
+      `ParameterRef::get()` / `set()` indexed-array accessors, which
+      account for 33 of the 78 as header re-instantiations),
+      `src/tuner/tune.cpp` and `src/tuner/tune_main.cpp`. All have the
+      same shape: a signed `int` (`Square` or a `const int` index) used to
+      subscript a `std::array`/`std::vector`, whose `operator[]` takes
+      `size_t`. GCC and MSVC print none. Cause: the 2026-09-26 (11)
+      measurement of "zero first-party `-Wconversion` warnings" was made
+      with GCC, where `-Wconversion` does NOT include `-Wsign-conversion`
+      for C++, while Clang's `-Wconversion` does (docs/DECISIONS.md,
+      2026-10-03 (7)). Options, none chosen yet (approval needed because
+      the files are from completed phases): (a) leave as is, since there is
+      no defect; (b) add `static_cast<std::size_t>` at the sites or an
+      indexing helper; (c) add `-Wsign-conversion` to the GCC branch so
+      the sandbox sees them too, then fix. Any fix must keep the Release
+      `bench` node count (36154 at depth 6) unchanged.
 
 ## Phase 9 — Advanced / Stretch Goals (beyond great-engine baseline)
 - [ ] SPSA tuner (Simultaneous Perturbation Stochastic Approximation) — added 2026-10-02 from the modern-HCE alternatives review. The existing tuner is Texel-style (finite-difference/analytic gradient descent on a static labeled-position corpus); SPSA instead optimizes parameters directly against game results, which sidesteps the label-fit versus playing-strength gap and the endgame-term identifiability problem (Tier 0's open item) because strength is measured by play, not by a loss surface. Scope: perturb a parameter vector by a random ±delta per iteration, play a short match between the plus and minus vectors, and step along the observed score gradient with the standard decaying gain schedules (Spall's SPSA; CPW — Chess Programming Wiki, "SPSA"). Applies to eval constants and to search constants (margins, reduction coefficients, pruning depths) alike. Planned to reuse the existing `ParameterRef<Weights>` machinery for the parameter list and either `tuner::play_match()` (eval constants, in-process) or the two-process runner `nightwing_uci_match` (search constants, which need separately built binaries or a UCI option), plus SPRT gating before any tuned value is committed, as for every tuner output. No NNUE, no neural nets; the evaluator stays fully handcrafted. Design decisions (parameter exposure over UCI versus in-process, game count per iteration, time control) to be logged in docs/DECISIONS.md when the item is started.

@@ -4,6 +4,26 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-03 (7) — ThreadSanitizer job widened to the full suite except `[hash]`; the macOS `-Wsign-conversion` warnings are recorded, not fixed
+
+**Decision (1):** The `tsan-test` job runs `"~[hash]"` instead of an allowlist of seven tags. The `[hash]` test cases stay excluded.
+
+**Rationale:** An allowlist of tags covers only the code its authors thought of as thread-touching, and a data race can sit behind code that does not look it (a stale watchdog thread was found in `uci.cpp`, 2026-10-03 entries above). The full suite minus `[hash]` was run under TSan locally before the change: 719 test cases, 691240 assertions, zero reports, in a few minutes on a single-core sandbox, so the hosted-runner cost is small. The allowlist also contained a silent assumption that the Session 174 notes got wrong: the `go ponder` coverage they listed as missing had been included since the job was created. The job's `halt_on_error=1` and the unchanged job name keep the failure semantics and the CI status label the same.
+
+**Alternatives considered:**
+- Keeping the allowlist and adding tags as new threaded code appears: rejected, because that depends on someone remembering to add the tag, and the failure mode is silence.
+- Including `[hash]` now: rejected; those cases were OOM-killed under TSan in the 4 GB sandbox and a hosted-runner trial has not been run. A non-gating trial step is the planned way to find out.
+
+**Not established:** The hosted-runner duration and cleanliness of the widened job (first CI run pending). A clean run shows no race on the interleavings that occurred, not the absence of races.
+
+**Decision (2):** The macOS `-Wsign-conversion` warnings are filed as a ROADMAP item and no source file was changed.
+
+**Rationale:** The CI logs of `v1.0.697` show 78 such warnings per macOS leg in six first-party files, all one pattern (a signed `int` index into a `std::array` or `std::vector`). They are warnings, not defects, and the affected files belong to completed, green phases; changing them without approval conflicts with the rule against rewriting green code. The finding corrects an assumption in 2026-09-26 (11): that measurement found zero first-party `-Wconversion` warnings, but it was taken with GCC, where `-Wconversion` does not include `-Wsign-conversion` in C++, while Clang's `-Wconversion` does. The conclusion of that decision (enable `-Wconversion` scoped to `nightwing_warnings`) is not reversed; only its "zero warnings on every GCC/Clang leg" claim was too broad.
+
+**Not established:** Whether the project wants these silenced (the three options are on the ROADMAP item), and the exact count of distinct source sites (the 78 lines include header re-instantiations, with `tune.h:210` and `tune.h:217` alone accounting for 33).
+
+---
+
 ### 2026-10-03 (6) — The endgame suite is mirrored on the production search path in a separate file, and a balance policy is recorded, rather than converting or duplicating tests wholesale
 
 **Decision:** A new `tests/production_path_tests.cpp` re-runs the positions and the deliberately loose assertions of `tests/endgame_suite_tests.cpp` through `search_iterative_deepening()` with no time limit. The original fixed-depth suite is kept unchanged. A balance policy was added to ARCHITECTURE.md "Testing Policy": tests of search behavior or full-engine judgment default to the production path, and `search_fixed_depth()` is kept for technique isolation, cold-versus-warm TT comparisons and unit-level checks.

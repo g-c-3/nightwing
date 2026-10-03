@@ -4,6 +4,26 @@ Newest entry at top.
 
 ---
 
+### Session 175 — 2026-10-03 — CI logs for Session 174 checked; TSan job widened to the full suite; macOS warning finding
+
+**CI result for the Session 174 commit (`v1.0.697`, commit `a26f790`):** All legs passed: Linux Debug and Release 727/727, Windows Debug and Release 727/727, macOS Release and Debug 725/725 (two fewer test cases than the other platforms, the same 2-case difference as the previous run's 715 versus 717), wasm build, `tsan-test` (333 assertions in 127 test cases, zero reports), and the rolling plus versioned release publish. All 10 `production_path` test cases ran and passed on every `build-and-test` leg; no warning mentions `production_path_tests.cpp`.
+
+**Built:** `.github/workflows/ci.yml` (REPLACE): the `tsan-test` step now runs `"~[hash]"` (the full suite except the 8 `[hash]` test cases) instead of seven thread-touching tags, with the step renamed and its header comment updated. Local verification before the change: the full suite except `[hash]` under TSan (Debug, single-core sandbox, `halt_on_error=1`): 719 test cases, 691240 assertions, all passed, zero reports.
+
+**Correction:** The Session 174 start point asked for a `go` / `go ponder` / `ponderhit` / `stop` session to be added to the TSan selection. It was already covered by the `[pondering]` and `[uci]~[hash]` tags. The Session 174 entry was corrected in place.
+
+**Finding:** Both macOS legs print 78 `-Wsign-conversion` warnings in six first-party files (attacks.cpp, masks.cpp, psqt.cpp, tune.h, tune.cpp, tune_main.cpp); GCC and MSVC print none. The 2026-09-26 (11) "zero first-party warnings" measurement was GCC-only. Filed as a non-gating ROADMAP item with three options; no code was changed. See DECISIONS.md, 2026-10-03 (7).
+
+**Bugs fixed:** None. No engine source file changed.
+
+**Decisions made:** DECISIONS.md, 2026-10-03 (7).
+
+**Open:** First CI run of the widened `tsan-test` step (wall-clock time and cleanliness). The `[hash]` tests under TSan on a hosted runner remain untried.
+
+**Next session start point:** Check the `tsan-test` log of the commit containing this session's `ci.yml`: it must be clean, and its duration recorded in the ROADMAP TSan item. If clean, add a non-gating trial step (`continue-on-error: true`) that runs `"[hash]"` under TSan on the hosted runner and record the outcome. If the `tsan-test` job failed, diagnose the reported race before anything else. After that, the next ROADMAP item is widening the singular-extension isolation match's sample size.
+
+---
+
 ### Session 174 — 2026-10-03 — Fixed-depth versus production-path test coverage audited; endgame suite mirrored on the production path
 
 **Built:** `tests/production_path_tests.cpp` (new, 10 test cases, tag `[production_path]`) and its registration in `tests/CMakeLists.txt`. The file re-runs the nine endgame-suite positions (KPK unstoppable, KPK rook pawn, KBPK wrong bishop, KNK, KRK, KBNK, Lucena, Philidor, opposite-colored bishops) with the same loose assertions through `search_iterative_deepening()` with `time_limit_ms = 0`, plus a determinism test.
@@ -18,9 +38,9 @@ Newest entry at top.
 
 **Finding:** The opposite-colored versus same-colored bishop ordering flips at depth 8 on the production path (312 versus 276), as it does on the fixed-depth path; depth 7 is used (margin 88). Search-score non-monotonicity, not an evaluation defect.
 
-**Open:** First CI run of `production_path_tests.cpp` on all six legs; a cross-platform score difference (unlikely, since evaluation and search are integer and single-threaded here) would show up there. ThreadSanitizer item remains `[~]` (three gaps: excluded `[hash]` tests, a `go`/`go ponder` session in the leg, full suite under TSan). `tsan-test` has had one clean run since the watchdog fix.
+**Open:** First CI run of `production_path_tests.cpp` on all six legs; a cross-platform score difference (unlikely, since evaluation and search are integer and single-threaded here) would show up there. ThreadSanitizer item remains `[~]` (gaps: excluded `[hash]` tests and the full suite under TSan; a `go`/`go ponder` gap was listed here in error and is corrected in Session 175). `tsan-test` had one clean run since the watchdog fix at the time of writing.
 
-**Next session start point:** Close the first ThreadSanitizer gap that is cheap and concrete: add a UCI session containing `go`, `go ponder` with `ponderhit`, and `stop` to the `tsan-test` job's test selection (new test cases if the existing tags do not cover it), run it under TSan locally, and update the ROADMAP item. First check the CI logs for `production_path_tests.cpp` and `tsan-test`; if either failed, fix that before anything else.
+**Next session start point:** (Superseded by Session 175: the start point written here named a coverage gap that did not exist.) See Session 175.
 
 ---
 
