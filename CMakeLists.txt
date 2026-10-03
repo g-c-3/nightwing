@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(nightwing VERSION 0.1.0 LANGUAGES CXX)
+project(nightwing VERSION 1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -268,6 +268,24 @@ add_subdirectory(src)
 # specifically so a full rebuild always regenerates it fresh from
 # whatever version is currently configured, rather than a stale copy
 # silently surviving a version bump.
+# Version scheme: MAJOR.MINOR.BUILD (e.g. 1.0.680). MAJOR.MINOR is the
+# `project(nightwing VERSION ...)` declaration at the top of this file --
+# the only part edited by hand. BUILD is the CI run number: GitHub Actions
+# exports it to every job as GITHUB_RUN_NUMBER, and it is the same number
+# the release workflow uses for the tag (`v1.0.680`), so the UCI `id name`
+# string and the release tag agree. Outside CI it is 0 (`1.0.0`). Override
+# with -DNIGHTWING_BUILD_NUMBER=N. Deliberately a plain (non-cache)
+# variable so a stale value can never survive between configures.
+if(NOT DEFINED NIGHTWING_BUILD_NUMBER)
+    if(DEFINED ENV{GITHUB_RUN_NUMBER} AND "$ENV{GITHUB_RUN_NUMBER}" MATCHES "^[0-9]+$")
+        set(NIGHTWING_BUILD_NUMBER "$ENV{GITHUB_RUN_NUMBER}")
+    else()
+        set(NIGHTWING_BUILD_NUMBER 0)
+    endif()
+endif()
+set(NIGHTWING_VERSION_FULL
+    "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${NIGHTWING_BUILD_NUMBER}")
+
 configure_file(${CMAKE_SOURCE_DIR}/src/version.h.in
                ${CMAKE_BINARY_DIR}/generated/nightwing/version.h @ONLY)
 target_include_directories(nightwing_lib PUBLIC ${CMAKE_BINARY_DIR}/generated)
