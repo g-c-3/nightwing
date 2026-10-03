@@ -2145,7 +2145,7 @@ void run(std::istream& in, std::ostream& out) {
             // single source of truth for this number lives there, not
             // here.
             out << "id name Nightwing " << NIGHTWING_VERSION_STRING << '\n';
-            out << "id author g-c-3\n";
+            out << "id author Gokul Chandar\n";
             // `option name Threads type spin default <D> min <MIN> max <MAX>`:
             // standard UCI `spin` option syntax -- kMinThreads/kMaxThreads's
             // own doc comment above has the bounds' rationale.
