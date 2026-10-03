@@ -2196,7 +2196,7 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
 - [x] Standalone `nightwing.min.js`: single self-contained minified bundle (wasm binary inlined as base64, not a separate `.wasm` file to host/serve) for drop-in use without asset-path configuration -- DONE (implemented Session 169, confirmed Session 170, 2026-10-02): new CMake option `NIGHTWING_WASM_SINGLE_FILE` (root CMakeLists.txt; requires `NIGHTWING_BUILD_WASM`, fails fast otherwise -- the guard was tested natively) adds `-sSINGLE_FILE=1` and renames the output to `nightwing.min.js` (src/CMakeLists.txt). `wasm-build` gained a second build directory (`build-wasm-single`) and a verify step that copies `nightwing.min.js` ALONE into an empty directory and runs 6 checks from there (uci, isready, real search with `info` lines, `bestmove`, `OwnBook false` from startpos, Hash clamp), plus assertions that no `.wasm` was emitted. The `go` checks matter most: every `go` spawns a pthread worker that re-loads the same file, so the inlined-wasm-plus-threads combination is exercised, not assumed. "Minified" means Emscripten's own Release-build whitespace minification only; no Closure or separate minifier was added (rationale in docs/DECISIONS.md, 2026-10-02 (3)). CONFIRMED on real CI (Session 170, user-uploaded logs): `build-wasm-single` produced `nightwing.min.js` (448,547 bytes, 1 line, no `.wasm` emitted) and all 6 standalone checks passed from an empty directory, including both real-search checks, so the inlined-wasm-plus-pthread-worker combination works. The bundle is about 448 KB against 306 KB for the separate `.wasm` (base64 overhead plus glue).
 - [x] Both wasm artifacts (`nightwing.wasm`+`nightwing.js`, and `nightwing.min.js`) published as release assets alongside the 3 native binaries on the same rolling `latest` release -- DONE (implemented Session 169, confirmed Session 170): `wasm-build` stages `nightwing.js`, `nightwing.wasm` and `nightwing.min.js` into one flat `wasm-assets/` directory uploaded as the `nightwing-wasm` artifact; `release` now downloads it and copies the three files into `release-assets/`, so both the rolling `latest` and the versioned release carry them next to the 3 native binaries. `release` is now gated on `wasm-build` as well (`needs: [build-and-test, wasm-build]`). CONFIRMED on real CI (Session 170): `ls -l release-assets` listed all 6 files (`nightwing-linux`, `nightwing-macos`, `nightwing-windows.exe`, `nightwing.js`, `nightwing.wasm`, `nightwing.min.js`), and both the rolling `latest` release and the versioned release `v0.1.0-652` were created.
 - [x] **Version scheme `MAJOR.MINOR.BUILD` and engine author string**
-      (Session 173, awaiting CI) — release tags changed from `v0.1.0-680`
+      (Session 173, CI-verified) — release tags changed from `v0.1.0-680`
       to `v1.0.680`: MAJOR.MINOR (`1.0`) is the hand-edited `project(
       nightwing VERSION 1.0 ...)` line in `CMakeLists.txt`; BUILD is the
       CI run number (`github.run_number`), iterating on every run. The
@@ -2211,12 +2211,18 @@ picked up in any session without waiting for Phase 8. Decisions/rationale in DEC
       repository owner's request (the name is deliberately kept out of
       docs/; it lives only in `src/uci/uci.cpp`). A test
       (`[uci][version]`) checks the `id name` format and the author line.
-      Verified locally: with `GITHUB_RUN_NUMBER=681` the engine printed
+      CI-VERIFIED (run 693): the release workflow published `v1.0.693`
+      (title "Nightwing v1.0.693"); the downloaded Linux release binary and
+      the `latest` rolling binary both print `id name Nightwing 1.0.693`
+      and the author line, so tag and engine agree; all six
+      `build-and-test` legs (717/717 Linux and Windows, 715/715 macOS) and
+      the wasm build passed, including the new `[uci][version]` test.
+      Verified locally before that: with `GITHUB_RUN_NUMBER=681` the engine printed
       `id name Nightwing 1.0.681`; without it `1.0.0`; the override and
-      reset both work; full suite 717 test cases pass. NOT verified: the
-      release workflow producing the new tag (first CI run pending), and
-      that every CI job exports `GITHUB_RUN_NUMBER` as documented
-      (expected for GitHub Actions; unconfirmed here). Release assets
+      reset both work; full suite 717 test cases pass. Not directly
+      inspected: the macOS, Windows and wasm binaries' own version strings
+      (only the Linux assets were run); the tag/engine agreement is shown
+      for Linux. Release assets
       built by different jobs in one run share the run number, so
       binaries and tag agree; a manual re-run of a workflow keeps the same
       run number, so a re-run of the publish step would collide with its
@@ -3209,8 +3215,12 @@ Not part of the report's own ordering, appended here:
       defect needs real elapsed time or TSan to observe); the `tsan-test`
       job is the regression guard. Test risk: `halt_on_error=1` stops at the
       first race, so a second race could still be hidden behind this one.
-      REMAINING: (1) confirm the next CI runs of `tsan-test` are clean,
-      ideally several; (2) the `[hash]` tests were OOM-killed in the 4 GB
+      FIRST CLEAN RUN AFTER THE FIX (run 693): `tsan-test` passed, 333
+      assertions in 127 test cases, zero ThreadSanitizer reports. One clean
+      run does not establish the fix, given the earlier intermittent
+      failure.
+      REMAINING: (1) confirm further `tsan-test` runs stay clean (one so
+      far after the fix); (2) the `[hash]` tests were OOM-killed in the 4 GB
       local sandbox and are excluded, and whether a hosted runner can run
       them under TSan is untried; (3) the full suite has not been run under
       TSan. A clean TSan run shows no race on the interleavings that

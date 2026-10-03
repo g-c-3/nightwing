@@ -31,13 +31,15 @@ Newest entry at top.
 
 **Version scheme and author string:** Release tags changed from `v0.1.0-680` to `MAJOR.MINOR.BUILD` (`v1.0.<run number>`), with the same number embedded in the engine so `id name` reads `Nightwing 1.0.<run number>`; `CMakeLists.txt` now declares `VERSION 1.0`, reads `GITHUB_RUN_NUMBER`, and `src/version.h.in` and the `ci.yml` "Compute version tag" step were updated. The UCI `id author` string was changed to the engine author's full name (kept in source only). A `[uci][version]` test was added. Verified locally: `1.0.681` with run number 681, `1.0.0` without, full suite 717 test cases. Pending: the first CI run to confirm the new tag. See DECISIONS.md, 2026-10-03 (5) and the ROADMAP release-assets section.
 
+**CI result for the version scheme and the watchdog fix (run 693):** All six `build-and-test` legs passed (717/717 on Linux and Windows, 715/715 on macOS), as did the wasm build and the release publish. The release was published as `v1.0.693`; the Linux release binary and the `latest` rolling binary were downloaded and both print `id name Nightwing 1.0.693` and the author line, so tag and engine agree. The `tsan-test` job passed (333 assertions, 127 test cases, zero reports), the first clean run after the `uci.cpp` watchdog fix; one clean run does not prove the fix because the earlier race was intermittent. Only the Linux assets were run; the macOS, Windows and wasm binaries' version strings were not inspected.
+
 **Comment fix:** A stale comment in `src/book/book.h` claimed no `OwnBook` toggle or UCI options infrastructure existed. It was rewritten to state that `book_move()` is unconditional and that the `OwnBook` option is applied by the caller in `start_go()` (DECISIONS.md, 2026-10-02 (2), superseding 2026-09-03 (4)). Comment-only change; `book.cpp` carries no such claim. The historical 2026-09-03 (4) entry was left as written.
 
 **License added:** The repository owner chose GPL-3.0-or-later and added `LICENSE` (GPLv3 text) and a README License section. The `LICENSE` text was verified against Stockfish's `Copying.txt` after whitespace normalization (differences: "(C)" versus the copyright sign, and one FSF URL path). The ROADMAP LICENSE item was marked done. See DECISIONS.md, 2026-10-03 (3).
 
 **Open:** None carried from this session besides the CI runs noted in the start point below.
 
-**Next session start point:** Read the CI run after the version-scheme change: confirm the release tag is `v1.0.<run number>` and the Linux binary reports the same in `id name`. Also check that the `tsan-test` job is clean (repeat a few times, since the earlier race was intermittent). If both are good, take the test-coverage audit ("Audit fixed-depth vs. production-path test coverage").
+**Next session start point:** Take the test-coverage audit ("Audit fixed-depth vs. production-path test coverage"). In later CI logs, keep watching that `tsan-test` stays clean (one clean run so far after the watchdog fix) and, if it fails, fix that before anything else.
 
 ---
 
