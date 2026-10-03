@@ -4,6 +4,16 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-03 (5) — Version scheme is `MAJOR.MINOR.BUILD` with the CI run number as BUILD; the UCI author string is the engine author's full name
+
+**Decision:** Release tags and the UCI `id name` version use `MAJOR.MINOR.BUILD` (for example `v1.0.680` and `Nightwing 1.0.680`). MAJOR.MINOR is the hand-edited `project(nightwing VERSION ...)` value in `CMakeLists.txt`; BUILD is the GitHub Actions run number, read by CMake from `GITHUB_RUN_NUMBER` and by the release workflow from `github.run_number`. Builds outside CI use BUILD 0. The UCI `id author` string is the engine author's full name instead of the repository handle.
+
+**Rationale:** The previous tag `v0.1.0-680` mixed a semantic version with a build suffix and did not match what the binary reported, since the engine only knew `0.1.0`. A three-part scheme where the last part iterates automatically keeps the tag and the engine's own version string in agreement without any extra bookkeeping, and the run number was already the project's uniqueness mechanism. Reading `GITHUB_RUN_NUMBER` in CMake needs no change to the many CI configure steps. The author change was requested by the repository owner; the name is kept in source only, per the documentation voice rule.
+
+**Alternatives considered:** Passing `-DNIGHTWING_BUILD_NUMBER` in every CI configure step (rejected: many edits for the same result); computing BUILD from a commit count (rejected: needs full history in every checkout and differs from the run number the tag already uses); keeping the old tag and only changing the engine string (rejected: tag and engine would disagree).
+
+---
+
 ### 2026-10-03 (4) — The ponderhit watchdog is a joinable, cancellable member thread, not a detached one
 
 **Decision:** `handle_ponderhit()` no longer detaches its timed-stop watchdog. The watchdog is `PonderState::watchdog`, waits on a condition variable, and is cancelled and joined by `cancel_watchdog()` from `abandon_pondering()`, `handle_stop()` and `finish_pondering()`. A cancelled watchdog never sets `ponder.stop`.
