@@ -23,9 +23,11 @@ Newest entry at top.
 
 **ThreadSanitizer CI result:** The first CI run containing the `tsan-test` job (uploaded logs, 2026-10-03, hosted `ubuntu-latest`) was read. Configure and build were clean, and the test step reported "All tests passed (331 assertions in 126 test cases)" with zero ThreadSanitizer reports, in about 68 seconds. All six `build-and-test` legs (716/716 on Linux and Windows, 714/714 on macOS), the wasm build and the release publish step also completed. No data race was found. The ROADMAP item stays `[~]` for three remaining gaps: the excluded `[hash]` tests, a `go`/`go ponder` session in the leg, and the full suite under TSan.
 
+**Per-node work profiled (ROADMAP "Reduce redundant per-node work"):** `main` was profiled (gprof, Release without LTO, 4 positions at depth 11) with direct call counters added in a throwaway sandbox build. `evaluate()` is about 35% of search time; 76% of cache-eligible calls hit `EvalCache` (1,517,172 of 1,995,096), so the repeated calls in `negamax()` cost little beyond a probe (at most 1-2% to gain). `compute_pawn_hash()` is about 1.2% self time, and an incremental version would add cost to every make/unmake. Neither change was judged worthwhile; no code was changed and the item is left `[~]`, awaiting approval to close it without optimization. Side finding: `board/attacks.cpp` generates magic numbers for all 128 squares at every process start even with PEXT active, and startup takes about 300 ms in the sandbox; a new ROADMAP item was added (not started). gprof's per-caller call counts disagreed with the direct counters and were not relied on.
+
 **Open:** The LICENSE choice is awaiting a decision.
 
-**Next session start point:** Take the next incomplete item in ROADMAP.md that does not need a manual dispatch; the ThreadSanitizer item may be extended later with the three remaining gaps listed above, and Step 3b needs no further work.
+**Next session start point:** Approval is needed to close "Reduce redundant per-node work" without an optimization (recommended). After that, take the startup-time item (read `board/attacks.cpp` in full first) or the test-coverage audit; the ThreadSanitizer item may be extended later with its three remaining gaps.
 
 ---
 

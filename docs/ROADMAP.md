@@ -3007,7 +3007,7 @@ it either way.
 
 Not part of the report's own ordering, appended here:
 
-- [ ] **Reduce redundant per-node work** (finding 7, lower priority —
+- [~] **Reduce redundant per-node work** (finding 7, lower priority —
       report's own framing: "probably a cheap NPS gain," profile first)
       — `eval::evaluate()` is called up to 4 separate times per
       `negamax()` node (node static eval, reverse futility, razoring,
@@ -3024,6 +3024,42 @@ Not part of the report's own ordering, appended here:
       the pawn(s) actually touched by the move just made) would remove
       this real O(pawn-count)-per-node cost. Profile before spending
       time on either — the report's own caution, not lowered.
+      PROFILED (Session 173, no code change made; closing without an
+      optimization is proposed and awaits approval): `main` was profiled
+      with gprof (Release, LTO off, `-pg`, 1-core 2.8 GHz Xeon sandbox) over
+      four off-book positions at depth 11, about 4.2 s of samples, plus
+      direct call counters in a throwaway sandbox build (not committed).
+      (1) `evaluate()` is about 35% of search time, but that is genuine
+      evaluation work: of 3,675,840 calls, 1,995,096 could use the
+      `EvalCache` and 1,517,172 of those hit (76%), leaving 2,158,668 full
+      evaluations. The 4 negamax call sites therefore cost little beyond a
+      cache probe (`EvalCache::probe` about 2.4% self time in total), so
+      passing the node's static eval to RFP/razoring/futility would save at
+      most about 1-2%. (2) `compute_pawn_hash()` is about 1.2% self time
+      (2,805,367 calls: 1,942,994 from `evaluate()`, 862,373 from
+      `negamax()`); an incremental pawn hash would add work to every
+      `make_move`/`unmake_move` (about 8% of time together) to remove at
+      most that 1.2%, with real regression risk to perft and Zobrist tests.
+      Conclusion: neither change is a worthwhile NPS gain. Caveats: gprof's
+      per-caller call counts were inconsistent with the direct counters
+      (inlining and identical-code folding), so only the self-time shares
+      and the counters were relied on; one machine, four positions; the
+      1,680,744 evaluate calls with the cache unusable are suspected to be
+      quiescence calls with a lazy window, which was inferred and not
+      confirmed. Side finding: see the startup-time item below.
+- [ ] **Engine startup takes about 300 ms** (found Session 173 while
+      profiling) — `board/attacks.cpp` runs `find_magic_for_square()` for
+      all 128 rook/bishop squares at every process start, apparently even
+      when BMI2/PEXT is active (the PEXT tables are built in addition, and
+      `g_use_pext` only selects which table `rook_attacks()` reads).
+      Measured: `uci`+`isready`+`quit` takes 285-320 ms wall in the sandbox
+      (non-LTO Release); gprof attributed about 0.21 s per process to
+      `find_magic_for_square` under `-pg`. Matters only for process-spawning
+      workloads (the `uci-match` runner, GUIs that restart the engine, the
+      raw test binary), not search speed. Not yet confirmed that magic
+      generation is skippable on the PEXT path without breaking the
+      non-BMI2 fallback or the tests; read `attacks.cpp` fully before
+      changing it. Not started.
 - [~] **Add a LICENSE and a `.gitignore`** (finding 13) — neither exists
       in the repository today (confirmed absent). The README has a
       documented attribution policy but nothing governs actual reuse
