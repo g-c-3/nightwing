@@ -1204,31 +1204,27 @@ jobs:
       # time (never deleted/overwritten, unlike "latest") so past builds
       # stay individually downloadable and referenceable by tag.
       #
-      # `project(nightwing VERSION X.Y.Z ...)` (CMakeLists.txt, line 2)
-      # is this project's one existing source of truth for a version
-      # number -- it already feeds `src/version.h.in` (this same file's
-      # `configure_file` call) into the UCI `id name` string, so reusing
-      # it here rather than inventing a second, disconnected version
-      # scheme keeps "the UCI id string" and "the release tag" in sync
-      # automatically whenever CMakeLists.txt's VERSION is bumped.
+      # Tag format: `vMAJOR.MINOR.BUILD`, e.g. `v1.0.680` (changed from
+      # `v0.1.0-680`). MAJOR.MINOR comes from `project(nightwing VERSION
+      # X.Y ...)` in CMakeLists.txt -- the one hand-edited part, a human
+      # judgment this workflow cannot make. BUILD is `github.run_number`
+      # (a plain integer, unique and strictly increasing for every run of
+      # this workflow), which makes each tag distinct and keeps counting
+      # across MAJOR.MINOR bumps rather than resetting.
       #
-      # That X.Y.Z alone isn't unique per CI run, though (nothing here
-      # auto-bumps it -- deciding a major/minor/patch bump is a human,
-      # semantic judgment this workflow has no basis to make), so
-      # `github.run_number` (a plain integer, unique and strictly
-      # increasing for every run of this workflow) is appended to make
-      # each tag distinct: `v0.1.0-1`, `v0.1.0-2`, ... `v0.2.0-47`, ...
-      # if CMakeLists.txt's VERSION is later bumped to 0.2.0, run_number
-      # simply keeps counting rather than resetting, which is fine — the
-      # tags still sort and read sensibly, and staying monotonic across
-      # the whole run history (not per-version) is what keeps this a
-      # single `run_number`-per-tag scheme rather than needing per-
-      # version counters tracked somewhere.
+      # CMakeLists.txt reads the same number from GITHUB_RUN_NUMBER (set
+      # automatically in every job) when building, so the binaries'
+      # UCI `id name` string reads `Nightwing 1.0.680` and matches this
+      # tag. Older `v0.1.0-N` releases are left untouched.
       - name: Compute version tag
         id: version
         run: |
-          RAW_VERSION=$(grep -oP 'project\(nightwing VERSION \K[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt)
-          echo "tag=v${RAW_VERSION}-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          MAJOR_MINOR=$(grep -oP 'project\(nightwing VERSION \K[0-9]+\.[0-9]+' CMakeLists.txt)
+          if [ -z "${MAJOR_MINOR}" ]; then
+            echo "::error::could not read MAJOR.MINOR from CMakeLists.txt"
+            exit 1
+          fi
+          echo "tag=v${MAJOR_MINOR}.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
       # No delete-first step here (unlike "latest" above) -- this tag is
       # unique by construction (run_number never repeats), so `gh
