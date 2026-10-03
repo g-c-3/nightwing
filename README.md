@@ -114,3 +114,15 @@ codebase, Ethereal, or the Chess Programming Wiki) informs an
 implementation, the corresponding source file's own comments credit it
 specifically, consistent with this project's own attribution policy
 (`docs/ARCHITECTURE.md`).
+
+## License
+
+Nightwing is free software, licensed under the
+[GNU General Public License, version 3 or (at your option) any later
+version](LICENSE) (SPDX: `GPL-3.0-or-later`). You may use, modify, and
+redistribute it, but any distributed derivative must also be released
+under the same license with its source code and notices intact.
+
+Nightwing is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE.
