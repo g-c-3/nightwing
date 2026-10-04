@@ -4,6 +4,37 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-04 (2) — The singular-extension isolation match is redesigned as singular-on versus singular-off on current `main`, run through the in-repo `uci-match` workflow with `go movetime`
+
+**Decision:** The re-run filed on 2026-09-24 is not repeated as originally described (null-move-only binary versus `main`). Instead the baseline is current `main` with singular extensions disabled by raising `kSingularMinDepth` from 8 to 99, held on a throwaway branch `exp-no-singular`, and the candidate is `main`. The match is dispatched through the existing `uci-match` workflow with `ucimatch_movetime_ms=500` as the primary run.
+
+**Rationale:** The original variant existed only as a sandbox build with no git ref, and was based on a `main` that has since gained many search changes (Internal Iterative Reduction among them), so it cannot be passed to `uci-match`, which takes git refs. A one-constant switch from current `main` is the smallest possible change, needs no hand-splicing of the `exclude_move` plumbing (the reason a clean isolated variant was rejected on 2026-09-24), and answers the question that matters now: whether singular extensions, as they currently exist, help or hurt. Checked in the sandbox: the variant builds, matches `main` exactly (score, best move, node count) at depths 6, 7 and 8 on two positions, and differs at depth 9. Singular extensions cost about 30% more nodes at equal depth (Kiwipete depth 9: 192173 versus 148055), so a fixed-depth match, which ignores that cost, would favor the technique by construction; `go movetime` charges it. Engine speed measured at about 300000 nodes/s, placing 500 ms at about depth 9-10, where the technique is active.
+
+**Departure from the filed item, stated plainly:** the 2026-09-24 question was "does the rewrite beat the previous (buggy) singular-extension code"; the redesigned question is "do singular extensions beat no singular extensions". The previous code no longer exists as a buildable ref, and the rewrite-versus-old question was already answered in direction (combined +52.5 Elo, z=2.15, no regression). The new question is the more decision-relevant one.
+
+**Alternatives considered:**
+- Building the experiment into the engine as a runtime UCI option: rejected, because it would add engine surface (and a branch in the hot search path) solely for an experiment.
+- Fixed-depth 9 as the primary run: rejected as biased toward the technique (see node cost above); kept as an optional second run for comparison.
+- Branching from an old commit as the baseline: rejected, because it would confound singular extensions with every change made since.
+
+**Not established:** The result itself. A run of 100-250 games gives a direction and a z-score, not a verdict at the +/-5 Elo SPRT bounds. The branch and the dispatch require a person (GitHub web UI and Actions); neither was done in this session.
+
+---
+
+### 2026-10-04 (1) — The ThreadSanitizer job runs the whole test suite, including `[hash]`
+
+**Decision:** The `tsan-test` job runs `./tests/nightwing_tests` with no tag filter. The `~[hash]` exclusion (2026-10-03 (7)) was dropped and the interim `tsan-hash-trial` job deleted.
+
+**Rationale:** The exclusion existed only because the `[hash]` cases were OOM-killed under TSan's shadow-memory overhead in a 4 GB local sandbox, with the hosted-runner behavior untried. The trial answered that: on a hosted runner (15989 MB total) the 8 cases passed in about 7 s with about 1.5 GB in use afterwards and no TSan report. The same CI run showed the rest of the suite clean under TSan (719 test cases, 129 s). With both facts established, a permanent exclusion would only leave the hash-resize and ponder-abandonment paths (`setoption name Hash` during a ponder search) as the one place a data race could go unseen, in the area most likely to have one. The additional cost is about 7 s of test time per run.
+
+**Alternatives considered:**
+- Keeping `~[hash]` and the trial job as a permanent non-gating check: rejected, because a non-gating check does not fail the workflow and so would not stop a race from shipping.
+- Running `[hash]` as a separate gating job: rejected, because it would repeat a full TSan build (about 1.75 minutes) to save 7 s of test time.
+
+**Not established:** One clean run of each is a single sample; TSan reports only races on interleavings that occur, so a clean run is evidence, not proof. Local reproduction of `[hash]` under TSan still needs more than 4 GB of memory.
+
+---
+
 ### 2026-10-03 (7) — ThreadSanitizer job widened to the full suite except `[hash]`; the macOS `-Wsign-conversion` warnings are recorded, not fixed
 
 **Decision (1):** The `tsan-test` job runs `"~[hash]"` instead of an allowlist of seven tags. The `[hash]` test cases stay excluded.

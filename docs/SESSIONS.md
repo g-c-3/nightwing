@@ -4,6 +4,26 @@ Newest entry at top.
 
 ---
 
+### Session 177 — 2026-10-04 — `[hash]` TSan trial read; full suite promoted into the TSan job
+
+**CI result for the Session 176 commit (`v1.0.701`):** All legs passed: Linux Debug and Release 727/727, Windows Debug and Release 727/727, macOS Debug and Release 725/725, wasm build, `tsan-test`, `tsan-hash-trial`, and the rolling release publish (`v1.0.701`). No TSan report in either TSan job.
+- `tsan-test` (`~[hash]`): 719 test cases, 691240 assertions, 129 s test step, about 204 s job total.
+- `tsan-hash-trial` (`[hash]` only): 8 test cases, 17 assertions, about 7 s; `free -m` showed 1135 MB used before and 1475 MB after, of 15989 MB total, no swap use.
+
+**Built:** `.github/workflows/ci.yml` (REPLACE): the `tsan-test` step now runs the whole suite (`./tests/nightwing_tests`, step renamed "Test (full suite)"), the `tsan-hash-trial` job was removed, and the job's header comment was rewritten with the history. YAML validated; `release` still needs only `build-and-test` and `wasm-build`.
+
+**Also prepared (experiment artifact, NOT for `main`):** `search.cpp` for a throwaway branch `exp-no-singular`: current `main`'s `src/search/search.cpp` with one constant changed (`kSingularMinDepth` 8 -> 99) plus a comment banner. Sandbox-verified: builds; identical to `main` at depths 6-8 on two positions (score, best move, node count), differs at depth 9. Node cost of singular extensions at equal depth was measured (192173 versus 148055 nodes, Kiwipete depth 9). The `uci-match` dispatch inputs were worked out (ROADMAP singular-extension item, PREPARED paragraph).
+
+**Bugs fixed:** None. No file under `src/` on `main` changed.
+
+**Decisions made:** DECISIONS.md, 2026-10-04 (1) and (2). The ROADMAP ThreadSanitizer item is closed.
+
+**Open:** First CI run of the final `ci.yml` (expected `tsan-test` to pass 727 test cases). The macOS `-Wsign-conversion` ROADMAP item awaits a decision on its three options. "Widen the singular-extension isolation match's sample size" needs a manually dispatched workflow run.
+
+**Next session start point:** Confirm from the CI log that `tsan-test` passed 727 test cases. Then read the `uci-match-results` artifact or log of the singular-extension isolation run (if a person started it per the ROADMAP steps) and close or update that item with the tally, Elo estimate and z-score; if it has not been run, remind that it needs the `exp-no-singular` branch and one workflow dispatch, and meanwhile take the macOS `-Wsign-conversion` item only after a decision on its options.
+
+---
+
 ### Session 176 — 2026-10-03 — `[hash]` TSan trial job added
 
 **CI result for the Session 175 commit:** Reported as all green, including the widened `tsan-test` step. The widened step's wall-clock time was not supplied and is unrecorded.

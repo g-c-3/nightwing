@@ -3154,6 +3154,34 @@ Not part of the report's own ordering, appended here:
       methodology and both binaries' build commits are recorded in
       docs/DECISIONS.md, 2026-09-24. Not blocking — no regression signal
       exists at any sample size tested.
+      PREPARED (Session 177), awaiting a person to create one branch and
+      dispatch one workflow run. The 2026-09-24 isolation variant
+      (null-move fix only) was a sandbox-only build with no git ref and is
+      based on a long-superseded `main`, so it cannot be fed to the
+      `uci-match` workflow. The isolation was redesigned (docs/DECISIONS.md,
+      2026-10-04 (2)): baseline = current `main` with singular extensions
+      switched off by one constant (`kSingularMinDepth` 8 -> 99, a
+      one-line, otherwise unchanged `src/search/search.cpp`), candidate =
+      `main`. Verified in the sandbox: built clean; on two positions
+      depths 6, 7 and 8 give identical score, best move and node count to
+      `main`, and depth 9 differs (so the switch is a true no-op below the
+      trigger depth and a real change above it). Node cost at equal depth
+      (Kiwipete, depth 9): 192173 with singular versus 148055 without, so
+      a fixed-depth match would overstate the technique; the primary run
+      therefore uses `go movetime` (speed counts). Measured engine speed
+      is about 300000 nodes/s, which puts 500 ms at roughly depth 9-10.
+      STEPS: (1) on github.com (mobile browser is enough) create branch
+      `exp-no-singular` from `main`, upload the delivered
+      `src/search/search.cpp` onto that branch (never to `main`);
+      (2) Actions > CI > Run workflow, dispatched on `main`:
+      pipeline=`uci-match`, `ucimatch_baseline_ref`=`exp-no-singular`,
+      `ucimatch_candidate_ref`=`main`, `ucimatch_movetime_ms`=`500`,
+      everything else default (SPRT -5/+5, 300-minute cap, partial tally
+      reported if the cap is hit). Expected: on the order of 100-250
+      games, enough for direction and a z-score, not a +/-5 Elo verdict.
+      Optional second run for comparison: `ucimatch_movetime_ms`=`0`,
+      `ucimatch_depth`=`9`. Read result: `uci-match-results` artifact.
+      Close the item on the outcome; delete the branch afterwards.
 - [x] **Investigate the KQ-vs-K "unresolved after ~13M nodes / 60s"
       observation** — CLOSED (Session 145), reproduced-and-not-a-defect.
       Reproduced independently by both an external verification report
@@ -3187,7 +3215,8 @@ Not part of the report's own ordering, appended here:
       class) that `ctest`'s per-process isolation hides. Now feasible
       since the direct run is green.
       DONE (Session 172, awaiting its first CI run): a step "Test, raw binary in a single process (Linux Release only)" was added to `build-and-test` in `.github/workflows/ci.yml`, running `./tests/nightwing_tests` once after `ctest`. Verified locally only: the direct run passes (716 test cases, 691236 assertions, about 12 seconds, Linux Release). Windows, macOS and Debug are deliberately not covered ("once").
-- [~] **ThreadSanitizer coverage** (report finding 3d, filed Session 145)
+- [x] **ThreadSanitizer coverage** (report finding 3d, filed Session 145)
+      — CLOSED (Session 177): the whole test suite runs under TSan in CI
       — `CMakeLists.txt` had no `-fsanitize=thread` option; the
       sanitizer matrix was ASan/UBSan only, a gap docs/DECISIONS.md
       already acknowledged. Largest unverified area (Lazy SMP, lock-free
@@ -3259,12 +3288,22 @@ Not part of the report's own ordering, appended here:
       workflow or hold back `release` (which needs only `build-and-test`
       and `wasm-build`). Not run locally: the cases were OOM-killed in the
       4 GB sandbox, which is the question being tried.
-      REMAINING: read the first `tsan-hash-trial` log. Clean pass: drop
-      `~[hash]` from the `tsan-test` command and delete the trial job.
-      Race reported: diagnose it (a real finding). OOM kill or timeout
-      (exit 137 or 124): delete the trial job and record that `[hash]`
-      stays excluded, which closes this item. A clean TSan run shows no
-      race on the interleavings that occurred, not the absence of races.
+      SESSION 177 (CLOSING): the first `tsan-hash-trial` log (CI run
+      `v1.0.701`) was a clean pass: all 8 `[hash]` test cases (17
+      assertions) in about 7 s on a 16 GB hosted runner, `free -m`
+      showing roughly 1.5 GB used afterwards, no TSan report. The same
+      run's widened `tsan-test` step passed 719 test cases (691240
+      assertions) in 129 s (job total about 204 s), zero reports. In
+      response, `~[hash]` was dropped from the `tsan-test` command (it now
+      runs the whole suite, `./tests/nightwing_tests`, with
+      `halt_on_error=1`), the step renamed "Test (full suite)", the
+      `tsan-hash-trial` job deleted, and the job's header comment
+      rewritten. The first CI run of that final `ci.yml` is pending
+      (expected: 727 test cases, about 2.2 minutes of test time). Residual
+      limit, unchanged: a clean TSan run shows no race on the
+      interleavings that occurred, not the absence of races; and
+      the 4 GB local sandbox still cannot run `[hash]` under TSan, which
+      matters only for local reproduction.
 
 - [ ] **Apple Clang `-Wsign-conversion` warnings in first-party code**
       (found Session 175 from the macOS CI logs; non-gating, no behavior
