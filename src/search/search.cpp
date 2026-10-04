@@ -723,12 +723,7 @@ constexpr int kCheckExtensionPly = 1;
 /// any check-extension bonus the same move might also separately
 /// qualify for (this function's move loop), so a move never gets
 /// double-extended for two different reasons at once.
-// EXPERIMENT BRANCH ONLY (never merge to main): singular extensions are
-// disabled by raising the minimum depth past anything reachable, so this
-// binary is current `main` minus exactly the singular-extension technique
-// (behavior-identical below depth 8). Used as the baseline in the
-// `uci-match` isolation match (docs/ROADMAP.md, singular-extension item).
-constexpr int kSingularMinDepth = 99;
+constexpr int kSingularMinDepth = 8;
 constexpr int kSingularTTDepthMargin = 3;
 constexpr int kSingularMarginPerPly = 2;
 constexpr int kSingularDepthDivisor = 2;
