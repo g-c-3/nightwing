@@ -3248,13 +3248,23 @@ Not part of the report's own ordering, appended here:
       the hosted run has not happened yet; the longer TSan run time is the
       only expected cost, and a race in a test that does not touch
       threads directly would now fail the job (which is the point).
-      REMAINING: (1) confirm the first CI run of the widened step is clean
-      and note its wall-clock time; (2) the 8 `[hash]` test cases were
-      OOM-killed in the 4 GB local sandbox and remain excluded; whether a
-      hosted runner can run them under TSan is untried (a
-      non-gating trial step with `continue-on-error: true` is the cheap
-      way to find out). A clean TSan run shows no race on the
-      interleavings that occurred, not the absence of races.
+      SESSION 176: the widened `tsan-test` step ran green on CI (reported
+      as all-green; its wall-clock time was not supplied and is
+      unrecorded). A separate job `tsan-hash-trial` ("Linux Debug
+      (ThreadSanitizer, [hash] trial)", `continue-on-error: true`,
+      30-minute timeout, prints `free -m` before and after) was added to
+      `.github/workflows/ci.yml` to run the 8 `[hash]` test cases under
+      TSan on a hosted runner. It is separate from `tsan-test` so a memory
+      kill cannot take the real gate down, and it cannot fail the
+      workflow or hold back `release` (which needs only `build-and-test`
+      and `wasm-build`). Not run locally: the cases were OOM-killed in the
+      4 GB sandbox, which is the question being tried.
+      REMAINING: read the first `tsan-hash-trial` log. Clean pass: drop
+      `~[hash]` from the `tsan-test` command and delete the trial job.
+      Race reported: diagnose it (a real finding). OOM kill or timeout
+      (exit 137 or 124): delete the trial job and record that `[hash]`
+      stays excluded, which closes this item. A clean TSan run shows no
+      race on the interleavings that occurred, not the absence of races.
 
 - [ ] **Apple Clang `-Wsign-conversion` warnings in first-party code**
       (found Session 175 from the macOS CI logs; non-gating, no behavior

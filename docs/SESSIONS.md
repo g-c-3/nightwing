@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 176 — 2026-10-03 — `[hash]` TSan trial job added
+
+**CI result for the Session 175 commit:** Reported as all green, including the widened `tsan-test` step. The widened step's wall-clock time was not supplied and is unrecorded.
+
+**Built:** `.github/workflows/ci.yml` (REPLACE): new non-gating job `tsan-hash-trial` that builds the TSan test binary and runs only the `[hash]` test cases, with `free -m` printed before and after, `continue-on-error: true` and a 30-minute timeout. The YAML was validated and the `release` job's `needs` list (`build-and-test`, `wasm-build`) was confirmed not to include it. Not run locally (the cases were OOM-killed in the 4 GB sandbox, which is the question the trial answers).
+
+**Bugs fixed:** None. No source file changed.
+
+**Decisions made:** None beyond the job's own design (separate job, job-level `continue-on-error`), recorded in the ROADMAP TSan item and in the `ci.yml` comment.
+
+**Open:** First `tsan-hash-trial` log; outcome decides whether `~[hash]` is dropped from `tsan-test` or `[hash]` stays excluded.
+
+**Next session start point:** Read the `tsan-hash-trial` log from the commit containing this session's `ci.yml` and act on the outcome as written in the ROADMAP TSan item (promote, diagnose, or delete the trial job), then close that item. After that, start "Widen the singular-extension isolation match's sample size", which needs a manually dispatched `uci-match` workflow run and so a person to start it.
+
+---
+
 ### Session 175 — 2026-10-03 — CI logs for Session 174 checked; TSan job widened to the full suite; macOS warning finding
 
 **CI result for the Session 174 commit (`v1.0.697`, commit `a26f790`):** All legs passed: Linux Debug and Release 727/727, Windows Debug and Release 727/727, macOS Release and Debug 725/725 (two fewer test cases than the other platforms, the same 2-case difference as the previous run's 715 versus 717), wasm build, `tsan-test` (333 assertions in 127 test cases, zero reports), and the rolling plus versioned release publish. All 10 `production_path` test cases ran and passed on every `build-and-test` leg; no warning mentions `production_path_tests.cpp`.
@@ -20,7 +36,7 @@ Newest entry at top.
 
 **Open:** First CI run of the widened `tsan-test` step (wall-clock time and cleanliness). The `[hash]` tests under TSan on a hosted runner remain untried.
 
-**Next session start point:** Check the `tsan-test` log of the commit containing this session's `ci.yml`: it must be clean, and its duration recorded in the ROADMAP TSan item. If clean, add a non-gating trial step (`continue-on-error: true`) that runs `"[hash]"` under TSan on the hosted runner and record the outcome. If the `tsan-test` job failed, diagnose the reported race before anything else. After that, the next ROADMAP item is widening the singular-extension isolation match's sample size.
+**Next session start point:** (Executed in Session 176 as far as the `[hash]` trial; see Session 176.) Check the `tsan-test` log of the commit containing this session's `ci.yml`: it must be clean, and its duration recorded in the ROADMAP TSan item. If clean, add a non-gating trial step (`continue-on-error: true`) that runs `"[hash]"` under TSan on the hosted runner and record the outcome. If the `tsan-test` job failed, diagnose the reported race before anything else. After that, the next ROADMAP item is widening the singular-extension isolation match's sample size.
 
 ---
 
