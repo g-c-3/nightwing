@@ -63,6 +63,7 @@
 #include "eval/psqt.h"
 
 #include <algorithm>
+#include <cstddef>
 
 namespace nightwing::eval {
 namespace {
@@ -307,7 +308,7 @@ Score psqt_value(Piece piece, Square sq, const PsqtWeights* weights) noexcept {
     // caller-supplied PsqtWeights instead of the constexpr tables.
     switch (type) {
         case PieceType::Pawn: {
-            const int idx = color == Color::White ? sq : mirror_vertical(sq);
+            const auto idx = static_cast<std::size_t>(color == Color::White ? sq : mirror_vertical(sq));
             return {round_to_int(weights->pawn_mg[idx]), round_to_int(weights->pawn_eg[idx])};
         }
         case PieceType::Knight: {
@@ -318,24 +319,24 @@ Score psqt_value(Piece piece, Square sq, const PsqtWeights* weights) noexcept {
             // needed the identical fix: any future PSQT tuning run
             // would otherwise have been fit against the same biased
             // signal for Black's knights/queens.
-            const int idx = color == Color::White ? sq : mirror_vertical(sq);
+            const auto idx = static_cast<std::size_t>(color == Color::White ? sq : mirror_vertical(sq));
             return {round_to_int(weights->knight_mg[idx]), round_to_int(weights->knight_eg[idx])};
         }
         case PieceType::Bishop: {
-            const int idx = color == Color::White ? sq : mirror_vertical(sq);
+            const auto idx = static_cast<std::size_t>(color == Color::White ? sq : mirror_vertical(sq));
             return {round_to_int(weights->bishop_mg[idx]), round_to_int(weights->bishop_eg[idx])};
         }
         case PieceType::Rook: {
-            const int idx = color == Color::White ? sq : mirror_vertical(sq);
+            const auto idx = static_cast<std::size_t>(color == Color::White ? sq : mirror_vertical(sq));
             return {round_to_int(weights->rook_mg[idx]), round_to_int(weights->rook_eg[idx])};
         }
         case PieceType::Queen: {
             // Same fix as Knight above -- see that case's comment.
-            const int idx = color == Color::White ? sq : mirror_vertical(sq);
+            const auto idx = static_cast<std::size_t>(color == Color::White ? sq : mirror_vertical(sq));
             return {round_to_int(weights->queen_mg[idx]), round_to_int(weights->queen_eg[idx])};
         }
         case PieceType::King: {
-            const int idx = color == Color::White ? sq : mirror_vertical(sq);
+            const auto idx = static_cast<std::size_t>(color == Color::White ? sq : mirror_vertical(sq));
             return {round_to_int(weights->king_mg[idx]), round_to_int(weights->king_eg[idx])};
         }
         case PieceType::None:

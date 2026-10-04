@@ -112,7 +112,7 @@ private:
     std::vector<PawnEntry> entries_;
 
     [[nodiscard]] std::size_t index_for(std::uint64_t key) const noexcept {
-        return key & (entries_.size() - 1);
+        return static_cast<std::size_t>(key & (entries_.size() - 1));
     }
 };
 
