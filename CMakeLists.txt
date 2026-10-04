@@ -185,8 +185,14 @@ else()
     # -Wconversion-equivalent class (C4244, Session 136's own fix) under
     # one flag already, which is why MSVC's own branch needed no change
     # here.
+    #
+    # -Wsign-conversion added Session 179 (docs/DECISIONS.md, 2026-10-04
+    # (4)): Clang's -Wconversion already includes it, GCC's does not (for
+    # C++), which is why the 2026-09-26 (11) GCC-only measurement of "zero
+    # warnings" missed 78 Apple Clang / 130 wasm-Clang warnings that CI
+    # then printed on every run. Explicit here so GCC sees the same class.
     target_compile_options(nightwing_warnings INTERFACE -Wall -Wextra -Wpedantic -Wshadow
-                                                          -Wconversion)
+                                                          -Wconversion -Wsign-conversion)
 endif()
 
 # --- Release: -O3 + LTO ---
