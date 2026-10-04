@@ -46,6 +46,7 @@ add_library(nightwing_lib STATIC
     tuner/tune.cpp
     tuner/match.cpp
     tuner/sprt.cpp
+    tuner/spsa.cpp
 )
 
 target_include_directories(nightwing_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
