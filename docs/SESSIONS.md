@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 180 — 2026-10-04 — Session 179 changes confirmed on CI
+
+**CI result (`v1.0.715`):** All legs passed: Linux Debug and Release 727/727, Windows Debug and Release 727/727, macOS Debug and Release 725/725, `tsan-test` (727 test cases, 691257 assertions, zero reports), wasm build (a 300199-byte `nightwing.wasm`), and the rolling and versioned release publish.
+
+**Warnings:** macOS 79 -> 1 and wasm 130 -> 2 `warning:` lines per run. The remaining three are not compiler diagnostics on first-party code: the macOS linker's duplicate-library notice (present in the previous run) and emcc's `-pthread` plus memory-growth notice (present, twice, in the previous run). No Linux or Windows leg prints a first-party warning. Treated as a confirmation of DECISIONS.md 2026-10-04 (4); no further change.
+
+**Built:** Nothing; docs only (ROADMAP item annotated as CI-confirmed).
+
+**Bugs fixed:** None.
+
+**Decisions made:** None.
+
+**Open:** The pooled second singular-extension match (needs a person to dispatch `uci-match` with `ucimatch_seed`=2 and `ucimatch_time_limit_min`=340; `exp-no-singular` branch kept until then). The earlier red runs #703/#704 remain unexamined. The two cosmetic notices above are unaddressed by choice. The remaining open ROADMAP items are large (Tier 0 `tune()` consumption of the new weight tables, SPSA, restricted nonlinear eval interactions, pondering verification against real GUIs) and need a design decision before work starts.
+
+**Next session start point:** Ask which large item to begin; recommended order is the Tier 0 remainder (make `tune()` consume the existing `ParameterRef` tables, with SPRT-gating before any tuned values are committed), because the eval terms and the match runner it depends on are now in place. Do not start it without that answer.
+
+---
+
 ### Session 179 — 2026-10-04 — Conversion warnings eliminated; `-Wsign-conversion` made explicit
 
 **Built (all complete files, REPLACE):** `src/board/attacks.cpp`, `src/board/masks.cpp`, `src/eval/psqt.cpp`, `src/eval/eval_cache.h`, `src/eval/pawn_tt.h`, `src/search/tt.h`, `src/tuner/tune.cpp`, `src/tuner/tune.h`, `src/tuner/tune_main.cpp`, `CMakeLists.txt`. Changes are explicit `static_cast<std::size_t>` at 62+ indexing sites, a few `<cstddef>` includes, and `-Wsign-conversion` in the `nightwing_warnings` flags.

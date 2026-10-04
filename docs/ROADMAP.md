@@ -3334,7 +3334,13 @@ Not part of the report's own ordering, appended here:
 
 - [x] **Apple Clang `-Wsign-conversion` warnings in first-party code**
       (found Session 175 from the macOS CI logs) — DONE (Session 179,
-      awaiting its first CI run). Option (b) plus the GCC half of (c) were
+      CI-CONFIRMED Session 180 on `v1.0.715`: all legs green, first-party
+      compiler warnings 79 -> 1 on macOS and 130 -> 2 on wasm, the
+      remainder being unrelated pre-existing linker/emcc notices: macOS
+      `ld: ignoring duplicate libraries: libnightwing_lib.a` (the tests
+      link `nightwing_lib` and `nightwing_uci_match_lib`, which links it
+      too) and emcc `-pthread + ALLOW_MEMORY_GROWTH` (suggests
+      `-sGROWABLE_ARRAYBUFFERS=2`); neither was acted on). Option (b) plus the GCC half of (c) were
       chosen on delegated approval. Scope turned out wider than the macOS
       log: the wasm (Clang, 32-bit `size_t`) leg printed 130 warnings per
       run, adding a second class ("`uint64_t` to `size_type` loses integer
