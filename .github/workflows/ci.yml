@@ -298,6 +298,41 @@ jobs:
           TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1
         run: ./tests/nightwing_tests "~[hash]"
 
+  # Trial (Session 176), not a gate: whether the `[hash]` test cases, which
+  # the `tsan-test` job above excludes because they were OOM-killed under
+  # TSan's shadow-memory overhead in a 4 GB local sandbox, can run under
+  # TSan on a hosted runner. A separate job (not an extra step in
+  # `tsan-test`) so that a memory kill here cannot take the real TSan gate
+  # down with it, and `continue-on-error: true` at job level so this job
+  # can never fail the workflow or hold back the `release` job (which only
+  # needs `build-and-test` and `wasm-build`). `free -m` is printed before
+  # and after so the memory headroom is on record whichever way it goes.
+  # Promote to the `tsan-test` selection (drop `~[hash]`) once this has
+  # passed cleanly; delete this job if the runner cannot hold it.
+  tsan-hash-trial:
+    runs-on: ubuntu-latest
+    name: Linux Debug (ThreadSanitizer, [hash] trial)
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure CMake
+        run: cmake -B build_tsan -DCMAKE_BUILD_TYPE=Debug -DNIGHTWING_ENABLE_TSAN=ON -DNIGHTWING_BUILD_TESTS=ON
+
+      - name: Build (test binary only)
+        run: cmake --build build_tsan --parallel --target nightwing_tests
+
+      - name: Test ([hash] only)
+        working-directory: build_tsan
+        env:
+          TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1
+        run: |
+          free -m
+          timeout 1200 ./tests/nightwing_tests "[hash]" || { rc=$?; free -m; echo "::warning::[hash] under TSan exited with code $rc (137 = OOM kill, 124 = timeout)"; exit $rc; }
+          free -m
+
   # ROADMAP.md Phase 5's final item ("Tuned weights committed, before/after
   # strength comparison logged") needs a real large-scale run: thousands of
   # nightwing_selfplay games piped into nightwing_tune, then a
