@@ -87,6 +87,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -300,10 +301,10 @@ private:
     std::atomic<std::uint8_t> current_age_{0};
 
     [[nodiscard]] TTBucket& bucket_for(std::uint64_t key) noexcept {
-        return buckets_[key & (buckets_.size() - 1)];
+        return buckets_[static_cast<std::size_t>(key & (buckets_.size() - 1))];
     }
     [[nodiscard]] const TTBucket& bucket_for(std::uint64_t key) const noexcept {
-        return buckets_[key & (buckets_.size() - 1)];
+        return buckets_[static_cast<std::size_t>(key & (buckets_.size() - 1))];
     }
 };
 
