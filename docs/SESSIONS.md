@@ -4,6 +4,42 @@ Newest entry at top.
 
 ---
 
+### Session 179 — 2026-10-04 — Conversion warnings eliminated; `-Wsign-conversion` made explicit
+
+**Built (all complete files, REPLACE):** `src/board/attacks.cpp`, `src/board/masks.cpp`, `src/eval/psqt.cpp`, `src/eval/eval_cache.h`, `src/eval/pawn_tt.h`, `src/search/tt.h`, `src/tuner/tune.cpp`, `src/tuner/tune.h`, `src/tuner/tune_main.cpp`, `CMakeLists.txt`. Changes are explicit `static_cast<std::size_t>` at 62+ indexing sites, a few `<cstddef>` includes, and `-Wsign-conversion` in the `nightwing_warnings` flags.
+
+**Process:** GCC `-Wsign-conversion` was found to reproduce the macOS Clang warnings (62 unique first-party sites in the same six files). The wasm log showed an additional class, 64-bit-to-32-bit index narrowing; a `-m32` GCC toolchain was installed in the sandbox to find and verify all of them.
+
+**Verification (Linux, GCC 13):** zero first-party warnings (64-bit with `-Wsign-conversion`; `-m32` sweep of all `src/*.cpp`); 727/727 `ctest` and 691257 assertions; `bench` 36154 nodes unchanged; search bit-identical to the old build (192173 nodes, score -73, e2a6). Not run locally: Debug/ASan, Windows, macOS, wasm.
+
+**Bugs fixed:** None; no behavior changed.
+
+**Decisions made:** DECISIONS.md, 2026-10-04 (4); the `-Wsign-conversion` ROADMAP item is closed pending CI.
+
+**Open:** First CI run of these changes. Optional pooled second singular-extension match (needs a person to dispatch it with `ucimatch_seed`=2, `ucimatch_time_limit_min`=340). The `exp-no-singular` branch is kept until that is decided. The earlier red runs #703/#704 remain unexamined.
+
+**Next session start point:** Check the CI logs of the commit containing these changes: all legs green, and the macOS and wasm legs should print zero first-party warnings (count `warning:` lines outside Catch2). If a leg shows new warnings, fix those first. Then ask whether the pooled second singular-extension match should run before choosing the next incomplete ROADMAP item.
+
+---
+
+### Session 178 — 2026-10-04 — Singular-extension isolation match read and recorded
+
+**Material checked:** The CI run for the commit with the final `ci.yml` (Linux and Windows 727/727, macOS 725/725, wasm build green; `tsan-test` now runs the whole suite: 727 test cases, 691257 assertions, zero reports, which confirms the Session 177 `ci.yml`) and the `uci-match` run 37183270637. The earlier red runs #703 and #704 on `main` were not diagnosed (no log was supplied); later runs were green.
+
+**uci-match result:** Hit the 300-minute cap at 297 games (exit 124), inconclusive. Candidate (singular on) 129 wins, 57 draws; baseline (singular off) 111 wins. Elo +21.1, 95% CI -14 to +57, z = 1.16, LLR about 0.64. Both engines built from the intended refs (`exp-no-singular` file verified byte-identical to the delivered file before dispatch).
+
+**Built:** No code. Docs only.
+
+**Bugs fixed:** None.
+
+**Decisions made:** DECISIONS.md, 2026-10-04 (3): singular extensions stay enabled; the result is directional, not significant.
+
+**Open:** Optional pooled second run (`ucimatch_seed`=2, `ucimatch_time_limit_min`=340). Open question from the earlier session: the macOS `-Wsign-conversion` item awaits a decision. Reds #703/#704 not examined.
+
+**Next session start point:** The 727-test TSan confirmation is done. Ask whether to (a) run the pooled second match, (b) take the macOS `-Wsign-conversion` item with one of its three options, or (c) move to the next incomplete ROADMAP item after the singular-extension item; do not start any of them without that answer. Delete the `exp-no-singular` branch when the singular-extension item closes.
+
+---
+
 ### Session 177 — 2026-10-04 — `[hash]` TSan trial read; full suite promoted into the TSan job
 
 **CI result for the Session 176 commit (`v1.0.701`):** All legs passed: Linux Debug and Release 727/727, Windows Debug and Release 727/727, macOS Debug and Release 725/725, wasm build, `tsan-test`, `tsan-hash-trial`, and the rolling release publish (`v1.0.701`). No TSan report in either TSan job.

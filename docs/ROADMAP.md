@@ -3142,7 +3142,7 @@ Not part of the report's own ordering, appended here:
       recorded in the new file's comments: the opposite-colored-bishops
       pair flips order at depth 8 on the production path too (margin
       -36), the same artifact documented for the fixed-depth path.
-- [ ] **Widen the singular-extension isolation match's sample size**
+- [~] **Widen the singular-extension isolation match's sample size**
       (filed 2026-09-24, from item 4's own match results above) — the
       combined and null-move-gate-only matches (200 and 90 games) gave a
       real, if not fully 2-sigma, signal; the singular-extension-alone
@@ -3182,6 +3182,33 @@ Not part of the report's own ordering, appended here:
       Optional second run for comparison: `ucimatch_movetime_ms`=`0`,
       `ucimatch_depth`=`9`. Read result: `uci-match-results` artifact.
       Close the item on the outcome; delete the branch afterwards.
+      RESULT (Session 178, CI run 37183270637, 2026-10-04): baseline
+      `exp-no-singular` (A, singular off) versus candidate `main` (B,
+      singular on, `4083767`), `go movetime 500`, SPRT -5/+5, seed 1, 8
+      opening plies. The run hit the 300-minute cap (exit code 124) after
+      297 games, INCONCLUSIVE by the SPRT. Final tally: candidate 129
+      wins, 57 draws, baseline 111 wins. Computed from that tally
+      (normal approximation, trinomial variance): score 0.5303, Elo
+      +21.1 for singular extensions ON, 95% CI [-14, +57], z = 1.16,
+      approximate LLR 0.64 against bounds of +/-2.94. Direction favors
+      keeping singular extensions; the sample cannot separate +21 from 0
+      (p about 0.25 two-sided). `kSingularMinDepth` stays 8. Observations:
+      throughput was about 60 games/hour (500 ms games, serial), which is
+      the real limit on sample size; the run's step summary printed only
+      the last 4 progress lines on a timeout, not an Elo estimate (the
+      earlier "partial tally reported" expectation was about the progress
+      lines, not a computed estimate), so the figures above were computed
+      outside the workflow from the final progress line. Not established:
+      whether the effect is real or its size; behavior at other time
+      controls.
+      REMAINING (optional): a second independent run to pool, with
+      `ucimatch_seed`=2 and `ucimatch_time_limit_min`=340 (job limit is
+      355), otherwise the same inputs; pooled about 600+ games would
+      narrow the 95% CI to about +/-25 Elo. A third alternative is a
+      `go movetime 200` run (about 2.5x the games per hour, weaker
+      depth, so a different question). The `exp-no-singular` branch is
+      kept until this item closes, then deleted.
+
 - [x] **Investigate the KQ-vs-K "unresolved after ~13M nodes / 60s"
       observation** — CLOSED (Session 145), reproduced-and-not-a-defect.
       Reproduced independently by both an external verification report
@@ -3305,29 +3332,36 @@ Not part of the report's own ordering, appended here:
       the 4 GB local sandbox still cannot run `[hash]` under TSan, which
       matters only for local reproduction.
 
-- [ ] **Apple Clang `-Wsign-conversion` warnings in first-party code**
-      (found Session 175 from the macOS CI logs; non-gating, no behavior
-      change). Both macOS legs (Release and Debug) of the CI run for
-      `v1.0.697` print 78 `-Wsign-conversion` warning lines in six
-      first-party files: `src/board/attacks.cpp`, `src/board/masks.cpp`,
-      `src/eval/psqt.cpp`, `src/tuner/tune.h` (lines 210 and 217, the
-      `ParameterRef::get()` / `set()` indexed-array accessors, which
-      account for 33 of the 78 as header re-instantiations),
-      `src/tuner/tune.cpp` and `src/tuner/tune_main.cpp`. All have the
-      same shape: a signed `int` (`Square` or a `const int` index) used to
-      subscript a `std::array`/`std::vector`, whose `operator[]` takes
-      `size_t`. GCC and MSVC print none. Cause: the 2026-09-26 (11)
-      measurement of "zero first-party `-Wconversion` warnings" was made
-      with GCC, where `-Wconversion` does NOT include `-Wsign-conversion`
-      for C++, while Clang's `-Wconversion` does (docs/DECISIONS.md,
-      2026-10-03 (7)). Options, none chosen yet (approval needed because
-      the files are from completed phases): (a) leave as is, since there is
-      no defect; (b) add `static_cast<std::size_t>` at the sites or an
-      indexing helper; (c) add `-Wsign-conversion` to the GCC branch so
-      the sandbox sees them too, then fix. Any fix must keep the Release
-      `bench` node count (36154 at depth 6) unchanged.
+- [x] **Apple Clang `-Wsign-conversion` warnings in first-party code**
+      (found Session 175 from the macOS CI logs) — DONE (Session 179,
+      awaiting its first CI run). Option (b) plus the GCC half of (c) were
+      chosen on delegated approval. Scope turned out wider than the macOS
+      log: the wasm (Clang, 32-bit `size_t`) leg printed 130 warnings per
+      run, adding a second class ("`uint64_t` to `size_type` loses integer
+      precision" in the magic-index and TT/cache index code), which no
+      64-bit build shows. Fix: explicit `static_cast<std::size_t>` at each
+      site, using a local `sq_idx` in the table-building loops and the four
+      attack functions (`attacks.cpp` 36 sites, `masks.cpp` 8, `psqt.cpp`
+      12 via six `idx` locals, `tune.cpp` 2, `tune.h` 2, `tune_main.cpp`
+      1) and a cast of the masked key in `eval_cache.h`, `pawn_tt.h`
+      (one `index_for()` each) and `tt.h` (two `bucket_for()`), plus
+      `<cstddef>` includes where `std::size_t` is now named directly.
+      `CMakeLists.txt` now passes `-Wsign-conversion` explicitly in the
+      GCC/Clang branch of `nightwing_warnings`, so Linux CI sees the same
+      class Apple Clang does. Verified locally (GCC 13, Linux): zero
+      first-party warnings with `-Wsign-conversion` on 64-bit; zero in a
+      `-m32` syntax sweep of every `src/*.cpp` (proxy for wasm32; the
+      wasm leg itself not run locally); 727/727 `ctest`, 691257
+      assertions; `bench` unchanged at 36154 nodes; search bit-identical
+      to the pre-change build (Kiwipete depth 9: 192173 nodes, score -73,
+      e2a6). Not run locally: Debug/ASan, Windows, macOS, wasm. Speed:
+      sandbox nps is too noisy to resolve a difference (old 188-215k, new
+      182-224k, no consistent direction); the casts are the conversion
+      the compiler already performed, so no codegen change is expected.
+      Test risk: none known; a new `-Wsign-conversion` hit could appear in
+      a file only built on another platform (MSVC has its own flags; the
+      flag is not applied there).
 
-## Phase 9 — Advanced / Stretch Goals (beyond great-engine baseline)
 - [ ] SPSA tuner (Simultaneous Perturbation Stochastic Approximation) — added 2026-10-02 from the modern-HCE alternatives review. The existing tuner is Texel-style (finite-difference/analytic gradient descent on a static labeled-position corpus); SPSA instead optimizes parameters directly against game results, which sidesteps the label-fit versus playing-strength gap and the endgame-term identifiability problem (Tier 0's open item) because strength is measured by play, not by a loss surface. Scope: perturb a parameter vector by a random ±delta per iteration, play a short match between the plus and minus vectors, and step along the observed score gradient with the standard decaying gain schedules (Spall's SPSA; CPW — Chess Programming Wiki, "SPSA"). Applies to eval constants and to search constants (margins, reduction coefficients, pruning depths) alike. Planned to reuse the existing `ParameterRef<Weights>` machinery for the parameter list and either `tuner::play_match()` (eval constants, in-process) or the two-process runner `nightwing_uci_match` (search constants, which need separately built binaries or a UCI option), plus SPRT gating before any tuned value is committed, as for every tuner output. No NNUE, no neural nets; the evaluator stays fully handcrafted. Design decisions (parameter exposure over UCI versus in-process, game count per iteration, time control) to be logged in docs/DECISIONS.md when the item is started.
 - [ ] Restricted nonlinear feature interactions in the evaluator — added 2026-10-02 from the same review. Currently terms are summed (material, PSQT, mobility, king safety, pawns, threats, space, ...), apart from the king-attack scaling inside king safety and the pawn-count scaling in `material_imbalance`. Scope: a small, explicit set of high-value interaction terms (candidates from the review: passed pawns scaled by king distance, bishop pair scaled by openness of the position, rook activity scaled by open files, king attackers scaled by king exposure), each a plain handcrafted formula with tunable constants, not a learned function. Each candidate must be (1) added to the tunable parameter set, (2) shown not to destabilize the eval or cost measurable nodes-per-second (`bench`), and (3) accepted only after an SPRT win through the two-process runner or `play_match()`, one interaction at a time. Interactions that fail SPRT are removed, not kept as dead code. No NNUE, no neural nets.
 - [ ] NUMA-aware thread/memory allocation (large multi-socket hardware only)

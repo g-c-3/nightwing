@@ -4,6 +4,40 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-04 (4) — Sign/width conversion warnings fixed at the source with explicit casts, and `-Wsign-conversion` made explicit for GCC and Clang
+
+**Decision:** The warnings catalogued in 2026-10-03 (7) (macOS, `-Wsign-conversion`) and the wasm-only 64-to-32-bit index narrowings were fixed with explicit `static_cast<std::size_t>` at each site, and `-Wsign-conversion` was added to the GCC/Clang branch of `nightwing_warnings` in `CMakeLists.txt`.
+
+**Rationale:** Delegated approval selected option (b) together with the GCC half of option (c). The warnings were not defects, but CI printed 78 (macOS legs) and 130 (wasm leg) of them on every run, which hides any new, real warning. Every site is an index into a fixed 64-entry table or a power-of-two table whose index is provably in range (a `Square` in [0, 63]; `(x * magic) >> (64 - bits)` below `2^bits`; `key & (size - 1)`), so the cast cannot change a value. Making the flag explicit keeps Linux CI from regressing on a class that only Clang printed before. A local `sq_idx` was preferred to casts at each subscript for readability in the attack functions, and the `-m32` toolchain was installed in the sandbox so the wasm32 class could be checked without waiting for CI.
+
+**Corrects 2026-09-26 (11):** its "zero first-party warnings" held for the compiler it was measured on (GCC), where `-Wconversion` excludes `-Wsign-conversion` in C++. Clang includes it, and wasm32 adds the precision-loss class. Its conclusion (scoped `-Wconversion` on `nightwing_warnings`) stands.
+
+**Alternatives considered:**
+- Leaving the warnings: rejected, since log noise masks future real warnings.
+- Making `Square` unsigned or the arrays signed-indexed: rejected, because it changes a core type used everywhere and would produce the reverse conversions at far more sites.
+- A shared index helper in `bitboard.h`: rejected, because editing the most widely included header forces a full rebuild and adds an API for a purely local concern.
+- `-Werror`: not added; the project has none, and a new platform-specific warning would break CI.
+
+**Not established:** The first CI run on macOS, wasm, Windows and Debug/ASan (all expected clean). No speed difference could be resolved in the noisy sandbox; none is expected since the generated code should be identical.
+
+---
+
+### 2026-10-04 (3) — Singular extensions stay enabled: the isolation match leans positive (+21 Elo) but is inconclusive after 297 games
+
+**Result:** `uci-match`, baseline = `main` with `kSingularMinDepth` 99 (singular off), candidate = `main` (singular on), `go movetime 500`, SPRT -5/+5, 297 games before the 300-minute cap: candidate 129 wins, 57 draws, baseline 111 wins. Score 0.5303, Elo +21.1 (95% CI -14 to +57, z = 1.16, approximate LLR 0.64 of +/-2.94). The SPRT did not terminate.
+
+**Decision:** No change to the engine: `kSingularMinDepth` stays 8. The evidence is directional only. The prior in favor is strong (singular extensions are a standard, well-measured technique in classical engines, per CPW) and the match direction agrees with it, while the earlier 2026-09-24 combined measurement of the rewrite also pointed the same way (+52.5 Elo, z = 2.15, against the old code, a different question). Nothing in the data supports removing it.
+
+**Method notes recorded for later matches:** (1) Throughput at 500 ms per move is about 60 games per hour on the hosted runner, so one 300-minute run yields about 300 games; a +/-5 Elo SPRT needs on the order of thousands, so the SPRT bounds are not reachable for single runs and results should be read as Elo estimates with confidence intervals. (2) The workflow's timeout summary shows only the last four progress lines; the Elo estimate was computed outside the workflow from the final tally. Adding an Elo/CI line to the timeout summary would remove that manual step (not done; unrequested change to green infrastructure). (3) Candidate and baseline differed by exactly one constant, so the result is attributable to the technique alone.
+
+**Alternatives considered:**
+- Declaring singular extensions harmful or neutral and removing them: rejected, since the point estimate is positive and nothing is significant.
+- Declaring them proven beneficial: rejected, since the 95% interval includes zero (and negative values).
+
+**Not established:** Whether the true effect is positive, and at what size. An optional pooled second run (different seed) is on the ROADMAP.
+
+---
+
 ### 2026-10-04 (2) — The singular-extension isolation match is redesigned as singular-on versus singular-off on current `main`, run through the in-repo `uci-match` workflow with `go movetime`
 
 **Decision:** The re-run filed on 2026-09-24 is not repeated as originally described (null-move-only binary versus `main`). Instead the baseline is current `main` with singular extensions disabled by raising `kSingularMinDepth` from 8 to 99, held on a throwaway branch `exp-no-singular`, and the candidate is `main`. The match is dispatched through the existing `uci-match` workflow with `ucimatch_movetime_ms=500` as the primary run.
