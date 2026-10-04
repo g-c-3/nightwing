@@ -7,6 +7,7 @@
 #include "board/masks.h"
 
 #include <array>
+#include <cstddef>
 #include <utility>
 
 namespace nightwing::board {
@@ -40,6 +41,7 @@ void init_masks() {
     for (Square sq = 0; sq < kNumSquares; ++sq) {
         const int file = file_of(sq);
         const int rank = rank_of(sq);
+        const auto sq_idx = static_cast<std::size_t>(sq);
 
         Bitboard knight_bb = kEmptyBitboard;
         for (const auto& [df, dr] : kKnightDeltas) {
@@ -49,7 +51,7 @@ void init_masks() {
                 set_bit(knight_bb, make_square(f, r));
             }
         }
-        g_knight_attacks[sq] = knight_bb;
+        g_knight_attacks[sq_idx] = knight_bb;
 
         Bitboard king_bb = kEmptyBitboard;
         for (const auto& [df, dr] : kKingDeltas) {
@@ -59,7 +61,7 @@ void init_masks() {
                 set_bit(king_bb, make_square(f, r));
             }
         }
-        g_king_attacks[sq] = king_bb;
+        g_king_attacks[sq_idx] = king_bb;
 
         // White captures toward higher ranks, Black toward lower ranks.
         // Off-board results (e.g. a "white pawn" on rank 8) simply produce
@@ -74,7 +76,7 @@ void init_masks() {
                 set_bit(white_pawn_bb, make_square(f, r));
             }
         }
-        g_pawn_attacks[static_cast<std::size_t>(Color::White)][sq] = white_pawn_bb;
+        g_pawn_attacks[static_cast<std::size_t>(Color::White)][sq_idx] = white_pawn_bb;
 
         Bitboard black_pawn_bb = kEmptyBitboard;
         for (int df : {-1, 1}) {
@@ -84,7 +86,7 @@ void init_masks() {
                 set_bit(black_pawn_bb, make_square(f, r));
             }
         }
-        g_pawn_attacks[static_cast<std::size_t>(Color::Black)][sq] = black_pawn_bb;
+        g_pawn_attacks[static_cast<std::size_t>(Color::Black)][sq_idx] = black_pawn_bb;
 
         // Passed-pawn span and backward-support span (masks.h's doc
         // comments on passed_pawn_mask()/backward_support_mask()): own
@@ -116,10 +118,10 @@ void init_masks() {
                 }
             }
         }
-        g_passed_pawn_mask[static_cast<std::size_t>(Color::White)][sq] = white_passed_bb;
-        g_passed_pawn_mask[static_cast<std::size_t>(Color::Black)][sq] = black_passed_bb;
-        g_backward_support_mask[static_cast<std::size_t>(Color::White)][sq] = white_backward_bb;
-        g_backward_support_mask[static_cast<std::size_t>(Color::Black)][sq] = black_backward_bb;
+        g_passed_pawn_mask[static_cast<std::size_t>(Color::White)][sq_idx] = white_passed_bb;
+        g_passed_pawn_mask[static_cast<std::size_t>(Color::Black)][sq_idx] = black_passed_bb;
+        g_backward_support_mask[static_cast<std::size_t>(Color::White)][sq_idx] = white_backward_bb;
+        g_backward_support_mask[static_cast<std::size_t>(Color::Black)][sq_idx] = black_backward_bb;
     }
 
     g_initialized = true;

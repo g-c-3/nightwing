@@ -70,6 +70,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -269,8 +270,10 @@ std::uint64_t find_magic_for_square(Bitboard mask, const SubsetData& data,
         bool collision = false;
 
         for (int i = 0; i < size && !collision; ++i) {
-            const std::uint64_t index = (data.occupancies[static_cast<std::size_t>(i)] * candidate) >>
-                                         (64 - bits);
+            // < 2^bits <= table size, so narrowing to size_t is lossless
+            // even where size_t is 32 bits (wasm32).
+            const auto index = static_cast<std::size_t>(
+                (data.occupancies[static_cast<std::size_t>(i)] * candidate) >> (64 - bits));
             if (stamp_at[index] != stamp) {
                 stamp_at[index] = stamp;
                 table_out[index] = data.reference[static_cast<std::size_t>(i)];
@@ -370,29 +373,31 @@ void init_magic_bitboards() {
 #endif
 
     for (Square sq = 0; sq < kNumSquares; ++sq) {
-        g_rook_mask[sq] = relevant_occupancy_mask(sq, kRookDeltas);
-        g_rook_bits[sq] = popcount(g_rook_mask[sq]);
-        const SubsetData data = enumerate_subsets(sq, g_rook_mask[sq], kRookDeltas);
+        const auto sq_idx = static_cast<std::size_t>(sq);
+        g_rook_mask[sq_idx] = relevant_occupancy_mask(sq, kRookDeltas);
+        g_rook_bits[sq_idx] = popcount(g_rook_mask[sq_idx]);
+        const SubsetData data = enumerate_subsets(sq, g_rook_mask[sq_idx], kRookDeltas);
         if (need_magic) {
-            g_rook_magic[sq] = find_magic_for_square(g_rook_mask[sq], data, rng, g_rook_table[sq]);
+            g_rook_magic[sq_idx] = find_magic_for_square(g_rook_mask[sq_idx], data, rng, g_rook_table[sq_idx]);
         }
 #if defined(NIGHTWING_ENABLE_BMI2)
         if (g_use_pext) {
-            g_rook_pext_table[sq] = build_pext_table(g_rook_mask[sq], data);
+            g_rook_pext_table[sq_idx] = build_pext_table(g_rook_mask[sq_idx], data);
         }
 #endif
     }
 
     for (Square sq = 0; sq < kNumSquares; ++sq) {
-        g_bishop_mask[sq] = relevant_occupancy_mask(sq, kBishopDeltas);
-        g_bishop_bits[sq] = popcount(g_bishop_mask[sq]);
-        const SubsetData data = enumerate_subsets(sq, g_bishop_mask[sq], kBishopDeltas);
+        const auto sq_idx = static_cast<std::size_t>(sq);
+        g_bishop_mask[sq_idx] = relevant_occupancy_mask(sq, kBishopDeltas);
+        g_bishop_bits[sq_idx] = popcount(g_bishop_mask[sq_idx]);
+        const SubsetData data = enumerate_subsets(sq, g_bishop_mask[sq_idx], kBishopDeltas);
         if (need_magic) {
-            g_bishop_magic[sq] = find_magic_for_square(g_bishop_mask[sq], data, rng, g_bishop_table[sq]);
+            g_bishop_magic[sq_idx] = find_magic_for_square(g_bishop_mask[sq_idx], data, rng, g_bishop_table[sq_idx]);
         }
 #if defined(NIGHTWING_ENABLE_BMI2)
         if (g_use_pext) {
-            g_bishop_pext_table[sq] = build_pext_table(g_bishop_mask[sq], data);
+            g_bishop_pext_table[sq_idx] = build_pext_table(g_bishop_mask[sq_idx], data);
         }
 #endif
     }
@@ -401,36 +406,42 @@ void init_magic_bitboards() {
 }
 
 Bitboard rook_attacks(Square sq, Bitboard occupied) noexcept {
-    const Bitboard relevant = occupied & g_rook_mask[sq];
+    const auto sq_idx = static_cast<std::size_t>(sq);
+    const Bitboard relevant = occupied & g_rook_mask[sq_idx];
 #if defined(NIGHTWING_ENABLE_BMI2)
     if (g_use_pext) {
-        return g_rook_pext_table[sq][pext_u64(relevant, g_rook_mask[sq])];
+        return g_rook_pext_table[sq_idx][pext_u64(relevant, g_rook_mask[sq_idx])];
     }
 #endif
-    const std::uint64_t index = (relevant * g_rook_magic[sq]) >> (64 - g_rook_bits[sq]);
-    return g_rook_table[sq][index];
+    const auto index = static_cast<std::size_t>(
+        (relevant * g_rook_magic[sq_idx]) >> (64 - g_rook_bits[sq_idx]));
+    return g_rook_table[sq_idx][index];
 }
 
 Bitboard bishop_attacks(Square sq, Bitboard occupied) noexcept {
-    const Bitboard relevant = occupied & g_bishop_mask[sq];
+    const auto sq_idx = static_cast<std::size_t>(sq);
+    const Bitboard relevant = occupied & g_bishop_mask[sq_idx];
 #if defined(NIGHTWING_ENABLE_BMI2)
     if (g_use_pext) {
-        return g_bishop_pext_table[sq][pext_u64(relevant, g_bishop_mask[sq])];
+        return g_bishop_pext_table[sq_idx][pext_u64(relevant, g_bishop_mask[sq_idx])];
     }
 #endif
-    const std::uint64_t index = (relevant * g_bishop_magic[sq]) >> (64 - g_bishop_bits[sq]);
-    return g_bishop_table[sq][index];
+    const auto index = static_cast<std::size_t>(
+        (relevant * g_bishop_magic[sq_idx]) >> (64 - g_bishop_bits[sq_idx]));
+    return g_bishop_table[sq_idx][index];
 }
 
 #if defined(NIGHTWING_ENABLE_BMI2)
 Bitboard rook_attacks_pext_for_testing(Square sq, Bitboard occupied) noexcept {
-    const Bitboard relevant = occupied & g_rook_mask[sq];
-    return g_rook_pext_table[sq][pext_u64(relevant, g_rook_mask[sq])];
+    const auto sq_idx = static_cast<std::size_t>(sq);
+    const Bitboard relevant = occupied & g_rook_mask[sq_idx];
+    return g_rook_pext_table[sq_idx][pext_u64(relevant, g_rook_mask[sq_idx])];
 }
 
 Bitboard bishop_attacks_pext_for_testing(Square sq, Bitboard occupied) noexcept {
-    const Bitboard relevant = occupied & g_bishop_mask[sq];
-    return g_bishop_pext_table[sq][pext_u64(relevant, g_bishop_mask[sq])];
+    const auto sq_idx = static_cast<std::size_t>(sq);
+    const Bitboard relevant = occupied & g_bishop_mask[sq_idx];
+    return g_bishop_pext_table[sq_idx][pext_u64(relevant, g_bishop_mask[sq_idx])];
 }
 #endif
 
