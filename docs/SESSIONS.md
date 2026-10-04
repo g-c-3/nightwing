@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 181 — 2026-10-05 — SPSA optimizer core added
+
+**Built (all complete files):** NEW `src/tuner/spsa.h`, NEW `src/tuner/spsa.cpp`, NEW `tests/spsa_tests.cpp`; REPLACE `src/CMakeLists.txt` (adds `tuner/spsa.cpp` to `nightwing_lib`), REPLACE `tests/CMakeLists.txt` (adds `spsa_tests.cpp`), REPLACE `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
+
+**Process:** The Session 180 handoff named "make `tune()` consume the existing `ParameterRef` tables" as the Tier 0 remainder; the ROADMAP shows that work already done (term entry points, K fit), so the note was stale. The only unchecked Tier 0 child is the deliberately paused EG-instability item. The next actionable item was therefore the SPSA tuner, started with its pure optimizer core.
+
+**Verification (Linux, GCC, Release):** zero warnings; 734/734 `ctest` (727 existing plus 7 new, 83 assertions in `[spsa]`). Not run locally: Debug/ASan, Windows, macOS, wasm.
+
+**Bugs fixed:** None.
+
+**Decisions made:** DECISIONS.md, 2026-10-05.
+
+**Open:** First CI run of these changes. Pooled second singular-extension match (needs a person to dispatch it). Pondering GUI verification (no GUI available). EG-instability item remains paused.
+
+**Next session start point:** Check CI for the SPSA commit (all legs green, no new first-party warnings). Then build the in-process binding: a function that runs `run_spsa()` over `kMobilityParameters` using `tuner::play_match()` with `MatchConfig::eval_weights_a/b`, plus an `nightwing_spsa` CLI, and log the games-per-iteration and depth decisions in DECISIONS.md.
+
+---
+
 ### Session 180 — 2026-10-04 — Session 179 changes confirmed on CI
 
 **CI result (`v1.0.715`):** All legs passed: Linux Debug and Release 727/727, Windows Debug and Release 727/727, macOS Debug and Release 725/725, `tsan-test` (727 test cases, 691257 assertions, zero reports), wasm build (a 300199-byte `nightwing.wasm`), and the rolling and versioned release publish.

@@ -4,6 +4,21 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-05 — SPSA tuner started as an engine-agnostic optimizer core behind a match-callback seam; CLI and match bindings deferred
+
+**Decision:** The SPSA ROADMAP item was started with `src/tuner/spsa.h/.cpp`: `run_spsa()` takes a list of `SpsaParam` (start, per-parameter perturbation `c`, bounds), an `SpsaConfig`, and a `SpsaMatchFn` callback that plays theta+ against theta- and returns theta+'s score. Two template helpers, `make_spsa_params()` and `apply_spsa_theta()`, adapt any existing `ParameterRef<Weights>` table (anchored entries skipped, as `tune()` does). No CLI and no binding to `play_match()` or the two-process runner was built in this step.
+
+**Rationale:** The item's own text left parameter exposure (in-process versus UCI), games per iteration and time control as design decisions to be logged when work starts. A callback boundary keeps those decisions out of the algorithm: the optimizer is testable instantly with a synthetic strength function (7 tests, 83 assertions), and the in-process eval-constant binding (`ParameterRef` plus `play_match()` with `EvalWeightsOverride`) and the UCI search-constant binding can each be added without touching it. The algorithm is Spall's SPSA with the published exponents (alpha 0.602, gamma 0.101); the step is scaled by the squared perturbation so wide-range parameters move proportionally further, following the convention of Stockfish's fishtest SPSA tuner. The score difference is `2*y+ - 1` (y- = 1 - y+), so a drawn match leaves theta unchanged. `r0` and the stability constant (default 10% of iterations) are untuned starting values.
+
+**Scope of what this does NOT yet establish:** that SPSA with these defaults improves playing strength. No match has been run. Because the evaluator rounds most weights to integers (2026-09-22 (4)), a perturbation below about 1 can be invisible to play; callers must pick `c` accordingly, and the module does not guess. Any tuned value still requires SPRT gating before commit.
+
+**Alternatives considered:**
+- Building the in-process `play_match()` binding and CLI in the same step: deferred; game count per iteration and time control need their own decision, and bundling them would have mixed an untestable-without-matches layer into a unit-testable one.
+- Per-parameter gain constants `a_i` as explicit inputs instead of the `c^2` scaling: rejected for now; one fewer knob per parameter, and the scaling is the established practice.
+- Minimizing a loss instead of maximizing score: rejected; match score is the natural quantity and avoids a sign flip at the callback.
+
+---
+
 ### 2026-10-04 (4) — Sign/width conversion warnings fixed at the source with explicit casts, and `-Wsign-conversion` made explicit for GCC and Clang
 
 **Decision:** The warnings catalogued in 2026-10-03 (7) (macOS, `-Wsign-conversion`) and the wasm-only 64-to-32-bit index narrowings were fixed with explicit `static_cast<std::size_t>` at each site, and `-Wsign-conversion` was added to the GCC/Clang branch of `nightwing_warnings` in `CMakeLists.txt`.
