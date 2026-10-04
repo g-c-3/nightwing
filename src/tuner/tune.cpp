@@ -381,7 +381,8 @@ eval::PsqtWeights compute_psqt_gradient(const std::vector<SelfPlayPosition>& pos
             // eval/psqt.cpp's own header comment) or for White.
             const bool color_distinct =
                 type != board::PieceType::Knight && type != board::PieceType::Queen;
-            const int idx = (color == board::Color::White || !color_distinct) ? sq : (sq ^ 56);
+            const auto idx = static_cast<std::size_t>(
+                (color == board::Color::White || !color_distinct) ? sq : (sq ^ 56));
 
             const auto [mg_field, eg_field] = psqt_field_pair(type);
             if (mg_field == nullptr) {

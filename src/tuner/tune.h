@@ -207,14 +207,14 @@ struct ParameterRef {
     /// Reads this parameter's current value out of `w` — `w.*array_member
     /// [index]` if this is an indexed-array entry, `w.*member` otherwise.
     [[nodiscard]] double get(const Weights& w) const noexcept {
-        return array_member != nullptr ? (w.*array_member)[index] : w.*member;
+        return array_member != nullptr ? (w.*array_member)[static_cast<std::size_t>(index)] : w.*member;
     }
 
     /// Writes `value` into this parameter's field in `w` — the exact
     /// inverse of get() above, same branch condition.
     void set(Weights& w, double value) const noexcept {
         if (array_member != nullptr) {
-            (w.*array_member)[index] = value;
+            (w.*array_member)[static_cast<std::size_t>(index)] = value;
         } else {
             w.*member = value;
         }

@@ -107,6 +107,7 @@
 // does not itself constitute having already run it at production scale.
 
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -135,7 +136,7 @@ void print_psqt_field(const char* name, const std::array<double, 64>& values) {
         std::fprintf(stderr, "   ");
         for (int file = 0; file < 8; ++file) {
             const int idx = rank * 8 + file;
-            const int rounded = static_cast<int>(std::lround(values[idx]));
+            const int rounded = static_cast<int>(std::lround(values[static_cast<std::size_t>(idx)]));
             std::fprintf(stderr, "%5d,", rounded);
         }
         std::fprintf(stderr, "\n");
