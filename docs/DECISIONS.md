@@ -4,6 +4,22 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-05 (5) — First SPSA run was a null result; a deliberately-wrong-start sanity test was added before any further tuning
+
+**Result recorded:** The first dispatched `spsa` run (`100 16 6 1 2 8 400`, about 31 minutes on a hosted runner) started from the default mobility weights. Tuned weights after rounding: knight 4/5, bishop 6/4, rook 2/4, queen 2/0 (mg/eg), against defaults 4/4, 5/5, 2/4, 1/2. Validation, tuned versus default, 400 games: 124 W / 117 L / 159 D, score 0.5088, +6.1 Elo, 95% CI about -20 to +33 (z = 0.45). The plus vector's score averaged 0.499 over the 100 iterations (0.507 over the first 50, 0.490 over the last 50), with no upward trend.
+
+**Interpretation:** The optimizer received essentially no signal at 16 games per iteration, and the weights drifted near their starting values. This neither shows that SPSA cannot work here nor that the defaults are optimal; mobility may sit in a flat region where only a few Elo is available, which 16 games cannot resolve. The tuned vector was not adopted and no SPRT was run on it.
+
+**Decision:** Before further tuning runs, the tuner itself is sanity-tested: a `start_scale` setting (`SpsaMobilityConfig::start_scale`, eighth positional argument of `nightwing_spsa`, eighth value of the workflow's `spsa_settings`) multiplies every default weight to form the starting vector. With a start far from the defaults (scale 0), a working optimizer should move toward the defaults and the final tuned-versus-default match should approach even. When `start_scale` is not 1 and validation is enabled, the starting vector is first played against the defaults, so a single run reports both how wrong the start was and how much was recovered. The suggested sanity run is `60 64 6 1 2 8 400 0` (about 70 minutes).
+
+**Criterion for the sanity test:** the start vector must lose clearly to the defaults (otherwise the test is uninformative), and the tuned vector's score against the defaults must be clearly higher than the start's. If it is not, the optimizer, step size or signal level needs work before any further real run.
+
+**Alternatives considered:**
+- Repeating the default-start run with more games per iteration: deferred; it cannot distinguish a flat landscape from a tuner that does not work.
+- Starting at scale 2 (doubled weights): kept as an option; zero is expected to give a larger, easier-to-see deficit.
+
+---
+
 ### 2026-10-05 (4) — SPSA run started from a manual workflow with a single settings input; defaults sized for about one hour
 
 **Decision:** `ci.yml` gained a fifth `pipeline` choice, `spsa`, and a `spsa-tune` job that builds and runs `nightwing_spsa`. All seven settings (iterations, games per iteration, depth, seed, c, r0, validation games) are passed as one space-separated input, `spsa_settings`, default `100 16 6 1 2 8 400`. The job validates that exactly seven numbers were given, passes them through `env:` rather than interpolating into the script, writes the tuned weights and the validation line to the job summary, and uploads the result and progress files as an artifact. The job timeout is 355 minutes.

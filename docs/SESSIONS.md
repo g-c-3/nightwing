@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 185 — 2026-10-05 — First SPSA run reviewed; start_scale sanity test added
+
+**Built (all complete files):** REPLACE `src/tuner/spsa_eval.h`, `src/tuner/spsa_eval.cpp` (adds `start_scale` and `scaled_mobility_weights()`), `src/tuner/spsa_main.cpp` (eighth argument; starting-vector baseline match), `tests/spsa_eval_tests.cpp` (2 further tests), `.github/workflows/ci.yml` (`spsa_settings` now takes eight values), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
+
+**First SPSA run:** null result, 124 W / 117 L / 159 D in the 400-game validation (+6.1 Elo, 95% CI about -20 to +33), no trend in the optimizer's own score trace. CI for the run's commit was green on every leg (Linux and Windows 737/737, macOS 735/735, ThreadSanitizer clean). Details in DECISIONS.md 2026-10-05 (5).
+
+**Verification (Linux, GCC, Release):** zero warnings; 739/739 `ctest` (737 existing plus 2 new). The CLI was smoke-tested with start_scale 0 and printed both validation lines. YAML parsed with 25 inputs. Not run locally: Debug/ASan, Windows, macOS, wasm, or the workflow on GitHub.
+
+**Bugs fixed:** None.
+
+**Decisions made:** DECISIONS.md 2026-10-05 (5).
+
+**Open:** First CI run of these changes. The sanity dispatch (`60 64 6 1 2 8 400 0`). EG-instability item remains paused. Pondering GUI verification is blocked.
+
+**Next session start point:** Review the output of the sanity dispatch (the `start_validation:` and `validation:` lines in the job summary). If the tuned vector scores clearly above the start vector against the defaults, plan a stronger-signal run from the defaults; if not, investigate step size and signal level before any further run.
+
+---
+
 ### Session 184 — 2026-10-05 — SPSA workflow added
 
 **Built (all complete files):** REPLACE `.github/workflows/ci.yml` (new `spsa` pipeline choice, `spsa_settings` input, `spsa-tune` job), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
