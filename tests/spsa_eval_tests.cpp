@@ -101,3 +101,47 @@ TEST_CASE("run_spsa_mobility: start_scale 0 starts every parameter near zero", "
         REQUIRE(v <= 1.0); // one step of at most about 0.94 from 0 at default r0
     }
 }
+
+TEST_CASE("scaled_material_weights: scale 1 is the defaults; pawn stays anchored at any scale", "[tuner][spsa]") {
+    const auto def = eval::default_material_weights();
+    const auto same = tuner::scaled_material_weights(1.0);
+    const auto damaged = tuner::scaled_material_weights(0.5);
+    for (const auto& ref : tuner::kMaterialParameters) {
+        REQUIRE(ref.get(same) == ref.get(def));
+        if (ref.anchored) {
+            REQUIRE(ref.get(damaged) == ref.get(def));
+        } else {
+            REQUIRE(ref.get(damaged) == ref.get(def) * 0.5);
+        }
+    }
+}
+
+TEST_CASE("play_material_match: damaged vs default plays a complete match; same seed reproduces", "[tuner][spsa]") {
+    init_tables();
+    const auto def = eval::default_material_weights();
+    const auto damaged = tuner::scaled_material_weights(0.5);
+    const tuner::MatchResult r1 = tuner::play_material_match(damaged, def, 13, tiny_match());
+    const tuner::MatchResult r2 = tuner::play_material_match(damaged, def, 13, tiny_match());
+    REQUIRE(r1.games_played == 2);
+    REQUIRE(r1.wins_a + r1.wins_b + r1.draws == 2);
+    REQUIRE(r1.wins_a == r2.wins_a);
+    REQUIRE(r1.wins_b == r2.wins_b);
+    REQUIRE(r1.draws == r2.draws);
+}
+
+TEST_CASE("run_spsa_material: a short run returns 8 in-bounds parameters", "[tuner][spsa]") {
+    init_tables();
+    tuner::SpsaMaterialConfig cfg;
+    cfg.spsa.iterations = 2;
+    cfg.spsa.seed = 5;
+    cfg.match = tiny_match();
+    cfg.start_scale = 0.7;
+    const tuner::SpsaResult r = tuner::run_spsa_material(cfg);
+    REQUIRE(r.iterations_run == 2);
+    REQUIRE(r.theta.size() == 8); // kMaterialParameters minus the two anchored pawn entries
+    REQUIRE(r.plus_scores.size() == 2);
+    for (double v : r.theta) {
+        REQUIRE(v >= cfg.min_value);
+        REQUIRE(v <= cfg.max_value);
+    }
+}
