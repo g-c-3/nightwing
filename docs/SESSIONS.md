@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+### Session 182 — 2026-10-05 — CI confirmed for the SPSA core; singular-extension item closed
+
+**Built:** No source changes. REPLACE `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
+
+**Verification:** An initial CI run failed on all jobs at CMake configure because `tests/CMakeLists.txt` had been committed at the repository root, overwriting the root `CMakeLists.txt`. Both files were restored at their correct paths. The following run was green on every leg: Linux, Windows 734/734, macOS 732/732, ThreadSanitizer clean, wasm UCI checks passed, release `v1.0.723` published. No new first-party warnings.
+
+**Decisions made:** DECISIONS.md 2026-10-05 (2): singular extensions kept at `kSingularMinDepth` 8 on a pooled +19.2 Elo (95% CI -5 to +44, 635 games), not statistically significant.
+
+**Open:** The EG-instability item remains paused. Pondering GUI verification is blocked. The SPSA tuner is partial.
+
+**Next session start point:** Build the in-process SPSA binding: run `run_spsa()` over `kMobilityParameters` using `tuner::play_match()` with `MatchConfig::eval_weights_a/b`, plus an `nightwing_spsa` CLI, and log the games-per-iteration and depth decisions in DECISIONS.md.
+
+---
+
 ### Session 181 — 2026-10-05 — SPSA optimizer core added
 
 **Built (all complete files):** NEW `src/tuner/spsa.h`, NEW `src/tuner/spsa.cpp`, NEW `tests/spsa_tests.cpp`; REPLACE `src/CMakeLists.txt` (adds `tuner/spsa.cpp` to `nightwing_lib`), REPLACE `tests/CMakeLists.txt` (adds `spsa_tests.cpp`), REPLACE `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.

@@ -3142,7 +3142,7 @@ Not part of the report's own ordering, appended here:
       recorded in the new file's comments: the opposite-colored-bishops
       pair flips order at depth 8 on the production path too (margin
       -36), the same artifact documented for the fixed-depth path.
-- [~] **Widen the singular-extension isolation match's sample size**
+- [x] **Widen the singular-extension isolation match's sample size**
       (filed 2026-09-24, from item 4's own match results above) — the
       combined and null-move-gate-only matches (200 and 90 games) gave a
       real, if not fully 2-sigma, signal; the singular-extension-alone
@@ -3208,6 +3208,15 @@ Not part of the report's own ordering, appended here:
       `go movetime 200` run (about 2.5x the games per hour, weaker
       depth, so a different question). The `exp-no-singular` branch is
       kept until this item closes, then deleted.
+      CLOSED (Session 182, 2026-10-05): the second run (seed 2, 338 games,
+      stopped by the 340-minute CI limit) and the first run (297 games)
+      were pooled: 275 W / 120 D / 240 L over 635 games, +19.2 Elo for
+      singular extensions on (95% CI -5 to +44, z = 1.55). Both runs
+      pointed the same way; the pooled interval still includes 0, so the
+      result is a lean, not a confirmed gain. `kSingularMinDepth` stays at
+      8 and singular extensions stay enabled. See DECISIONS.md 2026-10-05
+      (2). The `exp-no-singular` branch is no longer needed and may be
+      deleted.
 
 - [x] **Investigate the KQ-vs-K "unresolved after ~13M nodes / 60s"
       observation** — CLOSED (Session 145), reproduced-and-not-a-defect.

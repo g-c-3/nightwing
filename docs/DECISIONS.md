@@ -4,6 +4,20 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-05 (2) — Singular extensions kept enabled at `kSingularMinDepth` 8; isolation match closed on a non-significant positive result
+
+**Decision:** The singular-extension isolation item was closed with singular extensions left enabled and `kSingularMinDepth` unchanged at 8. No code changed.
+
+**Evidence:** Two baseline-versus-candidate matches (`exp-no-singular` versus `main`, `go movetime 500`) were pooled. Run 1 (seed 1): 129 W / 57 D / 111 L over 297 games, +21.1 Elo. Run 2 (seed 2): 146 W / 63 D / 129 L over 338 games, +17.5 Elo, stopped by the 340-minute CI limit before the SPRT reached a bound. Pooled: 275 W / 120 D / 240 L over 635 games, +19.2 Elo, 95% CI -5 to +44, z = 1.55 (about p = 0.12, two-sided).
+
+**Rationale:** Both runs point in the same direction and the point estimate is positive, which together with the technique's established record in classical engines makes removal unjustified. The pooled interval still includes 0, so the result is recorded as a lean and not as a measured gain. The SPRT bounds in use are far narrower than a roughly 60-games-per-hour run can resolve within the CI time limit, which is why no run reached a decision bound.
+
+**Alternatives considered:**
+- Removing singular extensions: rejected; no evidence of harm and a positive estimate.
+- Further runs to reach significance: rejected for now; the cost (about 6 hours per run) outweighs the value of resolving an effect that does not change the decision. The question can be reopened if later search changes interact with it.
+
+---
+
 ### 2026-10-05 — SPSA tuner started as an engine-agnostic optimizer core behind a match-callback seam; CLI and match bindings deferred
 
 **Decision:** The SPSA ROADMAP item was started with `src/tuner/spsa.h/.cpp`: `run_spsa()` takes a list of `SpsaParam` (start, per-parameter perturbation `c`, bounds), an `SpsaConfig`, and a `SpsaMatchFn` callback that plays theta+ against theta- and returns theta+'s score. Two template helpers, `make_spsa_params()` and `apply_spsa_theta()`, adapt any existing `ParameterRef<Weights>` table (anchored entries skipped, as `tune()` does). No CLI and no binding to `play_match()` or the two-process runner was built in this step.
