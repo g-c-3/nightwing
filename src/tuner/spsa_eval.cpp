@@ -1,0 +1,43 @@
+// src/tuner/spsa_eval.cpp
+//
+// See spsa_eval.h for scope and design.
+
+#include "tuner/spsa_eval.h"
+
+#include "eval/eval.h"
+#include "eval/psqt.h"
+#include "tuner/tune.h"
+
+namespace nightwing::tuner {
+
+MatchResult play_mobility_match(const eval::MobilityWeights& a, const eval::MobilityWeights& b,
+                                std::uint64_t base_seed, const MatchConfig& match) {
+    eval::EvalWeightsOverride override_a;
+    override_a.mobility = &a;
+    eval::EvalWeightsOverride override_b;
+    override_b.mobility = &b;
+
+    MatchConfig config = match;
+    config.eval_weights_a = &override_a;
+    config.eval_weights_b = &override_b;
+
+    const eval::MaterialWeights material = eval::default_material_weights();
+    return play_match(material, material, base_seed, config);
+}
+
+SpsaResult run_spsa_mobility(const SpsaMobilityConfig& config) {
+    const eval::MobilityWeights base = eval::default_mobility_weights();
+    const std::vector<SpsaParam> params =
+        make_spsa_params(kMobilityParameters, base, config.c, config.min_value, config.max_value);
+
+    const SpsaMatchFn match_fn = [&](const std::vector<double>& plus, const std::vector<double>& minus,
+                                     std::uint64_t game_seed) {
+        const eval::MobilityWeights wp = apply_spsa_theta(kMobilityParameters, base, plus);
+        const eval::MobilityWeights wm = apply_spsa_theta(kMobilityParameters, base, minus);
+        return play_mobility_match(wp, wm, game_seed, config.match).score_a();
+    };
+
+    return run_spsa(params, config.spsa, match_fn);
+}
+
+} // namespace nightwing::tuner
