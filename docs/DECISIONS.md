@@ -4,6 +4,21 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-05 (7) — Base material bound to SPSA as the sanity-test target; the start must be zero, and the step must be material-sized
+
+**Decision:** `tuner::run_spsa_material()` (with `play_material_match()` and `scaled_material_weights()`) binds the eight non-anchored base material values (knight through queen, middlegame and endgame; pawn stays anchored at 100) to `run_spsa()` through `play_match()`'s `weights_a/_b` arguments. `nightwing_spsa` gained a ninth positional argument, `target` (0 = mobility, the default; 1 = material), and the workflow's `spsa_settings` input accepts eight or nine values, so existing eight-value dispatches behave as before. Material bounds are [0, 2000].
+
+**Rationale:** The zero-mobility run (2026-10-05 (6)) could not test the optimizer because mobility has too small an effect. Material was chosen because a damaged table has a large effect on play. Local measurements at depth 4 showed that this holds only for a very damaged start: scaling all non-pawn values by 0.5 or 0.3 scored 0.51 and 0.50 against the defaults (mostly draws), while scale 0 scored 0.13 (about -320 Elo over 40 to 60 games). Scale 0 is therefore the sanity start. Perturbation and step must also be sized to material: with the mobility-sized settings (c 20, r0 8) a 25-iteration trial moved no value above 32 and the validation stayed near -290 Elo, whereas c 150 and r0 40 moved the vector to values near or above the defaults (knight 624/749, bishop 671/487, rook 1105/44, queen 1174/129, mg/eg) and the validation rose to -41 Elo. The endgame rook and queen values stayed low, so the recovery was partial and uneven; with 60-game validation and a single seed this is an indication, not a result.
+
+**Criterion for the sanity test:** with `60 32 4 1 150 40 200 0 1` (about 10 minutes), the start validation must show a clear loss to the defaults and the tuned validation must score clearly higher than the start's. If it does not, step size or signal level needs work before any further run. A pass establishes only that the optimizer responds to a large signal; it does not show that SPSA can find small gains, and no tuned value is adopted without SPRT gating.
+
+**Alternatives considered:**
+- Scale 0.5 or 0.7 as the wrong start: rejected on measurement; no visible deficit at depth 4.
+- A PSQT-bound target: deferred; material is simpler and already has a measured large effect.
+- Separate executable for material: rejected; one executable with a `target` argument keeps the workflow job unchanged.
+
+---
+
 ### 2026-10-05 (6) — Zero-mobility sanity run was uninformative; mobility is a weak term at fixed depth 6
 
 **Result recorded:** The sanity dispatch (`60 64 6 1 2 8 400 0`, about 2 hours 6 minutes on a hosted runner) started from all-zero mobility. Start versus defaults, 400 games: 128 W / 112 L / 160 D, score 0.520, +13.9 Elo, 95% CI about -12 to +40. After 60 iterations of 64 games the weights were still near zero after rounding (largest 0.9). Tuned versus defaults, 400 games: 126 W / 123 L / 151 D, score 0.5038, +2.6 Elo, 95% CI about -24 to +30. The plus vector's score averaged 0.499 overall and stayed between 0.49 and 0.51 in every block of ten iterations.

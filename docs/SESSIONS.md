@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 187 — 2026-10-05 — Material bound to SPSA as the sanity target
+
+**Built (all complete files):** REPLACE `src/tuner/spsa_eval.h`, `src/tuner/spsa_eval.cpp` (material match, scaling and `run_spsa_material()`), `src/tuner/spsa_main.cpp` (ninth argument `target`), `tests/spsa_eval_tests.cpp` (3 further tests), `.github/workflows/ci.yml` (`spsa_settings` accepts eight or nine values; summary names the target), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
+
+**Verification (Linux, GCC, Release):** zero warnings; 742/742 `ctest` (739 existing plus 3 new). YAML parsed with 25 inputs and all expected jobs. Not run locally: Debug/ASan, Windows, macOS, wasm, or the workflow on GitHub.
+
+**Measurements (local, depth 4, small samples):** scale 0.5 and 0.3 did not lose to the defaults; scale 0 lost clearly (score 0.13). A 25-iteration trial from scale 0 recovered from about -325 to -290 Elo at c 20 / r0 8 and to -41 Elo at c 150 / r0 40. Details in DECISIONS.md 2026-10-05 (7).
+
+**Bugs fixed:** None.
+
+**Decisions made:** DECISIONS.md 2026-10-05 (7).
+
+**Open:** First CI run of these changes. The material sanity dispatch. EG-instability item remains paused. Pondering GUI verification is blocked.
+
+**Next session start point:** Confirm CI is green, then review the output of the material sanity dispatch (`60 32 4 1 150 40 200 0 1`: the `start_validation:` and `validation:` lines). If the tuned vector scores clearly above the start, plan the first real SPSA run; if not, adjust step size or signal level before any further run.
+
+---
+
 ### Session 186 — 2026-10-05 — Sanity run reviewed; mobility ruled out as a tuner test target
 
 **Built:** No source changes. REPLACE `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
