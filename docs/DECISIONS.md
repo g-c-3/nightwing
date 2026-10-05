@@ -4,6 +4,20 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-05 (6) — Zero-mobility sanity run was uninformative; mobility is a weak term at fixed depth 6
+
+**Result recorded:** The sanity dispatch (`60 64 6 1 2 8 400 0`, about 2 hours 6 minutes on a hosted runner) started from all-zero mobility. Start versus defaults, 400 games: 128 W / 112 L / 160 D, score 0.520, +13.9 Elo, 95% CI about -12 to +40. After 60 iterations of 64 games the weights were still near zero after rounding (largest 0.9). Tuned versus defaults, 400 games: 126 W / 123 L / 151 D, score 0.5038, +2.6 Elo, 95% CI about -24 to +30. The plus vector's score averaged 0.499 overall and stayed between 0.49 and 0.51 in every block of ten iterations.
+
+**Interpretation:** The criterion set in 2026-10-05 (5) required the zero start to lose clearly to the defaults. It did not, so the run neither confirms nor refutes the optimizer. A direct check of the override path showed it works: swapping zero for default mobility changes the static evaluation by about 18 to 30 centipawns in two middlegame positions (and by 0 in the start position), so the flat result reflects a small playing-strength effect, not a dead override. With about 60 percent of games drawn at fixed depth 6, a mobility effect of at most a few Elo is below what 64 games per iteration can resolve.
+
+**Decision:** No further mobility tuning run is queued. The mobility table is a poor test target for the tuner: its effect is too small to give the optimizer a measurable signal at these game counts. A sanity target with a large and certain effect is needed before SPSA's behavior can be judged, and that requires binding a different table (material or PSQT) or a search constant to `run_spsa()`.
+
+**Alternatives considered:**
+- Doubling mobility as the wrong start: rejected; expected to produce an even smaller deficit than zero.
+- Many more games per iteration on mobility: rejected for now; cost grows quickly and mobility is not expected to be worth the Elo.
+
+---
+
 ### 2026-10-05 (5) — First SPSA run was a null result; a deliberately-wrong-start sanity test was added before any further tuning
 
 **Result recorded:** The first dispatched `spsa` run (`100 16 6 1 2 8 400`, about 31 minutes on a hosted runner) started from the default mobility weights. Tuned weights after rounding: knight 4/5, bishop 6/4, rook 2/4, queen 2/0 (mg/eg), against defaults 4/4, 5/5, 2/4, 1/2. Validation, tuned versus default, 400 games: 124 W / 117 L / 159 D, score 0.5088, +6.1 Elo, 95% CI about -20 to +33 (z = 0.45). The plus vector's score averaged 0.499 over the 100 iterations (0.507 over the first 50, 0.490 over the last 50), with no upward trend.

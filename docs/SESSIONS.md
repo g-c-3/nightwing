@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 186 — 2026-10-05 — Sanity run reviewed; mobility ruled out as a tuner test target
+
+**Built:** No source changes. REPLACE `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
+
+**Verification:** CI for the `ci.yml` commit (`v1.0.736`) was green on every leg (Linux and Windows 739/739, macOS 737/737, ThreadSanitizer clean, wasm UCI checks run). The sanity run itself finished and uploaded its artifacts. The override path was checked directly with a throwaway program (not committed): zero versus default mobility changes static eval by -18 to +30 cp in middlegame positions.
+
+**Run result:** Zero-mobility start did not lose to the defaults (+13.9 Elo, CI -12 to +40); tuned result +2.6 Elo (CI -24 to +30); optimizer score trace flat at about 0.50. See DECISIONS.md 2026-10-05 (6).
+
+**Bugs fixed:** None.
+
+**Decisions made:** DECISIONS.md 2026-10-05 (6).
+
+**Open:** A sanity target with a large known effect is needed before SPSA's behavior can be judged. EG-instability item remains paused. Pondering GUI verification is blocked.
+
+**Next session start point:** Decide the sanity target: bind another ParameterRef table with a large, certain effect (a damaged material or PSQT start) to `run_spsa()` through the same `play_match()` path, using `tuner::MatchConfig::eval_weights_a/_b` or the material arguments of `play_match()`, and rerun the start-versus-defaults check at small cost before any long run.
+
+---
+
 ### Session 185 — 2026-10-05 — First SPSA run reviewed; start_scale sanity test added
 
 **Built (all complete files):** REPLACE `src/tuner/spsa_eval.h`, `src/tuner/spsa_eval.cpp` (adds `start_scale` and `scaled_mobility_weights()`), `src/tuner/spsa_main.cpp` (eighth argument; starting-vector baseline match), `tests/spsa_eval_tests.cpp` (2 further tests), `.github/workflows/ci.yml` (`spsa_settings` now takes eight values), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
