@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 189 — 2026-10-06 — First nonlinear interaction term (passed-pawn king proximity)
+
+**Built (all complete files):** NEW `src/eval/passed_pawn_king.h`, NEW `src/eval/passed_pawn_king.cpp`, NEW `tests/passed_pawn_king_tests.cpp` (6 tests), REPLACE `src/eval/eval.cpp` (include plus one term in the sum), REPLACE `src/CMakeLists.txt` and `tests/CMakeLists.txt` (new files registered), REPLACE `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
+
+**Decision:** SPSA work paused after CI went green (material sanity passed, mobility null); next item chosen was candidate 1 of the restricted nonlinear interactions. See DECISIONS.md 2026-10-06.
+
+**Verification (Linux, GCC, Release):** zero warnings; 750/750 `ctest` (744 existing plus 6 new). Not run locally: Debug/ASan, Windows, macOS, wasm, `bench`, or the workflow on GitHub.
+
+**Bugs fixed:** None.
+
+**Open:** First CI run of these changes. SPRT against the previous commit and a `bench` nodes-per-second check for the new term (not yet run). Candidates 2 to 4 of the interactions item. EG-instability item remains paused. Pondering GUI verification is blocked.
+
+**Next session start point:** Confirm CI is green for the new term, run the SPRT of this commit against the previous one plus a `bench` comparison, and keep the term only if the SPRT is a win and nodes-per-second shows no measurable loss; otherwise remove it. Then start candidate 2 (bishop pair scaled by openness).
+
+---
+
 ### Session 188 — 2026-10-05 — Material sanity run reviewed; tied mg/eg target added
 
 **Built (all complete files):** REPLACE `src/tuner/spsa_eval.h`, `src/tuner/spsa_eval.cpp` (tied-material mode), `src/tuner/spsa_main.cpp` (target 2), `tests/spsa_eval_tests.cpp` (2 further tests), `.github/workflows/ci.yml` (target 2 in the description and summary), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.

@@ -4,6 +4,25 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-06 — First nonlinear interaction: passed-pawn king proximity
+
+**Decision:** The first candidate of the restricted nonlinear feature interactions item was implemented as `eval::passed_pawn_king_value()` (`src/eval/passed_pawn_king.h/.cpp`) and added to the sum in `eval::evaluate()`. For each passed pawn on relative rank 3 to 6 the endgame value is `kPassedKingRankWeight[rank] * (2 * min(enemy_king_dist, 5) - 1 * min(own_king_dist, 5))`, with Chebyshev distances to the pawn's stop square; the middlegame value is zero. Weights are {0, 0, 0, 1, 2, 3, 5, 0} by relative rank, so the largest possible single-pawn value is 45 centipawns. All constants are first-draft estimates in the header.
+
+**Rationale:** The static passed-pawn bonus ignores the kings, and because it is cached by pawn hash it cannot use them. King distance to the stop square is the standard missing piece (CPW "Passed Pawn"; Stockfish-classic uses the same idea). The term is endgame-only because king distance carries little meaning while many pieces remain. It is computed outside the pawn hash for the same reason: it depends on king squares.
+
+**Why this candidate first:** It needs no new data structure, runs on bitboards already used by the pawn module, and has a clear expected direction, which makes an SPRT result easy to interpret.
+
+**Acceptance criteria (from the roadmap item):** an SPRT win against the previous commit, and no measurable `bench` nodes-per-second loss. If either fails the term is removed, not kept as dead code. Until then the term is in the tree but unproven.
+
+**Verification:** zero warnings; 750/750 `ctest` (744 existing plus 6 new) on Linux, GCC, Release. Existing eval and search tests stayed green, so no expectations were changed.
+
+**Alternatives considered:**
+- Adding the term to the cached pawn score: rejected; king squares are not part of the pawn hash key, so stale values would result.
+- Applying it in the middlegame as well: rejected for the first draft; no evidence it helps and it widens the effect on search.
+- Scaling by remaining piece count instead of the endgame-only split: deferred; the existing taper already reduces the term when pieces remain.
+
+---
+
 ### 2026-10-05 (8) — Material sanity run passed; endgame values were unidentifiable, so a tied mg/eg target was added
 
 **Result recorded:** The sanity dispatch `60 32 4 1 150 40 200 0 1` (material, scale 0) started at 4 W / 155 L / 41 D against the defaults (score 0.1225, -342 Elo, 200 games). After 60 iterations of 32 games the tuned vector scored 15 W / 20 L / 165 D (0.4875, -8.7 Elo, 95% interval roughly +/-35). Tuned values (mg/eg): knight 232.7/246.0, bishop 180.9/320.2, rook 523.4/0.0, queen 871.8/40.5. The plus-vector score averaged 0.445 over the first ten iterations and about 0.50 afterwards.
