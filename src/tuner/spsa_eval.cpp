@@ -25,8 +25,16 @@ MatchResult play_mobility_match(const eval::MobilityWeights& a, const eval::Mobi
     return play_match(material, material, base_seed, config);
 }
 
+eval::MobilityWeights scaled_mobility_weights(double scale) {
+    eval::MobilityWeights w = eval::default_mobility_weights();
+    for (const auto& ref : kMobilityParameters) {
+        ref.set(w, ref.get(w) * scale);
+    }
+    return w;
+}
+
 SpsaResult run_spsa_mobility(const SpsaMobilityConfig& config) {
-    const eval::MobilityWeights base = eval::default_mobility_weights();
+    const eval::MobilityWeights base = scaled_mobility_weights(config.start_scale);
     const std::vector<SpsaParam> params =
         make_spsa_params(kMobilityParameters, base, config.c, config.min_value, config.max_value);
 
