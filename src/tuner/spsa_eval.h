@@ -94,6 +94,13 @@ struct SpsaMaterialConfig {
     /// deliberately wrong start whose deficit against the defaults is large
     /// and certain. The result is clamped to [min_value, max_value].
     double start_scale = 1.0;
+    /// When true, each piece's endgame value is tied to its middlegame value
+    /// and only four parameters (knight, bishop, rook, queen) are tuned.
+    /// The compiled-in defaults already have mg == eg, and the endgame values
+    /// received almost no signal in the first material sanity run (rook_eg
+    /// clamped to 0, queen_eg 40; docs/DECISIONS.md, 2026-10-05 (8)). The
+    /// starting value of each tied parameter is the scaled middlegame value.
+    bool tie_mg_eg = false;
 };
 
 /// Plays material vector `a` against `b` (all other eval terms at their
@@ -110,7 +117,15 @@ struct SpsaMaterialConfig {
 
 /// Runs SPSA over the non-anchored eval::MaterialWeights from
 /// scaled_material_weights(config.start_scale) and returns the optimizer
-/// result (theta in kMaterialParameters order, anchored entries skipped).
+/// result (theta in kMaterialParameters order, anchored entries skipped; with
+/// config.tie_mg_eg, theta is knight, bishop, rook, queen -- see
+/// apply_tied_material_theta()).
 [[nodiscard]] SpsaResult run_spsa_material(const SpsaMaterialConfig& config);
+
+/// Writes a tied-mode theta (knight, bishop, rook, queen; extra or missing
+/// entries ignored) into a copy of `base`, setting both the middlegame and
+/// endgame value of each piece to the same number. Pawn is untouched.
+[[nodiscard]] eval::MaterialWeights apply_tied_material_theta(eval::MaterialWeights base,
+                                                              const std::vector<double>& theta);
 
 } // namespace nightwing::tuner

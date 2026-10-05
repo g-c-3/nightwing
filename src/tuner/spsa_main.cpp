@@ -15,9 +15,12 @@
 // is also played against the defaults first, so the printed result shows how
 // wrong the start was.
 // target selects the table: 0 = eval mobility (default, 8 parameters),
-// 1 = base material (8 non-anchored parameters; pawn anchored). Material is
-// the sanity-test target because its effect on play is large and certain.
-// For target 1, `c` is in material units (a value around 20 is sensible; the
+// 1 = base material (8 non-anchored parameters; pawn anchored), 2 = base
+// material with each piece's endgame value tied to its middlegame value
+// (4 parameters: knight, bishop, rook, queen). Material is the sanity-test
+// target because its effect on play is large and certain; target 2 exists
+// because the endgame values received almost no signal under target 1.
+// For targets 1 and 2, `c` is in material units (a value around 20 is sensible; the
 // mobility default of 2 is far too small) and bounds are [0, 2000].
 // Progress goes to stderr; stdout receives only `name=value` lines for the
 // tuned weights followed by one validation line when validation_games > 0.
@@ -86,8 +89,8 @@ int main(int argc, char** argv) {
     if (argc > 9) target = std::atoi(argv[9]);
     spsa.seed = seed;
 
-    if (target != 0 && target != 1) {
-        std::fprintf(stderr, "Unknown target %d (0 = mobility, 1 = material)\n", target);
+    if (target < 0 || target > 2) {
+        std::fprintf(stderr, "Unknown target %d (0 = mobility, 1 = material, 2 = material mg/eg tied)\n", target);
         return 1;
     }
 
@@ -99,6 +102,7 @@ int main(int argc, char** argv) {
     mat.spsa = spsa;
     mat.match = match;
     mat.start_scale = start_scale;
+    mat.tie_mg_eg = (target == 2);
     if (c >= 0.0) {
         mob.c = c;
         mat.c = c;
@@ -107,14 +111,14 @@ int main(int argc, char** argv) {
     std::fprintf(stderr,
                  "Nightwing SPSA (%s): iterations=%d games/iter=%d depth=%d seed=%llu c=%.2f r0=%.2f "
                  "validation_games=%d start_scale=%.2f\n",
-                 target == 1 ? "material" : "mobility", spsa.iterations, match.num_games, match.search_depth,
-                 static_cast<unsigned long long>(seed), target == 1 ? mat.c : mob.c, spsa.r0, validation_games,
+                 target == 2 ? "material-tied" : (target == 1 ? "material" : "mobility"), spsa.iterations, match.num_games, match.search_depth,
+                 static_cast<unsigned long long>(seed), target >= 1 ? mat.c : mob.c, spsa.r0, validation_games,
                  start_scale);
 
     MatchConfig vm = match;
     vm.num_games = validation_games;
 
-    if (target == 1) {
+    if (target >= 1) {
         if (validation_games > 0 && start_scale != 1.0) {
             print_start_validation(start_scale,
                                    tuner::play_material_match(tuner::scaled_material_weights(start_scale),
@@ -123,8 +127,10 @@ int main(int argc, char** argv) {
         }
         const tuner::SpsaResult result = tuner::run_spsa_material(mat);
         print_progress(result);
-        const eval::MaterialWeights tuned = tuner::apply_spsa_theta(
-            tuner::kMaterialParameters, tuner::scaled_material_weights(start_scale), result.theta);
+        const eval::MaterialWeights tuned =
+            mat.tie_mg_eg ? tuner::apply_tied_material_theta(tuner::scaled_material_weights(start_scale), result.theta)
+                          : tuner::apply_spsa_theta(tuner::kMaterialParameters,
+                                                    tuner::scaled_material_weights(start_scale), result.theta);
         for (const auto& ref : tuner::kMaterialParameters) {
             std::printf("%s=%.1f\n", ref.name, ref.get(tuned));
         }

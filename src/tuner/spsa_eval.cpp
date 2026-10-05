@@ -67,8 +67,32 @@ eval::MaterialWeights scaled_material_weights(double scale) {
     return w;
 }
 
+eval::MaterialWeights apply_tied_material_theta(eval::MaterialWeights base, const std::vector<double>& theta) {
+    if (theta.size() > 0) { base.knight_mg = base.knight_eg = theta[0]; }
+    if (theta.size() > 1) { base.bishop_mg = base.bishop_eg = theta[1]; }
+    if (theta.size() > 2) { base.rook_mg = base.rook_eg = theta[2]; }
+    if (theta.size() > 3) { base.queen_mg = base.queen_eg = theta[3]; }
+    return base;
+}
+
 SpsaResult run_spsa_material(const SpsaMaterialConfig& config) {
     const eval::MaterialWeights base = scaled_material_weights(config.start_scale);
+
+    if (config.tie_mg_eg) {
+        const std::vector<SpsaParam> tied = {
+            {"knight", base.knight_mg, config.c, config.min_value, config.max_value},
+            {"bishop", base.bishop_mg, config.c, config.min_value, config.max_value},
+            {"rook", base.rook_mg, config.c, config.min_value, config.max_value},
+            {"queen", base.queen_mg, config.c, config.min_value, config.max_value},
+        };
+        const SpsaMatchFn tied_fn = [&](const std::vector<double>& plus, const std::vector<double>& minus,
+                                        std::uint64_t game_seed) {
+            return play_material_match(apply_tied_material_theta(base, plus),
+                                       apply_tied_material_theta(base, minus), game_seed, config.match)
+                .score_a();
+        };
+        return run_spsa(tied, config.spsa, tied_fn);
+    }
     const std::vector<SpsaParam> params =
         make_spsa_params(kMaterialParameters, base, config.c, config.min_value, config.max_value);
 
