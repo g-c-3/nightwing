@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 188 — 2026-10-05 — Material sanity run reviewed; tied mg/eg target added
+
+**Built (all complete files):** REPLACE `src/tuner/spsa_eval.h`, `src/tuner/spsa_eval.cpp` (tied-material mode), `src/tuner/spsa_main.cpp` (target 2), `tests/spsa_eval_tests.cpp` (2 further tests), `.github/workflows/ci.yml` (target 2 in the description and summary), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
+
+**Run result:** The material sanity dispatch passed its criterion (start -342 Elo, tuned -8.7 Elo, 200 games each). `rook_eg` was clamped to 0 and `queen_eg` reached 40.5, which prompted the tied target. See DECISIONS.md 2026-10-05 (8).
+
+**Verification (Linux, GCC, Release):** zero warnings; 744/744 `ctest` (742 existing plus 2 new). YAML parsed with 25 inputs. A local trial of target 2 recovered from -338 to -24 Elo but overshot to about 1200-1500 per piece. Not run locally: Debug/ASan, Windows, macOS, wasm, or the workflow on GitHub.
+
+**Bugs fixed:** None.
+
+**Decisions made:** DECISIONS.md 2026-10-05 (8).
+
+**Open:** First CI run of these changes. Whether any real material or mobility run is worthwhile. EG-instability item remains paused. Pondering GUI verification is blocked.
+
+**Next session start point:** Confirm CI is green for these files, then decide whether to run a real SPSA run from the defaults (scale 1, small `c`, gated by SPRT) or to move to the next roadmap item.
+
+---
+
 ### Session 187 — 2026-10-05 — Material bound to SPSA as the sanity target
 
 **Built (all complete files):** REPLACE `src/tuner/spsa_eval.h`, `src/tuner/spsa_eval.cpp` (material match, scaling and `run_spsa_material()`), `src/tuner/spsa_main.cpp` (ninth argument `target`), `tests/spsa_eval_tests.cpp` (3 further tests), `.github/workflows/ci.yml` (`spsa_settings` accepts eight or nine values; summary names the target), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.

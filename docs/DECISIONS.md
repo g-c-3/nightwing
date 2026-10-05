@@ -4,6 +4,22 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-05 (8) — Material sanity run passed; endgame values were unidentifiable, so a tied mg/eg target was added
+
+**Result recorded:** The sanity dispatch `60 32 4 1 150 40 200 0 1` (material, scale 0) started at 4 W / 155 L / 41 D against the defaults (score 0.1225, -342 Elo, 200 games). After 60 iterations of 32 games the tuned vector scored 15 W / 20 L / 165 D (0.4875, -8.7 Elo, 95% interval roughly +/-35). Tuned values (mg/eg): knight 232.7/246.0, bishop 180.9/320.2, rook 523.4/0.0, queen 871.8/40.5. The plus-vector score averaged 0.445 over the first ten iterations and about 0.50 afterwards.
+
+**Interpretation:** The criterion in 2026-10-05 (7) is met: the start lost clearly and the tuned vector recovered nearly all of the deficit, so the optimizer responds to a large signal. The tuned vector is not a candidate. `rook_eg` sits at the lower bound of 0, which means it was clamped, and `queen_eg` is 40.5. The endgame values received almost no signal (fixed-depth games from random openings stay mostly weighted toward the middlegame values), the same identifiability problem as the open EG-term item, and the large step (c 150, r0 40) let them drift.
+
+**Decision:** `nightwing_spsa` target 2 ties each piece's endgame value to its middlegame value and tunes four parameters (knight, bishop, rook, queen). This matches the compiled-in defaults, where mg equals eg. Targets 0 and 1 are unchanged. A local trial from scale 0 (`25 32 4 1 150 40 100 0 2`) recovered from -338 to -24 Elo (100 games) but overshot: all four pieces ended between about 1200 and 1500. Relative to the anchored pawn, piece values appear weakly determined at fixed depth 4 once they are far above the defaults, because games where the pieces dominate are mostly drawn. A single seed and small samples limit this reading.
+
+**Consequence:** No real material run is queued. If one is wanted, it should start from the defaults (scale 1) with a small `c` (about 20), and any result needs SPRT gating before commit. Whether material or mobility tuning by self-play is worth its cost is an open question for a later session.
+
+**Alternatives considered:**
+- Lower bound at half the default for every endgame value: rejected; it hides the unidentifiability instead of removing it.
+- Tuning only middlegame values with the endgame values frozen at defaults: rejected; the tie keeps the existing mg equals eg design.
+
+---
+
 ### 2026-10-05 (7) — Base material bound to SPSA as the sanity-test target; the start must be zero, and the step must be material-sized
 
 **Decision:** `tuner::run_spsa_material()` (with `play_material_match()` and `scaled_material_weights()`) binds the eight non-anchored base material values (knight through queen, middlegame and endgame; pawn stays anchored at 100) to `run_spsa()` through `play_match()`'s `weights_a/_b` arguments. `nightwing_spsa` gained a ninth positional argument, `target` (0 = mobility, the default; 1 = material), and the workflow's `spsa_settings` input accepts eight or nine values, so existing eight-value dispatches behave as before. Material bounds are [0, 2000].
