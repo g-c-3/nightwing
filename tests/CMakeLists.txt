@@ -55,6 +55,7 @@ add_executable(nightwing_tests
     match_tests.cpp
     sprt_tests.cpp
     spsa_tests.cpp
+    spsa_eval_tests.cpp
     skill_tests.cpp
     contempt_tests.cpp
     thread_regression_tests.cpp
