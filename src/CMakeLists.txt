@@ -47,6 +47,7 @@ add_library(nightwing_lib STATIC
     tuner/match.cpp
     tuner/sprt.cpp
     tuner/spsa.cpp
+    tuner/spsa_eval.cpp
 )
 
 target_include_directories(nightwing_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -325,6 +326,9 @@ target_link_libraries(nightwing_match PRIVATE nightwing_lib)
 
 add_executable(nightwing_sprt tuner/sprt_main.cpp)
 target_link_libraries(nightwing_sprt PRIVATE nightwing_lib)
+
+add_executable(nightwing_spsa tuner/spsa_main.cpp)
+target_link_libraries(nightwing_spsa PRIVATE nightwing_lib)
 
 # Two-process UCI-vs-UCI match runner (ROADMAP.md Priority Fixes,
 # 2026-09-22). Kept in its own library, outside nightwing_lib, because it
