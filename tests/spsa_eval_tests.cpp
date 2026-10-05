@@ -145,3 +145,38 @@ TEST_CASE("run_spsa_material: a short run returns 8 in-bounds parameters", "[tun
         REQUIRE(v <= cfg.max_value);
     }
 }
+
+TEST_CASE("apply_tied_material_theta: mg and eg match per piece, pawn untouched, short theta tolerated", "[tuner][spsa]") {
+    const auto base = eval::default_material_weights();
+    const auto w = tuner::apply_tied_material_theta(base, {210.0, 220.0, 430.0, 800.0});
+    REQUIRE(w.knight_mg == 210.0);
+    REQUIRE(w.knight_eg == 210.0);
+    REQUIRE(w.bishop_mg == 220.0);
+    REQUIRE(w.bishop_eg == 220.0);
+    REQUIRE(w.rook_mg == 430.0);
+    REQUIRE(w.rook_eg == 430.0);
+    REQUIRE(w.queen_mg == 800.0);
+    REQUIRE(w.queen_eg == 800.0);
+    REQUIRE(w.pawn_mg == base.pawn_mg);
+    REQUIRE(w.pawn_eg == base.pawn_eg);
+    const auto partial = tuner::apply_tied_material_theta(base, {111.0});
+    REQUIRE(partial.knight_mg == 111.0);
+    REQUIRE(partial.bishop_mg == base.bishop_mg);
+}
+
+TEST_CASE("run_spsa_material: tied mode tunes 4 parameters and returns tied-compatible values", "[tuner][spsa]") {
+    init_tables();
+    tuner::SpsaMaterialConfig cfg;
+    cfg.spsa.iterations = 2;
+    cfg.spsa.seed = 5;
+    cfg.match = tiny_match();
+    cfg.start_scale = 0.7;
+    cfg.tie_mg_eg = true;
+    const tuner::SpsaResult r = tuner::run_spsa_material(cfg);
+    REQUIRE(r.iterations_run == 2);
+    REQUIRE(r.theta.size() == 4);
+    for (double v : r.theta) {
+        REQUIRE(v >= cfg.min_value);
+        REQUIRE(v <= cfg.max_value);
+    }
+}
