@@ -4,6 +4,20 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-05 (3) — SPSA bound to eval mobility weights through fixed-depth `play_match()`; defaults for iterations, games, depth and bounds chosen as untuned starting values
+
+**Decision:** `src/tuner/spsa_eval.h/.cpp` binds the SPSA core to `eval::MobilityWeights`. `play_mobility_match()` plays one mobility vector against another through `play_match()` using `MatchConfig::eval_weights_a/_b`, with material held at the compiled-in defaults for both sides. `run_spsa_mobility()` runs SPSA from `default_mobility_weights()` over `kMobilityParameters`. A CLI, `nightwing_spsa`, takes positional arguments (iterations, games per iteration, search depth, seed, c, r0, validation games), writes tuned `name=value` lines to stdout and progress to stderr, and optionally plays a validation match of the tuned vector against the defaults at a different seed.
+
+**Rationale:** The existing override path already carried mobility weights into played games, so no change to match or search code was required. Fixed-depth games keep runs reproducible and machine-speed independent, at the cost of not measuring time-managed play. Defaults are untuned starting values: 50 iterations, 8 games per iteration, depth 4 in the CLI; perturbation c = 2 (mobility weights are rounded to integers by the evaluator, so values under about 1 are invisible to play); bounds 0 to 20 (keeps mobility bonuses non-negative and well below material scale).
+
+**Scope of what this does NOT yet establish:** that the bound optimizer finds anything better than the defaults. Only plumbing was tested (tiny depth-2 matches). With 8 games per iteration, the score signal per iteration is very noisy; whether that is enough to move the parameters usefully is an empirical question for a real run. Any tuned vector still requires SPRT gating before commit.
+
+**Alternatives considered:**
+- A generic binding templated over every Weights type in one step: deferred; mobility is the smallest table (8 parameters) and proves the path before the other five tables are wired.
+- Wiring the binding into the two-process UCI runner first: deferred; that path is for search constants and is a separate step.
+
+---
+
 ### 2026-10-05 (2) — Singular extensions kept enabled at `kSingularMinDepth` 8; isolation match closed on a non-significant positive result
 
 **Decision:** The singular-extension isolation item was closed with singular extensions left enabled and `kSingularMinDepth` unchanged at 8. No code changed.

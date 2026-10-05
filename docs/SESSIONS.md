@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 183 — 2026-10-05 — SPSA bound to eval mobility weights
+
+**Built (all complete files):** NEW `src/tuner/spsa_eval.h`, `src/tuner/spsa_eval.cpp`, `src/tuner/spsa_main.cpp`, `tests/spsa_eval_tests.cpp`; REPLACE `src/CMakeLists.txt` (adds `tuner/spsa_eval.cpp` to `nightwing_lib` and the `nightwing_spsa` executable), `tests/CMakeLists.txt` (adds `spsa_eval_tests.cpp`), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
+
+**Verification (Linux, GCC, Release):** zero warnings; 737/737 `ctest` (734 existing plus 3 new). The CLI was smoke-tested on a tiny configuration and printed eight weights and a validation line. Not run locally: Debug/ASan, Windows, macOS, wasm.
+
+**Bugs fixed:** None in the repository. A local build interrupted by a time limit left a 0-byte test binary in the sandbox, removed and relinked.
+
+**Decisions made:** DECISIONS.md 2026-10-05 (3).
+
+**Open:** First CI run of these changes. No real tuning run exists. The EG-instability item remains paused. Pondering GUI verification is blocked.
+
+**Next session start point:** Check CI for this commit. Then add a manually dispatched workflow job to `.github/workflows/ci.yml` that builds and runs `nightwing_spsa` with inputs for iterations, games per iteration, depth, seed, c, r0 and validation games, uploading the output as an artifact. Read the current `ci.yml` in full first.
+
+---
+
 ### Session 182 — 2026-10-05 — CI confirmed for the SPSA core; singular-extension item closed
 
 **Built:** No source changes. REPLACE `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
