@@ -11,8 +11,11 @@
 // defaults for both sides, and returns side A's score. Colors alternate
 // inside play_match(), so neither vector gets a tempo advantage.
 //
-// Scope: eval mobility only (8 parameters). Other eval terms follow the
-// same pattern through their own ParameterRef tables. Search constants
+// Scope: eval mobility (8 parameters) and, as a sanity-test target with a
+// large and certain playing-strength effect, the base material values
+// (8 non-anchored parameters; pawn stays anchored at 100) through
+// play_match()'s weights_a/_b arguments. Other eval terms follow the same
+// pattern through their own ParameterRef tables. Search constants
 // need the UCI-option binding (separate, later step). Fixed-depth games
 // make runs reproducible and machine-speed independent (match.h), at the
 // cost of not measuring time-managed play; any tuned value still needs
@@ -69,5 +72,45 @@ struct SpsaMobilityConfig {
 /// config.start_scale) and returns the optimizer result (theta in
 /// kMobilityParameters order).
 [[nodiscard]] SpsaResult run_spsa_mobility(const SpsaMobilityConfig& config);
+
+/// Settings for run_spsa_material(). Material is the sanity-test target
+/// because a damaged material table has a large, certain effect on play
+/// (unlike mobility, whose effect at fixed depth 6 is only a few Elo --
+/// docs/DECISIONS.md, 2026-10-05 (6)).
+struct SpsaMaterialConfig {
+    SpsaConfig spsa;
+    /// Per-iteration match. `num_games` is the games per SPSA iteration;
+    /// eval_weights_a/_b are cleared internally (material only).
+    MatchConfig match;
+    /// Initial perturbation size for every non-anchored material parameter.
+    /// Material values are in the hundreds, so the default is 20 (untuned).
+    double c = 20.0;
+    /// Bounds applied to every parameter (untuned).
+    double min_value = 0.0;
+    double max_value = 2000.0;
+    /// Multiplier applied to every NON-ANCHORED default material value to
+    /// form the starting vector (1.0 = the compiled-in defaults; pawn is
+    /// anchored and always stays at its default). A value such as 0.7 is a
+    /// deliberately wrong start whose deficit against the defaults is large
+    /// and certain. The result is clamped to [min_value, max_value].
+    double start_scale = 1.0;
+};
+
+/// Plays material vector `a` against `b` (all other eval terms at their
+/// defaults for both) through play_match() and returns the result from A's
+/// side.
+[[nodiscard]] MatchResult play_material_match(const eval::MaterialWeights& a,
+                                              const eval::MaterialWeights& b,
+                                              std::uint64_t base_seed, const MatchConfig& match);
+
+/// Returns default_material_weights() with every non-anchored parameter
+/// (knight through queen, mg and eg) multiplied by `scale` (not clamped,
+/// not rounded). The anchored pawn values are left unchanged.
+[[nodiscard]] eval::MaterialWeights scaled_material_weights(double scale);
+
+/// Runs SPSA over the non-anchored eval::MaterialWeights from
+/// scaled_material_weights(config.start_scale) and returns the optimizer
+/// result (theta in kMaterialParameters order, anchored entries skipped).
+[[nodiscard]] SpsaResult run_spsa_material(const SpsaMaterialConfig& config);
 
 } // namespace nightwing::tuner
