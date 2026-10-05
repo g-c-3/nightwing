@@ -1,0 +1,78 @@
+// tests/spsa_eval_tests.cpp
+//
+// Tests for src/tuner/spsa_eval.h/.cpp: the in-process SPSA-to-play_match
+// binding for eval mobility weights. Matches are kept tiny (depth 2, few
+// games) so these stay fast; they check plumbing and invariants, not
+// strength. Each TEST_CASE initializes the board tables itself, like
+// tests/match_tests.cpp.
+
+#include <catch2/catch_test_macros.hpp>
+
+#include "board/attacks.h"
+#include "board/board.h"
+#include "board/masks.h"
+#include "board/zobrist.h"
+#include "eval/mobility.h"
+#include "tuner/spsa_eval.h"
+#include "tuner/tune.h"
+
+using namespace nightwing;
+
+namespace {
+
+void init_tables() {
+    board::init_masks();
+    board::init_magic_bitboards();
+    board::init_zobrist_keys();
+}
+
+tuner::MatchConfig tiny_match() {
+    tuner::MatchConfig m;
+    m.num_games = 2;
+    m.search_depth = 2;
+    m.random_opening_plies = 6;
+    m.max_plies = 60;
+    return m;
+}
+
+} // namespace
+
+TEST_CASE("play_mobility_match: identical vectors play a complete, consistent match", "[tuner][spsa]") {
+    init_tables();
+    const auto w = eval::default_mobility_weights();
+    const tuner::MatchResult r = tuner::play_mobility_match(w, w, 7, tiny_match());
+    REQUIRE(r.games_played == 2);
+    REQUIRE(r.wins_a + r.wins_b + r.draws == 2);
+    REQUIRE(r.score_a() >= 0.0);
+    REQUIRE(r.score_a() <= 1.0);
+}
+
+TEST_CASE("play_mobility_match: same seed reproduces the same result", "[tuner][spsa]") {
+    init_tables();
+    eval::MobilityWeights a = eval::default_mobility_weights();
+    a.knight_mg = 12.0;
+    const auto b = eval::default_mobility_weights();
+    const tuner::MatchResult r1 = tuner::play_mobility_match(a, b, 11, tiny_match());
+    const tuner::MatchResult r2 = tuner::play_mobility_match(a, b, 11, tiny_match());
+    REQUIRE(r1.wins_a == r2.wins_a);
+    REQUIRE(r1.wins_b == r2.wins_b);
+    REQUIRE(r1.draws == r2.draws);
+}
+
+TEST_CASE("run_spsa_mobility: a short run returns 8 in-bounds parameters", "[tuner][spsa]") {
+    init_tables();
+    tuner::SpsaMobilityConfig cfg;
+    cfg.spsa.iterations = 2;
+    cfg.spsa.seed = 5;
+    cfg.match = tiny_match();
+    cfg.min_value = 0.0;
+    cfg.max_value = 20.0;
+    const tuner::SpsaResult r = tuner::run_spsa_mobility(cfg);
+    REQUIRE(r.iterations_run == 2);
+    REQUIRE(r.theta.size() == tuner::kMobilityParameters.size());
+    REQUIRE(r.plus_scores.size() == 2);
+    for (double v : r.theta) {
+        REQUIRE(v >= 0.0);
+        REQUIRE(v <= 20.0);
+    }
+}
