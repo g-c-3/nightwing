@@ -127,12 +127,12 @@ on:
         required: false
         default: "1"
       # spsa pipeline (nightwing_spsa, eval mobility weights). One input
-      # holds all seven settings because GitHub allows at most 25
+      # holds all eight settings because GitHub allows at most 25
       # workflow_dispatch inputs and this workflow already used 24.
       spsa_settings:
-        description: "spsa: seven space-separated values - iterations games_per_iter depth seed c r0 validation_games (default 100 16 6 1 2 8 400, about one hour; keep c at least 1)"
+        description: "spsa: eight space-separated values - iterations games_per_iter depth seed c r0 validation_games start_scale (default 100 16 6 1 2 8 400 1; start_scale 1 = current weights, 0 = deliberately wrong start; keep c at least 1)"
         required: false
-        default: "100 16 6 1 2 8 400"
+        default: "100 16 6 1 2 8 400 1"
 
 jobs:
   build-and-test:
@@ -740,27 +740,27 @@ jobs:
 
       # Positional args (spsa_main.cpp's own header comment):
       #   nightwing_spsa [iterations] [games_per_iteration] [search_depth] [seed]
-      #                  [c] [r0] [validation_games]
+      #                  [c] [r0] [validation_games] [start_scale]
       - name: Run SPSA
         working-directory: build
         env:
           SPSA_SETTINGS: ${{ inputs.spsa_settings }}
         run: |
           set -euo pipefail
-          read -r SPSA_ITERATIONS SPSA_GAMES SPSA_DEPTH SPSA_SEED SPSA_C SPSA_R0 SPSA_VALIDATION <<< "$SPSA_SETTINGS"
-          for v in "$SPSA_ITERATIONS" "$SPSA_GAMES" "$SPSA_DEPTH" "$SPSA_SEED" "$SPSA_C" "$SPSA_R0" "$SPSA_VALIDATION"; do
+          read -r SPSA_ITERATIONS SPSA_GAMES SPSA_DEPTH SPSA_SEED SPSA_C SPSA_R0 SPSA_VALIDATION SPSA_START <<< "$SPSA_SETTINGS"
+          for v in "$SPSA_ITERATIONS" "$SPSA_GAMES" "$SPSA_DEPTH" "$SPSA_SEED" "$SPSA_C" "$SPSA_R0" "$SPSA_VALIDATION" "${SPSA_START:-x}"; do
             if ! [[ "$v" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-              echo "Bad spsa_settings (need exactly seven numbers): '$SPSA_SETTINGS'" >&2
+              echo "Bad spsa_settings (need exactly eight numbers): '$SPSA_SETTINGS'" >&2
               exit 1
             fi
           done
           ./src/nightwing_spsa "$SPSA_ITERATIONS" "$SPSA_GAMES" "$SPSA_DEPTH" \
-            "$SPSA_SEED" "$SPSA_C" "$SPSA_R0" "$SPSA_VALIDATION" \
+            "$SPSA_SEED" "$SPSA_C" "$SPSA_R0" "$SPSA_VALIDATION" "$SPSA_START" \
             2> >(tee spsa_progress.txt >&2) | tee spsa_result.txt
           {
             echo "### SPSA result (eval mobility weights)"
             echo ""
-            echo "iterations=$SPSA_ITERATIONS games/iter=$SPSA_GAMES depth=$SPSA_DEPTH seed=$SPSA_SEED c=$SPSA_C r0=$SPSA_R0 validation=$SPSA_VALIDATION"
+            echo "iterations=$SPSA_ITERATIONS games/iter=$SPSA_GAMES depth=$SPSA_DEPTH seed=$SPSA_SEED c=$SPSA_C r0=$SPSA_R0 validation=$SPSA_VALIDATION start_scale=$SPSA_START"
             echo ""
             echo '```'
             cat spsa_result.txt
