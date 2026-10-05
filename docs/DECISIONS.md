@@ -4,6 +4,21 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-05 (4) — SPSA run started from a manual workflow with a single settings input; defaults sized for about one hour
+
+**Decision:** `ci.yml` gained a fifth `pipeline` choice, `spsa`, and a `spsa-tune` job that builds and runs `nightwing_spsa`. All seven settings (iterations, games per iteration, depth, seed, c, r0, validation games) are passed as one space-separated input, `spsa_settings`, default `100 16 6 1 2 8 400`. The job validates that exactly seven numbers were given, passes them through `env:` rather than interpolating into the script, writes the tuned weights and the validation line to the job summary, and uploads the result and progress files as an artifact. The job timeout is 355 minutes.
+
+**Rationale:** GitHub allows at most 25 `workflow_dispatch` inputs and the workflow already used 24, so seven separate inputs would have caused the workflow file to be rejected; one input keeps the total at 25. Sizing came from timing the binary: about 0.12 s per depth-4 game, 1.6 s per depth-6 game and 5.6 s per depth-7 game on the development machine, so the default (100 x 16 tuning games plus 400 validation games at depth 6) is about one hour, with margin for slower runners. The step gain default is 8 instead of the optimizer's own default of 1: at 1 the per-iteration step measured about 0.1 weight units, too small to move an integer-rounded parameter over a run of this length. Both values are untuned starting points.
+
+**Scope of what this does NOT yet establish:** that these settings produce a useful result. The signal per iteration (16 games) is noisy and the first real run may show the weights drifting without a clear improvement; the validation match at 400 games has a 95% interval of roughly +/-35 Elo, so it can only detect a large effect. Any candidate still requires SPRT gating before commit.
+
+**Alternatives considered:**
+- Separate inputs per setting: rejected, exceeds the 25-input limit.
+- Raising the limit by removing or merging existing inputs: rejected; unrelated pipelines would be disturbed.
+- Reading the optimizer's output only from the log: rejected; the job summary is readable on a phone without downloading anything.
+
+---
+
 ### 2026-10-05 (3) — SPSA bound to eval mobility weights through fixed-depth `play_match()`; defaults for iterations, games, depth and bounds chosen as untuned starting values
 
 **Decision:** `src/tuner/spsa_eval.h/.cpp` binds the SPSA core to `eval::MobilityWeights`. `play_mobility_match()` plays one mobility vector against another through `play_match()` using `MatchConfig::eval_weights_a/_b`, with material held at the compiled-in defaults for both sides. `run_spsa_mobility()` runs SPSA from `default_mobility_weights()` over `kMobilityParameters`. A CLI, `nightwing_spsa`, takes positional arguments (iterations, games per iteration, search depth, seed, c, r0, validation games), writes tuned `name=value` lines to stdout and progress to stderr, and optionally plays a validation match of the tuned vector against the defaults at a different seed.

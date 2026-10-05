@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 184 — 2026-10-05 — SPSA workflow added
+
+**Built (all complete files):** REPLACE `.github/workflows/ci.yml` (new `spsa` pipeline choice, `spsa_settings` input, `spsa-tune` job), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
+
+**Process:** CI for the mobility binding was confirmed green on every leg (Linux and Windows 737/737, macOS 735/735, ThreadSanitizer clean, wasm built, release `v1.0.729` published). A request for run instructions revealed that nothing could start `nightwing_spsa` from a phone, so the workflow job was built next. A first draft with seven separate inputs was caught before delivery because it would have exceeded GitHub's 25-input limit.
+
+**Verification:** YAML parsed with 25 inputs and all expected jobs; the run-step shell logic was exercised under bash (valid settings, progress capture, rejection of too few values). The workflow itself has not been run on GitHub.
+
+**Bugs fixed:** None in source.
+
+**Decisions made:** DECISIONS.md 2026-10-05 (4).
+
+**Open:** First CI run of this workflow file (it must still parse and leave all existing jobs working). First real SPSA dispatch. The EG-instability item remains paused. Pondering GUI verification is blocked.
+
+**Next session start point:** Confirm CI is green for the `ci.yml` commit, then review the output of the first `spsa` dispatch (job summary and the `spsa-results` artifact) and decide whether the settings need changing before any SPRT gating of a candidate.
+
+---
+
 ### Session 183 — 2026-10-05 — SPSA bound to eval mobility weights
 
 **Built (all complete files):** NEW `src/tuner/spsa_eval.h`, `src/tuner/spsa_eval.cpp`, `src/tuner/spsa_main.cpp`, `tests/spsa_eval_tests.cpp`; REPLACE `src/CMakeLists.txt` (adds `tuner/spsa_eval.cpp` to `nightwing_lib` and the `nightwing_spsa` executable), `tests/CMakeLists.txt` (adds `spsa_eval_tests.cpp`), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
