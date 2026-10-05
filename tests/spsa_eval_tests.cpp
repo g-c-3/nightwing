@@ -76,3 +76,28 @@ TEST_CASE("run_spsa_mobility: a short run returns 8 in-bounds parameters", "[tun
         REQUIRE(v <= 20.0);
     }
 }
+
+TEST_CASE("scaled_mobility_weights: scale 1 is the defaults, scale 0 is all zeros", "[tuner][spsa]") {
+    const auto def = eval::default_mobility_weights();
+    const auto same = tuner::scaled_mobility_weights(1.0);
+    const auto zero = tuner::scaled_mobility_weights(0.0);
+    for (const auto& ref : tuner::kMobilityParameters) {
+        REQUIRE(ref.get(same) == ref.get(def));
+        REQUIRE(ref.get(zero) == 0.0);
+    }
+}
+
+TEST_CASE("run_spsa_mobility: start_scale 0 starts every parameter near zero", "[tuner][spsa]") {
+    init_tables();
+    tuner::SpsaMobilityConfig cfg;
+    cfg.spsa.iterations = 1;
+    cfg.spsa.seed = 3;
+    cfg.match = tiny_match();
+    cfg.start_scale = 0.0;
+    const tuner::SpsaResult r = tuner::run_spsa_mobility(cfg);
+    REQUIRE(r.theta.size() == tuner::kMobilityParameters.size());
+    for (double v : r.theta) {
+        REQUIRE(v >= 0.0);
+        REQUIRE(v <= 1.0); // one step of at most about 0.94 from 0 at default r0
+    }
+}
