@@ -24,6 +24,7 @@ on:
           - pgo
           - sprt
           - uci-match
+          - spsa
         default: tuning
       selfplay_games:
         description: "nightwing_selfplay: number of self-play games to generate training data from"
@@ -125,6 +126,13 @@ on:
         description: "uci-match: base seed for the random openings"
         required: false
         default: "1"
+      # spsa pipeline (nightwing_spsa, eval mobility weights). One input
+      # holds all seven settings because GitHub allows at most 25
+      # workflow_dispatch inputs and this workflow already used 24.
+      spsa_settings:
+        description: "spsa: seven space-separated values - iterations games_per_iter depth seed c r0 validation_games (default 100 16 6 1 2 8 400, about one hour; keep c at least 1)"
+        required: false
+        default: "100 16 6 1 2 8 400"
 
 jobs:
   build-and-test:
@@ -704,6 +712,70 @@ jobs:
             build/training_data.txt
             build/tuned_weights.txt
             build/sprt_result.txt
+          retention-days: 30
+
+  # ROADMAP.md, "SPSA tuner" item, step 1b: runs nightwing_spsa
+  # (src/tuner/spsa_main.cpp) over the eval mobility weights with
+  # fixed-depth self-play matches. Manually triggered only (`workflow_dispatch`
+  # with pipeline = spsa). Inputs go through `env:` rather than being
+  # interpolated into the script. The result is also written to the job
+  # summary so it can be read on a phone without downloading the artifact.
+  # The tuned values are a CANDIDATE only: they still need SPRT gating
+  # before being committed.
+  spsa-tune:
+    if: github.event_name == 'workflow_dispatch' && inputs.pipeline == 'spsa'
+    runs-on: ubuntu-latest
+    name: SPSA tuning (eval mobility weights)
+    timeout-minutes: 355
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure CMake (Release, no tests)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF
+
+      - name: Build nightwing_spsa
+        run: cmake --build build --config Release --parallel --target nightwing_spsa
+
+      # Positional args (spsa_main.cpp's own header comment):
+      #   nightwing_spsa [iterations] [games_per_iteration] [search_depth] [seed]
+      #                  [c] [r0] [validation_games]
+      - name: Run SPSA
+        working-directory: build
+        env:
+          SPSA_SETTINGS: ${{ inputs.spsa_settings }}
+        run: |
+          set -euo pipefail
+          read -r SPSA_ITERATIONS SPSA_GAMES SPSA_DEPTH SPSA_SEED SPSA_C SPSA_R0 SPSA_VALIDATION <<< "$SPSA_SETTINGS"
+          for v in "$SPSA_ITERATIONS" "$SPSA_GAMES" "$SPSA_DEPTH" "$SPSA_SEED" "$SPSA_C" "$SPSA_R0" "$SPSA_VALIDATION"; do
+            if ! [[ "$v" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+              echo "Bad spsa_settings (need exactly seven numbers): '$SPSA_SETTINGS'" >&2
+              exit 1
+            fi
+          done
+          ./src/nightwing_spsa "$SPSA_ITERATIONS" "$SPSA_GAMES" "$SPSA_DEPTH" \
+            "$SPSA_SEED" "$SPSA_C" "$SPSA_R0" "$SPSA_VALIDATION" \
+            2> >(tee spsa_progress.txt >&2) | tee spsa_result.txt
+          {
+            echo "### SPSA result (eval mobility weights)"
+            echo ""
+            echo "iterations=$SPSA_ITERATIONS games/iter=$SPSA_GAMES depth=$SPSA_DEPTH seed=$SPSA_SEED c=$SPSA_C r0=$SPSA_R0 validation=$SPSA_VALIDATION"
+            echo ""
+            echo '```'
+            cat spsa_result.txt
+            echo '```'
+            echo ""
+            echo "Defaults are knight 4/4, bishop 5/5, rook 2/4, queen 1/2 (mg/eg). A candidate only: SPRT-gate before committing."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload SPSA artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: spsa-results
+          path: |
+            build/spsa_result.txt
+            build/spsa_progress.txt
           retention-days: 30
 
   # ROADMAP.md Priority Fixes (2026-09-22), "Engine-vs-engine match
