@@ -20,6 +20,7 @@ add_library(nightwing_lib STATIC
     eval/piece_bonuses.cpp
     eval/knight_outposts.cpp
     eval/space.cpp
+    eval/rook_files.cpp
     eval/threats.cpp
     eval/king_tropism.cpp
     eval/trapped_pieces.cpp
