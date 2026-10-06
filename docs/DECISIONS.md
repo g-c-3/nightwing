@@ -4,6 +4,22 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-06 (5) — Remaining interaction candidates are Texel-fitted before their SPRT; candidate 3 must first be scoped against existing rook terms
+
+**Decision:** For candidates 3 and 4 of the restricted nonlinear feature interactions item, the candidate's constants are fitted with the project's Texel tooling on self-play data before the SPRT is run, rather than hand-estimated constants going straight into the SPRT. This resolves the open option recorded in DECISIONS 2026-10-06 (4). The roadmap acceptance rule is unchanged: a term that does not win its SPRT is removed.
+
+**Rationale:** Two consecutive hand-estimated interaction terms (candidates 1 and 2) failed their SPRTs. A fitted constant is a stronger bet than a first-draft guess, and the roadmap item already requires each candidate to be part of the tunable parameter set.
+
+**Cost, recorded so it is not underestimated:** The tuner fits a term only when that term has (a) its own runtime weights struct, (b) a `ParameterRef` table in `src/tuner/tune.h`, (c) a nullable weights override threaded through `eval::evaluate()` and `compute_loss()`, and (d) a `tune_*` function, the pattern used by space (Tier 0 Step 8a) and the other tuned terms. Self-play data must also be generated in CI by the existing manual tuning pipeline. Each candidate therefore needs a plumbing step, a CI data-and-fit run, and then the SPRT, spread over more than one session. The constants of the earlier bishop-pair terms are plain `inline constexpr` values and are not tunable, which is why they are not a template for this.
+
+**Scoping constraint for candidate 3:** `eval/piece_bonuses.h` already awards a flat per-rook bonus on open and semi-open files (`kRookOpenFileBonus`, `kRookSemiOpenFileBonus`), and rook mobility already rewards open lines. A candidate that only re-rewards a rook on an open file would double-count, as the first bishop-pair idea nearly did. The candidate must measure a distinct quantity, for example scaling an additional rook bonus by the total number of fully open files on the board, and its design must be checked against those existing terms before any code is written.
+
+**Alternatives considered:**
+- Hand constants straight to the SPRT: rejected for now, given two consecutive failures.
+- Using SPSA through the existing self-play tuner instead of Texel: possible, but slower per evaluation and not what the roadmap item names; not adopted.
+
+---
+
 ### 2026-10-06 (4) — Locked-centre bishop pair term rejected by SPRT and removed
 
 **Decision:** Candidate 2 of the restricted nonlinear feature interactions item (`eval::bishop_pair_closedness_value()`, DECISIONS 2026-10-06 (3)) is removed. `src/eval/bishop_pair_closedness.h`, `src/eval/bishop_pair_closedness.cpp` and `tests/bishop_pair_closedness_tests.cpp` are deleted, and the include, the one sum term in `src/eval/eval.cpp` and the two CMake registrations are reverted. The resulting source tree is byte-identical to commit `7c833da`, which passed every CI job (744/744 tests).

@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 193 — 2026-10-06 — Texel-first approach adopted for candidates 3 and 4; no code changed
+
+**Verified first:** CI for the candidate 2 revert (`6ee0494`) was green on every job (744/744 on Linux and Windows, 742/742 on macOS, ThreadSanitizer and WebAssembly passing, release `v1.0.773` published); the three `bishop_pair_closedness` files are absent and the tree matches `7c833da`.
+
+**Decision:** Remaining interaction candidates are fitted with the Texel tooling before their SPRT. See DECISIONS.md 2026-10-06 (5), which also records the plumbing cost and the overlap risk of candidate 3 with the existing rook open-file bonuses and rook mobility.
+
+**Built:** Docs only: REPLACE `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`. No source files changed. Context was approaching its limit, so work stopped before starting a partially built term.
+
+**Bugs fixed:** None.
+
+**Open:** Candidate 3 design, tuner plumbing, CI fit, SPRT. Candidate 4 after that. EG-instability item remains paused. Pondering GUI verification is blocked.
+
+**Next session start point:** Design candidate 3 against `eval/piece_bonuses.h` and `eval/mobility.h` so it measures a quantity they do not (for example total open files on the board scaling an extra rook bonus), then implement its weights struct, `ParameterRef` table, nullable override through `evaluate()`/`compute_loss()` and `tune_*` function using the space term (Tier 0 Step 8a) as the template, with tests.
+
+---
+
 ### Session 192 — 2026-10-06 — Candidate 2 rejected by SPRT and removed
 
 **Evidence reviewed:** CI logs for the candidate 2 commit: all test jobs green (752/752 on Linux and Windows, 750/750 on macOS, ThreadSanitizer and WebAssembly passing). The SPRT job (depth 6, SPRT 0/+8, alpha=beta=0.1) stopped at 1546 games: candidate 662, draws 153, baseline 731; LLR -2.223; AcceptH0; about -15.5 Elo.
