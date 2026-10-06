@@ -4,6 +4,22 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-07 (6) — Candidate 3 designed as rook count times board-wide file openness; term built standalone before tuner plumbing
+
+**Decision:** Candidate 3 of the restricted nonlinear feature interactions item is `eval::rook_files_value()` (`src/eval/rook_files.h/.cpp`). Per side, the score is `min(rooks, 2) * (open_bonus * open_files + semi_open_bonus * semi_open_files_for_that_side)`, where `open_files` counts files holding no pawn of either color and `semi_open_files_for_that_side` counts files with no own pawn and at least one enemy pawn. Starting constants are `kRookOpenFilesBonus` = {2, 3} and `kRookSemiOpenFilesBonus` = {1, 2} (middlegame, endgame), untuned and intended to be replaced by a Texel fit before the SPRT, per DECISIONS 2026-10-06 (5).
+
+**Scoping against existing terms (the check required by DECISIONS 2026-10-06 (5)):** The term ignores the file a rook stands on, so it does not re-reward `kRookOpenFileBonus`/`kRookSemiOpenFileBonus` in `eval/piece_bonuses.h`, and it does not read attacked squares, so it does not overlap rook mobility. A test asserts that moving a rook between files, with the pawn structure fixed, leaves the value unchanged. The interaction is the product of rook count and file count; neither factor alone is rewarded. The rook count is capped at two so that promoted extra rooks do not scale the bonus further.
+
+**Known risk:** Fully open files and rook count both correlate with the existing pawn-count-based terms, and the term rewards rooks that have no access to the files counted. A small fitted value or an SPRT rejection is a plausible outcome, and the term is removed if it fails, per the roadmap acceptance rule.
+
+**Build order:** The term, its weights struct and its tests were built first as a self-contained unit, registered in CMake, and deliberately not called from `evaluate()`. Tuner plumbing (override threading through `evaluate()` and `compute_loss()`, `ParameterRef` table, `tune_rook_files()`, CLI mode, CI matrix entry) is a separate step, because that plumbing touches many call sites in search, quiescence and the tuner and was judged too large to complete safely in the remaining context. Because the term is not wired in, the source tree has unchanged playing behavior and the existing 744 tests are unaffected.
+
+**Alternatives considered:**
+- Bonus scaled only by open files in front of a rook's own file: rejected as it re-measures the rook's own file, which `piece_bonuses.h` already rewards.
+- Counting all rooks without a cap: rejected to keep the term bounded.
+
+---
+
 ### 2026-10-06 (5) — Remaining interaction candidates are Texel-fitted before their SPRT; candidate 3 must first be scoped against existing rook terms
 
 **Decision:** For candidates 3 and 4 of the restricted nonlinear feature interactions item, the candidate's constants are fitted with the project's Texel tooling on self-play data before the SPRT is run, rather than hand-estimated constants going straight into the SPRT. This resolves the open option recorded in DECISIONS 2026-10-06 (4). The roadmap acceptance rule is unchanged: a term that does not win its SPRT is removed.

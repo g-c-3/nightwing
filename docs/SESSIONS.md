@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 194 — 2026-10-07 — Candidate 3 term built standalone (rook count times file openness), not yet wired
+
+**Verified first:** Docs and `main` tree read; Session 193 left candidate 3 at the design step with no source changes.
+
+**Decision:** Candidate 3 scoped against `eval/piece_bonuses.h` and `eval/mobility.h` as a product of rook count and board-wide open/semi-open file counts that ignores the rook's own file. See DECISIONS.md 2026-10-07 (6) .
+
+**Built (all complete files):** NEW `src/eval/rook_files.h`, NEW `src/eval/rook_files.cpp`, NEW `tests/rook_files_tests.cpp` (7 tests), REPLACE `src/CMakeLists.txt` and `tests/CMakeLists.txt` (one registration each), REPLACE `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`. `evaluate()` was not changed, so engine behavior is unchanged.
+
+**Verification (Linux, GCC, Release):** no compiler errors or warnings in the build output filtered for them; 751/751 `ctest` (744 existing plus 7 new). `bench` was not run because the term is not called from `evaluate()`. Not run locally: Debug/ASan, Windows, macOS, wasm.
+
+**Bugs fixed:** None.
+
+**Open:** Tuner plumbing for `RookFilesWeights`, CI Texel fit, wiring into `evaluate()`, SPRT with `bench` cost check. Candidate 4 after that. EG-instability item remains paused. Pondering GUI verification is blocked.
+
+**Next session start point:** Thread `const RookFilesWeights*` through `eval::EvalWeightsOverride`, `eval::evaluate()` (insert after `pawns_weights`, then fix every call site the compiler flags in `search.cpp`, `quiescence.cpp`, `tune.cpp` and tests, checking that no call passing a literal `nullptr` after `pawns_weights` silently shifts), and `tuner::compute_loss()`; add `kRookFilesParameters` and `tune_rook_files()` using `tune_space()` as the template, a `--rook-files` mode in `tune_main.cpp` and a CI tuning matrix entry; call `rook_files_value(pos, rook_files_weights)` in the `evaluate()` sum; add tests; then run the CI fit.
+
+---
+
 ### Session 193 — 2026-10-06 — Texel-first approach adopted for candidates 3 and 4; no code changed
 
 **Verified first:** CI for the candidate 2 revert (`6ee0494`) was green on every job (744/744 on Linux and Windows, 742/742 on macOS, ThreadSanitizer and WebAssembly passing, release `v1.0.773` published); the three `bishop_pair_closedness` files are absent and the tree matches `7c833da`.
