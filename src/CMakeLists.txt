@@ -22,7 +22,6 @@ add_library(nightwing_lib STATIC
     eval/space.cpp
     eval/threats.cpp
     eval/king_tropism.cpp
-    eval/passed_pawn_king.cpp
     eval/trapped_pieces.cpp
     eval/tempo.cpp
     eval/material_imbalance.cpp
