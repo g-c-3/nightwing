@@ -4,6 +4,23 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-06 (3) — Candidate 2 built as a locked-central-pawn scaling of the bishop pair, additive to the existing pawn-count term
+
+**Decision:** Candidate 2 of the restricted nonlinear feature interactions item ("bishop pair scaled by openness") is implemented in `src/eval/bishop_pair_closedness.h/.cpp` as `bishop_pair_closedness_value()`. Each side owning two or more bishops receives `kBishopPairPerLockedCentralPair = {-4, -3}` times the number of locked central pawn pairs, where a locked pair is a White pawn on files c-f with a Black pawn directly in front of it, counted once. The term is added to the evaluation sum next to `material_imbalance_value()`. It is first-draft, untuned, and provisional until the SPRT below completes.
+
+**Rationale:** `eval/material_imbalance.h` already scales the bishop pair by missing pawns (`kBishopPairPerMissingPawn = {2, 3}`), so a second term keyed to total pawn count would double-count. Total pawn count cannot tell an open position from a closed one with the same number of pawns, for example a locked French or King's Indian centre. The new term measures that distinct quantity. It is additive to, not a replacement for, both `kBishopPairBonus` and `kBishopPairPerMissingPawn`, so no green code was modified.
+
+**Alternatives considered:**
+- Replacing the per-missing-pawn term with a better openness measure: rejected for this step; it changes already-accepted, tested behavior and would confound the SPRT, since the match could not separate the replacement from the new signal.
+- Skipping candidate 2 as redundant: rejected; the two terms measure different quantities, so redundancy is an empirical question for the SPRT rather than a design-time conclusion.
+- Counting locked pawns on all files: rejected; locked wing pawns do not shut the central diagonals the pair relies on, and including them would blur what the term measures.
+
+**Tunability:** The constant is an `inline constexpr Score` in its header, matching `kBishopPairBonus` and `kBishopPairPerMissingPawn`, neither of which is in a weights struct either. It is therefore not yet exposed to the Texel or SPSA tuner. Exposing it is deferred until the term passes the SPRT.
+
+**Verification so far:** Release build with no compiler warnings; 752/752 `ctest` (744 existing plus 8 new); `bench` CPU time per node ratio 0.993 against `6e2dcbd`, within noise, with a different bench node count (35722 against 36154), confirming the term affects evaluation. The CI SPRT is pending. Acceptance requires an SPRT win; otherwise the term is removed.
+
+---
+
 ### 2026-10-06 (2) — Passed-pawn king proximity rejected and removed; the SPRT showed no gain and the term cost nodes-per-second
 
 **Decision:** Candidate 1 of the restricted nonlinear feature interactions item (`eval::passed_pawn_king_value()`) is removed from the tree. `src/eval/passed_pawn_king.h`, `src/eval/passed_pawn_king.cpp` and `tests/passed_pawn_king_tests.cpp` are deleted, and the one-line wiring in `src/eval/eval.cpp` plus the two CMake registrations are reverted. The resulting source tree is byte-identical to commit `6e2dcbd`, the last commit before the term was added.

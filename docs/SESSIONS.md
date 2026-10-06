@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 191 — 2026-10-06 — Candidate 2 (bishop pair and locked centre) built, SPRT pending
+
+**Verified first:** CI for the candidate 1 revert (`7c833da`) was green on every job (744/744 on Linux and Windows, 742/742 on macOS, ThreadSanitizer and WebAssembly passing, rolling and tagged releases published).
+
+**Built (all complete files):** NEW `src/eval/bishop_pair_closedness.h`, NEW `src/eval/bishop_pair_closedness.cpp`, NEW `tests/bishop_pair_closedness_tests.cpp` (8 tests), REPLACE `src/eval/eval.cpp` (include plus one sum term), REPLACE `src/CMakeLists.txt`, REPLACE `tests/CMakeLists.txt`, REPLACE `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
+
+**Decision:** The existing per-missing-pawn bishop pair term already covers openness by total pawn count, so candidate 2 was built as a separate, additive term on locked central pawn pairs (files c-f). See DECISIONS.md 2026-10-06 (3).
+
+**Verification (Linux, GCC, Release):** no compiler warnings; 752/752 `ctest`; `bench` CPU time per node ratio 0.993 against `6e2dcbd` over 25 interleaved repeats (no measurable cost); bench node count 35722 against 36154. Not run locally: Debug/ASan, Windows, macOS, wasm.
+
+**Bugs fixed:** None.
+
+**Open:** The CI SPRT for candidate 2 has not been run. Inputs for the manual `uci-match` workflow: baseline `7c833daaf333301201cfd8b547c195015ee84120`, candidate `main` (after the commit), depth 6, SPRT elo0 0, elo1 8, alpha 0.1, beta 0.1, 4000-game cap, 8 opening plies.
+
+**Next session start point:** Read the SPRT result for candidate 2. If it accepts, expose the constant to the tuner and mark candidate 2 done. If it rejects or ends without a win, remove the three new files and the wiring, as for candidate 1. Then start candidate 3 (rook activity scaled by open files).
+
+---
+
 ### Session 190 — 2026-10-06 — Passed-pawn king proximity rejected by SPRT and removed
 
 **Built (all complete files):** REPLACE `src/eval/eval.cpp` (term removed), REPLACE `src/CMakeLists.txt` and `tests/CMakeLists.txt` (registrations removed), REPLACE `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`. DELETE `src/eval/passed_pawn_king.h`, `src/eval/passed_pawn_king.cpp`, `tests/passed_pawn_king_tests.cpp`.
