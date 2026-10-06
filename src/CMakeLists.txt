@@ -25,6 +25,7 @@ add_library(nightwing_lib STATIC
     eval/trapped_pieces.cpp
     eval/tempo.cpp
     eval/material_imbalance.cpp
+    eval/bishop_pair_closedness.cpp
     eval/endgame.cpp
     eval/king_pawn_endgame.cpp
     eval/rook_endgame.cpp
