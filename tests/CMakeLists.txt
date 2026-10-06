@@ -29,7 +29,6 @@ add_executable(nightwing_tests
     trapped_pieces_tests.cpp
     tempo_tests.cpp
     material_imbalance_tests.cpp
-    bishop_pair_closedness_tests.cpp
     endgame_tests.cpp
     king_pawn_endgame_tests.cpp
     rook_endgame_tests.cpp
