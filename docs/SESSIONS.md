@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 192 — 2026-10-06 — Candidate 2 rejected by SPRT and removed
+
+**Evidence reviewed:** CI logs for the candidate 2 commit: all test jobs green (752/752 on Linux and Windows, 750/750 on macOS, ThreadSanitizer and WebAssembly passing). The SPRT job (depth 6, SPRT 0/+8, alpha=beta=0.1) stopped at 1546 games: candidate 662, draws 153, baseline 731; LLR -2.223; AcceptH0; about -15.5 Elo.
+
+**Decision:** The term fails the roadmap acceptance rule and was removed. See DECISIONS.md 2026-10-06 (4).
+
+**Built (all complete files):** REPLACE `src/eval/eval.cpp`, `src/CMakeLists.txt`, `tests/CMakeLists.txt` (term wiring and registrations removed), REPLACE `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`. DELETE `src/eval/bishop_pair_closedness.h`, `src/eval/bishop_pair_closedness.cpp`, `tests/bishop_pair_closedness_tests.cpp`.
+
+**Verification:** source tree byte-identical to commit `7c833da` (`git diff --stat` empty for `src`, `tests`, `.github`, root `CMakeLists.txt`), which passed every CI job with 744/744 tests. A fresh local build and `ctest` of the reverted tree were not repeated, since the tree is byte-identical to that green commit.
+
+**Bugs fixed:** None.
+
+**Open:** First CI run of this revert. Candidates 3 and 4 of the interactions item. Whether to Texel-fit a candidate's constants before its SPRT (explicit decision required). EG-instability item remains paused. Pondering GUI verification is blocked.
+
+**Next session start point:** Confirm CI is green for the revert, obtain a decision on whether candidate 3 (rook activity scaled by open files) should have its constants Texel-fitted before the SPRT, then build candidate 3.
+
+---
+
 ### Session 191 — 2026-10-06 — Candidate 2 (bishop pair and locked centre) built, SPRT pending
 
 **Verified first:** CI for the candidate 1 revert (`7c833da`) was green on every job (744/744 on Linux and Windows, 742/742 on macOS, ThreadSanitizer and WebAssembly passing, rolling and tagged releases published).

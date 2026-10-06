@@ -4,6 +4,23 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-06 (4) — Locked-centre bishop pair term rejected by SPRT and removed
+
+**Decision:** Candidate 2 of the restricted nonlinear feature interactions item (`eval::bishop_pair_closedness_value()`, DECISIONS 2026-10-06 (3)) is removed. `src/eval/bishop_pair_closedness.h`, `src/eval/bishop_pair_closedness.cpp` and `tests/bishop_pair_closedness_tests.cpp` are deleted, and the include, the one sum term in `src/eval/eval.cpp` and the two CMake registrations are reverted. The resulting source tree is byte-identical to commit `7c833da`, which passed every CI job (744/744 tests).
+
+**Evidence:** The CI "UCI match (baseline vs. candidate, SPRT)" job compared baseline `7c833da` with the candidate at depth 6, 8-ply random openings, SPRT elo0=0 / elo1=8, alpha=beta=0.1 (bounds [-2.197, 2.197]). The match stopped at 1546 games when the lower bound was crossed: candidate wins 662, draws 153, baseline wins 731. The score is 0.478, about -15.5 Elo, with a standard error near 8 Elo, so the point estimate is roughly 1.8 standard errors below zero. The final LLR was -2.223 and the job reported AcceptH0 (no improvement). The pre-match local check had shown no per-node cost (CPU time ratio 0.993), so the rejection is purely on strength. All CI test jobs on the candidate commit were green (752/752 on Linux and Windows, 750/750 on macOS, ThreadSanitizer and WebAssembly passing); the removal is a strength decision, not a defect fix.
+
+**What this does and does not establish:** The test shows no gain and a point estimate that leans negative; it does not prove the true effect is harmful, since the interval is wide. The test does not establish that the opposite sign (a locked centre favoring the bishop pair) is an improvement; that was never hypothesized, and trying it after seeing the result would be fitting to the outcome, so it is not pursued. The constants were untuned hand estimates, as with candidate 1.
+
+**Pattern across candidates 1 and 2:** Two consecutive hand-estimated, untuned interaction terms have failed to show a gain under the SPRT. This does not change the roadmap rule that a term must win its SPRT to stay. It does suggest that, for the remaining candidates, the untuned-constant risk is real. Fitting a candidate's constants with the existing Texel tooling before spending a 4000-game SPRT run is a possible refinement; it is recorded here as an option, not adopted, and requires an explicit decision before use.
+
+**Alternatives considered:**
+- Keeping the term because the result was not significantly negative at a conventional 95% level: rejected; the roadmap criteria require an SPRT win, and the SPRT itself accepted H0.
+- Flipping the sign of the constants and re-testing: rejected, as above.
+- Retuning the single constant and re-running: deferred; see the pattern note.
+
+---
+
 ### 2026-10-06 (3) — Candidate 2 built as a locked-central-pawn scaling of the bishop pair, additive to the existing pawn-count term
 
 **Decision:** Candidate 2 of the restricted nonlinear feature interactions item ("bishop pair scaled by openness") is implemented in `src/eval/bishop_pair_closedness.h/.cpp` as `bishop_pair_closedness_value()`. Each side owning two or more bishops receives `kBishopPairPerLockedCentralPair = {-4, -3}` times the number of locked central pawn pairs, where a locked pair is a White pawn on files c-f with a Black pawn directly in front of it, counted once. The term is added to the evaluation sum next to `material_imbalance_value()`. It is first-draft, untuned, and provisional until the SPRT below completes.
