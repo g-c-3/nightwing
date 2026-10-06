@@ -24,6 +24,7 @@ add_executable(nightwing_tests
     piece_bonuses_tests.cpp
     knight_outposts_tests.cpp
     space_tests.cpp
+    rook_files_tests.cpp
     threats_tests.cpp
     king_tropism_tests.cpp
     trapped_pieces_tests.cpp
