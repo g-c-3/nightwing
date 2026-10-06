@@ -9,6 +9,7 @@
 #include "eval/king_safety.h"
 #include "eval/king_tropism.h"
 #include "eval/knight_outposts.h"
+#include "eval/bishop_pair_closedness.h"
 #include "eval/material_imbalance.h"
 #include "eval/minor_piece_endgame.h"
 #include "eval/mobility.h"
@@ -237,6 +238,7 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
                                   threats_value(pos, threats_weights) +
                                   king_tropism_value(pos) + trapped_piece_value(pos) +
                                   tempo_value(pos) + material_imbalance_value(pos) +
+                                  bishop_pair_closedness_value(pos) +
                                   king_pawn_endgame_value(pos) + rook_endgame_value(pos) +
                                   minor_piece_endgame_value(pos) + fortress_value(pos) +
                                   basic_mate_value(pos),
