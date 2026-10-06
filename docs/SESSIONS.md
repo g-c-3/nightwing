@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 190 — 2026-10-06 — Passed-pawn king proximity rejected by SPRT and removed
+
+**Built (all complete files):** REPLACE `src/eval/eval.cpp` (term removed), REPLACE `src/CMakeLists.txt` and `tests/CMakeLists.txt` (registrations removed), REPLACE `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`. DELETE `src/eval/passed_pawn_king.h`, `src/eval/passed_pawn_king.cpp`, `tests/passed_pawn_king_tests.cpp`.
+
+**Evidence reviewed:** CI logs for commit `d48491b`: all test jobs green (750 tests Linux and Windows, 748 macOS, ThreadSanitizer green, WebAssembly green). The SPRT job played the full 4000 games (candidate 1793, draws 400, baseline 1807; LLR -1.536, bounds +/-2.197, inconclusive, about -1 Elo). Local `bench` CPU per node was about 3% higher with the term. Local sandbox matches gave +34, +9 and -10 Elo over three 300-game batches and about +19 over a fourth stopped at 130 games; the pooled early positive was noise.
+
+**Decision:** The term fails the roadmap acceptance rule and was removed. See DECISIONS.md 2026-10-06 (2).
+
+**Verification (Linux, GCC, Release):** source tree byte-identical to commit `6e2dcbd` (`git diff --stat` empty for `src`, `tests`, `.github`, root `CMakeLists.txt`); 744/744 `ctest`. Not run locally: Debug/ASan, Windows, macOS, wasm.
+
+**Bugs fixed:** None.
+
+**Open:** First CI run of the revert. Candidates 2 to 4 of the interactions item. EG-instability item remains paused. Pondering GUI verification is blocked.
+
+**Next session start point:** Confirm CI is green for the revert, then start candidate 2 (bishop pair scaled by openness) as a plain handcrafted formula with constants in a header and tests, and judge it with the CI SPRT job and a `bench` per-node-cost comparison.
+
+---
+
 ### Session 189 — 2026-10-06 — First nonlinear interaction term (passed-pawn king proximity)
 
 **Built (all complete files):** NEW `src/eval/passed_pawn_king.h`, NEW `src/eval/passed_pawn_king.cpp`, NEW `tests/passed_pawn_king_tests.cpp` (6 tests), REPLACE `src/eval/eval.cpp` (include plus one term in the sum), REPLACE `src/CMakeLists.txt` and `tests/CMakeLists.txt` (new files registered), REPLACE `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.

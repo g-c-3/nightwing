@@ -4,6 +4,27 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-06 (2) — Passed-pawn king proximity rejected and removed; the SPRT showed no gain and the term cost nodes-per-second
+
+**Decision:** Candidate 1 of the restricted nonlinear feature interactions item (`eval::passed_pawn_king_value()`) is removed from the tree. `src/eval/passed_pawn_king.h`, `src/eval/passed_pawn_king.cpp` and `tests/passed_pawn_king_tests.cpp` are deleted, and the one-line wiring in `src/eval/eval.cpp` plus the two CMake registrations are reverted. The resulting source tree is byte-identical to commit `6e2dcbd`, the last commit before the term was added.
+
+**Rationale:** The acceptance rule recorded in the roadmap item and in the entry above required an SPRT win and no measurable nodes-per-second loss. Neither held.
+- The CI "UCI match (baseline vs. candidate, SPRT)" job compared `6e2dcbd` (baseline) with `d48491b` (candidate) at depth 6, 8-ply random openings, SPRT elo0=0 / elo1=8, bounds [-2.197, 2.197], 4000-game cap. All 4000 games were played: candidate wins 1793, draws 400, baseline wins 1807. The score is 0.498, about -1 Elo with a 95% interval of roughly +/-10 Elo. The final LLR was -1.536, inside the bounds, so the test did not accept the candidate and its trend favored the null.
+- A `bench` comparison (25 interleaved repeats, CPU time per node) gave a median of 1571 ns/node for the baseline and 1618 ns/node for the candidate, about 3% slower. That measurement is noisy (the bench workload is about 50 ms), but its direction is unfavorable, and a fixed-depth match does not charge for per-node cost, so any real cost is on top of the match result.
+- An independent local match run in the sandbox (same methodology as DECISIONS 2026-09-24) produced +34, +9 and -10 Elo over three 300-game batches, and about +19 Elo over a fourth batch stopped at 130 games. Pooled over the first 880 games this looked like +11 Elo (z about 1.0). The 4000-game CI result superseded it; the early positive was sampling noise. This is recorded because it shows that a few hundred games is not enough to judge a change of this size, and that the 4000-game CI job should be the deciding measurement rather than ad hoc sandbox matches.
+
+**What this does and does not establish:** The term showed no measurable strength gain under this test. It does not show that king proximity to passed pawns is unhelpful in general. The match was at fixed depth 6 from random 8-ply openings, a setup in which few games reach endgames with passed pawns; an endgame-only term has little opportunity to matter there, so the test has limited power for exactly this kind of term. The constants were also untuned first-draft values. Neither point changes the outcome under the project's own rule (a term that fails is removed, not kept as dead code), but either would be a reason to revisit the idea later with endgame-start positions and a tuned weight set rather than treating it as ruled out.
+
+**Alternatives considered:**
+- Keeping the term because the result was not significantly negative: rejected; the roadmap criteria require a win, and a small measured per-node cost with no measured gain is a net loss.
+- Extending the SPRT beyond 4000 games: rejected; the point estimate sits near zero, so reaching a decision either way would take a very large number of games for a term whose best case is a small gain.
+- Keeping the file but disabling it behind a flag: rejected; the roadmap rule is explicit that failed interactions are removed rather than kept as dead code.
+- Tuning the weights first and re-running: deferred, not rejected; tuning an unproven term before it shows any signal is poor use of tuning runs, and the idea can return as a later item with an endgame-weighted test set.
+
+**Verification:** After the revert, a full Release build and `ctest` on Linux (GCC) passed 744/744, matching the pre-term count. All CI jobs for `d48491b` (Linux, Windows, macOS, WebAssembly, ThreadSanitizer) were green with the term present, so the removal is a strength decision, not a defect fix.
+
+---
+
 ### 2026-10-06 — First nonlinear interaction: passed-pawn king proximity
 
 **Decision:** The first candidate of the restricted nonlinear feature interactions item was implemented as `eval::passed_pawn_king_value()` (`src/eval/passed_pawn_king.h/.cpp`) and added to the sum in `eval::evaluate()`. For each passed pawn on relative rank 3 to 6 the endgame value is `kPassedKingRankWeight[rank] * (2 * min(enemy_king_dist, 5) - 1 * min(own_king_dist, 5))`, with Chebyshev distances to the pawn's stop square; the middlegame value is zero. Weights are {0, 0, 0, 1, 2, 3, 5, 0} by relative rank, so the largest possible single-pawn value is 45 centipawns. All constants are first-draft estimates in the header.
