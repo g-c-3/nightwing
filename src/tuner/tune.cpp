@@ -51,7 +51,8 @@ double compute_loss(const std::vector<SelfPlayPosition>& positions,
                      const eval::SpaceWeights* space_weights,
                      const eval::ThreatsWeights* threats_weights,
                      const eval::KingSafetyWeights* king_safety_weights,
-                     const eval::PawnsWeights* pawns_weights) noexcept {
+                     const eval::PawnsWeights* pawns_weights,
+                     const eval::RookFilesWeights* rook_files_weights) noexcept {
     if (positions.empty()) {
         return 0.0;
     }
@@ -69,7 +70,8 @@ double compute_loss(const std::vector<SelfPlayPosition>& positions,
         // king_safety_weights, OR pawns_weights override is in play.
         const int white_relative =
             eval::evaluate(pos, nullptr, nullptr, &weights, psqt_weights, mobility_weights,
-                            space_weights, threats_weights, king_safety_weights, pawns_weights);
+                            space_weights, threats_weights, king_safety_weights, pawns_weights,
+                            rook_files_weights);
         const double predicted = sigmoid(static_cast<double>(white_relative) / sigmoid_scale);
         const double error = predicted - position.result;
         sum_squared_error += error * error;
@@ -489,6 +491,15 @@ double compute_loss_for(const std::vector<SelfPlayPosition>& positions,
                          /*threats_weights=*/nullptr, /*king_safety_weights=*/nullptr, &w);
 }
 
+double compute_loss_for(const std::vector<SelfPlayPosition>& positions,
+                         const eval::MaterialWeights& material_weights, double sigmoid_scale,
+                         const eval::RookFilesWeights& w) noexcept {
+    return compute_loss(positions, material_weights, sigmoid_scale, /*psqt_weights=*/nullptr,
+                         /*mobility_weights=*/nullptr, /*space_weights=*/nullptr,
+                         /*threats_weights=*/nullptr, /*king_safety_weights=*/nullptr,
+                         /*pawns_weights=*/nullptr, &w);
+}
+
 // Shared implementation behind tune_mobility()/tune_space()/
 // tune_threats()/tune_king_safety()/tune_pawns() (tune.h) — the exact
 // same finite-difference gradient-descent shape tune()'s own
@@ -582,6 +593,13 @@ TermTuneResult<eval::PawnsWeights> tune_pawns(const std::vector<SelfPlayPosition
                                                const eval::PawnsWeights& initial_weights,
                                                const TuneConfig& config) {
     return tune_term(positions, material_weights, kPawnsParameters, initial_weights, config);
+}
+
+TermTuneResult<eval::RookFilesWeights>
+tune_rook_files(const std::vector<SelfPlayPosition>& positions,
+                const eval::MaterialWeights& material_weights,
+                const eval::RookFilesWeights& initial_weights, const TuneConfig& config) {
+    return tune_term(positions, material_weights, kRookFilesParameters, initial_weights, config);
 }
 
 } // namespace nightwing::tuner

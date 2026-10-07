@@ -109,6 +109,7 @@
 #include "eval/mobility.h"
 #include "eval/pawns.h"
 #include "eval/psqt.h"
+#include "eval/rook_files.h"
 #include "eval/space.h"
 #include "eval/threats.h"
 #include "tuner/selfplay.h"
@@ -444,6 +445,25 @@ using SpaceParameterRef = ParameterRef<eval::SpaceWeights>;
 inline constexpr std::array<SpaceParameterRef, 2> kSpaceParameters = {{
     {"square_mg", &eval::SpaceWeights::square_mg},
     {"square_eg", &eval::SpaceWeights::square_eg},
+}};
+
+/// `ParameterRef<eval::RookFilesWeights>` -- the rook-files-side
+/// counterpart to SpaceParameterRef above (ROADMAP.md, "Restricted
+/// nonlinear feature interactions", candidate 3), built from the same
+/// plain-scalar template as kSpaceParameters.
+using RookFilesParameterRef = ParameterRef<eval::RookFilesWeights>;
+
+/// Every RookFilesWeights field, in declaration order. 4 entries
+/// (open/semi-open, each mg/eg), all `anchored = false`: the term is an
+/// ADDITIVE product of a rook count and a file count, with no
+/// multiplicative flat-scaling degeneracy of the kind material's pawn
+/// anchor exists to remove. Revisit against real tuning output, same
+/// stance as every other additive table here.
+inline constexpr std::array<RookFilesParameterRef, 4> kRookFilesParameters = {{
+    {"open_mg", &eval::RookFilesWeights::open_mg},
+    {"open_eg", &eval::RookFilesWeights::open_eg},
+    {"semi_open_mg", &eval::RookFilesWeights::semi_open_mg},
+    {"semi_open_eg", &eval::RookFilesWeights::semi_open_eg},
 }};
 
 /// `ParameterRef<eval::ThreatsWeights>` — the threats-side counterpart
@@ -978,6 +998,13 @@ struct TuneResult {
 /// `psqt_weights`/`mobility_weights`/`space_weights`/`threats_weights`/
 /// `king_safety_weights` -- any subset of the six may be non-null.
 ///
+/// `rook_files_weights` -- the rook-files interaction-term counterpart
+/// to `pawns_weights` above (candidate 3 of ROADMAP.md's "Restricted
+/// nonlinear feature interactions" item), forwarded to eval::evaluate()
+/// the same way (see that parameter's own doc comment, eval.h).
+/// Defaults to nullptr (the compiled-in constants), independent of every
+/// other override -- any subset of the seven may be non-null.
+///
 /// Precondition: board::init_masks() AND board::
 /// init_magic_bitboards() have been called (this function parses each
 /// position's FEN and evaluates it, both of which are transitively
@@ -990,7 +1017,8 @@ struct TuneResult {
                                    const eval::SpaceWeights* space_weights = nullptr,
                                    const eval::ThreatsWeights* threats_weights = nullptr,
                                    const eval::KingSafetyWeights* king_safety_weights = nullptr,
-                                   const eval::PawnsWeights* pawns_weights = nullptr) noexcept;
+                                   const eval::PawnsWeights* pawns_weights = nullptr,
+                                   const eval::RookFilesWeights* rook_files_weights = nullptr) noexcept;
 
 /// The Texel loss (the same mean squared error compute_loss() above
 /// computes) evaluated from PRECOMPUTED white-relative scores instead
@@ -1265,5 +1293,14 @@ tune_pawns(const std::vector<SelfPlayPosition>& positions,
            const eval::MaterialWeights& material_weights,
            const eval::PawnsWeights& initial_weights = eval::default_pawns_weights(),
            const TuneConfig& config = {});
+
+/// The rook-files-term counterpart to tune_mobility() above -- see that
+/// function's own doc comment for the full convention. Internally:
+/// tune_term() instantiated over kRookFilesParameters.
+[[nodiscard]] TermTuneResult<eval::RookFilesWeights>
+tune_rook_files(const std::vector<SelfPlayPosition>& positions,
+                const eval::MaterialWeights& material_weights,
+                const eval::RookFilesWeights& initial_weights = eval::default_rook_files_weights(),
+                const TuneConfig& config = {});
 
 } // namespace nightwing::tuner
