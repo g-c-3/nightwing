@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 195 — 2026-10-07 — Candidate 3 tuner plumbing and evaluate() wiring completed
+
+**Verified first:** Docs and `main` tree read; Session 194 left the term standalone and unwired, matching the repository.
+
+**Decision:** Plumbing followed the existing nullable-override pattern with the parameter inserted after `pawns_weights`. See DECISIONS.md 2026-10-07 (7).
+
+**Built (all complete files):** REPLACE `src/eval/eval.h`, `src/eval/eval.cpp`, `src/search/search.cpp`, `src/search/quiescence.cpp`, `src/tuner/tune.h`, `src/tuner/tune.cpp`, `src/tuner/tune_main.cpp`, `tests/eval_tests.cpp`, `tests/incremental_eval_tests.cpp`, `tests/tune_tests.cpp`, `.github/workflows/ci.yml`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`. `rook_files_value()` is now part of the `evaluate()` sum, so engine behavior changed.
+
+**Verification (Linux, GCC, Release):** zero compiler errors or warnings; 759/759 `ctest` (751 existing plus 8 new: 2 in `eval_tests.cpp`, 6 in `tune_tests.cpp`). `bench` nodes 36154 before, 35333 after; nodes per second not resolvable at 80 ms. Not run locally: Debug/ASan, Windows, macOS, wasm.
+
+**Bugs fixed:** None.
+
+**Open:** CI Texel fit for the rook-files term, adoption of fitted constants, SPRT with a `bench` cost check. Candidate 4 after that. EG-instability item remains paused. Pondering GUI verification is blocked.
+
+**Next session start point:** After the commit is green, run the `tuning-pipeline` workflow_dispatch job and read the `rook-files` leg output; if the fitted weights are sensible, replace the starting constants in `src/eval/rook_files.cpp` with them, otherwise keep the defaults and proceed to the SPRT job with a `bench` per-node-cost check.
+
+---
+
 ### Session 194 — 2026-10-07 — Candidate 3 term built standalone (rook count times file openness), not yet wired
 
 **Verified first:** Docs and `main` tree read; Session 193 left candidate 3 at the design step with no source changes.

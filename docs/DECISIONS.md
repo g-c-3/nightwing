@@ -4,6 +4,23 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-07 (7) — Candidate 3 wired into evaluate() with untuned constants; Texel fit and SPRT follow from CI
+
+**Decision:** `RookFilesWeights` was added as a nullable override following the existing seven-override pattern: a `rook_files` member of `eval::EvalWeightsOverride`, a `rook_files_weights` parameter of `eval::evaluate()` placed immediately after `pawns_weights`, a matching trailing parameter of `tuner::compute_loss()`, a `kRookFilesParameters` table (4 plain scalar entries, none anchored), `tune_rook_files()`, a `--rook-files` mode in `tune_main.cpp`, and a `rook-files` leg of the CI tuning-pipeline matrix. `rook_files_value()` was added to the `evaluate()` sum with the compiled-in starting constants of DECISIONS 2026-10-07 (6).
+
+**Rationale for placement:** Inserting the parameter before `incremental_material_psqt` makes every positional call that passed that argument in the following slot fail to compile, because a `const Score*` does not convert to `const RookFilesWeights*`. The compiler therefore identifies each call site that needs updating instead of silently shifting an argument. Eight test call sites were updated in this way.
+
+**Anchoring:** No parameter is anchored. The term is an additive product of a rook count and a file count, so the flat-scaling degeneracy that motivated the material pawn anchor does not apply.
+
+**Cache:** `eval_cache` is neither probed nor stored whenever `rook_files_weights` is non-null, for the same staleness reason as the other overrides.
+
+**Known risk:** The term is live with untuned constants. Playing strength therefore differs from the previous tree until the Texel fit result is adopted or the term is removed. Fixed-depth `bench` nodes moved from 36154 to 35333. Per-node cost could not be resolved at the 80 ms bench size and remains to be checked in the SPRT job. The roadmap acceptance rule is unchanged: a term that does not win its SPRT is removed.
+
+**Alternatives considered:**
+- Keeping the term unwired until the fit is complete: rejected, because the CI fit and SPRT both require the term to be present in `evaluate()`.
+
+---
+
 ### 2026-10-07 (6) — Candidate 3 designed as rook count times board-wide file openness; term built standalone before tuner plumbing
 
 **Decision:** Candidate 3 of the restricted nonlinear feature interactions item is `eval::rook_files_value()` (`src/eval/rook_files.h/.cpp`). Per side, the score is `min(rooks, 2) * (open_bonus * open_files + semi_open_bonus * semi_open_files_for_that_side)`, where `open_files` counts files holding no pawn of either color and `semi_open_files_for_that_side` counts files with no own pawn and at least one enemy pawn. Starting constants are `kRookOpenFilesBonus` = {2, 3} and `kRookSemiOpenFilesBonus` = {1, 2} (middlegame, endgame), untuned and intended to be replaced by a Texel fit before the SPRT, per DECISIONS 2026-10-06 (5).
