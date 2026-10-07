@@ -1729,3 +1729,137 @@ TEST_CASE("compute_loss_from_scores: matches compute_loss() and tolerates bad in
     REQUIRE(compute_loss_from_scores({}, {}, 400.0) == 0.0);
     REQUIRE(compute_loss_from_scores(scores, {0.5}, 400.0) == 0.0); // size mismatch
 }
+
+// --- ROADMAP.md "Restricted nonlinear feature interactions", candidate 3:
+// rook-files term tuner plumbing ---
+
+TEST_CASE("kRookFilesParameters: covers exactly the 4 RookFilesWeights fields, each a plain "
+          "scalar entry (member set, array_member null), none anchored",
+          "[tuner][tune][rook_files]") {
+    REQUIRE(kRookFilesParameters.size() == 4);
+    for (const RookFilesParameterRef& param : kRookFilesParameters) {
+        REQUIRE(param.member != nullptr);
+        REQUIRE(param.array_member == nullptr);
+        REQUIRE(param.anchored == false);
+    }
+}
+
+TEST_CASE("kRookFilesParameters: every member pointer reaches exactly the field its name "
+          "claims, and only that field",
+          "[tuner][tune][rook_files]") {
+    // The sentinel must not equal any default field value (the lesson of
+    // the king-safety table's own sentinel collision, DECISIONS.md
+    // 2026-09-20 (2)).
+    for (std::size_t i = 0; i < kRookFilesParameters.size(); ++i) {
+        RookFilesWeights probe = default_rook_files_weights();
+        probe.*(kRookFilesParameters[i].member) = -999999.0;
+        int changed_count = 0;
+        for (std::size_t j = 0; j < kRookFilesParameters.size(); ++j) {
+            if (probe.*(kRookFilesParameters[j].member) == -999999.0) {
+                ++changed_count;
+            }
+        }
+        REQUIRE(changed_count == 1);
+    }
+}
+
+TEST_CASE("kRookFilesParameters: get()/set() agree with default_rook_files_weights() and each "
+          "other's inverse, for every entry",
+          "[tuner][tune][rook_files]") {
+    const RookFilesWeights defaults = default_rook_files_weights();
+    const double expected[4] = {defaults.open_mg, defaults.open_eg, defaults.semi_open_mg,
+                                defaults.semi_open_eg};
+    for (std::size_t i = 0; i < kRookFilesParameters.size(); ++i) {
+        REQUIRE(kRookFilesParameters[i].get(defaults) == expected[i]);
+        RookFilesWeights w = defaults;
+        kRookFilesParameters[i].set(w, 12.5);
+        REQUIRE(kRookFilesParameters[i].get(w) == 12.5);
+    }
+}
+
+TEST_CASE("compute_loss: an optional rook_files_weights argument is forwarded to evaluate() "
+          "exactly the same way the other term overrides are",
+          "[tuner][tune][rook_files]") {
+    init_all();
+    // Bare kings plus one White rook: every file is open, so the rook-files
+    // term is the only difference between this and a dead-equal-ish
+    // position, and perturbing its weights is guaranteed to move the eval.
+    const std::string fen = "4k3/8/8/8/8/8/8/R3K3 w - - 0 1";
+    const Position pos = parse_fen(fen);
+    const MaterialWeights weights = default_material_weights();
+    const double sigmoid_scale = 400.0;
+
+    const int default_eval = evaluate(pos, nullptr, nullptr, &weights);
+    const double default_label = sigmoid(static_cast<double>(default_eval) / sigmoid_scale);
+    SelfPlayPosition position{fen, default_label};
+    REQUIRE(compute_loss({position}, weights, sigmoid_scale) < 1e-12);
+
+    RookFilesWeights perturbed = default_rook_files_weights();
+    perturbed.open_mg += 50.0; // mg and eg together, so taper() cannot hide it
+    perturbed.open_eg += 50.0;
+    const double loss_with_override = compute_loss(
+        {position}, weights, sigmoid_scale, /*psqt_weights=*/nullptr, /*mobility_weights=*/nullptr,
+        /*space_weights=*/nullptr, /*threats_weights=*/nullptr, /*king_safety_weights=*/nullptr,
+        /*pawns_weights=*/nullptr, &perturbed);
+    REQUIRE(loss_with_override > 1e-6);
+
+    const int perturbed_eval =
+        evaluate(pos, nullptr, nullptr, &weights, nullptr, nullptr, nullptr, nullptr, nullptr,
+                 nullptr, &perturbed);
+    const double perturbed_predicted =
+        sigmoid(static_cast<double>(perturbed_eval) / sigmoid_scale);
+    const double expected_error = perturbed_predicted - default_label;
+    REQUIRE(loss_with_override == expected_error * expected_error);
+}
+
+TEST_CASE("tune_rook_files: an all-neutral (bare kings, 0.5 result) training set leaves "
+          "rook-files weights exactly unchanged, and history/initial_loss/final_loss are "
+          "internally consistent",
+          "[tuner][tune][rook_files]") {
+    init_all();
+    std::vector<SelfPlayPosition> positions;
+    for (int i = 0; i < 5; ++i) {
+        positions.push_back(SelfPlayPosition{"4k3/8/8/8/8/8/8/4K3 w - - 0 1", 0.5});
+    }
+
+    TuneConfig config;
+    config.iterations = 5;
+    const MaterialWeights material = default_material_weights();
+    const RookFilesWeights initial = default_rook_files_weights();
+    const TermTuneResult<RookFilesWeights> result =
+        tune_rook_files(positions, material, initial, config);
+
+    REQUIRE(result.history.size() == static_cast<std::size_t>(config.iterations + 1));
+    REQUIRE(result.initial_loss == result.history.front().loss);
+    REQUIRE(result.final_loss == result.history.back().loss);
+    REQUIRE(result.final_loss == result.initial_loss);
+    REQUIRE(result.weights.open_mg == initial.open_mg);
+    REQUIRE(result.weights.open_eg == initial.open_eg);
+    REQUIRE(result.weights.semi_open_mg == initial.semi_open_mg);
+    REQUIRE(result.weights.semi_open_eg == initial.semi_open_eg);
+}
+
+TEST_CASE("tune_rook_files: a consistently White-favoring signal on a rook-vs-nothing position "
+          "does not increase loss, and moves at least one weight",
+          "[tuner][tune][rook_files]") {
+    init_all();
+    // The rook position is labeled a clear White win. Material already
+    // predicts a White edge; if the term's untuned bonus is too small the
+    // optimizer should raise it. Loss must never go UP over the run.
+    std::vector<SelfPlayPosition> positions;
+    for (int i = 0; i < 8; ++i) {
+        positions.push_back(SelfPlayPosition{"4k3/8/8/8/8/8/8/R3K3 w - - 0 1", 1.0});
+    }
+
+    TuneConfig config;
+    config.iterations = 20;
+    const MaterialWeights material = default_material_weights();
+    const RookFilesWeights initial = default_rook_files_weights();
+    const TermTuneResult<RookFilesWeights> result =
+        tune_rook_files(positions, material, initial, config);
+
+    REQUIRE(result.final_loss <= result.initial_loss);
+    const bool moved = result.weights.open_mg != initial.open_mg ||
+                       result.weights.open_eg != initial.open_eg;
+    REQUIRE(moved);
+}
