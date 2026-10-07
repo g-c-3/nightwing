@@ -69,6 +69,7 @@
 #include "eval/pawn_tt.h"
 #include "eval/pawns.h"
 #include "eval/psqt.h"
+#include "eval/rook_files.h"
 #include "eval/space.h"
 #include "eval/threats.h"
 
@@ -132,6 +133,7 @@ struct EvalWeightsOverride {
     const ThreatsWeights* threats = nullptr;
     const KingSafetyWeights* king_safety = nullptr;
     const PawnsWeights* pawns = nullptr;
+    const RookFilesWeights* rook_files = nullptr;
 };
 
 /// Evaluates `pos` and returns a centipawn score from White's
@@ -304,6 +306,22 @@ struct EvalWeightsOverride {
 /// evaluate()'s own implementation, eval.cpp, for where this is
 /// enforced).
 ///
+/// `rook_files_weights`, if non-null, is forwarded to the internal
+/// rook_files_value() call INSTEAD OF its own compiled-in constants
+/// (eval/rook_files.h's RookFilesWeights) -- the rook-activity-by-file-
+/// openness interaction term (ROADMAP.md, "Restricted nonlinear feature
+/// interactions", candidate 3), the eighth override alongside the seven
+/// above. Independent of the others -- any subset may be non-null on a
+/// given call. `eval_cache` is DELIBERATELY NEVER consulted whenever
+/// `rook_files_weights != nullptr`, for the identical staleness reason.
+/// Defaults to nullptr (compiled-in constants). It sits immediately
+/// AFTER `pawns_weights` and BEFORE `incremental_material_psqt`, so a
+/// positional call that previously passed `incremental_material_psqt`
+/// in the slot after `pawns_weights` no longer compiles (an
+/// `const Score*` does not convert to `const RookFilesWeights*`) --
+/// the compiler flags every such call site rather than silently
+/// shifting an argument.
+///
 /// `incremental_material_psqt`, if non-null, is used INSTEAD OF running
 /// compute_material_psqt()'s own 64-square scan (eval/incremental.h) —
 /// the caller is asserting that `*incremental_material_psqt` already
@@ -391,6 +409,7 @@ struct EvalWeightsOverride {
                             const ThreatsWeights* threats_weights = nullptr,
                             const KingSafetyWeights* king_safety_weights = nullptr,
                             const PawnsWeights* pawns_weights = nullptr,
+                            const RookFilesWeights* rook_files_weights = nullptr,
                             const Score* incremental_material_psqt = nullptr,
                             const int* lazy_alpha_white = nullptr,
                             const int* lazy_beta_white = nullptr) noexcept;
