@@ -153,6 +153,8 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
     const eval::KingSafetyWeights* const ew_king_safety =
         eval_weights ? eval_weights->king_safety : nullptr;
     const eval::PawnsWeights* const ew_pawns = eval_weights ? eval_weights->pawns : nullptr;
+    const eval::RookFilesWeights* const ew_rook_files =
+        eval_weights ? eval_weights->rook_files : nullptr;
 
     // Mid-search time-budget interruption (search.h's SearchLimits):
     // fast-path bail if a shallower quiescence/negamax() frame already
@@ -241,7 +243,7 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         // normal play).
         const int white_relative = eval::evaluate(pos, pawn_tt, eval_cache, material_weights,
                                                     ew_psqt, ew_mobility, ew_space, ew_threats,
-                                                    ew_king_safety, ew_pawns, mat_psqt);
+                                                    ew_king_safety, ew_pawns, ew_rook_files, mat_psqt);
         return pos.side_to_move == Color::White ? white_relative : -white_relative;
     }
 
@@ -269,7 +271,7 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         const int lazy_beta_white = pos.side_to_move == Color::White ? beta : -alpha;
         const int white_relative =
             eval::evaluate(pos, pawn_tt, eval_cache, material_weights,
-                            ew_psqt, ew_mobility, ew_space, ew_threats, ew_king_safety, ew_pawns,
+                            ew_psqt, ew_mobility, ew_space, ew_threats, ew_king_safety, ew_pawns, ew_rook_files,
                             mat_psqt, &lazy_alpha_white, &lazy_beta_white);
         best = pos.side_to_move == Color::White ? white_relative : -white_relative;
         if (best >= beta) {
