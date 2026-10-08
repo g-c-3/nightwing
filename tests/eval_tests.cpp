@@ -851,7 +851,7 @@ TEST_CASE("evaluate: a lazy window wide enough to contain any plausible score ne
     const int lazy_beta_white = 100'000;
     const int with_wide_lazy_window =
         evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-                 nullptr, nullptr, nullptr, &lazy_alpha_white, &lazy_beta_white);
+                 nullptr, nullptr, &lazy_alpha_white, &lazy_beta_white);
     REQUIRE(with_wide_lazy_window == no_lazy);
 }
 
@@ -880,7 +880,7 @@ TEST_CASE("evaluate: a lazy window the cheap material+PSQT score clears by more 
     const int lazy_beta_white = 0;
     const int with_tight_lazy_window =
         evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-                 nullptr, nullptr, nullptr, &lazy_alpha_white, &lazy_beta_white);
+                 nullptr, nullptr, &lazy_alpha_white, &lazy_beta_white);
 
     REQUIRE(with_tight_lazy_window == material_psqt_only);
     // And the whole point of this position: the early-exit value is
@@ -905,7 +905,7 @@ TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a laz
     const int lazy_alpha_white = 0;
     const int lazy_beta_white = 0;
     const int result = evaluate(pos, nullptr, &cache, nullptr, nullptr, nullptr, nullptr,
-                                 nullptr, nullptr, nullptr, nullptr, nullptr, &lazy_alpha_white,
+                                 nullptr, nullptr, nullptr, nullptr, &lazy_alpha_white,
                                  &lazy_beta_white);
     REQUIRE(result != 12345);
 
@@ -915,70 +915,3 @@ TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a laz
 }
 
 
-
-// --- ROADMAP.md "Restricted nonlinear feature interactions", candidate 3:
-// rook_files_value() wired into evaluate() ---
-
-TEST_CASE("evaluate: a RookFilesWeights override changes evaluate()'s result exactly as expected "
-          "-- the rook-files counterpart to the SpaceWeights test above, and proof that "
-          "rook_files_value() is actually part of evaluate()'s sum",
-          "[eval][rook_files][tuner]") {
-    init_all();
-    // Bare kings plus one White rook: no pawns anywhere, so all 8 files
-    // are fully open. White's term is 1 rook x 8 open files x the open
-    // bonus; Black has no rooks and contributes nothing.
-    Position pos = empty_position();
-    pos.place_piece(make_square(4, 0), Piece::WhiteKing); // e1
-    pos.place_piece(make_square(4, 7), Piece::BlackKing); // e8
-    pos.place_piece(make_square(0, 0), Piece::WhiteRook); // a1
-
-    const int default_eval = evaluate(pos);
-
-    // An explicit override equal to the compiled-in defaults changes nothing.
-    const RookFilesWeights defaults = default_rook_files_weights();
-    REQUIRE(evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-                      nullptr, &defaults) == default_eval);
-
-    // Boosting the open-file bonus by 10 (mg and eg together, so taper()
-    // cannot hide it) raises White's advantage by 8 files x 10 = 80,
-    // modulo taper rounding.
-    RookFilesWeights boosted = default_rook_files_weights();
-    boosted.open_mg += 10.0;
-    boosted.open_eg += 10.0;
-    const int boosted_eval = evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-                                       nullptr, nullptr, nullptr, &boosted);
-    REQUIRE(boosted_eval - default_eval >= 78);
-    REQUIRE(boosted_eval - default_eval <= 82);
-
-    // Zeroing the term removes it: the default evaluation must be strictly
-    // higher for White, which only holds if the term is in the sum.
-    RookFilesWeights zeroed;
-    zeroed.open_mg = 0.0;
-    zeroed.open_eg = 0.0;
-    zeroed.semi_open_mg = 0.0;
-    zeroed.semi_open_eg = 0.0;
-    const int zeroed_eval = evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-                                      nullptr, nullptr, nullptr, &zeroed);
-    REQUIRE(default_eval > zeroed_eval);
-}
-
-TEST_CASE("evaluate: eval_cache is never consulted (probed or stored) when a RookFilesWeights "
-          "override is supplied, even if a real EvalCache pointer is also passed",
-          "[eval][eval_cache][rook_files][tuner]") {
-    init_all();
-    Position pos = start_position();
-
-    EvalCache cache(2048);
-    cache.store(pos.zobrist_hash, 12345); // same poisoning technique as the tests above
-
-    const RookFilesWeights weights = default_rook_files_weights();
-    const int result = evaluate(pos, nullptr, &cache, nullptr, nullptr, nullptr, nullptr, nullptr,
-                                 nullptr, nullptr, &weights);
-    REQUIRE(result != 12345);
-    REQUIRE(result == evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-                                nullptr, nullptr, &weights));
-
-    const auto [hit, cached] = cache.probe(pos.zobrist_hash);
-    REQUIRE(hit);
-    REQUIRE(cached == 12345); // untouched, not overwritten with a fresh value either
-}
