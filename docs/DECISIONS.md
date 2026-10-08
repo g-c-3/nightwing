@@ -4,6 +4,22 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-07 (8) — Candidate 3 rejected and removed; fit not adopted; uci-match is the SPRT route for evaluator terms
+
+**Decision:** The rook count x file openness interaction term was removed together with its tuner plumbing, tests, CMake entries and CI `rook-files` matrix leg. Affected files were restored to their state before the wiring commit and the three `rook_files` files were deleted.
+
+**Evidence:** The CI Texel fit ran 200 iterations over 298141 positions without converging (loss still falling at the cap, 0.093415 to 0.092330). The fitted weights were open_mg -6.5, open_eg -38.3, semi_open_mg -3.6, semi_open_eg +40.6. Opposite signs on near-identical features and a magnitude near -460 cp for two rooks on six open files indicate that the columns absorbed collinear pawn-count signal rather than rook activity. The fit was therefore not adopted, which deviates from DECISIONS 2026-10-06 (5) (candidates 3 and 4 fitted before SPRT); the starting constants were tested instead. The `uci-match` SPRT (4000 games, depth 6, bounds 0/+5, baseline 3ec9cd4) ended inconclusive at the game cap: 1778 candidate wins, 428 draws, 1794 baseline wins, LLR -0.722, about -1.4 Elo. At this sample size the standard error is roughly 5 Elo, so the result excludes a gain near the +5 bound but cannot distinguish the term from neutral.
+
+**Rule applied:** A candidate that does not win its SPRT is removed, not kept as dead code (ROADMAP, restricted nonlinear interactions). Third consecutive rejection of an evaluator interaction candidate.
+
+**Process notes:** The `nightwing_sprt` pipeline evaluates `eval::MaterialWeights` only and cannot test an evaluator term. The `uci-match` pipeline, which plays a baseline git ref against a candidate git ref, is the route for such terms. A tuner fit should be sanity-checked for sign, magnitude and convergence before adoption; the CI fit leg exposes no `l2_lambda` input, so a regularised fit would need a workflow change.
+
+**Alternatives considered:**
+- Adopting the fitted weights: rejected as implausible and non-converged.
+- Re-fitting with constraints before SPRT: deferred, because the work is only worthwhile if the term shows a gain.
+
+---
+
 ### 2026-10-07 (7) — Candidate 3 wired into evaluate() with untuned constants; Texel fit and SPRT follow from CI
 
 **Decision:** `RookFilesWeights` was added as a nullable override following the existing seven-override pattern: a `rook_files` member of `eval::EvalWeightsOverride`, a `rook_files_weights` parameter of `eval::evaluate()` placed immediately after `pawns_weights`, a matching trailing parameter of `tuner::compute_loss()`, a `kRookFilesParameters` table (4 plain scalar entries, none anchored), `tune_rook_files()`, a `--rook-files` mode in `tune_main.cpp`, and a `rook-files` leg of the CI tuning-pipeline matrix. `rook_files_value()` was added to the `evaluate()` sum with the compiled-in starting constants of DECISIONS 2026-10-07 (6).

@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 196 — 2026-10-08 — Candidate 3 evaluated and removed
+
+**Verified first:** Session 195 commit green in CI; tuning-pipeline `rook-files` leg and `uci-match` SPRT results reviewed from the uploaded artifacts.
+
+**Findings:** Texel fit non-converged with implausible weights (not adopted). `uci-match` SPRT at the 4000-game cap: 1778 / 428 / 1794, LLR -0.722, about -1.4 Elo, inconclusive. See DECISIONS.md 2026-10-07 (8).
+
+**Changed (all complete files):** REPLACE `src/eval/eval.h`, `src/eval/eval.cpp`, `src/search/search.cpp`, `src/search/quiescence.cpp`, `src/tuner/tune.h`, `src/tuner/tune.cpp`, `src/tuner/tune_main.cpp`, `tests/eval_tests.cpp`, `tests/incremental_eval_tests.cpp`, `tests/tune_tests.cpp`, `.github/workflows/ci.yml`, `src/CMakeLists.txt`, `tests/CMakeLists.txt`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`. DELETED `src/eval/rook_files.h`, `src/eval/rook_files.cpp`, `tests/rook_files_tests.cpp`.
+
+**Verification (Linux, GCC, Release):** zero compiler warnings; 744/744 `ctest`; `bench` 36154 nodes, identical to the pre-wiring baseline.
+
+**Bugs fixed:** None.
+
+**Open:** Candidate 4 (king attackers scaled by king exposure). EG-instability item remains paused. Pondering GUI verification is blocked.
+
+**Next session start point:** Scope candidate 4 against the existing king-attack scaling inside king safety (read `src/eval/king_safety.*`), then build the standalone term with tests, unwired, as the first step.
+
+---
+
 ### Session 195 — 2026-10-07 — Candidate 3 tuner plumbing and evaluate() wiring completed
 
 **Verified first:** Docs and `main` tree read; Session 194 left the term standalone and unwired, matching the repository.
