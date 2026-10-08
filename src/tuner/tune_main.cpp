@@ -24,6 +24,7 @@
 //   nightwing_tune --threats < training_data.txt
 //   nightwing_tune --king-safety < training_data.txt
 //   nightwing_tune --pawns < training_data.txt
+//   nightwing_tune --king-exposure < training_data.txt
 //   nightwing_tune --fit-k < training_data.txt
 //
 // K-FITTING (Session 149, docs/DECISIONS.md 2026-09-27 (5)/(6)): Texel's
@@ -185,7 +186,7 @@ int main(int argc, char** argv) {
     // exact same slot it has in material mode, so switching modes
     // never requires renumbering the rest of the command line (this
     // file's own header comment).
-    enum class Mode { Material, Psqt, Mobility, Space, Threats, KingSafety, Pawns, FitK };
+    enum class Mode { Material, Psqt, Mobility, Space, Threats, KingSafety, Pawns, KingExposure, FitK };
     Mode mode = Mode::Material;
     int arg_offset = 1;
     if (argc > 1 && std::strcmp(argv[1], "--psqt") == 0) {
@@ -205,6 +206,9 @@ int main(int argc, char** argv) {
         arg_offset = 2;
     } else if (argc > 1 && std::strcmp(argv[1], "--pawns") == 0) {
         mode = Mode::Pawns;
+        arg_offset = 2;
+    } else if (argc > 1 && std::strcmp(argv[1], "--king-exposure") == 0) {
+        mode = Mode::KingExposure;
         arg_offset = 2;
     } else if (argc > 1 && std::strcmp(argv[1], "--fit-k") == 0) {
         mode = Mode::FitK;
@@ -356,6 +360,7 @@ int main(int argc, char** argv) {
         case Mode::Threats: mode_name = "threats"; break;
         case Mode::KingSafety: mode_name = "king-safety"; break;
         case Mode::Pawns: mode_name = "pawns"; break;
+        case Mode::KingExposure: mode_name = "king-exposure"; break;
         case Mode::FitK: mode_name = "fit-k"; break;
     }
 
@@ -540,6 +545,22 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "  %4d  %.6f\n", step.iteration, step.loss);
         }
         print_term_weights(nightwing::tuner::kPawnsParameters, result.weights);
+        return 0;
+    }
+    if (mode == Mode::KingExposure) {
+        const nightwing::eval::MaterialWeights material_weights =
+            nightwing::eval::default_material_weights();
+        const nightwing::tuner::TermTuneResult<nightwing::eval::KingExposureWeights> result =
+            nightwing::tuner::tune_king_exposure(
+                positions, material_weights, nightwing::eval::default_king_exposure_weights(),
+                config);
+        std::fprintf(stderr, "Initial loss: %.6f\nFinal loss:   %.6f\n", result.initial_loss,
+                      result.final_loss);
+        std::fprintf(stderr, "Loss history (iteration, loss):\n");
+        for (const nightwing::tuner::TuneIteration& step : result.history) {
+            std::fprintf(stderr, "  %4d  %.6f\n", step.iteration, step.loss);
+        }
+        print_term_weights(nightwing::tuner::kKingExposureParameters, result.weights);
         return 0;
     }
 

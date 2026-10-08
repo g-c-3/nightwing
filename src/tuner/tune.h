@@ -105,6 +105,7 @@
 #include <utility>
 #include <vector>
 
+#include "eval/king_exposure.h"
 #include "eval/king_safety.h"
 #include "eval/mobility.h"
 #include "eval/pawns.h"
@@ -564,6 +565,23 @@ inline constexpr std::array<KingSafetyParameterRef, 22> kKingSafetyParameters = 
     {"back_rank_eg", &eval::KingSafetyWeights::back_rank_eg},
 }};
 
+/// `ParameterRef<eval::KingExposureWeights>` -- the king-exposure
+/// interaction-term counterpart to the term tables above (ROADMAP.md,
+/// restricted nonlinear feature interactions, candidate 4).
+using KingExposureParameterRef = ParameterRef<eval::KingExposureWeights>;
+
+/// Every KingExposureWeights field, in declaration order: 2 plain
+/// scalar entries (the mg/eg weight applied to the integer product
+/// `attack_units * exposure`, eval/king_exposure.h). No entry is
+/// anchored: the term is a single additive product, so the flat-scaling
+/// degeneracy that motivated the material pawn anchor does not apply,
+/// and the table has no collinear column pairs of the kind that made
+/// the candidate 3 fit implausible (DECISIONS.md 2026-10-07 (8)).
+inline constexpr std::array<KingExposureParameterRef, 2> kKingExposureParameters = {{
+    {"attack_exposure_mg", &eval::KingExposureWeights::attack_exposure_mg},
+    {"attack_exposure_eg", &eval::KingExposureWeights::attack_exposure_eg},
+}};
+
 /// `ParameterRef<eval::PawnsWeights>` — the pawn-structure-side
 /// counterpart to MaterialParameterRef/PsqtParameterRef/
 /// MobilityParameterRef/SpaceParameterRef/ThreatsParameterRef/
@@ -978,6 +996,14 @@ struct TuneResult {
 /// `psqt_weights`/`mobility_weights`/`space_weights`/`threats_weights`/
 /// `king_safety_weights` -- any subset of the six may be non-null.
 ///
+/// `king_exposure_weights` -- the king-exposure interaction-term
+/// counterpart to `pawns_weights` above (candidate 4 of the restricted
+/// nonlinear feature interactions item), forwarded to eval::evaluate()
+/// the exact same way (see that parameter's own doc comment, eval.h).
+/// Defaults to nullptr (the compiled-in kExposureAttackPenalty),
+/// independent of every other override -- any subset of the seven may
+/// be non-null.
+///
 /// Precondition: board::init_masks() AND board::
 /// init_magic_bitboards() have been called (this function parses each
 /// position's FEN and evaluates it, both of which are transitively
@@ -990,7 +1016,9 @@ struct TuneResult {
                                    const eval::SpaceWeights* space_weights = nullptr,
                                    const eval::ThreatsWeights* threats_weights = nullptr,
                                    const eval::KingSafetyWeights* king_safety_weights = nullptr,
-                                   const eval::PawnsWeights* pawns_weights = nullptr) noexcept;
+                                   const eval::PawnsWeights* pawns_weights = nullptr,
+                                   const eval::KingExposureWeights* king_exposure_weights =
+                                       nullptr) noexcept;
 
 /// The Texel loss (the same mean squared error compute_loss() above
 /// computes) evaluated from PRECOMPUTED white-relative scores instead
@@ -1265,5 +1293,15 @@ tune_pawns(const std::vector<SelfPlayPosition>& positions,
            const eval::MaterialWeights& material_weights,
            const eval::PawnsWeights& initial_weights = eval::default_pawns_weights(),
            const TuneConfig& config = {});
+
+/// The king-exposure counterpart to tune_mobility() above -- see that
+/// function's own doc comment for the full convention. Internally:
+/// tune_term() instantiated over kKingExposureParameters.
+[[nodiscard]] TermTuneResult<eval::KingExposureWeights>
+tune_king_exposure(const std::vector<SelfPlayPosition>& positions,
+                   const eval::MaterialWeights& material_weights,
+                   const eval::KingExposureWeights& initial_weights =
+                       eval::default_king_exposure_weights(),
+                   const TuneConfig& config = {});
 
 } // namespace nightwing::tuner
