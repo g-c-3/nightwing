@@ -21,7 +21,6 @@ add_executable(nightwing_tests
     pawns_tests.cpp
     mobility_tests.cpp
     king_safety_tests.cpp
-    king_exposure_tests.cpp
     piece_bonuses_tests.cpp
     knight_outposts_tests.cpp
     space_tests.cpp
