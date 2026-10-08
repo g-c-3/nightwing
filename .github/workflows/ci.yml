@@ -475,7 +475,7 @@ jobs:
     # NOT derived from `matrix.mode` via string manipulation, since
     # GitHub Actions expressions have no built-in capitalize()) exists
     # so that list reads as a short, unambiguous "Mobility"/"Space"/
-    # "Threats"/"King-safety"/"Pawns"/"Rook-files"/"PSQT" rather than a long, mobile-
+    # "Threats"/"King-safety"/"Pawns"/"PSQT" rather than a long, mobile-
     # UI-truncating "Tuning pipeline, king-saf..." this job's own name
     # used before. `matrix.mode` (still the actual `--mode` value the
     # step below passes to nightwing_tune) is unchanged.
@@ -496,13 +496,6 @@ jobs:
             label: King-safety
           - mode: pawns
             label: Pawns
-          # Candidate 3 of ROADMAP.md's "Restricted nonlinear feature
-          # interactions" item (rook count x board-wide file openness):
-          # 4 parameters, so the cheapest finite-difference leg here
-          # (compute_loss() cost scales with training positions x
-          # (2N+1) evaluations per iteration, N = 4).
-          - mode: rook-files
-            label: Rook-files
 
     steps:
       - name: Checkout
