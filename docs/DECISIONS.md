@@ -4,6 +4,23 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-08 (1) — Candidate 4 scoped: king attackers x shelter exposure as a standalone product term
+
+**Decision:** Candidate 4 of the restricted nonlinear feature interactions item was built as `eval::king_exposure_value()` (`src/eval/king_exposure.h/.cpp`), standalone and unwired. Per side the penalty is `attack_units * exposure * weight`, where `attack_units` uses the same weights as the king-safety attacker component (knight 1, bishop 1, rook 2, queen 4, counted per piece attacking the king zone) and `exposure` is the number of files among the king file and its two neighbours (0..3) with no own pawn inside the 2-rank shield zone in front of the king. The default weight is {-1, 0} (middlegame only), untuned.
+
+**Scoping finding:** Earlier entries of the roadmap item refer to an existing king-attack scaling inside king safety. `king_safety.cpp` contains no such scaling: the attacker component is the linear product `attack_unit_penalty * units`, and the shield, open-file and storm components are additive. The term is therefore a new interaction (attackers against a broken shelter), not a modification of an existing nonlinearity, and the double-counting concern reduces to partial overlap with the linear attacker term and the file-based penalties.
+
+**Rationale for the shape:** One scalar feature with one (mg, eg) weight pair leaves a fit no room for the opposite-sign, collinear columns that made the candidate 3 fit implausible (DECISIONS 2026-10-07 (8)). An intact shelter scores 0, so a healthy castled king is never charged however many pieces attack it. Fractional weights are applied to the integer product and rounded once, so a tuner can move the weight in sub-centipawn steps.
+
+**Implementation notes:** The attack-unit scan and the shield-file geometry are duplicated file-privately rather than exported from `king_safety.cpp`, so completed, green code stays untouched. Sharing the scan is a possible optimisation at wiring time if `bench` shows a per-node cost. Verification (Linux, GCC, Release): zero compiler warnings; 754/754 `ctest` (744 existing plus 10 new test cases); no search or evaluation path references the term, so the search `bench` node count is unchanged by construction.
+
+**Alternatives considered:**
+- Exposing `attack_units_on()` from `king_safety.h`: deferred, because it modifies green code before the term has shown any gain.
+- Several weights (per exposure level, per piece type): rejected for the collinearity reason above.
+- Exposure measured as missing shield pawns out of 6: rejected, because an ordinary intact shelter would score 3 and the term would charge healthy kings.
+
+---
+
 ### 2026-10-07 (8) — Candidate 3 rejected and removed; fit not adopted; uci-match is the SPRT route for evaluator terms
 
 **Decision:** The rook count x file openness interaction term was removed together with its tuner plumbing, tests, CMake entries and CI `rook-files` matrix leg. Affected files were restored to their state before the wiring commit and the three `rook_files` files were deleted.

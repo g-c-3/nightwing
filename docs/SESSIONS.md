@@ -4,6 +4,26 @@ Newest entry at top.
 
 ---
 
+### Session 197 — 2026-10-08 — Candidate 4 standalone term built (unwired)
+
+**Verified first:** Session 196 state read from SESSIONS.md, ROADMAP.md, DECISIONS.md and ARCHITECTURE.md; `src/eval/king_safety.h/.cpp` read in full for scoping.
+
+**Findings:** No king-attack scaling exists in `king_safety.cpp` (the attacker component is linear); the roadmap wording was inaccurate. See DECISIONS.md 2026-10-08 (1).
+
+**Built:** `eval::king_exposure_value()` / `king_exposure_level()` / `KingExposureWeights` (attack units x shelter exposure, single weight pair, default {-1, 0}), standalone and unwired.
+
+**Changed (all complete files):** NEW `src/eval/king_exposure.h`, `src/eval/king_exposure.cpp`, `tests/king_exposure_tests.cpp`. REPLACE `src/CMakeLists.txt`, `tests/CMakeLists.txt`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
+
+**Verification (Linux, GCC, Release, sandbox build):** zero compiler warnings; 754/754 `ctest`. The term is not called from `evaluate()`, so search `bench` (36154 nodes) is unchanged by construction; the sandbox run covered the perft bench only.
+
+**Bugs fixed:** None.
+
+**Open:** Candidate 4 wiring, CI fit and SPRT. EG-instability item remains paused. Pondering GUI verification is blocked.
+
+**Next session start point:** Wire `KingExposureWeights` as a nullable override through `eval::evaluate()` and `tuner::compute_loss()` (new parameter placed immediately after the last existing override so the compiler flags every call site), add `kKingExposureParameters` and `tune_king_exposure()` with a `--king-exposure` mode in `tune_main.cpp` and a CI tuning-pipeline leg, using the space term as the template.
+
+---
+
 ### Session 196 — 2026-10-08 — Candidate 3 evaluated and removed
 
 **Verified first:** Session 195 commit green in CI; tuning-pipeline `rook-files` leg and `uci-match` SPRT results reviewed from the uploaded artifacts.
