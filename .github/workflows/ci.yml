@@ -496,6 +496,8 @@ jobs:
             label: King-safety
           - mode: pawns
             label: Pawns
+          - mode: king-exposure
+            label: King-exposure
 
     steps:
       - name: Checkout
