@@ -64,6 +64,7 @@
 #include "board/board.h"
 #include "eval/eval_cache.h"
 #include "eval/incremental.h"
+#include "eval/king_exposure.h"
 #include "eval/king_safety.h"
 #include "eval/mobility.h"
 #include "eval/pawn_tt.h"
@@ -132,6 +133,10 @@ struct EvalWeightsOverride {
     const ThreatsWeights* threats = nullptr;
     const KingSafetyWeights* king_safety = nullptr;
     const PawnsWeights* pawns = nullptr;
+    /// Candidate 4 of the restricted nonlinear interactions item
+    /// (eval/king_exposure.h): enemy king attackers scaled by shelter
+    /// exposure.
+    const KingExposureWeights* king_exposure = nullptr;
 };
 
 /// Evaluates `pos` and returns a centipawn score from White's
@@ -304,6 +309,22 @@ struct EvalWeightsOverride {
 /// evaluate()'s own implementation, eval.cpp, for where this is
 /// enforced).
 ///
+/// `king_exposure_weights`, if non-null, is forwarded to the internal
+/// king_exposure_value() call INSTEAD OF its own compiled-in constant
+/// (eval/king_exposure.h's KingExposureWeights) -- the king-exposure
+/// interaction-term counterpart to the seven overrides above
+/// (ROADMAP.md, restricted nonlinear feature interactions, candidate
+/// 4). Independent of the other seven: any subset of the eight may be
+/// non-null on a given call. `eval_cache` is DELIBERATELY NEVER
+/// consulted whenever `king_exposure_weights != nullptr`, for the
+/// identical staleness reason the other seven already disable it.
+/// Defaults to nullptr, meaning "use the compiled-in constant".
+/// Placed immediately before `incremental_material_psqt` so that every
+/// positional call passing that argument in the following slot fails
+/// to compile (a `const Score*` does not convert to a
+/// `const KingExposureWeights*`) instead of silently shifting an
+/// argument; the compiler therefore names every call site to update.
+///
 /// `incremental_material_psqt`, if non-null, is used INSTEAD OF running
 /// compute_material_psqt()'s own 64-square scan (eval/incremental.h) —
 /// the caller is asserting that `*incremental_material_psqt` already
@@ -391,6 +412,7 @@ struct EvalWeightsOverride {
                             const ThreatsWeights* threats_weights = nullptr,
                             const KingSafetyWeights* king_safety_weights = nullptr,
                             const PawnsWeights* pawns_weights = nullptr,
+                            const KingExposureWeights* king_exposure_weights = nullptr,
                             const Score* incremental_material_psqt = nullptr,
                             const int* lazy_alpha_white = nullptr,
                             const int* lazy_beta_white = nullptr) noexcept;

@@ -5,6 +5,7 @@
 #include "board/zobrist.h"
 #include "eval/basic_mates.h"
 #include "eval/fortress.h"
+#include "eval/king_exposure.h"
 #include "eval/king_pawn_endgame.h"
 #include "eval/king_safety.h"
 #include "eval/king_tropism.h"
@@ -86,6 +87,7 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
              const MobilityWeights* mobility_weights, const SpaceWeights* space_weights,
              const ThreatsWeights* threats_weights,
              const KingSafetyWeights* king_safety_weights, const PawnsWeights* pawns_weights,
+             const KingExposureWeights* king_exposure_weights,
              const Score* incremental_material_psqt, const int* lazy_alpha_white,
              const int* lazy_beta_white) noexcept {
     // Eval cache (eval/eval_cache.h): probed first, keyed on the FULL
@@ -101,8 +103,9 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     //
     // DELIBERATELY SKIPPED WHENEVER material_weights, psqt_weights,
     // mobility_weights, space_weights, threats_weights,
-    // king_safety_weights, OR pawns_weights IS SET (this function's own
-    // doc comment on all seven parameters has the full rationale,
+    // king_safety_weights, pawns_weights, OR king_exposure_weights IS SET
+    // (this function's own doc comment on all eight parameters has the
+    // full rationale,
     // repeated for each): eval_cache's key says nothing about which
     // weight vector(s) produced a cached result, so honoring it under a
     // different-than-default weight vector could silently return a
@@ -118,7 +121,8 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
                                     (psqt_weights == nullptr) && (mobility_weights == nullptr) &&
                                     (space_weights == nullptr) && (threats_weights == nullptr) &&
                                     (king_safety_weights == nullptr) &&
-                                    (pawns_weights == nullptr) && !lazy_eval_requested;
+                                    (pawns_weights == nullptr) &&
+                                    (king_exposure_weights == nullptr) && !lazy_eval_requested;
     if (eval_cache_usable) {
         const auto [hit, cached] = eval_cache->probe(pos.zobrist_hash);
         if (hit) {
@@ -232,6 +236,7 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     // Phase 6 item that adds its own consumer.
     const int result = taper(score + pawn_score + mobility_value(pos, mobility_weights) +
                                   king_safety_value(pos, king_safety_weights) +
+                                  king_exposure_value(pos, king_exposure_weights) +
                                   piece_bonus_value(pos) +
                                   knight_outpost_value(pos) + space_value(pos, space_weights) +
                                   threats_value(pos, threats_weights) +
