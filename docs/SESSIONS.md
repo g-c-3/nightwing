@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 199 — 2026-10-08 — Candidate 4 removed
+
+**Evidence reviewed:** Session 198 CI green (759/759 on Linux and Windows, 757 on macOS). `uci-match` SPRT inconclusive at about -1.1 Elo (4000 games). CI fit returned attack_exposure_mg -3.63 and attack_exposure_eg +22.92, failing the sanity check. See DECISIONS.md 2026-10-08 (3).
+
+**Changed:** DELETE `src/eval/king_exposure.h`, `src/eval/king_exposure.cpp`, `tests/king_exposure_tests.cpp`. REPLACE (restored to Session 197 contents, plus CMake entries removed) `src/CMakeLists.txt`, `tests/CMakeLists.txt`, `src/eval/eval.h`, `src/eval/eval.cpp`, `src/search/search.cpp`, `src/search/quiescence.cpp`, `src/tuner/tune.h`, `src/tuner/tune.cpp`, `src/tuner/tune_main.cpp`, `tests/eval_tests.cpp`, `tests/incremental_eval_tests.cpp`, `tests/tune_tests.cpp`, `.github/workflows/ci.yml`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
+
+**Verification (Linux, GCC, Release, sandbox):** see DECISIONS.md 2026-10-08 (3): 744 tests, `bench` 36154 nodes.
+
+**Bugs fixed:** None.
+
+**Open:** The restricted nonlinear feature interactions item is exhausted for now (blocked on a constrained or regularised fit). EG-instability item remains paused. Pondering GUI verification is blocked.
+
+**Next session start point:** Choose the next ROADMAP item; the evaluator-interaction item should only be reopened after the tuner can fit with non-negative or L2-regularised endgame weights.
+
+---
+
 ### Session 198 — 2026-10-08 — Candidate 4 wired into evaluate()
 
 **Verified first:** Session 197 commit green in CI on all jobs (754/754 ctest on Linux and Windows, 752/752 on macOS, where six BMI2/bench tests do not register by existing platform gating; ThreadSanitizer and WebAssembly jobs green; release published).

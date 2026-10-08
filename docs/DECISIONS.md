@@ -4,6 +4,22 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-08 (3) — Candidate 4 removed after an inconclusive SPRT and a failed fit sanity check
+
+**Decision:** The king-attackers-times-shelter-exposure term (DECISIONS 2026-10-08 (1) and (2)) was removed in full: `src/eval/king_exposure.h/.cpp`, `tests/king_exposure_tests.cpp`, the `KingExposureWeights` override plumbing in `eval::evaluate()`, `search.cpp`, `quiescence.cpp` and `tuner::compute_loss()`, `kKingExposureParameters`, `tune_king_exposure()`, the `--king-exposure` tuner mode, the `king-exposure` CI tuning leg and the CMake entries. Files touched by the wiring were restored to their Session 197 contents.
+
+**Evidence:**
+- `uci-match` SPRT, untuned default {-1, 0}, baseline Session 197 commit f8b543f, candidate main 8f7abea: 4000 games (candidate 1794 wins, baseline 1807, draws 399), 0 illegal moves, about -1.1 Elo, LLR -0.668 against bounds of +/-2.944, inconclusive.
+- CI Texel fit (5000 self-play games, 298142 quiet positions, depth 6, 200 iterations): attack_exposure_mg -3.63, attack_exposure_eg +22.92, final loss 0.093521, flat from iteration 161. A positive endgame weight of that size would reward attackers against a broken shelter, which has no chess meaning.
+
+**Rationale:** The single-weight design avoided the multi-column collinearity of candidate 3 but not the underlying failure: an unconstrained endgame weight absorbed unrelated signal. The rule recorded in DECISIONS 2026-10-07 (8) (remove a term whose fit is implausible and whose SPRT is not won) was applied. The middlegame weight was not adopted on its own because it was fitted jointly with the implausible endgame weight.
+
+**Verification:** Reverted tree: 744 tests, `bench` 36154 nodes (the Session 197 value before wiring).
+
+**Consequence for future work:** Further evaluator-interaction candidates are blocked on a fitting procedure that can express non-negative or regularised endgame weights (`l2_lambda` above 0), which the CI tuning leg cannot currently do.
+
+---
+
 ### 2026-10-08 (2) — Candidate 4 wired into evaluate() with untuned constants; Texel fit and SPRT follow from CI
 
 **Decision:** `KingExposureWeights` was added as a nullable override following the existing seven-override pattern: a `king_exposure` member of `eval::EvalWeightsOverride`, a `king_exposure_weights` parameter of `eval::evaluate()` placed immediately after `pawns_weights`, a matching trailing parameter of `tuner::compute_loss()`, a `kKingExposureParameters` table (2 plain scalar entries, none anchored), `tune_king_exposure()`, a `--king-exposure` mode in `tune_main.cpp`, and a `king-exposure` leg of the CI tuning-pipeline matrix. `king_exposure_value()` was added to the `evaluate()` sum with the compiled-in default {-1, 0} of DECISIONS 2026-10-08 (1). `search.cpp` and `quiescence.cpp` forward the override through the existing bundle.
