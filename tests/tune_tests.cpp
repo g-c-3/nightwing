@@ -1729,3 +1729,82 @@ TEST_CASE("compute_loss_from_scores: matches compute_loss() and tolerates bad in
     REQUIRE(compute_loss_from_scores({}, {}, 400.0) == 0.0);
     REQUIRE(compute_loss_from_scores(scores, {0.5}, 400.0) == 0.0); // size mismatch
 }
+
+// --- Candidate 4 (king exposure) ---
+
+TEST_CASE("kKingExposureParameters: covers exactly the 2 KingExposureWeights fields, each a plain "
+          "scalar entry (member set, array_member null), none anchored; get()/set() agree with "
+          "default_king_exposure_weights()",
+          "[tuner][tune][king_exposure]") {
+    REQUIRE(kKingExposureParameters.size() == 2);
+    const KingExposureWeights defaults = default_king_exposure_weights();
+    for (const KingExposureParameterRef& param : kKingExposureParameters) {
+        REQUIRE(param.member != nullptr);
+        REQUIRE(param.array_member == nullptr);
+        REQUIRE(param.anchored == false);
+        KingExposureWeights w = defaults;
+        param.set(w, param.get(defaults) + 1.5);
+        REQUIRE(param.get(w) == param.get(defaults) + 1.5);
+    }
+}
+
+TEST_CASE("compute_loss: an optional king_exposure_weights argument is forwarded to evaluate() "
+          "exactly the same way the other overrides already are",
+          "[tuner][tune][king_exposure]") {
+    init_all();
+    // White king g1 with g2/h2 only under a Black queen on d4: the
+    // king-exposure product is 4, so changing its weight moves the eval.
+    const std::string fen = "4k3/8/8/8/3q4/8/6PP/6K1 w - - 0 1";
+    const Position pos = parse_fen(fen);
+    const MaterialWeights weights = default_material_weights();
+    const double sigmoid_scale = 400.0;
+
+    const int default_eval = evaluate(pos, nullptr, nullptr, &weights);
+    const double default_label = sigmoid(static_cast<double>(default_eval) / sigmoid_scale);
+    SelfPlayPosition position{fen, default_label};
+    REQUIRE(compute_loss({position}, weights, sigmoid_scale) < 1e-12);
+
+    KingExposureWeights perturbed = default_king_exposure_weights();
+    perturbed.attack_exposure_mg -= 20.0;
+    perturbed.attack_exposure_eg -= 20.0;
+    const double loss_with_override = compute_loss(
+        {position}, weights, sigmoid_scale, /*psqt_weights=*/nullptr,
+        /*mobility_weights=*/nullptr, /*space_weights=*/nullptr,
+        /*threats_weights=*/nullptr, /*king_safety_weights=*/nullptr,
+        /*pawns_weights=*/nullptr, &perturbed);
+    REQUIRE(loss_with_override > 1e-6);
+
+    const int perturbed_eval =
+        evaluate(pos, nullptr, nullptr, &weights, /*psqt_weights=*/nullptr,
+                 /*mobility_weights=*/nullptr, /*space_weights=*/nullptr,
+                 /*threats_weights=*/nullptr, /*king_safety_weights=*/nullptr,
+                 /*pawns_weights=*/nullptr, &perturbed);
+    const double perturbed_predicted =
+        sigmoid(static_cast<double>(perturbed_eval) / sigmoid_scale);
+    const double expected_error = perturbed_predicted - default_label;
+    REQUIRE(loss_with_override == expected_error * expected_error);
+}
+
+TEST_CASE("tune_king_exposure: an all-neutral (bare kings, 0.5 result) training set leaves the "
+          "weights exactly unchanged, and history/initial_loss/final_loss are consistent",
+          "[tuner][tune][king_exposure]") {
+    init_all();
+    std::vector<SelfPlayPosition> positions;
+    for (int i = 0; i < 5; ++i) {
+        positions.push_back(SelfPlayPosition{"4k3/8/8/8/8/8/8/4K3 w - - 0 1", 0.5});
+    }
+
+    TuneConfig config;
+    config.iterations = 5;
+    const MaterialWeights material = default_material_weights();
+    const KingExposureWeights initial = default_king_exposure_weights();
+    const TermTuneResult<KingExposureWeights> result =
+        tune_king_exposure(positions, material, initial, config);
+
+    REQUIRE(result.history.size() == static_cast<std::size_t>(config.iterations + 1));
+    REQUIRE(result.initial_loss == result.history.front().loss);
+    REQUIRE(result.final_loss == result.history.back().loss);
+    REQUIRE(result.final_loss == result.initial_loss);
+    REQUIRE(result.weights.attack_exposure_mg == initial.attack_exposure_mg);
+    REQUIRE(result.weights.attack_exposure_eg == initial.attack_exposure_eg);
+}
