@@ -17,6 +17,7 @@ add_library(nightwing_lib STATIC
     eval/pawn_tt.cpp
     eval/mobility.cpp
     eval/king_safety.cpp
+    eval/king_exposure.cpp
     eval/piece_bonuses.cpp
     eval/knight_outposts.cpp
     eval/space.cpp
