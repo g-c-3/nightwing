@@ -4,6 +4,24 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-08 (2) — Candidate 4 wired into evaluate() with untuned constants; Texel fit and SPRT follow from CI
+
+**Decision:** `KingExposureWeights` was added as a nullable override following the existing seven-override pattern: a `king_exposure` member of `eval::EvalWeightsOverride`, a `king_exposure_weights` parameter of `eval::evaluate()` placed immediately after `pawns_weights`, a matching trailing parameter of `tuner::compute_loss()`, a `kKingExposureParameters` table (2 plain scalar entries, none anchored), `tune_king_exposure()`, a `--king-exposure` mode in `tune_main.cpp`, and a `king-exposure` leg of the CI tuning-pipeline matrix. `king_exposure_value()` was added to the `evaluate()` sum with the compiled-in default {-1, 0} of DECISIONS 2026-10-08 (1). `search.cpp` and `quiescence.cpp` forward the override through the existing bundle.
+
+**Rationale for placement:** Inserting the parameter before `incremental_material_psqt` makes every positional call that passed that argument in the following slot fail to compile, because a `const Score*` does not convert to `const KingExposureWeights*`. The compiler therefore identified each call site to update (six in `tests/eval_tests.cpp` and `tests/incremental_eval_tests.cpp`).
+
+**Cache behavior:** `eval_cache` is skipped whenever `king_exposure_weights` is non-null, for the same staleness reason as the other overrides. The pawn hash table is unaffected: the term depends on pieces as well as pawns and is computed outside the pawn-structure cache.
+
+**Effect on search:** The term is live at its compiled-in default, so the search `bench` node count changed from 36154 to 36829 (sandbox, GCC, Release). This is an intended consequence of wiring, not a regression; the SPRT decides whether the term stays. 759/759 `ctest`, zero compiler warnings.
+
+**Next steps:** CI tuning-pipeline fit of the two weights, sanity-checked for sign, magnitude and convergence before adoption (DECISIONS 2026-10-07 (8)); then the `uci-match` SPRT against the commit preceding the wiring, with a `bench` per-node-cost check. A term that does not win the SPRT is removed together with its plumbing, tests, CMake entries and CI leg.
+
+**Alternatives considered:**
+- Gating the term behind a UCI option for A/B testing: rejected, because the `uci-match` pipeline already compares two git refs and an option would leave dead configuration if the term is removed.
+- Bundling candidate 4 with a re-fit of the king-safety weights: rejected, because it would confound the SPRT result.
+
+---
+
 ### 2026-10-08 (1) — Candidate 4 scoped: king attackers x shelter exposure as a standalone product term
 
 **Decision:** Candidate 4 of the restricted nonlinear feature interactions item was built as `eval::king_exposure_value()` (`src/eval/king_exposure.h/.cpp`), standalone and unwired. Per side the penalty is `attack_units * exposure * weight`, where `attack_units` uses the same weights as the king-safety attacker component (knight 1, bishop 1, rook 2, queen 4, counted per piece attacking the king zone) and `exposure` is the number of files among the king file and its two neighbours (0..3) with no own pawn inside the 2-rank shield zone in front of the king. The default weight is {-1, 0} (middlegame only), untuned.

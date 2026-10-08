@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 198 — 2026-10-08 — Candidate 4 wired into evaluate()
+
+**Verified first:** Session 197 commit green in CI on all jobs (754/754 ctest on Linux and Windows, 752/752 on macOS, where six BMI2/bench tests do not register by existing platform gating; ThreadSanitizer and WebAssembly jobs green; release published).
+
+**Built:** `KingExposureWeights` override plumbing through `evaluate()`, `search.cpp`, `quiescence.cpp` and `tuner::compute_loss()`; `kKingExposureParameters`; `tune_king_exposure()`; `--king-exposure` tuner mode; `king-exposure` CI tuning-pipeline leg. See DECISIONS.md 2026-10-08 (2).
+
+**Changed (all complete files):** REPLACE `src/eval/eval.h`, `src/eval/eval.cpp`, `src/search/search.cpp`, `src/search/quiescence.cpp`, `src/tuner/tune.h`, `src/tuner/tune.cpp`, `src/tuner/tune_main.cpp`, `tests/eval_tests.cpp`, `tests/incremental_eval_tests.cpp`, `tests/tune_tests.cpp`, `.github/workflows/ci.yml`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
+
+**Verification (Linux, GCC, Release, sandbox):** zero compiler warnings; 759/759 `ctest`; search `bench` 36829 nodes (was 36154; the term is now live at its default).
+
+**Bugs fixed:** None.
+
+**Open:** Candidate 4 CI fit and SPRT. EG-instability item remains paused. Pondering GUI verification is blocked.
+
+**Next session start point:** Run the CI tuning-pipeline `king-exposure` leg and review `tuned_weights.txt` and `tune_stderr.txt` for sign, magnitude and convergence; then run the `uci-match` SPRT (candidate: this commit, baseline: the Session 197 commit) with a `bench` per-node-cost comparison, and remove the term if it does not win.
+
+---
+
 ### Session 197 — 2026-10-08 — Candidate 4 standalone term built (unwired)
 
 **Verified first:** Session 196 state read from SESSIONS.md, ROADMAP.md, DECISIONS.md and ARCHITECTURE.md; `src/eval/king_safety.h/.cpp` read in full for scoping.
