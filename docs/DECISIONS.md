@@ -4,6 +4,35 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-09 (3) — Search tunables: live `const int&` bindings in the tuning build, `constexpr` otherwise; seven spin options with clamped ranges
+
+**Decision:** Sub-step (2b) of SPSA step (2) was implemented as designed in 2026-10-09, with these concrete choices.
+
+1. `src/search/tunables.h` is always included. In the default build it declares only `kSearchTuningBuild = false`. When CMake option `NIGHTWING_SEARCH_TUNING` is ON, `nightwing_lib` receives a `NIGHTWING_SEARCH_TUNING=1` definition (PUBLIC, so tests see it) and the header additionally defines `SearchTunables`, the process-wide `g_search_tunables`, the table `kSearchTunableSpecs`, `set_search_tunable()` and `reset_search_tunables()`.
+2. In `search.cpp` each of the seven constants is written as `#if defined(NIGHTWING_SEARCH_TUNING) const int& kName = g_search_tunables.field; #else constexpr int kName = <value>; #endif`. Every use site is unchanged. The default build compiles to the same constants as before.
+3. Option names are `NullMoveReduction`, `NullMoveBigReduction`, `ProbCutMargin`, `IIRMinDepth`, `SingularMarginPerPly`, `ImprovingFutilityDelta`, `AspirationInitialDelta` (no spaces, so the `setoption` name reassembly in `handle_setoption()` is unambiguous). Ranges: 1-6, 1-8, 20-600, 2-12, 1-8, 0-200, 5-100. Values are clamped, not rejected. A non-integer value or an unknown name is ignored, matching the other options.
+4. `handle_setoption()` falls through to `set_search_tunable()` only in the tuning build; the `uci` response advertises the options only in the tuning build.
+
+**Rationale:**
+- *Reference bindings instead of macros or a struct read at each use.* All seven use sites are ordinary runtime expressions (checked by grep; none is in a `constexpr`, `static_assert` or array-size context), so a reference to the live value needs no change at any use site and no preprocessor substitution of identifiers. The extra load per read is confined to the tuning binary.
+- *Defaults in two places.* `SearchTunables` member initialisers and `kSearchTunableSpecs` both carry the default. A test requires them to agree and to lie inside the advertised range; whether they equal the `constexpr` values of the default build is checked indirectly, by `bench` returning 36154 nodes in the tuning build at defaults.
+- *Clamping.* An SPSA driver rounds theta to integers and may step outside a safe range; clamping keeps a run alive, and a clamped value is visible in the engine's advertised range. `SpsaParam` bounds in sub-step (2c) should be set to the same ranges.
+- *No synchronisation.* The values are plain ints written between games. A change during a search is unsupported in the tuning build; the ThreadSanitizer leg uses the default build.
+
+**Verification (Linux, GCC, Release, sandbox):** default build: 747/747 `ctest`, `bench` 36154 nodes, zero warnings. Tuning build: all `[tunables]` tests pass, 750/750 `ctest` before one further test was added (the defaults-consistency test), `bench` 36154 nodes at defaults, zero warnings; the `uci` output lists the seven options with the ranges above. Not verified: macOS, Windows and WebAssembly (the tuning option was not built there), and no CI leg builds the tuning configuration yet.
+
+**Scope of what this does NOT establish:** that any of the seven constants is mistuned, that the ranges are wide enough for a useful search, or that node-limited play yields a usable SPSA signal (sub-step (2c) must test that).
+
+**Alternatives considered:**
+- *Preprocessor macros naming the constants:* rejected; they hide identifiers and would affect any other use of the same names.
+- *A constexpr-selected `inline` accessor function per constant:* rejected as a larger edit at every use site for no benefit over a reference.
+- *Rejecting out-of-range values:* rejected in favour of clamping, for the SPSA reason above.
+- *Adding the CI leg in this sub-step:* deferred to (2d), as scoped in 2026-10-09.
+
+**Test risk:** low. The default build changes only by a header include and `#if` blocks that select the original `constexpr` lines; the only new default-build test asserts the options are absent.
+
+---
+
 ### 2026-10-09 (2) — Match go-command precedence: movetime, then nodes, then depth; built as a free function
 
 **Decision:** `UciMatchConfig` gained `nodes`. The `go` command sent by a match is chosen by `uci_go_command()` (a free function declared in `uci_match.h`): `go movetime N` when `movetime_ms` > 0, else `go nodes N` when `nodes` > 0, else `go depth N`. `nightwing_uci_match` gained `--nodes N`. The per-move timeout is unchanged (120000 ms unless `move_timeout_ms` or `movetime_ms` applies).

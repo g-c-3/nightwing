@@ -4,6 +4,26 @@ Newest entry at top.
 
 ---
 
+### Session 202 — 2026-10-09 — SPSA sub-step (2b): gated search tunables
+
+**Evidence reviewed:** `CMakeLists.txt`, `src/CMakeLists.txt` (definition block), `src/search/search.cpp` (constant block and the seven use sites), `src/search/search.h`, `src/uci/uci.cpp` (`handle_setoption()` and the `uci` option output), `tests/uci_tests.cpp` helpers, DECISIONS.md 2026-10-09.
+
+**Changed:** NEW `src/search/tunables.h`, NEW `tests/tunables_tests.cpp`. REPLACE `CMakeLists.txt`, `src/CMakeLists.txt`, `src/search/search.cpp`, `src/uci/uci.cpp`, `tests/CMakeLists.txt`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
+
+**Built:** CMake option `NIGHTWING_SEARCH_TUNING` (default OFF); `SearchTunables` and seven spin options (`NullMoveReduction`, `NullMoveBigReduction`, `ProbCutMargin`, `IIRMinDepth`, `SingularMarginPerPly`, `ImprovingFutilityDelta`, `AspirationInitialDelta`); `search.cpp` constants switch between `const int&` bindings (tuning) and `constexpr` (default); 1 default-build test and 5 tuning-build tests.
+
+**Decisions made:** DECISIONS.md 2026-10-09 (3).
+
+**Verification (Linux, GCC, Release, sandbox):** default build 747/747 `ctest`, `bench` 36154 nodes, zero warnings. Tuning build: `bench` 36154 nodes at defaults, zero warnings, 750/750 `ctest` before the defaults-consistency test was added and all five `[tunables]` tests passing afterwards (a full tuning-build `ctest` after that last test was not re-run). Not run: CI, macOS, Windows, WebAssembly.
+
+**Bugs fixed:** None. One warning introduced while writing the new test file (an unused helper in the default build) was fixed before delivery.
+
+**Open:** SPSA sub-steps (2c) to (2e) and step (3); a CI leg for the tuning configuration (planned with (2d)). Everything else unchanged from Session 201.
+
+**Next session start point:** Confirm CI is green for the Session 202 push, then sub-step (2c): read `src/tuner/spsa_eval.h/.cpp`, `spsa_main.cpp`, `uci_match.h/.cpp` and `tests/spsa_eval_tests.cpp` in full; add `play_search_match()` and `run_spsa_search()` (both engines from one tuning binary, differing in `setoption` values, node-limited through `UciMatchConfig::nodes`, one `UciMatchSession` per SPSA iteration) and `nightwing_spsa` target 3 with an engine-path argument, using the ranges in DECISIONS.md 2026-10-09 (3) as `SpsaParam` bounds.
+
+---
+
 ### Session 201 — 2026-10-09 — SPSA sub-step (2a): node-limited matches
 
 **Evidence reviewed:** `uci_match.h`, `uci_match.cpp` (go-command and timeout code), `uci_match_main.cpp`, `tests/uci_match_tests.cpp`.
