@@ -13,6 +13,8 @@
 //   --games N            maximum games to play (default 100)
 //   --depth N            fixed search depth, `go depth N` (default 4)
 //   --movetime MS        use `go movetime MS` instead of a fixed depth
+//   --nodes N            use `go nodes N` instead of a fixed depth (ignored
+//                        when --movetime is given)
 //   --opening-plies N    random opening plies per game (default 8)
 //   --max-plies N        game-length cap in plies (default 300)
 //   --seed S             base seed for the random openings (default 1)
@@ -51,7 +53,7 @@ using nightwing::tuner::UciMatchSession;
 void print_usage() {
     std::fprintf(stderr,
                  "usage: nightwing_uci_match <engine_a> <engine_b> [--games N] [--depth N] "
-                 "[--movetime MS]\n"
+                 "[--movetime MS] [--nodes N]\n"
                  "         [--opening-plies N] [--max-plies N] [--seed S] [--opt-a Name=Value]... "
                  "[--opt-b Name=Value]...\n"
                  "         [--sprt E0 E1 [ALPHA BETA]] [--keep-own-book]\n"
@@ -126,6 +128,10 @@ int main(int argc, char** argv) {
             const char* v = next("--movetime");
             if (v == nullptr) return 2;
             config.movetime_ms = std::atoi(v);
+        } else if (arg == "--nodes") {
+            const char* v = next("--nodes");
+            if (v == nullptr) return 2;
+            config.nodes = std::atoi(v);
         } else if (arg == "--opening-plies") {
             const char* v = next("--opening-plies");
             if (v == nullptr) return 2;
@@ -171,8 +177,7 @@ int main(int argc, char** argv) {
                  "Nightwing UCI match: A=%s (baseline) vs B=%s (candidate); max_games=%d %s "
                  "opening_plies=%d max_plies=%d seed=%llu%s\n",
                  spec_a.command.c_str(), spec_b.command.c_str(), max_games,
-                 config.movetime_ms > 0 ? ("movetime=" + std::to_string(config.movetime_ms)).c_str()
-                                        : ("depth=" + std::to_string(config.depth)).c_str(),
+                 uci_go_command(config).c_str(),
                  config.random_opening_plies, config.max_plies,
                  static_cast<unsigned long long>(base_seed),
                  use_sprt ? " (SPRT enabled)" : "");

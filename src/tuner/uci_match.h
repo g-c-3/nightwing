@@ -78,13 +78,25 @@ struct UciMatchConfig {
     /// UciMatchSession, whose caller chooses how many games to request.
     int num_games = 20;
 
-    /// Fixed search depth sent as `go depth N`. Used when `movetime_ms`
-    /// is 0. Fixed depth keeps a match reproducible and machine-speed
-    /// independent, the same reasoning as MatchConfig::search_depth.
+    /// Fixed search depth sent as `go depth N`. Used when both
+    /// `movetime_ms` and `nodes` are 0. Fixed depth keeps a match
+    /// reproducible and machine-speed independent, the same reasoning as
+    /// MatchConfig::search_depth.
     int depth = 4;
 
-    /// When greater than 0, `go movetime N` is used instead of `depth`.
+    /// When greater than 0, `go movetime N` is used. Takes precedence
+    /// over `nodes` and `depth`.
     int movetime_ms = 0;
+
+    /// When greater than 0 (and `movetime_ms` is 0), `go nodes N` is used
+    /// instead of `depth`. A node budget is reproducible and machine-speed
+    /// independent like fixed depth, but unlike fixed depth it credits a
+    /// pruning or reduction parameter for the nodes it saves, which makes
+    /// it the appropriate currency when tuning search constants
+    /// (docs/DECISIONS.md, 2026-10-09). The engine treats `go nodes` as a
+    /// soft limit applied from depth 2 onward, so games stay deterministic
+    /// for a deterministic engine but node counts are approximate.
+    int nodes = 0;
 
     /// Random opening plies at the start of each game (see match.h).
     int random_opening_plies = 8;
@@ -170,6 +182,11 @@ private:
                                             const UciEngineSpec& spec_b,
                                             std::uint64_t base_seed,
                                             const UciMatchConfig& config = {});
+
+/// Builds the `go` command line a match sends for `config`: `go movetime N`
+/// when `movetime_ms` > 0, else `go nodes N` when `nodes` > 0, else
+/// `go depth N`. Exposed for tests.
+[[nodiscard]] std::string uci_go_command(const UciMatchConfig& config);
 
 /// Extracts the move token from a UCI `bestmove` line. Returns an empty
 /// string if `line` is not a `bestmove` line or carries no move token.

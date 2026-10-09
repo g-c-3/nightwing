@@ -523,8 +523,7 @@ struct UciMatchSession::Impl {
     }
 
     std::string go_command() const {
-        return config.movetime_ms > 0 ? "go movetime " + std::to_string(config.movetime_ms)
-                                      : "go depth " + std::to_string(config.depth);
+        return uci_go_command(config);
     }
 
     bool fail(const std::string& message) {
@@ -754,6 +753,16 @@ UciMatchResult play_uci_match(const UciEngineSpec& spec_a, const UciEngineSpec& 
     UciMatchResult result = session.result();
     session.stop();
     return result;
+}
+
+std::string uci_go_command(const UciMatchConfig& config) {
+    if (config.movetime_ms > 0) {
+        return "go movetime " + std::to_string(config.movetime_ms);
+    }
+    if (config.nodes > 0) {
+        return "go nodes " + std::to_string(config.nodes);
+    }
+    return "go depth " + std::to_string(config.depth);
 }
 
 std::string parse_bestmove_line(const std::string& line) {
