@@ -104,6 +104,10 @@ set_source_files_properties(board/attacks.cpp PROPERTIES
     COMPILE_OPTIONS "$<$<CONFIG:Debug>:${NIGHTWING_INIT_OPT_FLAG}>"
 )
 
+if(NIGHTWING_SEARCH_TUNING)
+    target_compile_definitions(nightwing_lib PUBLIC NIGHTWING_SEARCH_TUNING=1)
+endif()
+
 if(NIGHTWING_ENABLE_BMI2 AND NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64|i[3-6]86|x86|X86)$")
     # NIGHTWING_ENABLE_BMI2 must only ever be defined on x86/x86_64 — code
     # gated behind it uses <immintrin.h> PEXT intrinsics, which don't exist
