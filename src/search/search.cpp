@@ -26,6 +26,7 @@
 #include "search/quiescence.h"
 #include "search/see.h"
 #include "search/tt.h"
+#include "search/tunables.h"
 
 namespace nightwing::search {
 namespace {
@@ -252,7 +253,12 @@ void emplace_transposition_table(std::optional<TranspositionTable>& opt,
 /// exists, targets eval terms first; a search constant like this one
 /// is a plausible later tuning target, not a claim that 25 is already
 /// verified optimal here).
+#if defined(NIGHTWING_SEARCH_TUNING)
+// Tuning build (tunables.h): read live from the UCI-settable value.
+const int& kAspirationInitialDelta = g_search_tunables.aspiration_initial_delta;
+#else
 constexpr int kAspirationInitialDelta = 25;
+#endif
 
 /// Best-move-stability threshold for the soft time-management early
 /// stop (ROADMAP.md Phase 8, "Time management" -- search.h's own
@@ -278,7 +284,12 @@ constexpr int kStabilityThreshold = 4;
 /// starting values in other engines' IIR implementations -- not yet
 /// tuned for Nightwing specifically, same caveat as
 /// kAspirationInitialDelta above.
+#if defined(NIGHTWING_SEARCH_TUNING)
+// Tuning build (tunables.h): read live from the UCI-settable value.
+const int& kIIRMinDepth = g_search_tunables.iir_min_depth;
+#else
 constexpr int kIIRMinDepth = 4;
+#endif
 constexpr int kIIRReduction = 1;
 
 /// Null-move pruning (CPW "Null Move Pruning", negamax()'s NMP block
@@ -291,9 +302,19 @@ constexpr int kIIRReduction = 1;
 /// specifically to keep the logic easy to hand-verify without a
 /// compiler available.
 constexpr int kNullMoveMinDepth = 3;        // don't bother below this remaining depth
+#if defined(NIGHTWING_SEARCH_TUNING)
+// Tuning build (tunables.h): read live from the UCI-settable value.
+const int& kNullMoveReduction = g_search_tunables.null_move_reduction;
+#else
 constexpr int kNullMoveReduction = 2;       // R for depth < kNullMoveBigReductionDepth
+#endif
 constexpr int kNullMoveBigReductionDepth = 6;
+#if defined(NIGHTWING_SEARCH_TUNING)
+// Tuning build (tunables.h): read live from the UCI-settable value.
+const int& kNullMoveBigReduction = g_search_tunables.null_move_big_reduction;
+#else
 constexpr int kNullMoveBigReduction = 3;    // R for depth >= kNullMoveBigReductionDepth
+#endif
 
 /// Zugzwang-aware null-move bias (ROADMAP.md Phase 6's "Zugzwang-aware
 /// search shaping" item; see eval/endgame.h's own is_zugzwang_prone()
@@ -477,7 +498,12 @@ constexpr int kNoStaticEval = kInfinity;
 /// caveat as every other search constant in this file.
 constexpr int kImprovingReductionBonus = 1;
 constexpr int kImprovingLmrDiscount = 1;
+#if defined(NIGHTWING_SEARCH_TUNING)
+// Tuning build (tunables.h): read live from the UCI-settable value.
+const int& kImprovingFutilityMarginDelta = g_search_tunables.improving_futility_delta;
+#else
 constexpr int kImprovingFutilityMarginDelta = 60;
+#endif
 
 /// Late move pruning (LMP) / move-count based pruning (CPW "Move Count
 /// Based Pruning", negamax()'s move loop below) constants. Only applies
@@ -648,7 +674,12 @@ constexpr std::array<int, kReverseFutilityMaxDepth + 1> kReverseFutilityMargins 
 /// for Nightwing specifically, same caveat as every other constant in
 /// this file.
 constexpr int kProbCutMinDepth = 5;
+#if defined(NIGHTWING_SEARCH_TUNING)
+// Tuning build (tunables.h): read live from the UCI-settable value.
+const int& kProbCutMargin = g_search_tunables.probcut_margin;
+#else
 constexpr int kProbCutMargin = 200; // centipawns
+#endif
 constexpr int kProbCutReduction = 4;
 
 /// Check extensions (CPW "Check Extensions", negamax()'s move loop
@@ -725,7 +756,12 @@ constexpr int kCheckExtensionPly = 1;
 /// double-extended for two different reasons at once.
 constexpr int kSingularMinDepth = 8;
 constexpr int kSingularTTDepthMargin = 3;
+#if defined(NIGHTWING_SEARCH_TUNING)
+// Tuning build (tunables.h): read live from the UCI-settable value.
+const int& kSingularMarginPerPly = g_search_tunables.singular_margin_per_ply;
+#else
 constexpr int kSingularMarginPerPly = 2;
+#endif
 constexpr int kSingularDepthDivisor = 2;
 constexpr int kSingularExtensionPly = 1;
 
