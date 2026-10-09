@@ -130,7 +130,7 @@ on:
       # One input holds all the settings because GitHub allows at most 25
       # workflow_dispatch inputs and this workflow already used 24.
       spsa_settings:
-        description: "spsa: eight or nine space-separated values - iterations games_per_iter depth seed c r0 validation_games start_scale [target] (default 100 16 6 1 2 8 400 1 0; start_scale 1 = current weights; target 0 = mobility, 1 = material, 2 = material with mg/eg tied; for material use c about 20-150)"
+        description: "spsa: eight to ten space-separated values - iterations games_per_iter depth seed c r0 validation_games start_scale [target] [nodes] (default 100 16 6 1 2 8 400 1 0; start_scale 1 = current weights; target 0 = mobility, 1 = material, 2 = material with mg/eg tied, 3 = search constants from a NIGHTWING_SEARCH_TUNING build; for material use c about 20-150; for target 3 depth is ignored, c is a multiplier on each constant's own step (use 1), and nodes is the per-move node budget, default 20000)"
         required: false
         default: "100 16 6 1 2 8 400 1 0"
 
@@ -307,6 +307,42 @@ jobs:
         env:
           TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1
         run: ./tests/nightwing_tests
+
+  # ROADMAP.md, "SPSA tuner" item, step (2d) (docs/DECISIONS.md 2026-10-09
+  # and 2026-10-09 (3)/(4)): builds and tests the gated tuning configuration
+  # (CMake NIGHTWING_SEARCH_TUNING=ON, src/search/tunables.h), which no other
+  # job compiles. The full ctest suite runs, including the tuning-only cases
+  # in tests/tunables_tests.cpp and tests/spsa_search_tests.cpp and the
+  # existing `bench` node-count test, which proves the tuned constants'
+  # defaults reproduce the production search exactly. Linux/Release only; the
+  # tuning binary is a development tool, is never uploaded as an artifact
+  # here and never feeds the `release` job.
+  tuning-build-test:
+    runs-on: ubuntu-latest
+    name: Linux Release (search tuning build)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure CMake
+        run: cmake -B build_tuning -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_SEARCH_TUNING=ON -DNIGHTWING_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build_tuning --parallel
+
+      - name: Verify the tuning options are advertised
+        working-directory: build_tuning
+        run: |
+          set -euo pipefail
+          OUT="$(printf 'uci\nquit\n' | ./src/nightwing)"
+          for opt in NullMoveReduction NullMoveBigReduction ProbCutMargin IIRMinDepth SingularMarginPerPly ImprovingFutilityDelta AspirationInitialDelta; do
+            echo "$OUT" | grep -q "^option name $opt type spin" || { echo "Missing option: $opt" >&2; exit 1; }
+          done
+          echo "All seven tuning options advertised."
+
+      - name: Test (full suite)
+        working-directory: build_tuning
+        run: ctest --output-on-failure --parallel 4
 
   # ROADMAP.md Phase 5's final item ("Tuned weights committed, before/after
   # strength comparison logged") needs a real large-scale run: thousands of
@@ -725,22 +761,42 @@ jobs:
   spsa-tune:
     if: github.event_name == 'workflow_dispatch' && inputs.pipeline == 'spsa'
     runs-on: ubuntu-latest
-    name: SPSA tuning (eval mobility or material weights)
+    name: SPSA tuning (eval weights or search constants)
     timeout-minutes: 355
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Configure CMake (Release, no tests)
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF
+      # Target 3 (search constants) tunes a NIGHTWING_SEARCH_TUNING=ON
+      # binary through the UCI runner, so it needs that configuration and
+      # the `nightwing` engine target as well; targets 0-2 are unchanged.
+      - name: Configure CMake (Release, no tests; tuning options ON only for target 3)
+        env:
+          SPSA_SETTINGS: ${{ inputs.spsa_settings }}
+        run: |
+          set -euo pipefail
+          read -r -a SPSA_ARR <<< "$SPSA_SETTINGS"
+          TUNING=OFF
+          if [ "$(printf '%.0f' "${SPSA_ARR[8]:-0}" 2>/dev/null || echo 0)" = "3" ]; then TUNING=ON; fi
+          echo "NW_TUNING=$TUNING" >> "$GITHUB_ENV"
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF -DNIGHTWING_SEARCH_TUNING=$TUNING
 
-      - name: Build nightwing_spsa
-        run: cmake --build build --config Release --parallel --target nightwing_spsa
+      - name: Build nightwing_spsa (and the engine for target 3)
+        run: |
+          set -euo pipefail
+          if [ "$NW_TUNING" = "ON" ]; then
+            cmake --build build --config Release --parallel --target nightwing_spsa nightwing
+          else
+            cmake --build build --config Release --parallel --target nightwing_spsa
+          fi
 
       # Positional args (spsa_main.cpp's own header comment):
       #   nightwing_spsa [iterations] [games_per_iteration] [search_depth] [seed]
       #                  [c] [r0] [validation_games] [start_scale] [target]
+      #                  [engine_path] [nodes]
+      # (engine_path and nodes are used by target 3 only; engine_path is
+      # always the tuning build's own ./src/nightwing.)
       - name: Run SPSA
         working-directory: build
         env:
@@ -748,28 +804,48 @@ jobs:
         run: |
           set -euo pipefail
           SPSA_TARGET=0
-          read -r SPSA_ITERATIONS SPSA_GAMES SPSA_DEPTH SPSA_SEED SPSA_C SPSA_R0 SPSA_VALIDATION SPSA_START SPSA_TARGET_IN SPSA_EXTRA <<< "$SPSA_SETTINGS"
+          read -r SPSA_ITERATIONS SPSA_GAMES SPSA_DEPTH SPSA_SEED SPSA_C SPSA_R0 SPSA_VALIDATION SPSA_START SPSA_TARGET_IN SPSA_NODES_IN SPSA_EXTRA <<< "$SPSA_SETTINGS"
           SPSA_TARGET="${SPSA_TARGET_IN:-0}"
-          for v in "$SPSA_ITERATIONS" "$SPSA_GAMES" "$SPSA_DEPTH" "$SPSA_SEED" "$SPSA_C" "$SPSA_R0" "$SPSA_VALIDATION" "${SPSA_START:-x}" "$SPSA_TARGET"; do
+          SPSA_NODES="${SPSA_NODES_IN:-20000}"
+          for v in "$SPSA_ITERATIONS" "$SPSA_GAMES" "$SPSA_DEPTH" "$SPSA_SEED" "$SPSA_C" "$SPSA_R0" "$SPSA_VALIDATION" "${SPSA_START:-x}" "$SPSA_TARGET" "$SPSA_NODES"; do
             if ! [[ "$v" =~ ^[0-9]+([.][0-9]+)?$ ]] || [ -n "${SPSA_EXTRA:-}" ]; then
-              echo "Bad spsa_settings (need eight or nine numbers): '$SPSA_SETTINGS'" >&2
+              echo "Bad spsa_settings (need eight to ten numbers): '$SPSA_SETTINGS'" >&2
               exit 1
             fi
           done
-          ./src/nightwing_spsa "$SPSA_ITERATIONS" "$SPSA_GAMES" "$SPSA_DEPTH" \
-            "$SPSA_SEED" "$SPSA_C" "$SPSA_R0" "$SPSA_VALIDATION" "$SPSA_START" "$SPSA_TARGET" \
-            2> >(tee spsa_progress.txt >&2) | tee spsa_result.txt
+          if [ -n "${SPSA_NODES_IN:-}" ] && [ "$NW_TUNING" != "ON" ]; then
+            echo "A tenth value (nodes) is only valid with target 3: '$SPSA_SETTINGS'" >&2
+            exit 1
+          fi
+          if [ "$NW_TUNING" = "ON" ]; then
+            ./src/nightwing_spsa "$SPSA_ITERATIONS" "$SPSA_GAMES" "$SPSA_DEPTH" \
+              "$SPSA_SEED" "$SPSA_C" "$SPSA_R0" "$SPSA_VALIDATION" "$SPSA_START" "$SPSA_TARGET" \
+              "$PWD/src/nightwing" "$SPSA_NODES" \
+              2> >(tee spsa_progress.txt >&2) | tee spsa_result.txt
+          else
+            ./src/nightwing_spsa "$SPSA_ITERATIONS" "$SPSA_GAMES" "$SPSA_DEPTH" \
+              "$SPSA_SEED" "$SPSA_C" "$SPSA_R0" "$SPSA_VALIDATION" "$SPSA_START" "$SPSA_TARGET" \
+              2> >(tee spsa_progress.txt >&2) | tee spsa_result.txt
+          fi
           {
-            case "$SPSA_TARGET" in 1) SPSA_NAME=material ;; 2) SPSA_NAME=material-tied ;; *) SPSA_NAME=mobility ;; esac
-            echo "### SPSA result (eval $SPSA_NAME weights)"
+            case "$SPSA_TARGET" in 1) SPSA_NAME="eval material weights" ;; 2) SPSA_NAME="eval material weights, mg/eg tied" ;; 3) SPSA_NAME="search constants" ;; *) SPSA_NAME="eval mobility weights" ;; esac
+            echo "### SPSA result ($SPSA_NAME)"
             echo ""
-            echo "iterations=$SPSA_ITERATIONS games/iter=$SPSA_GAMES depth=$SPSA_DEPTH seed=$SPSA_SEED c=$SPSA_C r0=$SPSA_R0 validation=$SPSA_VALIDATION start_scale=$SPSA_START target=$SPSA_TARGET"
+            if [ "$NW_TUNING" = "ON" ]; then
+              echo "iterations=$SPSA_ITERATIONS games/iter=$SPSA_GAMES nodes/move=$SPSA_NODES seed=$SPSA_SEED c_scale=$SPSA_C r0=$SPSA_R0 validation=$SPSA_VALIDATION start_scale=$SPSA_START target=$SPSA_TARGET"
+            else
+              echo "iterations=$SPSA_ITERATIONS games/iter=$SPSA_GAMES depth=$SPSA_DEPTH seed=$SPSA_SEED c=$SPSA_C r0=$SPSA_R0 validation=$SPSA_VALIDATION start_scale=$SPSA_START target=$SPSA_TARGET"
+            fi
             echo ""
             echo '```'
             cat spsa_result.txt
             echo '```'
             echo ""
-            echo "Mobility defaults are knight 4/4, bishop 5/5, rook 2/4, queen 1/2 (mg/eg); material defaults are knight 320, bishop 330, rook 500, queen 900 (pawn anchored at 100). A candidate only: SPRT-gate before committing."
+            if [ "$NW_TUNING" = "ON" ]; then
+              echo "Search-constant defaults: NullMoveReduction 2, NullMoveBigReduction 3, ProbCutMargin 200, IIRMinDepth 4, SingularMarginPerPly 2, ImprovingFutilityDelta 60, AspirationInitialDelta 25. Node-limited play from a tuning build. A candidate only: SPRT-gate against the production build before committing."
+            else
+              echo "Mobility defaults are knight 4/4, bishop 5/5, rook 2/4, queen 1/2 (mg/eg); material defaults are knight 320, bishop 330, rook 500, queen 900 (pawn anchored at 100). A candidate only: SPRT-gate before committing."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload SPSA artifacts
