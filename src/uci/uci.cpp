@@ -107,6 +107,7 @@
 #include "search/search.h"
 #include "search/skill.h"
 #include "search/tt.h"
+#include "search/tunables.h"
 
 namespace nightwing::uci {
 namespace {
@@ -1136,6 +1137,16 @@ void handle_setoption(int& num_threads, std::size_t& hash_size_mb, int& move_ove
         }
         // Any other value -- ignore, leaving own_book unchanged.
     }
+#if defined(NIGHTWING_SEARCH_TUNING)
+    else {
+        // Tuning build only (search/tunables.h): SPSA search-constant options.
+        // A non-integer value or unknown name is ignored.
+        try {
+            (void)search::set_search_tunable(name, std::stoi(tokens[value_start]));
+        } catch (const std::exception&) {
+        }
+    }
+#endif
     // Any other option name: silently ignored (this function's own doc comment).
 }
 
@@ -2212,6 +2223,13 @@ void run(std::istream& in, std::ostream& out) {
             // for engine-vs-engine testing and events that disallow an
             // engine's own book.
             out << "option name OwnBook type check default true\n";
+#if defined(NIGHTWING_SEARCH_TUNING)
+            // Tuning build only: one spin option per SPSA-tunable search constant.
+            for (const search::TunableSpec& spec : search::kSearchTunableSpecs) {
+                out << "option name " << spec.name << " type spin default " << spec.default_value
+                    << " min " << spec.min_value << " max " << spec.max_value << "\n";
+            }
+#endif
             out << "uciok\n";
             out.flush();
         } else if (cmd == "isready") {
