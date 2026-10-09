@@ -4,6 +4,49 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-09 (2) — Match go-command precedence: movetime, then nodes, then depth; built as a free function
+
+**Decision:** `UciMatchConfig` gained `nodes`. The `go` command sent by a match is chosen by `uci_go_command()` (a free function declared in `uci_match.h`): `go movetime N` when `movetime_ms` > 0, else `go nodes N` when `nodes` > 0, else `go depth N`. `nightwing_uci_match` gained `--nodes N`. The per-move timeout is unchanged (120000 ms unless `move_timeout_ms` or `movetime_ms` applies).
+
+**Rationale:** Timed play already overrode depth, so placing `nodes` between the two keeps every existing configuration behaving as before (default `nodes` is 0). Making the selection a free function allows a direct unit test of the precedence without launching processes; the private session method now delegates to it. A real-engine node-limited match test confirms the engine accepts the command and games finish cleanly.
+
+**Alternatives considered:**
+- Nodes taking precedence over movetime: rejected; it would change the meaning of any configuration that already sets `movetime_ms`.
+- Testing precedence only through real matches: rejected; the outcome of a match does not reveal which command was sent.
+
+**Verification:** 746/746 `ctest` (Linux, GCC, Release, sandbox), zero new warnings. No `src/search` or `src/eval` file was touched, so `bench` is unchanged by construction.
+
+---
+
+### 2026-10-09 — SPSA step (2) scoped: search constants tuned through a gated tuning build, UCI spin options, and node-limited matches
+
+**Decision:** SPSA step (2) (ROADMAP.md, "SPSA tuner") is split into five sub-steps, (2a) to (2e), and the design below is adopted before any code is written. No source file was changed this session.
+
+1. **Runtime-settable constants exist only in a separate tuning build.** A CMake option `NIGHTWING_SEARCH_TUNING` (default OFF) selects between the present anonymous-namespace `constexpr` constants in `src/search/search.cpp` (OFF, unchanged) and a `search::SearchTunables` struct of plain integers read at the same use sites (ON). When ON, `handle_setoption()` in `src/uci/uci.cpp` recognises one spin option per tunable and `uci` advertises them; when OFF, those options do not exist and an unknown `setoption` name remains silently ignored as it is today.
+2. **Matches that tune search constants are limited by nodes, not by fixed depth.** `UciMatchConfig` gains a `nodes` field sent as `go nodes N` (already supported by the engine, Session 5b of the 2026-09-24 work; soft limit, applied from depth 2 onward, checked at the existing periodic interval).
+3. **Binding.** `play_search_match()` and `run_spsa_search()` (in `spsa_eval.h/.cpp`) run both engines from the same tuning binary, differing only in the `setoption` values of theta+ and theta-, through `UciMatchSession`. A new session is created per SPSA iteration, which needs no `UciMatchSession` API change; process start-up cost is small against the games of one iteration. `nightwing_spsa` gains `target 3` and an engine-path argument. Theta is rounded to integers when sent, so each `SpsaParam::c` must be at least 1.
+4. **First parameter set is scalar integers only:** `kNullMoveReduction`, `kNullMoveBigReduction`, `kProbCutMargin`, `kIIRMinDepth`, `kSingularMarginPerPly`, `kImprovingFutilityMarginDelta`, `kAspirationInitialDelta`. The LMR constants and the margin arrays follow in (2e).
+5. **Gating is unchanged:** any tuned value is committed only after an SPRT through the `uci-match` pipeline against the untuned build, with the production (tuning OFF) binary as the candidate.
+
+**Rationale:**
+- *Gated build.* The search constants are read on the hot path of `negamax()`. Turning them into runtime globals in the production binary would risk a nodes-per-second cost; the 2026-10-06 (2) entry showed a per-node cost of about 3% was visible in `bench` and counted against a candidate. A compile-time gate keeps the production binary and its `bench` node count identical by construction and confines any cost to a binary that is never shipped.
+- *Node-limited matches.* Fixed-depth play credits a pruning or reduction parameter only for the strength reached at that depth and ignores the time it saves. The expected effect (reasoned, not measured here) is a bias toward less pruning. A node budget is machine-independent, reproducible, and gives a parameter credit for saved nodes. Fixed movetime would also work but depends on machine speed and load, which makes runs less reproducible.
+- *Session per iteration.* It reuses the existing, tested runner without widening its API.
+- *Scalar integers first.* They need no table rebuild. `lmr_reduction()` computes its table once in a function-local `static`, so tuning `kLMRBase`/`kLMRScale` first requires making that table rebuildable, which is a separate change.
+
+**Scope of what this does NOT establish:** no claim is made that any search constant is mistuned or that SPSA will find a gain. The Session 186-189 mobility result (null) and the flat material landscape at fixed depth are the only SPSA evidence so far. Whether node-limited play gives the optimizer a usable signal for search constants is the first thing sub-step (2c) must test, with the same kind of sanity check used for material (a deliberately wrong start that must recover toward the defaults).
+
+**Alternatives considered:**
+- *Runtime tunables in the production binary:* rejected for the nodes-per-second risk above.
+- *Preprocessor-substituted per-iteration builds (one compiled binary per parameter vector):* rejected; a build per SPSA iteration is far too slow.
+- *Fixed-depth matches, as used for eval constants:* rejected for search constants for the bias described above. Fixed depth remains appropriate for eval constants, where node counts do not change with the parameter.
+- *Extending `UciMatchSession` with a `set_options()` call between games:* deferred, not rejected; worth revisiting only if per-iteration process start-up proves significant.
+- *Starting with the LMR constants:* rejected for the first sub-step because of the table rebuild.
+
+**Test risk for the sub-steps:** (2a) low (additive field with default 0, existing tests unaffected); (2b) the gated ON build needs its own CI leg, and the OFF build must keep `bench` at 36154 nodes; (2c) matches are compute-heavy and run only through GitHub Actions.
+
+---
+
 ### 2026-10-08 (3) — Candidate 4 removed after an inconclusive SPRT and a failed fit sanity check
 
 **Decision:** The king-attackers-times-shelter-exposure term (DECISIONS 2026-10-08 (1) and (2)) was removed in full: `src/eval/king_exposure.h/.cpp`, `tests/king_exposure_tests.cpp`, the `KingExposureWeights` override plumbing in `eval::evaluate()`, `search.cpp`, `quiescence.cpp` and `tuner::compute_loss()`, `kKingExposureParameters`, `tune_king_exposure()`, the `--king-exposure` tuner mode, the `king-exposure` CI tuning leg and the CMake entries. Files touched by the wiring were restored to their Session 197 contents.

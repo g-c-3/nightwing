@@ -4,6 +4,44 @@ Newest entry at top.
 
 ---
 
+### Session 201 — 2026-10-09 — SPSA sub-step (2a): node-limited matches
+
+**Evidence reviewed:** `uci_match.h`, `uci_match.cpp` (go-command and timeout code), `uci_match_main.cpp`, `tests/uci_match_tests.cpp`.
+
+**Changed:** REPLACE `src/tuner/uci_match.h`, `src/tuner/uci_match.cpp`, `src/tuner/uci_match_main.cpp`, `tests/uci_match_tests.cpp`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
+
+**Built:** `UciMatchConfig::nodes`; `uci_go_command()`; `--nodes` CLI option; 2 tests (precedence, real-engine node-limited match).
+
+**Decisions made:** DECISIONS.md 2026-10-09 (2).
+
+**Verification (Linux, GCC, Release, sandbox):** full build clean; 746/746 `ctest` (744 before plus 2 new). CI on the other platforms not yet seen.
+
+**Bugs fixed:** None.
+
+**Open:** SPSA sub-steps (2b) to (2e) and step (3). Everything else unchanged from Session 199.
+
+**Next session start point:** Confirm Session 201 is green in CI, then sub-step (2b): read `src/search/search.cpp`'s constant block, `src/search/search.h`, `src/uci/uci.cpp`'s `handle_setoption()` and `uci` option output, and `CMakeLists.txt` in full; add the `NIGHTWING_SEARCH_TUNING` option and `SearchTunables` for the seven scalar constants named in DECISIONS.md 2026-10-09, with the OFF build keeping `bench` at 36154 nodes.
+
+---
+
+### Session 200 — 2026-10-09 — SPSA step (2) scoped
+
+**Evidence reviewed:** Session 199 state in ROADMAP.md, SESSIONS.md, DECISIONS.md and ARCHITECTURE.md; `spsa.h`, `spsa_eval.h`, `spsa_main.cpp`, `uci_match.h`, the `setoption` handling in `uci.cpp`, the search constants in `search.cpp`, and the `spsa-tune` job in `ci.yml`. All remaining open ROADMAP items were reviewed: Pondering GUI verification (blocked, no GUI), restricted nonlinear interactions (candidates 1 to 4 exhausted; blocked on a constrained or regularised fit), EG-term instability (paused), SPSA (partial), NUMA and distributed search (not practical).
+
+**Changed:** REPLACE `docs/ROADMAP.md` (SPSA item status), `docs/DECISIONS.md` (new entry 2026-10-09), `docs/SESSIONS.md` (this entry). No source, test or CI file was changed.
+
+**Decisions made:** see DECISIONS.md 2026-10-09. Search constants are tuned through a compile-time-gated tuning build (`NIGHTWING_SEARCH_TUNING`, default OFF), exposed as UCI spin options, and played through `UciMatchSession` with node-limited games rather than fixed depth. Work is split into sub-steps (2a) to (2e).
+
+**Verification:** none applicable; nothing was built or run this session. The design relies on the following facts read from the repository: unknown `setoption` names are ignored; `UciEngineSpec::options` sends `setoption` pairs after `uciok`; `go nodes` is supported by the engine; `UciMatchConfig` has `depth` and `movetime_ms` but no `nodes` field; `lmr_reduction()` builds its table in a function-local `static`.
+
+**Bugs fixed:** None.
+
+**Open:** unchanged from Session 199, plus SPSA sub-steps (2a) to (2e) and step (3).
+
+**Next session start point:** Sub-step (2a): read `src/tuner/uci_match.h`, `src/tuner/uci_match.cpp` and `tests/uci_match_tests.cpp` in full, add `UciMatchConfig::nodes` (sent as `go nodes N` when greater than 0, taking precedence over `depth` and below `movetime_ms`; decide and document the precedence), extend `uci_match_main.cpp` only if it exposes match settings, add tests, and confirm CI is green before starting (2b).
+
+---
+
 ### Session 199 — 2026-10-08 — Candidate 4 removed
 
 **Evidence reviewed:** Session 198 CI green (759/759 on Linux and Windows, 757 on macOS). `uci-match` SPRT inconclusive at about -1.1 Elo (4000 games). CI fit returned attack_exposure_mg -3.63 and attack_exposure_eg +22.92, failing the sanity check. See DECISIONS.md 2026-10-08 (3).
