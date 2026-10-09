@@ -4,6 +4,32 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-09 (5) — CI for the search-tuning build: a push job that builds and tests it, and target 3 inside the existing `spsa` pipeline
+
+**Decision:** Sub-step (2d) of SPSA step (2) was implemented in `.github/workflows/ci.yml` as follows.
+
+1. **New job `tuning-build-test`** (runs on every push and pull request, Linux, Release): configures with `-DNIGHTWING_SEARCH_TUNING=ON -DNIGHTWING_BUILD_TESTS=ON`, builds everything, checks that `uci` output advertises all seven tuning options, and runs the full `ctest` suite. It does not gate the `release` job (as with `tsan-test`) and uploads nothing, so a tuning binary can never be published.
+2. **`spsa-tune` job, target 3:** the configure step reads the ninth value of `spsa_settings`; when it is 3 it configures with `-DNIGHTWING_SEARCH_TUNING=ON` and builds `nightwing_spsa` and `nightwing`, otherwise the earlier behaviour is unchanged. An optional tenth value is `nodes` (default 20000), valid only with target 3. The engine path passed to `nightwing_spsa` is the tuning build's own `./src/nightwing`. The job summary names the target and lists the search-constant defaults.
+3. **No new dispatch input.** GitHub allows 25 `workflow_dispatch` inputs and 25 were in use; `nodes` was therefore added to the existing `spsa_settings` string, whose description was updated.
+
+**Rationale:**
+- *Separate job for the build and test.* The tuning configuration compiles different code (`const int&` bindings and the extra options). A dedicated job proves on every push that it still builds and that the existing `bench` node-count test, run against it, still sees the production node count, which is the evidence that default constants reproduce the production search.
+- *Linux Release only.* The option logic is platform-independent; the platform-sensitive part (process spawning in the UCI runner) is already covered by the default-build jobs on all three operating systems.
+- *Reusing the `spsa` pipeline.* Target 3 is another target of the same tool, with the same artifact and summary conventions.
+
+**Verification:** The workflow YAML parses and defines the expected jobs and steps. The detection and settings-validation shell logic was run locally against ten sample inputs (default settings, eight values, valid target 3 with and without nodes, decimal target, nodes with a non-3 target, extra value, non-numeric value) and behaved as intended. The advertised-options check was run locally against the tuning and production binaries (all seven present; none in the production binary). Not verified: execution of either job on GitHub Actions.
+
+**Scope of what this does NOT establish:** that a real target-3 run works at scale, or that node-limited play gives a usable signal. Both belong to the sanity run that follows.
+
+**Alternatives considered:**
+- *Adding `tuning-build-test` to a matrix of the existing job:* rejected; the matrix legs build and package release binaries, and a flag there would risk shipping one.
+- *Making `release` depend on the new job:* rejected as unnecessary coupling; a broken tuning build does not make the production binary wrong.
+- *A new `workflow_dispatch` input for nodes:* rejected, the input limit is exhausted.
+
+**Test risk:** low. No source file changed; the new job only adds coverage. The `spsa-tune` edits are confined to a manually triggered job.
+
+---
+
 ### 2026-10-09 (4) — Search-constant SPSA binding lives in the UCI-match library; engines must advertise the tuned options; target 3 of `nightwing_spsa`
 
 **Decision:** Sub-step (2c) of SPSA step (2) was implemented with the following choices.

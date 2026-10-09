@@ -4,6 +4,26 @@ Newest entry at top.
 
 ---
 
+### Session 204 — 2026-10-09 — SPSA sub-step (2d): CI for the search-tuning build
+
+**Evidence reviewed:** CI logs for the Session 203 push (all jobs green; macOS 751 tests against 753 elsewhere, the difference being the two x86-only BMI2/PEXT tests); `.github/workflows/ci.yml` read in full structure (dispatch inputs, `build-and-test`, `tsan-test`, `spsa-tune`, `release`); DECISIONS.md 2026-10-09 scope text for (2d).
+
+**Changed:** REPLACE `.github/workflows/ci.yml`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`. No source or test file changed.
+
+**Built:** job `tuning-build-test`; target-3 support, optional `nodes` value and summary text in `spsa-tune`; updated `spsa_settings` description.
+
+**Decisions made:** DECISIONS.md 2026-10-09 (5).
+
+**Verification:** workflow YAML parses; settings-parsing and tuning-detection shell logic exercised locally on ten inputs; the advertised-options check run against the sandbox tuning and production binaries. Not run: either job on GitHub Actions.
+
+**Bugs fixed:** None.
+
+**Open:** the node-limited sanity run; sub-step (2e) and step (3). Smoke-run observation from Session 203 (tuned 8-0 against the defaults in a tiny run) remains unexplained and uninterpreted.
+
+**Next session start point:** Confirm CI is green for the Session 204 push (including the new `tuning-build-test` job), then run the sanity check through Actions (`pipeline` = spsa, `spsa_settings` such as `60 16 6 1 1 8 40 0.5 3 20000`, i.e. every default start scaled to half) and read the result; if the tuned values move back toward the defaults and the validation against the defaults is not lopsided, proceed to (2e), otherwise investigate the node-limited signal before any further tuning.
+
+---
+
 ### Session 203 — 2026-10-09 — SPSA sub-step (2c): search-constant binding and target 3
 
 **Evidence reviewed:** CI for Session 202 reported green. `src/tuner/uci_match.h`, `src/tuner/uci_match.cpp` (handshake, session, process wrapper read-through), `spsa.h`, `spsa_eval.h/.cpp`, `spsa_main.cpp`, `src/CMakeLists.txt` and `tests/CMakeLists.txt` wiring, `tests/uci_match_tests.cpp` helpers, DECISIONS.md 2026-10-09 to (3).
