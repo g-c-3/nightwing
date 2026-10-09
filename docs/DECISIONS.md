@@ -4,6 +4,34 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-09 (6) — Re-validate tuned search constants through the `uci-match` pipeline: options for engine B, node limit, merged SPRT input
+
+**Context:** The first target-3 SPSA run (`60 16 6 1 1 8 40 0.5 3 20000`) ended with the tuned values beating the defaults 28-6-6 (score 0.775, about +215 Elo) over 40 games at 20000 nodes per move, while the deliberately weakened start had scored exactly 0.500 against the defaults. The size of the gap is judged implausible for tweaks of seven constants of a mature search, and the budget is a very shallow search; the result was therefore not accepted and no value was committed.
+
+**Decision:** The existing `uci-match` pipeline (two builds, SPRT, wall-clock limit) was extended so the same tuning binary can play itself with different `setoption` values:
+1. New input `ucimatch_options_b`: space-separated `Name=Integer` pairs sent to engine B only (`--opt-b`). A non-empty value builds both engines with `-DNIGHTWING_SEARCH_TUNING=ON`; a step then fails the job when the candidate build does not advertise every named option. Empty keeps ordinary production builds.
+2. New input `ucimatch_nodes`: `go nodes N` when above 0 (precedence movetime, then nodes, then depth, as in `uci_go_command()`).
+3. New input `ucimatch_sprt`: `elo0 elo1 alpha beta` in one string, replacing the four inputs `ucimatch_elo0`, `ucimatch_elo1`, `ucimatch_alpha`, `ucimatch_beta`. Reason: 25 `workflow_dispatch` inputs were in use and the limit is 25; the merge leaves 24. The default is `-5 5 0.05 0.05`, equal to the previous defaults.
+4. A settings step validates the SPRT string, the option pairs (`Name=Integer`) and the numeric limits before any build.
+5. The wall-clock limit input keeps its 300-minute default; the job timeout stays at 355 minutes.
+
+**Rationale:**
+- *Same binary, different options* isolates the constants: baseline and candidate refs are set equal, so no other code differs.
+- *Failing on an unadvertised option* prevents a silent null result (an engine ignores `setoption` for unknown names).
+- *Merging SPRT inputs* changes the dispatch form but not the match behaviour; the four values still reach `--sprt` unchanged.
+
+**Verification:** The workflow YAML parses with 24 inputs and the expected step order. The parsing, option-check and match-command logic was run locally against the real tuning binaries: valid options with a node limit, no options, a malformed SPRT string, a malformed option and an unadvertised option behaved as intended (the first two ran a 4-game match to completion). Not verified: execution on GitHub Actions.
+
+**Scope of what this does NOT establish:** whether the tuned values are stronger at any realistic budget. That is the purpose of the run this change enables.
+
+**Alternatives considered:**
+- *Adding the options as an `spsa`-pipeline validation mode:* rejected; the `uci-match` job already provides SPRT, a time limit and artifacts.
+- *Keeping four SPRT inputs and dropping another input:* rejected; no other input is redundant.
+
+**Test risk:** low. Only the manually triggered `uci-match` job changed; its default behaviour (production builds, depth control, default SPRT) is unchanged apart from the merged input.
+
+---
+
 ### 2026-10-09 (5) — CI for the search-tuning build: a push job that builds and tests it, and target 3 inside the existing `spsa` pipeline
 
 **Decision:** Sub-step (2d) of SPSA step (2) was implemented in `.github/workflows/ci.yml` as follows.

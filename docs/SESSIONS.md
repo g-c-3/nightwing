@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+### Session 205 — 2026-10-10 — SPSA sanity run reviewed; CI support for re-validation
+
+**Evidence reviewed:** CI logs for the Session 204 push (all jobs green, `tuning-build-test` 758/758) and the first target-3 SPSA run logs; `.github/workflows/ci.yml` `uci-match-test` job and dispatch inputs; the `--opt-b` and `--nodes` options of `nightwing_uci_match`.
+
+**Findings:** The sanity run (about 2h16m) did not satisfy its premise: start validation scored 0.500 (15-15-10), so the half-scale start was not weaker. Final values were 2.2, 3.7, 156.3, 2.0, 2.7, 38.0, 5.0 (IIRMinDepth and AspirationInitialDelta at their range minimums). Tuned against defaults scored 28-6-6 (0.775, about +215 Elo) over 40 games, judged implausibly large and not accepted. Mean per-iteration `plus_score` was 0.493 over 60 iterations (no side bias).
+
+**Changed:** REPLACE `.github/workflows/ci.yml`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`. No source or test file changed.
+
+**Built:** `uci-match` inputs `ucimatch_options_b`, `ucimatch_nodes`, `ucimatch_sprt` (merged SPRT numbers; four old inputs removed); settings-validation and option-advertisement steps.
+
+**Decisions made:** DECISIONS.md 2026-10-09 (6).
+
+**Verification:** workflow YAML parses (24 inputs); the new shell logic was run locally against real binaries on valid and invalid inputs. Not run: the job on GitHub Actions.
+
+**Bugs fixed:** None.
+
+**Open:** whether the tuned constants are genuinely stronger (re-validation pending); sub-step (2e) and step (3) on hold until then.
+
+**Next session start point:** Confirm CI is green for the Session 205 push, then dispatch `pipeline` = `uci-match` with `ucimatch_baseline_ref` and `ucimatch_candidate_ref` both `main`, `ucimatch_options_b` = `NullMoveReduction=2 NullMoveBigReduction=4 ProbCutMargin=156 IIRMinDepth=2 SingularMarginPerPly=3 ImprovingFutilityDelta=38 AspirationInitialDelta=5` (the rounded tuned values), `ucimatch_nodes` = 200000, `ucimatch_movetime_ms` = 0, `ucimatch_sprt` = `0 5 0.05 0.05`, `ucimatch_time_limit_min` = 300; read the SPRT verdict, then repeat at a timed control before any commit of values.
+
+---
+
 ### Session 204 — 2026-10-09 — SPSA sub-step (2d): CI for the search-tuning build
 
 **Evidence reviewed:** CI logs for the Session 203 push (all jobs green; macOS 751 tests against 753 elsewhere, the difference being the two x86-only BMI2/PEXT tests); `.github/workflows/ci.yml` read in full structure (dispatch inputs, `build-and-test`, `tsan-test`, `spsa-tune`, `release`); DECISIONS.md 2026-10-09 scope text for (2d).
