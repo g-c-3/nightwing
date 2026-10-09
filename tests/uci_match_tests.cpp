@@ -61,6 +61,36 @@ TEST_CASE("parse_bestmove_line: extracts the move token", "[tuner][uci_match]") 
     CHECK(parse_bestmove_line("") == "");
 }
 
+TEST_CASE("uci_go_command: movetime beats nodes beats depth", "[tuner][uci_match]") {
+    UciMatchConfig config;
+    config.depth = 7;
+    CHECK(uci_go_command(config) == "go depth 7");
+
+    config.nodes = 5000;
+    CHECK(uci_go_command(config) == "go nodes 5000");
+
+    config.movetime_ms = 100;
+    CHECK(uci_go_command(config) == "go movetime 100");
+
+    config.movetime_ms = 0;
+    config.nodes = 0;
+    CHECK(uci_go_command(config) == "go depth 7");
+}
+
+TEST_CASE("play_uci_match: a node-limited match against the real engine finishes cleanly",
+          "[tuner][uci_match]") {
+    init_all();
+    UciMatchConfig config = fast_config(2);
+    config.nodes = 2000;
+    const UciMatchResult result = play_uci_match(real_engine("A"), real_engine("B"), 1, config);
+
+    CHECK_FALSE(result.aborted);
+    CHECK(result.error.empty());
+    CHECK(result.tally.games_played == 2);
+    CHECK(result.illegal_moves_a == 0);
+    CHECK(result.illegal_moves_b == 0);
+}
+
 TEST_CASE("play_uci_match: real engine vs real engine finishes cleanly", "[tuner][uci_match]") {
     init_all();
     const UciMatchResult result =
