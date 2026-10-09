@@ -62,6 +62,7 @@ add_executable(nightwing_tests
     thread_regression_tests.cpp
     persistent_tt_tests.cpp
     uci_match_tests.cpp
+    spsa_search_tests.cpp
 )
 target_link_libraries(nightwing_tests PRIVATE nightwing_lib nightwing_uci_match_lib Catch2::Catch2WithMain)
 
