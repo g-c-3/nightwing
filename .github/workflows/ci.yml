@@ -90,22 +90,18 @@ on:
         description: "uci-match: optional. 0 = fixed depth (ucimatch_depth). Above 0 = `go movetime N` instead, so engine SPEED counts toward strength (a fixed-depth match cannot show a pure speed-up)"
         required: false
         default: "0"
-      ucimatch_elo0:
-        description: "uci-match: SPRT H0 Elo bound (candidate no better than this)"
+      ucimatch_nodes:
+        description: "uci-match: optional. 0 = use ucimatch_depth. Above 0 = `go nodes N` (ignored when ucimatch_movetime_ms is above 0). Node-limited play is deterministic in strength per node and does not depend on runner speed"
         required: false
-        default: "-5"
-      ucimatch_elo1:
-        description: "uci-match: SPRT H1 Elo bound (candidate at least this good)"
+        default: "0"
+      ucimatch_options_b:
+        description: "uci-match: optional. Space-separated Name=Value setoption pairs sent to engine B only, e.g. ProbCutMargin=156 AspirationInitialDelta=5. Non-empty = both engines are built with NIGHTWING_SEARCH_TUNING=ON (same commit: set baseline and candidate refs equal), and the job fails if B does not advertise every named option. Empty = ordinary production builds"
         required: false
-        default: "5"
-      ucimatch_alpha:
-        description: "uci-match: SPRT alpha (false-positive rate)"
+        default: ""
+      ucimatch_sprt:
+        description: "uci-match: SPRT settings as four space-separated numbers: elo0 elo1 alpha beta. elo0 = H0 bound (candidate no better than this), elo1 = H1 bound (candidate at least this good), alpha = false-positive rate, beta = false-negative rate"
         required: false
-        default: "0.05"
-      ucimatch_beta:
-        description: "uci-match: SPRT beta (false-negative rate)"
-        required: false
-        default: "0.05"
+        default: "-5 5 0.05 0.05"
       ucimatch_max_games:
         description: "uci-match: hard cap on games if neither SPRT bound is crossed"
         required: false
@@ -880,10 +876,9 @@ jobs:
       CANDIDATE_REF: ${{ inputs.ucimatch_candidate_ref }}
       DEPTH: ${{ inputs.ucimatch_depth }}
       MOVETIME_MS: ${{ inputs.ucimatch_movetime_ms }}
-      ELO0: ${{ inputs.ucimatch_elo0 }}
-      ELO1: ${{ inputs.ucimatch_elo1 }}
-      ALPHA: ${{ inputs.ucimatch_alpha }}
-      BETA: ${{ inputs.ucimatch_beta }}
+      NODES: ${{ inputs.ucimatch_nodes }}
+      OPTIONS_B: ${{ inputs.ucimatch_options_b }}
+      SPRT_SETTINGS: ${{ inputs.ucimatch_sprt }}
       MAX_GAMES: ${{ inputs.ucimatch_max_games }}
       TIME_LIMIT_MIN: ${{ inputs.ucimatch_time_limit_min }}
       OPENING_PLIES: ${{ inputs.ucimatch_opening_plies }}
@@ -914,6 +909,44 @@ jobs:
           echo "baseline : $(git -C baseline log -1 --format='%H %s')"
           echo "candidate: $(git -C candidate log -1 --format='%H %s')"
 
+      # Splits ucimatch_sprt into ELO0/ELO1/ALPHA/BETA and validates
+      # ucimatch_options_b (docs/DECISIONS.md 2026-10-09 (6)). A non-empty
+      # options string switches both engine builds to the tuning
+      # configuration (NIGHTWING_SEARCH_TUNING=ON, src/search/tunables.h).
+      - name: Parse and validate settings
+        run: |
+          set -euo pipefail
+          read -r ELO0 ELO1 ALPHA BETA SPRT_EXTRA <<< "$SPRT_SETTINGS"
+          for v in "${ELO0:-x}" "${ELO1:-x}" "${ALPHA:-x}" "${BETA:-x}"; do
+            if ! [[ "$v" =~ ^-?[0-9]+([.][0-9]+)?$ ]] || [ -n "${SPRT_EXTRA:-}" ]; then
+              echo "Bad ucimatch_sprt (need four numbers: elo0 elo1 alpha beta): '$SPRT_SETTINGS'" >&2
+              exit 1
+            fi
+          done
+          TUNING_BUILD=OFF
+          if [ -n "${OPTIONS_B// /}" ]; then
+            TUNING_BUILD=ON
+            for kv in $OPTIONS_B; do
+              if ! [[ "$kv" =~ ^[A-Za-z][A-Za-z0-9]*=-?[0-9]+$ ]]; then
+                echo "Bad ucimatch_options_b entry '$kv' (expected Name=IntegerValue, space-separated)" >&2
+                exit 1
+              fi
+            done
+          fi
+          for v in "$NODES" "$MOVETIME_MS"; do
+            if ! [[ "$v" =~ ^[0-9]+$ ]]; then
+              echo "ucimatch_nodes and ucimatch_movetime_ms must be non-negative integers" >&2
+              exit 1
+            fi
+          done
+          {
+            echo "ELO0=$ELO0"
+            echo "ELO1=$ELO1"
+            echo "ALPHA=$ALPHA"
+            echo "BETA=$BETA"
+            echo "TUNING_BUILD=$TUNING_BUILD"
+          } >> "$GITHUB_ENV"
+
       - name: Build runner
         run: |
           cmake -S runner -B runner/build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF
@@ -921,13 +954,30 @@ jobs:
 
       - name: Build baseline engine
         run: |
-          cmake -S baseline -B baseline/build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF
+          cmake -S baseline -B baseline/build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF -DNIGHTWING_SEARCH_TUNING=$TUNING_BUILD
           cmake --build baseline/build --config Release --parallel --target nightwing
 
       - name: Build candidate engine
         run: |
-          cmake -S candidate -B candidate/build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF
+          cmake -S candidate -B candidate/build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF -DNIGHTWING_SEARCH_TUNING=$TUNING_BUILD
           cmake --build candidate/build --config Release --parallel --target nightwing
+
+      # An engine ignores `setoption` for a name it does not advertise, so a
+      # build without the tuning options would give a silent, meaningless
+      # result. Fail before the match instead.
+      - name: Verify engine B advertises the options sent to it
+        if: env.TUNING_BUILD == 'ON'
+        run: |
+          set -euo pipefail
+          OUT="$(printf 'uci\nquit\n' | "$PWD/candidate/build/src/nightwing")"
+          for kv in $OPTIONS_B; do
+            name="${kv%%=*}"
+            echo "$OUT" | grep -q "^option name $name type spin" || {
+              echo "Candidate build does not advertise option '$name' (needs a commit containing src/search/tunables.h)" >&2
+              exit 1
+            }
+          done
+          echo "All requested options are advertised by the candidate build."
 
       # Engine A = baseline, engine B = candidate: nightwing_uci_match
       # reports the SPRT from B's side, so AcceptH1 means the candidate
@@ -941,11 +991,17 @@ jobs:
           CONTROL=(--depth "$DEPTH")
           if [ "$MOVETIME_MS" -gt 0 ]; then
             CONTROL=(--movetime "$MOVETIME_MS")
+          elif [ "$NODES" -gt 0 ]; then
+            CONTROL=(--nodes "$NODES")
           fi
+          OPT_ARGS=()
+          for kv in $OPTIONS_B; do
+            OPT_ARGS+=(--opt-b "$kv")
+          done
           timeout --signal=TERM "${TIME_LIMIT_MIN}m" \
             ./runner/build/src/nightwing_uci_match \
             "$PWD/baseline/build/src/nightwing" "$PWD/candidate/build/src/nightwing" \
-            --games "$MAX_GAMES" "${CONTROL[@]}" \
+            --games "$MAX_GAMES" "${CONTROL[@]}" "${OPT_ARGS[@]}" \
             --opening-plies "$OPENING_PLIES" --max-plies "$MAX_PLIES" --seed "$SEED" \
             --sprt "$ELO0" "$ELO1" "$ALPHA" "$BETA" \
             > match_result.txt 2> >(tee match_progress.log >&2)
@@ -957,6 +1013,9 @@ jobs:
             echo
             echo "- baseline : \`$(git -C baseline rev-parse HEAD)\`"
             echo "- candidate: \`$(git -C candidate rev-parse HEAD)\`"
+            if [ -n "${OPTIONS_B// /}" ]; then
+              echo "- options sent to engine B only: \`$OPTIONS_B\` (both engines built with NIGHTWING_SEARCH_TUNING=ON)"
+            fi
             echo
             if [ "$rc" -eq 124 ]; then
               echo "**Stopped at the ${TIME_LIMIT_MIN}-minute limit -- inconclusive.** Last progress lines:"
