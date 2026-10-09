@@ -14,6 +14,11 @@ endif()
 option(NIGHTWING_ENABLE_LTO "Enable link-time optimization in Release builds" ON)
 option(NIGHTWING_ENABLE_BMI2 "Compile with BMI2/POPCNT instructions enabled (fast path). Disable for a portable fallback build." ON)
 option(NIGHTWING_BUILD_TESTS "Build the Catch2 test suite" ON)
+# SPSA search-constant tuning build (ROADMAP.md "SPSA tuner" step (2b); docs/DECISIONS.md
+# 2026-10-09). ON compiles seven search constants as runtime-settable UCI spin options
+# (src/search/tunables.h). Default OFF: the production binary and its `bench` node count
+# are unchanged. A tuning binary must never be shipped.
+option(NIGHTWING_SEARCH_TUNING "Build with runtime-settable search constants (UCI spin options) for SPSA tuning. Never ship." OFF)
 option(NIGHTWING_ENABLE_TSAN "Debug builds use ThreadSanitizer (-fsanitize=thread) instead of ASan/UBSan (the two are mutually exclusive). GCC/Clang only; ignored on MSVC and under wasm." OFF)
 
 # --- WebAssembly build (ROADMAP.md "Release & Packaging Infrastructure",
