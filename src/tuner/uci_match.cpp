@@ -445,6 +445,40 @@ private:
     }
 }
 
+/// Like wait_for_line(proc, "uciok", ...) but also records the name of
+/// every `option name <name> type ...` line seen on the way into
+/// `option_names` (the name is the tokens between `name` and `type`, joined
+/// by single spaces).
+[[nodiscard]] ReadStatus wait_for_uciok(Process& proc, int timeout_ms,
+                                        std::vector<std::string>& option_names) {
+    const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);
+    std::string line;
+    for (;;) {
+        const ReadStatus status = proc.read_line(line, remaining_ms(deadline));
+        if (status != ReadStatus::Line) {
+            return status;
+        }
+        if (line == "uciok") {
+            return ReadStatus::Line;
+        }
+        std::istringstream in(line);
+        std::string first;
+        std::string second;
+        if (!(in >> first >> second) || first != "option" || second != "name") {
+            continue;
+        }
+        std::string name;
+        std::string token;
+        while (in >> token && token != "type") {
+            if (!name.empty()) {
+                name += ' ';
+            }
+            name += token;
+        }
+        option_names.push_back(name);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 2. Referee
 // ---------------------------------------------------------------------------
@@ -538,11 +572,18 @@ struct UciMatchSession::Impl {
         if (!proc.launch(spec.command, spec.args, error)) {
             return fail(spec.name + ": " + error);
         }
+        std::vector<std::string> advertised;
         if (!proc.write_line("uci") ||
-            wait_for_line(proc, "uciok", config.handshake_timeout_ms) != ReadStatus::Line) {
+            wait_for_uciok(proc, config.handshake_timeout_ms, advertised) != ReadStatus::Line) {
             return fail(spec.name + ": no 'uciok' (executable missing, crashed, or not a UCI "
                                     "engine): " +
                         spec.command);
+        }
+        for (const std::string& required : spec.required_options) {
+            if (std::find(advertised.begin(), advertised.end(), required) == advertised.end()) {
+                return fail(spec.name + ": engine does not advertise required option '" + required +
+                            "' (is " + spec.command + " built with NIGHTWING_SEARCH_TUNING=ON?)");
+            }
         }
         if (config.disable_own_book) {
             proc.write_line("setoption name OwnBook value false");

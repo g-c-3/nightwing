@@ -70,6 +70,15 @@ struct UciEngineSpec {
     /// `setoption name <first> value <second>` pairs sent after `uciok`,
     /// in order (for example {"Threads", "1"}, {"Hash", "64"}).
     std::vector<std::pair<std::string, std::string>> options;
+
+    /// Option names that must appear in the engine's `uci` response (as
+    /// `option name <name> type ...`). When any is missing the session
+    /// fails to start with an error naming it. Empty (the default)
+    /// performs no check. Needed because an engine ignores `setoption` for
+    /// an unknown name, so a tuning run pointed at a binary without the
+    /// tuned options would otherwise look like a null result
+    /// (docs/DECISIONS.md, 2026-10-09 (4)).
+    std::vector<std::string> required_options;
 };
 
 /// Match parameters shared by both engines.
