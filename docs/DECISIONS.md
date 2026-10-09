@@ -4,6 +4,35 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-09 (4) — Search-constant SPSA binding lives in the UCI-match library; engines must advertise the tuned options; target 3 of `nightwing_spsa`
+
+**Decision:** Sub-step (2c) of SPSA step (2) was implemented with the following choices.
+
+1. **Location.** `play_search_match()` and `run_spsa_search()` are in new files `src/tuner/spsa_search.h/.cpp`, compiled into `nightwing_uci_match_lib`, not in `spsa_eval.h/.cpp` as 2026-10-09 (1) 3 said. `nightwing_lib` deliberately has no process-spawning dependency (src/CMakeLists.txt), and `UciMatchSession` lives in the separate library. `nightwing_spsa` now links `nightwing_uci_match_lib`.
+2. **Required-option check.** `UciEngineSpec` gained `required_options`. During the `uci` handshake the runner records every `option name <name> type ...` line, and when a listed name is absent the session fails with an error naming the option and the CMake flag. The default is an empty list (no check), so existing callers are unchanged.
+3. **Failure policy.** `run_spsa_search()` throws `std::runtime_error` when any iteration's match aborts, and `nightwing_spsa` target 3 prints the error and exits with status 1. A failed match is never scored as a draw.
+4. **Match setup.** Both sides run the same binary with `Threads` 1 and `Hash` 16 plus the seven tunables (theta rounded to an integer and clamped to the option range). A new session is started per iteration. When neither `movetime_ms` nor `nodes` is set, `play_search_match()` uses 20000 nodes per move (`kDefaultSearchMatchNodes`, untuned).
+5. **Parameters.** The tunable table duplicates the names, defaults and ranges of `search/tunables.h` (that header exists only in the tuning build). Default perturbation sizes are 1, 1, 40, 1, 1, 15, 6 for the seven options in table order, each kept at 1 or more after scaling. A test compiled into the tuning build checks the two tables agree.
+6. **CLI.** `nightwing_spsa ... target=3 engine_path [nodes]`. For target 3 the `c` argument is a multiplier on each parameter's own perturbation size (negative or absent means 1), `start_scale` scales every default start value (rounded, clamped), and `search_depth` is ignored. Start validation and final validation play theta against the defaults through `play_search_match()`.
+
+**Rationale:**
+- *Required options.* The engine ignores `setoption` for an unknown name (verified in `handle_setoption()`), so a run pointed at a production binary would have produced a plausible-looking null result, the failure mode seen in the Session 185 and 186 runs. Failing at start-up makes that mistake impossible to miss.
+- *Throwing on abort.* `SpsaMatchFn` returns only a score, and any substitute score would bias the optimizer.
+- *Multiplier semantics for `c`.* The seven options have very different scales (a null-move reduction of 2 against a margin of 200), so a single absolute c cannot suit all of them.
+
+**Verification (Linux, GCC, Release, sandbox):** default build 753/753 `ctest` (747 before plus 6 new), tuning build 758/758 (751 plus 7), zero warnings in both. A smoke run of target 3 (3 iterations, 8 games, 5000 nodes, start scale 0.5, one seed) completed with theta inside the option ranges; its final validation scored 8 wins to 0 against the defaults over 8 games. That result is not interpreted: it is one seed, 8 games, a node budget far below a real run, and unexplained. A production binary aborts with the intended error. Not verified: CI, macOS, Windows.
+
+**Scope of what this does NOT establish:** whether node-limited play gives the optimizer a usable signal for search constants, whether 20000 nodes per move is a suitable budget, or whether any constant is mistuned. The sanity check scoped in 2026-10-09 (a deliberately wrong start recovering toward the defaults) has not been run.
+
+**Alternatives considered:**
+- *Putting the binding in `spsa_eval.cpp`:* rejected for the library dependency above.
+- *Scoring an aborted iteration as 0.5:* rejected; it hides setup errors and wastes a run.
+- *Reading the option list through a separate probe process:* rejected in favour of recording it during the session's own handshake, which needs no extra process.
+
+**Test risk:** low to moderate. `uci_match.cpp` handshake reading was reworked (the `uciok` wait now parses option lines); the existing `uci_match` tests passed in both builds. The new engine-dependent tests run the real engine, so macOS and Windows behaviour is unconfirmed until CI.
+
+---
+
 ### 2026-10-09 (3) — Search tunables: live `const int&` bindings in the tuning build, `constexpr` otherwise; seven spin options with clamped ranges
 
 **Decision:** Sub-step (2b) of SPSA step (2) was implemented as designed in 2026-10-09, with these concrete choices.

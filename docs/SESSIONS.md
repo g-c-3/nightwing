@@ -4,6 +4,26 @@ Newest entry at top.
 
 ---
 
+### Session 203 — 2026-10-09 — SPSA sub-step (2c): search-constant binding and target 3
+
+**Evidence reviewed:** CI for Session 202 reported green. `src/tuner/uci_match.h`, `src/tuner/uci_match.cpp` (handshake, session, process wrapper read-through), `spsa.h`, `spsa_eval.h/.cpp`, `spsa_main.cpp`, `src/CMakeLists.txt` and `tests/CMakeLists.txt` wiring, `tests/uci_match_tests.cpp` helpers, DECISIONS.md 2026-10-09 to (3).
+
+**Changed:** NEW `src/tuner/spsa_search.h`, `src/tuner/spsa_search.cpp`, `tests/spsa_search_tests.cpp`. REPLACE `src/tuner/uci_match.h`, `src/tuner/uci_match.cpp`, `src/tuner/spsa_main.cpp`, `src/CMakeLists.txt`, `tests/CMakeLists.txt`, `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`.
+
+**Built:** `UciEngineSpec::required_options` and the handshake option recording; `search_tunable_table()`, `make_search_spsa_params()`, `make_search_engine_spec()`, `play_search_match()`, `run_spsa_search()`; `nightwing_spsa` target 3 with engine path and node budget; 6 default-build tests and 7 tuning-build tests.
+
+**Decisions made:** DECISIONS.md 2026-10-09 (4).
+
+**Verification (Linux, GCC, Release, sandbox):** default build 753/753 `ctest`, tuning build 758/758, zero warnings in both. A 3-iteration smoke run of target 3 completed; a production binary aborts with the intended error. Not run: CI for this session, macOS, Windows, WebAssembly (the tuner targets are not built under WebAssembly).
+
+**Bugs fixed:** None.
+
+**Open:** SPSA sub-steps (2d) and (2e) and step (3); the node-limited sanity run (deliberately wrong start recovering toward the defaults) needs GitHub Actions. Everything else unchanged from Session 202.
+
+**Next session start point:** Confirm CI is green for the Session 203 push, then sub-step (2d): read `.github/workflows/ci.yml` in full (the `spsa-tune` job, the `spsa_settings` input and the build matrix); add a job that configures with `-DNIGHTWING_SEARCH_TUNING=ON`, builds, runs `ctest` for that configuration, and runs `nightwing_spsa` target 3 against the tuning `nightwing` binary from the same settings input, writing the result to the job summary and uploading it as an artifact.
+
+---
+
 ### Session 202 — 2026-10-09 — SPSA sub-step (2b): gated search tunables
 
 **Evidence reviewed:** `CMakeLists.txt`, `src/CMakeLists.txt` (definition block), `src/search/search.cpp` (constant block and the seven use sites), `src/search/search.h`, `src/uci/uci.cpp` (`handle_setoption()` and the `uci` option output), `tests/uci_tests.cpp` helpers, DECISIONS.md 2026-10-09.
