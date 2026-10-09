@@ -14,13 +14,13 @@ Newest entry at top.
 
 **Decisions made:** DECISIONS.md 2026-10-09 (2).
 
-**Verification (Linux, GCC, Release, sandbox):** full build clean; 746/746 `ctest` (744 before plus 2 new). CI on the other platforms not yet seen.
+**Verification (Linux, GCC, Release, sandbox):** full build clean; 746/746 `ctest` (744 before plus 2 new). CI logs for the Session 201 push were reviewed: Linux Release, Linux Debug, Linux Debug (ThreadSanitizer), Windows Debug and Windows Release passed 746 of 746; macOS Release and macOS Debug passed 744 of 744, with both new tests (`uci_go_command` precedence and the node-limited real-engine match) present and passing on macOS. The two-test difference between macOS and the other platforms was not investigated and is assumed to predate this session (the pre-session macOS count was not available in the logs). The WebAssembly build and the rolling-release publish job showed no error lines.
 
 **Bugs fixed:** None.
 
 **Open:** SPSA sub-steps (2b) to (2e) and step (3). Everything else unchanged from Session 199.
 
-**Next session start point:** Confirm Session 201 is green in CI, then sub-step (2b): read `src/search/search.cpp`'s constant block, `src/search/search.h`, `src/uci/uci.cpp`'s `handle_setoption()` and `uci` option output, and `CMakeLists.txt` in full; add the `NIGHTWING_SEARCH_TUNING` option and `SearchTunables` for the seven scalar constants named in DECISIONS.md 2026-10-09, with the OFF build keeping `bench` at 36154 nodes.
+**Next session start point:** Sub-step (2b): read `src/search/search.cpp`'s constant block, `src/search/search.h`, `src/uci/uci.cpp`'s `handle_setoption()` and `uci` option output, and `CMakeLists.txt` in full; add the `NIGHTWING_SEARCH_TUNING` option and `SearchTunables` for the seven scalar constants named in DECISIONS.md 2026-10-09, with the OFF build keeping `bench` at 36154 nodes.
 
 ---
 
