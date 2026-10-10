@@ -4,6 +4,34 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-10 — Tuned search constants not adopted; SPSA step (2e) and step (3) shelved
+
+**Context:** SPSA over seven search constants (target 3, 20000 nodes per move) produced values that beat the defaults 28-6-6 over 40 games. Re-validation through the `uci-match` pipeline (same tuning binary both sides, options sent to engine B only) gave: 200000 nodes per move, 264 games, 128-64-72 (about +75 Elo, interval about +39 to +112); 500 ms per move, seed 2, 301 games, 139-57-105 (about +39, about +4 to +75); same settings, seed 3, 301 games, 117-70-114 (about +3). Pooled timed result: 602 games, 256-127-219, score 0.531, about +21 Elo (about -3 to +46). Every SPRT stopped at the 300-minute limit without a verdict.
+
+**Decision:** The tuned values are not committed. No default search constant changes, `bench` stays at 36154 nodes, and SPSA sub-step (2e) and step (3) are shelved. The tuning infrastructure (CMake option `NIGHTWING_SEARCH_TUNING`, `src/search/tunables.h`, `nightwing_spsa` target 3, the `ucimatch_options_b`, `ucimatch_nodes` and `ucimatch_sprt` inputs, the `tuning-build-test` job) remains in the repository.
+
+**Rationale:**
+- The gain shrank from +215 to +75 to a pooled +21 as the setting became more realistic, and the last figure is not distinguishable from zero. The seed-2 and seed-3 results differ by an amount consistent with chance (about 1.4 standard errors).
+- Resolving a true effect of about +20 Elo at 95% confidence needs roughly 2000 or more games, about seven 300-minute runs on a hosted runner, for a change of marginal size.
+- Committing values that were fitted to a shallow node budget risks a regression at longer time controls for no demonstrated benefit.
+
+**Lessons recorded:**
+1. Small-budget node-limited SPSA of search constants overfits the budget; validation must use a realistic setting before any adoption.
+2. SPRT bounds must match the effect expected: 0/5 stopped the first re-validation inconclusive despite a large measured effect; 0/30 was closer but the true effect was smaller than H1.
+3. A merged result across seeds is a manual pooling of W/D/L counts; the SPRT does not pool.
+4. Two range limits were reached (IIRMinDepth at 2, AspirationInitialDelta at 5); any future run should widen those ranges first.
+
+**Scope of what this does NOT establish:** that the defaults are optimal (only that these seven tuned values are not shown better at 500 ms per move), or anything about other constants, time controls or opponents.
+
+**Alternatives considered:**
+- *Committing the values on the strength of two positive point estimates:* rejected; the pooled timed interval includes zero.
+- *More 300-minute runs to resolve a +20 Elo effect:* rejected on cost against value.
+- *Committing a subset of the seven values:* rejected; no per-constant evidence exists.
+
+**Test risk:** none; no source or test file changes.
+
+---
+
 ### 2026-10-09 (6) — Re-validate tuned search constants through the `uci-match` pipeline: options for engine B, node limit, merged SPRT input
 
 **Context:** The first target-3 SPSA run (`60 16 6 1 1 8 40 0.5 3 20000`) ended with the tuned values beating the defaults 28-6-6 (score 0.775, about +215 Elo) over 40 games at 20000 nodes per move, while the deliberately weakened start had scored exactly 0.500 against the defaults. The size of the gap is judged implausible for tweaks of seven constants of a mature search, and the budget is a very shallow search; the result was therefore not accepted and no value was committed.

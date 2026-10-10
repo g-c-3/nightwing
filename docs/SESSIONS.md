@@ -4,6 +4,26 @@ Newest entry at top.
 
 ---
 
+### Session 206 — 2026-10-10 — Re-validation of the tuned search constants; SPSA step (2) closed without adoption
+
+**Evidence reviewed:** logs of three `uci-match` runs (200000 nodes per move, SPRT 0/5, seed 1; 500 ms per move, SPRT 0/30, seeds 2 and 3), each stopped at the 300-minute limit; CI for the Session 205 push (all jobs green; default build 753/753, tuning build 758/758, macOS 751/751).
+
+**Results:** 264 games 128-64-72 (about +75 Elo); 301 games 139-57-105 (about +39); 301 games 117-70-114 (about +3). Pooled timed result 602 games 256-127-219, score 0.531, about +21 Elo (about -3 to +46). Full figures in DECISIONS.md 2026-10-10.
+
+**Changed:** REPLACE `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md`. No source, test or workflow file changed.
+
+**Decisions made:** DECISIONS.md 2026-10-10: tuned values not adopted; SPSA sub-step (2e) and step (3) shelved; tooling kept.
+
+**Verification:** analysis only; counts and Elo estimates were computed from the logged W/D/L tallies with a normal approximation.
+
+**Bugs fixed:** None.
+
+**Open:** SPSA item remains partial (infrastructure complete, no adopted values). Remaining ROADMAP items are unchanged from the earlier listing: Tier 0 (extend the tuner to PSQT and beyond), the engine-vs-engine infrastructure item, pondering protocol verification, restricted nonlinear feature interactions, and the low-priority items.
+
+**Next session start point:** Read the Tier 0 ROADMAP item ("extend the tuner to PSQT and beyond") in full, then scope its first sub-step in the same way SPSA step (2) was scoped in DECISIONS.md 2026-10-09 (evidence, design, sub-steps, test risk) before writing any code, applying the lessons recorded in DECISIONS.md 2026-10-10 (validate at a realistic setting; match SPRT bounds to the expected effect).
+
+---
+
 ### Session 205 — 2026-10-10 — SPSA sanity run reviewed; CI support for re-validation
 
 **Evidence reviewed:** CI logs for the Session 204 push (all jobs green, `tuning-build-test` 758/758) and the first target-3 SPSA run logs; `.github/workflows/ci.yml` `uci-match-test` job and dispatch inputs; the `--opt-b` and `--nodes` options of `nightwing_uci_match`.
