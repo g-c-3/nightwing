@@ -353,6 +353,16 @@ constexpr int kLMRMinMoveIndex = 4;    // don't reduce the first few (already we
 constexpr double kLMRBase = 0.0;       // additive constant (a)
 constexpr double kLMRScale = 0.3;      // scale on ln(depth)*ln(move_index) (b)
 
+/// TT-capture-move reduction (Session 210): extra LMR plies applied to
+/// an eligible quiet late move when this node's transposition-table
+/// move is a capture. A capture that was best at an earlier visit is
+/// very likely still the best move here, so the remaining quiet
+/// alternatives are less likely to matter and can be searched shallower.
+/// Credit: Stockfish-classic (`ttCapture`, `r += ttCapture`); Chess
+/// Programming Wiki, "Late Move Reductions". Judged by its own SPRT
+/// (DECISIONS.md 2026-10-12 (2)); removed if not accepted.
+constexpr int kTtCaptureLmrIncrease = 1;
+
 /// Bounds for lmr_reduction()'s precomputed table below. kMaxPly (128,
 /// search/ordering.h) is reused as the depth axis's own bound -- the
 /// same "safe, generous upper bound on remaining search depth" role it
@@ -2728,8 +2738,15 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             const int lmr_improving_reduction =
                 improving ? std::max(0, lmr_base_reduction - kImprovingLmrDiscount)
                           : lmr_base_reduction;
+            // TT-capture-move reduction (kTtCaptureLmrIncrease's doc
+            // comment above): `eligible_for_lmr` already excludes
+            // captures, so this move is never `tt_move` itself.
+            const int lmr_tt_reduction =
+                (!tt_move.is_null() && tt_move.is_capture())
+                    ? lmr_improving_reduction + kTtCaptureLmrIncrease
+                    : lmr_improving_reduction;
             const int reduction =
-                eligible_for_lmr ? std::min(lmr_improving_reduction, depth - 1) : 0;
+                eligible_for_lmr ? std::min(lmr_tt_reduction, depth - 1) : 0;
 
             // PVS: probe every later move with a null (zero-width)
             // window first -- cheap, since it only needs to prove
