@@ -1729,3 +1729,60 @@ TEST_CASE("compute_loss_from_scores: matches compute_loss() and tolerates bad in
     REQUIRE(compute_loss_from_scores({}, {}, 400.0) == 0.0);
     REQUIRE(compute_loss_from_scores(scores, {0.5}, 400.0) == 0.0); // size mismatch
 }
+
+// ---- stratify_by_phase() (Session 207) ------------------------------------
+
+TEST_CASE("phase_bucket splits [0, max] into three ordered buckets", "[tuner][stratify]") {
+    using nightwing::tuner::phase_bucket;
+    const int m = nightwing::eval::kMaxPhase;
+    REQUIRE(phase_bucket(0, m) == 0);
+    REQUIRE(phase_bucket(m / 3, m) == 0);
+    REQUIRE(phase_bucket(m / 3 + 1, m) == 1);
+    REQUIRE(phase_bucket(2 * m / 3, m) == 1);
+    REQUIRE(phase_bucket(m, m) == 2);
+}
+
+TEST_CASE("stratify_by_phase yields equal counts per bucket, deterministically",
+          "[tuner][stratify]") {
+    using namespace nightwing;
+    board::init_masks();
+    board::init_magic_bitboards();
+    board::init_zobrist_keys();
+    std::vector<tuner::SelfPlayPosition> corpus;
+    // 3 endgame (bare kings + pawn), 2 middlegame-ish, 4 opening-like.
+    const char* endgame = "8/8/4k3/8/8/4K3/4P3/8 w - - 0 1";
+    const char* opening = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    const char* middle = "r2qk2r/8/8/8/8/8/8/R2QK2R w KQkq - 0 1";
+    for (int i = 0; i < 3; ++i) corpus.push_back({endgame, 0.5});
+    for (int i = 0; i < 4; ++i) corpus.push_back({opening, 1.0});
+    for (int i = 0; i < 2; ++i) corpus.push_back({middle, 0.0});
+
+    const auto a = tuner::stratify_by_phase(corpus, 7);
+    const auto b = tuner::stratify_by_phase(corpus, 7);
+    REQUIRE(a.size() == 6); // 2 per bucket (smallest bucket has 2)
+    REQUIRE(a.size() == b.size());
+    int counts[3] = {0, 0, 0};
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        REQUIRE(a[i].fen == b[i].fen);
+        const int bucket = tuner::phase_bucket(
+            eval::compute_phase(board::parse_fen(a[i].fen)), eval::kMaxPhase);
+        ++counts[bucket];
+    }
+    REQUIRE(counts[0] == 2);
+    REQUIRE(counts[1] == 2);
+    REQUIRE(counts[2] == 2);
+}
+
+TEST_CASE("stratify_by_phase returns empty when a bucket is empty or FEN is bad",
+          "[tuner][stratify]") {
+    using namespace nightwing;
+    board::init_masks();
+    board::init_magic_bitboards();
+    board::init_zobrist_keys();
+    std::vector<tuner::SelfPlayPosition> corpus = {
+        {"8/8/4k3/8/8/4K3/4P3/8 w - - 0 1", 0.5},
+        {"not a fen", 0.5},
+    };
+    REQUIRE(tuner::stratify_by_phase(corpus, 1).empty());
+    REQUIRE(tuner::stratify_by_phase({}, 1).empty());
+}
