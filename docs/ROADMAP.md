@@ -1786,6 +1786,14 @@ Priority Fixes section above).
           Finding Eight raised (both matter, for different terms) but
           does not fully resolve the EG/MG-instability item itself,
           which stays open. See docs/DECISIONS.md, 2026-09-29 (6).
+          TENTH STEP (Session 207): phase-balanced corpus resampler built
+          (sub-step (a)): `tuner::stratify_by_phase()` (`src/tuner/tune.h`/
+          `.cpp`), enabled in `nightwing_tune` by the environment variable
+          `NIGHTWING_TUNE_STRATIFY_PHASE=<seed>`; 3 new tests, full suite
+          756/756 locally. REMAINING: (b) run the multi-seed comparison
+          (at least four depth-6 corpora, isolated mobility, fitted K) and
+          (c) record the result; closing condition in docs/DECISIONS.md,
+          2026-10-11. This item stays open until then.
 
 ## Priority Fixes (external code review, 2026-09-17)
 

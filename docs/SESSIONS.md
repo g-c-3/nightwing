@@ -4,6 +4,26 @@ Newest entry at top.
 
 ---
 
+### Session 207 — 2026-10-11 — Phase-stratified corpus resampler for the EG-term instability item (sub-step (a))
+
+**Scoped:** the remaining open Tier 0 item (EG-term identifiability/instability) was scoped as a falsifiable test: whether endgame-term fits (`bishop_eg`, `queen_eg`) hold sign and magnitude across seeds on a phase-balanced corpus at matched size and depth 6. Design in DECISIONS.md 2026-10-11.
+
+**Built (sub-step (a)):** `tuner::stratify_by_phase()`, `tuner::phase_bucket()` and `tuner::kPhaseBucketCount` (`src/tuner/tune.h`/`.cpp`): three phase buckets by `eval::compute_phase()` (endgame, middlegame, opening-like), equal count per bucket (the smallest bucket sets the size), deterministic shuffle by seed, unparseable FENs skipped. `nightwing_tune` (`src/tuner/tune_main.cpp`) applies it when the environment variable `NIGHTWING_TUNE_STRATIFY_PHASE` is set to a seed; no positional argument was renumbered. 3 new test cases in `tests/tune_tests.cpp` (`[tuner][stratify]`).
+
+**Changed:** `src/tuner/tune.h`, `src/tuner/tune.cpp`, `src/tuner/tune_main.cpp`, `tests/tune_tests.cpp` (all REPLACE), plus `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE).
+
+**Verification:** local Release build (GCC 13), full `ctest` 756/756 (753 before plus 3 new). No search or eval code touched, so `bench` is unchanged by construction; `bench` itself was not re-run. Debug/ASan, Windows, macOS not run locally.
+
+**Bugs fixed:** None in production code. One test-fixture error caught in the session's own first test run: a four-rook position computes to phase 8 of 24 (endgame bucket, not middlegame), so the fixture was changed to a rooks-and-queens position (phase 16).
+
+**Decisions made:** DECISIONS.md 2026-10-11.
+
+**Open:** sub-steps (b) and (c) of the EG item: the multi-seed comparison and its recorded result. The CLI path of the new environment variable was not exercised against a real corpus.
+
+**Next session start point:** Generate at least four independent depth-6 self-play corpora (distinct seeds, roughly 8.7k quiet positions each, or the CI tuning pipeline equivalent), run `NIGHTWING_TUNE_STRATIFY_PHASE=<seed> nightwing_tune --mobility 100 "" "" fit` on each, and record `queen_eg`/`bishop_eg` against the unstratified results in Findings 7-9; then close or rescope the EG item per DECISIONS.md 2026-10-11.
+
+---
+
 ### Session 206 — 2026-10-10 — Re-validation of the tuned search constants; SPSA step (2) closed without adoption
 
 **Evidence reviewed:** logs of three `uci-match` runs (200000 nodes per move, SPRT 0/5, seed 1; 500 ms per move, SPRT 0/30, seeds 2 and 3), each stopped at the 300-minute limit; CI for the Session 205 push (all jobs green; default build 753/753, tuning build 758/758, macOS 751/751).

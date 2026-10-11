@@ -4,6 +4,26 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-11 — EG-term instability: test a phase-balanced corpus; resampler built, comparison pending
+
+**Context:** the open Tier 0 sub-item (EG-term identifiability/instability) has Findings 7-9 on record: at depth 6 and full corpus size endgame values are consistent across seeds; endgame-only filtering flipped `queen_eg`; matched-size depth 6 versus depth 8 destabilised different terms. The one controllable variable still untested is the phase mix of the corpus.
+
+**Decision:** test the hypothesis that a corpus with equal counts in three phase buckets (endgame, middlegame, opening-like, split at one third and two thirds of `kMaxPhase`) gives endgame term fits that keep sign and similar magnitude across at least four seeds. The resampler is `tuner::stratify_by_phase()`; `nightwing_tune` enables it through the environment variable `NIGHTWING_TUNE_STRATIFY_PHASE=<seed>`. An environment variable was chosen over a new argument because every positional slot is already assigned and a new slot would renumber existing command lines.
+
+**Closing condition:** stable on the balanced corpus: close the item and record the balanced resample as the recommended corpus recipe. Unstable: close the item as not identifiable at this corpus scale, and stop spending sessions on it.
+
+**Rationale:** phase-mix sensitivity was measured (Finding 7), and the resampler removes it as a variable without changing search, evaluation or the tuner's gradient code.
+
+**Limitations:** the balanced subsample is limited by the smallest bucket (endgame positions are typically the scarcest), so it shrinks the corpus; the bucket split is a choice, not a fitted value; the equal-count rule discards data and therefore trades size for balance.
+
+**Alternatives considered:**
+- *Per-position weights by bucket:* rejected for now; it changes the loss function itself rather than the sample, a larger change to tuner code.
+- *Generating more endgame-heavy games:* rejected; it changes self-play and needs new corpora anyway.
+
+**Test risk:** low; additive tuner code only. 3 new test cases; full suite 756/756 locally.
+
+---
+
 ### 2026-10-10 — Tuned search constants not adopted; SPSA step (2e) and step (3) shelved
 
 **Context:** SPSA over seven search constants (target 3, 20000 nodes per move) produced values that beat the defaults 28-6-6 over 40 games. Re-validation through the `uci-match` pipeline (same tuning binary both sides, options sent to engine B only) gave: 200000 nodes per move, 264 games, 128-64-72 (about +75 Elo, interval about +39 to +112); 500 ms per move, seed 2, 301 games, 139-57-105 (about +39, about +4 to +75); same settings, seed 3, 301 games, 117-70-114 (about +3). Pooled timed result: 602 games, 256-127-219, score 0.531, about +21 Elo (about -3 to +46). Every SPRT stopped at the 300-minute limit without a verdict.
