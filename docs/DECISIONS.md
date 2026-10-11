@@ -4,7 +4,7 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
-### 2026-10-11 (2) — Next direction: cut-node-aware late move reductions, SPRT-gated
+### 2026-10-11 (2) — Cut-node-aware late move reductions: tested, rejected, removed
 
 **Context:** every remaining ROADMAP item was blocked or untestable here (pondering needs a real GUI; further evaluation interactions need a constrained fit and three candidates had failed; NUMA and distributed search need hardware this environment lacks). A search-side idea was chosen instead, with the direction left to the assistant's judgement. An inventory of `src/search/` showed history pruning, SEE capture pruning, LMP, futility, razoring, ProbCut, IIR, singular extensions, killers, continuation and capture history and correction history already implemented. No expected-cut-node information was used anywhere.
 
@@ -13,6 +13,10 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 **Rationale:** a node expected to fail high usually does so on an early move, so late quiet moves there are rarely decisive. Credit: Stockfish-classic `cutNode` (idea and flag propagation); Chess Programming Wiki, "Late Move Reductions" and "Node Types".
 
 **Status:** implemented, untested for strength. Full `ctest` 756/756. `bench` moved from 36154 to 35115 nodes (-2.9%), as expected for a reduction. A sandbox node-limited match was started and abandoned at 16 games (one core, about 25 seconds per game); no strength conclusion exists.
+
+**First SPRT result (CI `uci-match`, seed 4):** baseline `ff15d0f`, candidate `ce0088e` (`main`), 200000 nodes per move, SPRT 0/+5 (alpha 0.05, beta 0.05), 8 opening plies, 300-ply cap. The 300-minute limit stopped the job after 315 games, inconclusive: candidate 127 wins, 87 draws, baseline 101 wins; score 54.1%, +28.7 Elo (95% interval about -3.8 to +61.8); LLR +0.475 against bounds of +/-2.944. The direction is favourable but neither bound was reached. Earlier lessons (the SPSA result shrank from +215 to +21 Elo under realistic settings) argue against adopting on a partial tally. Next: a second pass with seed 3 and the same settings, pooled with this one.
+
+**Second SPRT result and decision (CI `uci-match`, seed 3):** same settings (baseline `ff15d0f`, candidate `ce0088e`, 200000 nodes, SPRT 0/+5). Stopped at the 300-minute limit after 498 games: candidate 180 wins, 109 draws, baseline 209 wins; score 47.1%, -20.3 Elo (95% interval about -47.4 to +6.7); LLR -0.60. Pooled with the seed-4 run (813 games: 307/196/310): score 49.8%, -1.3 Elo (95% interval about -22.1 to +19.5), LLR -0.17 against bounds of +/-2.944. The two runs disagreed in sign (+28.7 and -20.3), consistent with noise around a small true effect. The pre-stated adoption rule (pooled H1, or a clearly positive pooled estimate with the lower interval bound above zero) was not met, so the change was REJECTED and removed: `search.cpp` was restored to the previous version (identical to `ff15d0f`). The result is not evidence of harm, only of no demonstrable gain at this sample size; a re-attempt would need a larger game count or a larger effect (for example `kCutNodeLmrIncrease` = 2 as newer Stockfish versions use) and its own SPRT.
 
 **Closing condition:** the CI `uci-match` SPRT (baseline git ref: the commit before this change; candidate: `main`; node-limited or `movetime` play, since fixed-depth play cannot show a node-saving change; bounds 0/+5) must accept H1. On H0 or an inconclusive result at the game cap, the change is removed, as with the four rejected evaluation interactions.
 

@@ -4,7 +4,7 @@ Newest entry at top.
 
 ---
 
-### Session 208 — 2026-10-11 — Cut-node-aware LMR implemented, awaiting SPRT
+### Session 208 — 2026-10-11 — Cut-node-aware LMR implemented, tested, rejected, removed
 
 **Built:** a `cut_node` flag threaded through the `negamax()` call sites and `search_root()` in `src/search/search.cpp`, and one extra LMR ply at expected-cut nodes (`kCutNodeLmrIncrease`). Direction chosen after the item inventory found every ROADMAP item blocked (DECISIONS.md 2026-10-11 (2)).
 
@@ -14,9 +14,15 @@ Newest entry at top.
 
 **Bugs fixed:** none.
 
-**Open:** strength is unmeasured. The change must not be considered adopted until the CI SPRT accepts H1.
+**SPRT result:** first CI `uci-match` run (seed 4, baseline `ff15d0f`, candidate `ce0088e`, 200000 nodes, 0/+5) stopped at the 300-minute limit after 315 games: 127 wins, 87 draws, 101 losses, +28.7 Elo (95% interval about -3.8 to +61.8), LLR +0.475 of +/-2.944. Inconclusive.
 
-**Next session start point:** read the `uci-match` result for baseline = the commit before this change and candidate = `main` (nodes 200000, SPRT 0/+5, seed distinct from earlier runs). H1: mark the ROADMAP item done. Otherwise remove the `cut_node` parameter and `kCutNodeLmrIncrease`, restoring the previous `search.cpp`.
+**Open:** strength is not yet established. The change must not be considered adopted until a pooled SPRT accepts H1.
+
+**Second SPRT (seed 3):** stopped at the 300-minute limit after 498 games: 180 wins, 109 draws, 209 losses, -20.3 Elo (95% interval about -47.4 to +6.7). Pooled with seed 4 (813 games): -1.3 Elo (about -22.1 to +19.5), LLR -0.17. Adoption rule not met; the change was rejected and removed. Final `search.cpp` is identical to the version at `ff15d0f` (and `85f54fb`).
+
+**Changed (final):** `src/search/search.cpp` (REPLACE, restores the pre-change version), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE).
+
+**Next session start point:** no unblocked ROADMAP item remains (see the Session 207 handoff). Candidate search ideas not yet tried: PV-node reduction discount, TT-capture-move reduction, or a retry of cut-node LMR at 2 plies with at least 1500 games; each needs its own SPRT with a node-limited match.
 
 ---
 
