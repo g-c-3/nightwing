@@ -336,6 +336,27 @@ int main(int argc, char** argv) {
         config.l2_lambda = std::strtod(argv[arg_offset + 4], nullptr);
     }
 
+    // Optional sign constraint (Session 209): set the environment variable
+    // NIGHTWING_TUNE_KEEP_SIGN to any value other than empty or "0" to keep
+    // every parameter on its starting value's side of zero (TuneConfig::
+    // keep_initial_sign). An environment variable, not a new positional
+    // argument, so no existing command line is renumbered. Honored only by
+    // the five single-term modes; material and PSQT modes ignore it.
+    if (const char* keep = std::getenv("NIGHTWING_TUNE_KEEP_SIGN");
+        keep != nullptr && *keep != '\0' && std::strcmp(keep, "0") != 0) {
+        const bool term_mode = mode != Mode::Material && mode != Mode::Psqt && mode != Mode::FitK;
+        if (term_mode) {
+            config.keep_initial_sign = true;
+            std::fprintf(stderr,
+                          "Sign constraint on: every parameter stays on its starting value's "
+                          "side of zero (parameters starting at exactly 0 are unconstrained).\n");
+        } else {
+            std::fprintf(stderr,
+                          "NIGHTWING_TUNE_KEEP_SIGN ignored: only the single-term modes "
+                          "(--mobility/--space/--threats/--king-safety/--pawns) support it.\n");
+        }
+    }
+
     if (!nightwing::tuner::l2_update_is_stable(config.learning_rate, config.l2_lambda)) {
         std::fprintf(stderr,
                       "WARNING: learning_rate=%g and l2_lambda=%g together are past the L2 "

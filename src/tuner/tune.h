@@ -783,6 +783,27 @@ struct TuneConfig {
     /// five tune_mobility()/tune_space()/tune_threats()/
     /// tune_king_safety()/tune_pawns() term modes specifically.
     double l2_lambda = 0.0;
+
+    /// Sign constraint (ROADMAP.md "Restricted nonlinear feature
+    /// interactions" prerequisite, Session 209): when true, `tune_term()`
+    /// (and so `tune_mobility()`/`tune_space()`/`tune_threats()`/
+    /// `tune_king_safety()`/`tune_pawns()`) projects every parameter back
+    /// onto the side of zero its STARTING value was on after each
+    /// gradient step -- a parameter that starts positive is floored at 0,
+    /// one that starts negative is capped at 0, one that starts at
+    /// exactly 0 is left unconstrained (no sign to preserve). This is
+    /// plain projected gradient descent onto a per-parameter half-line,
+    /// not a penalty, so it never distorts the reported loss and never
+    /// affects an unconstrained parameter. It exists because the
+    /// Session 198/199 interaction candidate's Texel fit returned a
+    /// wrong-signed, implausibly large endgame weight and L2 alone
+    /// cannot fix a sign (see `l2_lambda` above): the compiled-in
+    /// starting constants encode the theoretically expected sign, and
+    /// this lets a fit refine the MAGNITUDE only. Defaults to false, so
+    /// every existing run/test is unaffected byte-for-byte. NOT consulted
+    /// by `tune()` (material) or `tune_psqt()`, which keep their own
+    /// documented behavior.
+    bool keep_initial_sign = false;
 };
 
 /// Returns whether `learning_rate`/`l2_lambda` together keep the L2

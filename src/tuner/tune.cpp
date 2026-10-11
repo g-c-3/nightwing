@@ -42,6 +42,20 @@ template <typename Weights, std::size_t N>
     return lambda * sum_squares;
 }
 
+/// Projects `value` back onto the same side of zero as `initial`
+/// (TuneConfig::keep_initial_sign): a positive `initial` floors the value
+/// at 0, a negative `initial` caps it at 0, and an `initial` of exactly 0
+/// leaves it unconstrained.
+[[nodiscard]] constexpr double clamp_to_initial_sign(double value, double initial) noexcept {
+    if (initial > 0.0) {
+        return value < 0.0 ? 0.0 : value;
+    }
+    if (initial < 0.0) {
+        return value > 0.0 ? 0.0 : value;
+    }
+    return value;
+}
+
 } // namespace
 
 double sigmoid(double x) noexcept { return 1.0 / (1.0 + std::exp(-x)); }
@@ -535,8 +549,11 @@ TermTuneResult<Weights> tune_term(const std::vector<SelfPlayPosition>& positions
 
         for (std::size_t i = 0; i < N; ++i) {
             const ParameterRef<Weights>& param = params[i];
-            param.set(result.weights,
-                      param.get(result.weights) - config.learning_rate * gradient[i]);
+            double updated = param.get(result.weights) - config.learning_rate * gradient[i];
+            if (config.keep_initial_sign) {
+                updated = clamp_to_initial_sign(updated, param.get(initial_weights));
+            }
+            param.set(result.weights, updated);
         }
 
         const double loss_after_step =
