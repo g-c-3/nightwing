@@ -4,6 +4,22 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-11 (2) — Next direction: cut-node-aware late move reductions, SPRT-gated
+
+**Context:** every remaining ROADMAP item was blocked or untestable here (pondering needs a real GUI; further evaluation interactions need a constrained fit and three candidates had failed; NUMA and distributed search need hardware this environment lacks). A search-side idea was chosen instead, with the direction left to the assistant's judgement. An inventory of `src/search/` showed history pruning, SEE capture pruning, LMP, futility, razoring, ProbCut, IIR, singular extensions, killers, continuation and capture history and correction history already implemented. No expected-cut-node information was used anywhere.
+
+**Decision:** thread a `cut_node` flag through `negamax()` (new trailing parameter, default false) and add one extra LMR ply (`kCutNodeLmrIncrease = 1`) for eligible quiet late moves at expected-cut nodes. Flag rules follow Stockfish-classic's `cutNode`: PV nodes and full-window children are not cut nodes; each null-window child takes the negation of its parent's flag; the root is a PV node; the singular-verification search keeps its own node's flag; null-move and ProbCut children take the negation.
+
+**Rationale:** a node expected to fail high usually does so on an early move, so late quiet moves there are rarely decisive. Credit: Stockfish-classic `cutNode` (idea and flag propagation); Chess Programming Wiki, "Late Move Reductions" and "Node Types".
+
+**Status:** implemented, untested for strength. Full `ctest` 756/756. `bench` moved from 36154 to 35115 nodes (-2.9%), as expected for a reduction. A sandbox node-limited match was started and abandoned at 16 games (one core, about 25 seconds per game); no strength conclusion exists.
+
+**Closing condition:** the CI `uci-match` SPRT (baseline git ref: the commit before this change; candidate: `main`; node-limited or `movetime` play, since fixed-depth play cannot show a node-saving change; bounds 0/+5) must accept H1. On H0 or an inconclusive result at the game cap, the change is removed, as with the four rejected evaluation interactions.
+
+**Alternatives considered:** a larger increase (2 plies, as newer Stockfish versions use) was left for a later tuning pass; a PV-node reduction discount and TT-capture-move reduction were left as separate, later candidates so each gets its own SPRT.
+
+---
+
 ### 2026-10-11 — EG-term instability: phase-balanced corpus tested; item closed
 
 **Context:** the open Tier 0 sub-item (EG-term identifiability/instability) has Findings 7-9 on record: at depth 6 and full corpus size endgame values are consistent across seeds; endgame-only filtering flipped `queen_eg`; matched-size depth 6 versus depth 8 destabilised different terms. The one controllable variable still untested is the phase mix of the corpus.

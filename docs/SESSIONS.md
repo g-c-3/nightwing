@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 208 — 2026-10-11 — Cut-node-aware LMR implemented, awaiting SPRT
+
+**Built:** a `cut_node` flag threaded through the `negamax()` call sites and `search_root()` in `src/search/search.cpp`, and one extra LMR ply at expected-cut nodes (`kCutNodeLmrIncrease`). Direction chosen after the item inventory found every ROADMAP item blocked (DECISIONS.md 2026-10-11 (2)).
+
+**Changed:** `src/search/search.cpp` (REPLACE), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE).
+
+**Verification:** local Release build, `ctest` 756/756, `bench` 36154 -> 35115 nodes (-2.9%). A sandbox node-limited match (100k nodes) was abandoned at 16 games as too slow on one core. No dedicated unit test: the change is behavioural and is judged by SPRT. Debug/ASan and other platforms were not run locally.
+
+**Bugs fixed:** none.
+
+**Open:** strength is unmeasured. The change must not be considered adopted until the CI SPRT accepts H1.
+
+**Next session start point:** read the `uci-match` result for baseline = the commit before this change and candidate = `main` (nodes 200000, SPRT 0/+5, seed distinct from earlier runs). H1: mark the ROADMAP item done. Otherwise remove the `cut_node` parameter and `kCutNodeLmrIncrease`, restoring the previous `search.cpp`.
+
+---
+
 ### Session 207 — 2026-10-11 — Phase-stratified corpus resampler built; EG-term item tested and closed
 
 **Scoped:** the remaining open Tier 0 item (EG-term identifiability/instability) was scoped as a falsifiable test: whether endgame-term fits (`bishop_eg`, `queen_eg`) hold sign and magnitude across seeds on a phase-balanced corpus at matched size and depth 6. Design in DECISIONS.md 2026-10-11.
@@ -22,7 +38,7 @@ Newest entry at top.
 
 **Limits:** four seeds, one iteration count (100), no confidence intervals; the CLI environment-variable path was exercised by these runs.
 
-**Next session start point:** pick the next open item from ROADMAP.md (all Tier 0 sub-items are now checked); the open candidates are pondering GUI verification and restricted nonlinear feature interactions, which now has the EG-weight identifiability question answered.
+**Next session start point:** the Tier 0 parent item was checked off. No unblocked, verifiable ROADMAP item remains: pondering needs a real GUI, restricted nonlinear interactions needs a non-negative/regularised fit first (three candidates rejected), NUMA and distributed search cannot be tested on the available hardware. A direction must be chosen before work starts.
 
 ---
 
