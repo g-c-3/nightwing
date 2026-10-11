@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 209 — 2026-10-12 — Sign-constrained tuner fit (prerequisite for further interaction candidates)
+
+**Built:** `TuneConfig::keep_initial_sign` (`src/tuner/tune.h`) and its use in `tune_term()` (`src/tuner/tune.cpp`, new helper `clamp_to_initial_sign()`): after each gradient step every parameter is projected back onto its starting value's side of zero; zero-start parameters are unconstrained. `nightwing_tune` (`src/tuner/tune_main.cpp`) reads the environment variable `NIGHTWING_TUNE_KEEP_SIGN` for the five single-term modes. Design in DECISIONS.md 2026-10-12.
+
+**Changed:** `src/tuner/tune.h`, `src/tuner/tune.cpp`, `src/tuner/tune_main.cpp`, `tests/tune_tests.cpp` (all REPLACE), plus `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE).
+
+**Verification:** local Release build (GCC 13, single core, about 15 minutes), raw test binary 758 test cases / 691567 assertions all passing (756 before plus 2 new `[sign]` cases), `bench` unchanged at 36154 nodes. CLI smoke test confirmed the constraint pins a flipped parameter at 0 and is reported as ignored in material mode. Debug/ASan, Windows, macOS and CI not run.
+
+**Bugs fixed:** none in shipped code. Two authoring errors caught by the compiler and by reading output before delivery: mis-escaped quotes in a scripted edit of `tune_main.cpp` (build failure, fixed) and the same escaping in a `tune.h` comment (fixed). One test-fixture hazard avoided: `MobilityWeights` carries non-zero default member initializers, so the zero-start fixture zeroes each field explicitly.
+
+**Open:** the interaction item remains open and unchecked. The prerequisite named by its Session 199 outcome (a fit able to express sign-constrained weights) now exists, but no candidate has been built. A candidate that wants a constrained endgame weight must start that weight at a small non-zero value.
+
+**Next session start point:** either (a) scope interaction candidate 5 against the existing eval terms to avoid double-counting, build it as a weights struct plus `ParameterRef` table plus nullable override, fit it with `NIGHTWING_TUNE_KEEP_SIGN=1`, and SPRT it through the `uci-match` pipeline; or (b) a search-side idea from Session 208 (PV-node reduction discount, TT-capture-move reduction, or a 2-ply cut-node LMR retry with at least 1500 games), each with its own node-limited SPRT. Approval is needed before choosing (b), since it leaves the roadmap item.
+
+---
+
 ### Session 208 — 2026-10-11 — Cut-node-aware LMR implemented, tested, rejected, removed
 
 **Built:** a `cut_node` flag threaded through the `negamax()` call sites and `search_root()` in `src/search/search.cpp`, and one extra LMR ply at expected-cut nodes (`kCutNodeLmrIncrease`). Direction chosen after the item inventory found every ROADMAP item blocked (DECISIONS.md 2026-10-11 (2)).

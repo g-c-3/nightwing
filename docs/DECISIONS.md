@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-12 — Sign-constrained fitting for the single-term tuner modes
+
+**Context:** the roadmap's "Restricted nonlinear feature interactions" item was left open after three candidates were rejected, with the note that further candidates require a fit able to express non-negative or regularised endgame weights. L2 regularisation already exists but cannot correct a sign (DECISIONS.md 2026-09-27); the king-exposure fit (2026-10-08 (3)) returned a wrong-signed, implausibly large endgame weight for exactly that reason.
+
+**Decision:** `TuneConfig::keep_initial_sign` (default false) was added. When set, `tune_term()` (and so `tune_mobility()`, `tune_space()`, `tune_threats()`, `tune_king_safety()`, `tune_pawns()`) projects every parameter back onto its starting value's side of zero after each gradient step: a positive start is floored at 0, a negative start is capped at 0, a start of exactly 0 is unconstrained. `nightwing_tune` enables it for the five single-term modes through the environment variable `NIGHTWING_TUNE_KEEP_SIGN` (any value other than empty or `0`); the variable is reported as ignored in material, PSQT and `--fit-k` modes. No positional argument was renumbered.
+
+**Rationale:** the compiled-in starting constants encode the theoretically expected sign, so a fit should refine magnitude only. Projected gradient descent onto a half-line is a hard constraint, not a penalty: reported loss is not distorted, unconstrained parameters are unaffected, and no new hyperparameter exists. A zero-start parameter has no sign to preserve, so a new term starting at zero in a given phase is not constrained in that phase; a candidate wanting a constrained endgame weight must start it at a small non-zero value.
+
+**Alternatives considered:** a per-parameter bounds field on `ParameterRef` (rejected for now: every table, about 120 entries, would need annotating, and sign-from-default covers the stated need); a suffix rule such as "all `_eg` non-negative" (rejected: bonuses and penalties differ in sign by term); a negative-barrier penalty (rejected: distorts loss and adds a tuning knob). `tune()` (material) and `tune_psqt()` were left unchanged; material has its own anchoring and PSQT cells have no theoretical sign.
+
+**Verification:** 2 new tests (`[tuner][tune][sign]`, 13 assertions): an unconstrained run on a one-sided knight corpus drives `knight_eg` below zero while the constrained run pins it exactly at 0 with loss still falling, and a zero-start run is bit-identical with and without the flag. Local Release build (GCC 13): full raw test binary 758 test cases, 691567 assertions, all passing (756 before); `bench` unchanged at 36154 nodes (no search or eval code touched). CLI smoke test on a two-position corpus: unconstrained `--mobility` gave `knight_eg=-453.8`, the constrained run gave `knight_eg=0`. Debug/ASan, Windows, macOS and CI not run.
+
 ### 2026-10-11 (2) — Cut-node-aware late move reductions: tested, rejected, removed
 
 **Context:** every remaining ROADMAP item was blocked or untestable here (pondering needs a real GUI; further evaluation interactions need a constrained fit and three candidates had failed; NUMA and distributed search need hardware this environment lacks). A search-side idea was chosen instead, with the direction left to the assistant's judgement. An inventory of `src/search/` showed history pruning, SEE capture pruning, LMP, futility, razoring, ProbCut, IIR, singular extensions, killers, continuation and capture history and correction history already implemented. No expected-cut-node information was used anywhere.
