@@ -101,6 +101,7 @@
 // left as later refinement, not attempted this session.
 
 #include <cstddef>
+#include <cstdint>
 #include <array>
 #include <utility>
 #include <vector>
@@ -1265,5 +1266,39 @@ tune_pawns(const std::vector<SelfPlayPosition>& positions,
            const eval::MaterialWeights& material_weights,
            const eval::PawnsWeights& initial_weights = eval::default_pawns_weights(),
            const TuneConfig& config = {});
+
+/// Game-phase buckets used by stratify_by_phase() (Session 207; ROADMAP.md,
+/// "EG-term identifiability/instability", Findings 7-9). A position's phase
+/// is eval::compute_phase() in [0, kMaxPhase]: bucket 0 = endgame
+/// (phase <= kMaxPhase/3), bucket 1 = middlegame (<= 2*kMaxPhase/3),
+/// bucket 2 = opening-like (above that).
+inline constexpr int kPhaseBucketCount = 3;
+
+/// Returns which of the kPhaseBucketCount phase buckets `phase` falls in.
+[[nodiscard]] constexpr int phase_bucket(int phase, int max_phase) noexcept {
+    if (phase * 3 <= max_phase) {
+        return 0;
+    }
+    if (phase * 3 <= max_phase * 2) {
+        return 1;
+    }
+    return 2;
+}
+
+/// Returns a phase-balanced subsample of `positions`: every phase bucket
+/// (see phase_bucket()) contributes exactly the same number of positions,
+/// namely the size of the SMALLEST non-empty-or-empty bucket (an empty
+/// bucket therefore yields an empty result -- no padding or duplication).
+/// Positions within each bucket are chosen by a deterministic shuffle
+/// seeded with `seed` (std::mt19937_64), and the output order is bucket 0,
+/// then 1, then 2, each in shuffled order. Rationale: a term's fitted
+/// endgame value was measured to depend on the corpus's phase MIX, not just
+/// on noise (ROADMAP.md Finding 7); a balanced mix removes that variable.
+/// Positions whose FEN fails to parse are skipped.
+///
+/// Precondition: board::init_masks()/init_magic_bitboards()/
+/// init_zobrist_keys() have run (parse_fen() and compute_phase() need them).
+[[nodiscard]] std::vector<SelfPlayPosition>
+stratify_by_phase(const std::vector<SelfPlayPosition>& positions, std::uint64_t seed);
 
 } // namespace nightwing::tuner

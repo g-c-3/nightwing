@@ -108,6 +108,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -359,8 +360,22 @@ int main(int argc, char** argv) {
         case Mode::FitK: mode_name = "fit-k"; break;
     }
 
-    const std::vector<nightwing::tuner::SelfPlayPosition> positions =
+    std::vector<nightwing::tuner::SelfPlayPosition> positions =
         nightwing::tuner::read_training_data(std::cin);
+
+    // Optional phase-balanced resampling (Session 207): set the environment
+    // variable NIGHTWING_TUNE_STRATIFY_PHASE to a seed (any unsigned integer)
+    // to replace the corpus with an equal-count-per-phase-bucket subsample
+    // (tuner::stratify_by_phase()). An environment variable, not a new
+    // positional argument, so no existing command line is renumbered.
+    if (const char* strat = std::getenv("NIGHTWING_TUNE_STRATIFY_PHASE");
+        strat != nullptr && *strat != '\0') {
+        const std::size_t before = positions.size();
+        positions = nightwing::tuner::stratify_by_phase(
+            positions, static_cast<std::uint64_t>(std::strtoull(strat, nullptr, 10)));
+        std::fprintf(stderr, "Phase-stratified corpus: %zu -> %zu positions (equal per bucket)\n",
+                     before, positions.size());
+    }
 
     std::fprintf(stderr,
                   "Nightwing tune: mode=%s, %zu training positions, iterations=%d, "

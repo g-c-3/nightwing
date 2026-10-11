@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <random>
 #include <vector>
 
 #include "board/fen.h"
@@ -582,6 +584,35 @@ TermTuneResult<eval::PawnsWeights> tune_pawns(const std::vector<SelfPlayPosition
                                                const eval::PawnsWeights& initial_weights,
                                                const TuneConfig& config) {
     return tune_term(positions, material_weights, kPawnsParameters, initial_weights, config);
+}
+
+std::vector<SelfPlayPosition> stratify_by_phase(const std::vector<SelfPlayPosition>& positions,
+                                                std::uint64_t seed) {
+    std::vector<std::vector<std::size_t>> buckets(kPhaseBucketCount);
+    for (std::size_t i = 0; i < positions.size(); ++i) {
+        try {
+            const board::Position pos = board::parse_fen(positions[i].fen);
+            buckets[static_cast<std::size_t>(
+                        phase_bucket(eval::compute_phase(pos), eval::kMaxPhase))]
+                .push_back(i);
+        } catch (...) {
+            // Unparseable FEN: skip, same as an unusable corpus line.
+        }
+    }
+    std::size_t per_bucket = buckets[0].size();
+    for (const auto& b : buckets) {
+        per_bucket = std::min(per_bucket, b.size());
+    }
+    std::mt19937_64 rng(seed);
+    std::vector<SelfPlayPosition> out;
+    out.reserve(per_bucket * kPhaseBucketCount);
+    for (auto& b : buckets) {
+        std::shuffle(b.begin(), b.end(), rng);
+        for (std::size_t k = 0; k < per_bucket; ++k) {
+            out.push_back(positions[b[k]]);
+        }
+    }
+    return out;
 }
 
 } // namespace nightwing::tuner
