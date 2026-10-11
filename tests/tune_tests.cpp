@@ -1786,3 +1786,84 @@ TEST_CASE("stratify_by_phase returns empty when a bucket is empty or FEN is bad"
     REQUIRE(tuner::stratify_by_phase(corpus, 1).empty());
     REQUIRE(tuner::stratify_by_phase({}, 1).empty());
 }
+
+// ---------------------------------------------------------------------
+// Sign constraint (Session 209): TuneConfig::keep_initial_sign.
+// ---------------------------------------------------------------------
+
+namespace {
+
+/// A bare-kings-plus-one-knight position labeled as a Black win (result
+/// 0.0) although White is a knight up: every White mobility parameter
+/// gets a strong, one-sided gradient pushing it BELOW its positive
+/// default, which an unconstrained run follows through zero.
+std::vector<SelfPlayPosition> sign_constraint_corpus() {
+    std::vector<SelfPlayPosition> positions;
+    for (int i = 0; i < 8; ++i) {
+        positions.push_back(SelfPlayPosition{"4k3/8/8/8/8/8/8/1N2K3 w - - 0 1", 0.0});
+    }
+    return positions;
+}
+
+} // namespace
+
+TEST_CASE("tune_mobility: keep_initial_sign floors a positive-default parameter at zero where an "
+          "unconstrained run crosses it",
+          "[tuner][tune][sign]") {
+    init_all();
+    const std::vector<SelfPlayPosition> positions = sign_constraint_corpus();
+    const MaterialWeights material = default_material_weights();
+    const MobilityWeights initial = default_mobility_weights();
+    REQUIRE(initial.knight_eg > 0.0);
+
+    TuneConfig free_config;
+    free_config.iterations = 100;
+    const TermTuneResult<MobilityWeights> free_run =
+        tune_mobility(positions, material, initial, free_config);
+    // The fixture's premise: the unconstrained fit really does flip sign.
+    REQUIRE(free_run.weights.knight_eg < 0.0);
+
+    TuneConfig constrained = free_config;
+    constrained.keep_initial_sign = true;
+    const TermTuneResult<MobilityWeights> held =
+        tune_mobility(positions, material, initial, constrained);
+    // Never crosses zero, and is pinned exactly at the boundary here.
+    REQUIRE(held.weights.knight_eg >= 0.0);
+    REQUIRE(held.weights.knight_eg == 0.0);
+    REQUIRE(held.weights.knight_mg >= 0.0);
+    REQUIRE(held.weights.bishop_eg >= 0.0);
+    REQUIRE(held.weights.rook_eg >= 0.0);
+    REQUIRE(held.weights.queen_eg >= 0.0);
+    // The constraint is a projection, not a penalty: loss still falls.
+    REQUIRE(held.final_loss < held.initial_loss);
+}
+
+TEST_CASE("tune_mobility: keep_initial_sign leaves a zero-start parameter unconstrained and is "
+          "off by default",
+          "[tuner][tune][sign]") {
+    init_all();
+    const std::vector<SelfPlayPosition> positions = sign_constraint_corpus();
+    const MaterialWeights material = default_material_weights();
+
+    // Start at all-zero mobility: no parameter has a sign to preserve, so
+    // the constrained run must match the unconstrained one exactly.
+    // (MobilityWeights' fields carry non-zero default initializers, so
+    // zero them explicitly rather than value-initializing.)
+    MobilityWeights zero_start = default_mobility_weights();
+    zero_start.knight_mg = zero_start.knight_eg = 0.0;
+    zero_start.bishop_mg = zero_start.bishop_eg = 0.0;
+    zero_start.rook_mg = zero_start.rook_eg = 0.0;
+    zero_start.queen_mg = zero_start.queen_eg = 0.0;
+    TuneConfig base;
+    base.iterations = 40;
+    TuneConfig constrained = base;
+    constrained.keep_initial_sign = true;
+
+    const TermTuneResult<MobilityWeights> a = tune_mobility(positions, material, zero_start, base);
+    const TermTuneResult<MobilityWeights> b =
+        tune_mobility(positions, material, zero_start, constrained);
+    REQUIRE(a.weights.knight_eg == b.weights.knight_eg);
+    REQUIRE(a.weights.queen_mg == b.weights.queen_mg);
+    REQUIRE(a.final_loss == b.final_loss);
+    REQUIRE_FALSE(TuneConfig{}.keep_initial_sign);
+}
