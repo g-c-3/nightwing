@@ -549,6 +549,13 @@ constexpr std::array<int, kHistoryPruningMaxDepth + 1> kHistoryPruningThresholds
     0, 300, 150, 50,
 };
 
+/// Extra LMR reduction (plies) applied at expected-cut nodes (Session
+/// 208). `cut_node` is threaded through negamax() the way Stockfish-classic
+/// threads `cutNode`: PV nodes and their first (full-window) child are
+/// not cut nodes; every null-window child flips its parent's flag; the
+/// root is a PV node. See docs/DECISIONS.md, 2026-10-11 (2).
+constexpr int kCutNodeLmrIncrease = 1;
+
 /// SEE-based (bad-)capture pruning (CPW doesn't have a single canonical
 /// name for this -- variously "SEE pruning" / "capture LMP" across
 /// engines that implement it; negamax()'s move loop below), external-
@@ -1701,7 +1708,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             std::array<std::uint64_t, kMaxPly>& path,
             std::array<int, kMaxPly>& static_eval_history,
             bool allow_null_move = true,
-            const eval::Score* mat_psqt = nullptr, Move exclude_move = Move()) {
+            const eval::Score* mat_psqt = nullptr, Move exclude_move = Move(),
+            bool cut_node = false) {
     // ROADMAP.md Priority Fixes (2026-09-22), item 6, finding 10:
     // every per-search-invariant piece this function needs (tables,
     // weights, limits, tie-break/contempt config) now arrives bundled
@@ -2108,12 +2116,22 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         reduction = std::min(reduction, depth - 1);
         UndoInfo null_undo;
         board::make_null_move(pos, null_undo);
-        const int null_score = -negamax(pos, depth - 1 - reduction, -beta, -beta + 1, ply + 1, nodes,
-                                         ctx,
-                                         /*prev_piece=*/board::PieceType::None, /*prev_to=*/0,
-                                         /*prev_was_capture=*/false, path,
-                                         static_eval_history,
-                                         /*allow_null_move=*/false, mat_psqt);
+        const int null_score = -negamax(pos,
+                         depth - 1 - reduction,
+                         -beta,
+                         -beta + 1,
+                         ply + 1,
+                         nodes,
+                         ctx,
+                         /*prev_piece=*/board::PieceType::None,
+                         /*prev_to=*/0,
+                         /*prev_was_capture=*/false,
+                         path,
+                         static_eval_history,
+                         /*allow_null_move=*/false,
+                         mat_psqt,
+                         /*exclude_move=*/Move(),
+                         /*cut_node=*/!cut_node);
         board::unmake_null_move(pos, null_undo);
         // A probe interrupted mid-search (limits->stopped) returns a
         // meaningless, truncated-subtree score (SearchLimits' own doc
@@ -2270,11 +2288,22 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             UndoInfo probcut_undo;
             board::make_move(pos, probcut_move, probcut_undo);
             const int probcut_score =
-                -negamax(pos, depth - kProbCutReduction, -probcut_beta, -probcut_beta + 1, ply + 1,
-                         nodes, ctx,
-                         probcut_moved_piece, probcut_move.to(), probcut_move.is_capture(),
-                         path, static_eval_history,
-                         /*allow_null_move=*/true);
+                -negamax(pos,
+                         depth - kProbCutReduction,
+                         -probcut_beta,
+                         -probcut_beta + 1,
+                         ply + 1,
+                         nodes,
+                         ctx,
+                         probcut_moved_piece,
+                         probcut_move.to(),
+                         probcut_move.is_capture(),
+                         path,
+                         static_eval_history,
+                         /*allow_null_move=*/true,
+                         /*mat_psqt=*/nullptr,
+                         /*exclude_move=*/Move(),
+                         /*cut_node=*/!cut_node);
             board::unmake_move(pos, probcut_move, probcut_undo);
             if (limits != nullptr && limits->stopped) {
                 // Truncated subtree (SearchLimits' own doc comment) --
@@ -2484,11 +2513,22 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // `moves` list just to feed an alternative-move scan the
             // way the old, one-search-per-alternative version required.
             const int singular_score =
-                negamax(pos, singular_depth, singular_beta - 1, singular_beta, ply, nodes, ctx,
-                        prev_piece, prev_to, prev_was_capture, path,
-                        static_eval_history,
-                        /*allow_null_move=*/true,
-                        mat_psqt, /*exclude_move=*/move);
+                negamax(pos,
+                         singular_depth,
+                         singular_beta - 1,
+                         singular_beta,
+                         ply,
+                         nodes,
+                         ctx,
+                         prev_piece,
+                         prev_to,
+                         prev_was_capture,
+                         path,
+                         static_eval_history,
+                         /*allow_null_move=*/true,
+                         mat_psqt,
+                         /*exclude_move=*/move,
+                         /*cut_node=*/cut_node);
             // A truncated subtree (SearchLimits' own doc comment) makes
             // `singular_score` meaningless -- same reasoning as NMP's/
             // ProbCut's own guards above; `singular_extension` simply
@@ -2625,9 +2665,22 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // even to this first move -- a checking or singular move
             // deserves the extra ply regardless of its position in the
             // ordering.
-            score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, ctx,
-                              moved_piece, move.to(), move.is_capture(), path, static_eval_history,
-                              /*allow_null_move=*/true, child_mat_psqt);
+            score = -negamax(pos,
+                         depth - 1 + extension,
+                         -beta,
+                         -alpha,
+                         ply + 1,
+                         nodes,
+                         ctx,
+                         moved_piece,
+                         move.to(),
+                         move.is_capture(),
+                         path,
+                         static_eval_history,
+                         /*allow_null_move=*/true,
+                         child_mat_psqt,
+                         /*exclude_move=*/Move(),
+                         /*cut_node=*/(beta - alpha == 1) ? !cut_node : false);
         } else {
             // Futility pruning (CPW "Futility Pruning", this function's
             // header comment): a node-level condition -- computed once,
@@ -2728,8 +2781,15 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             const int lmr_improving_reduction =
                 improving ? std::max(0, lmr_base_reduction - kImprovingLmrDiscount)
                           : lmr_base_reduction;
-            const int reduction =
-                eligible_for_lmr ? std::min(lmr_improving_reduction, depth - 1) : 0;
+            // Cut-node reduction (Stockfish-classic's `cutNode` LMR term;
+            // Session 208): a quiet late move at an expected-cut node is
+            // reduced one extra ply, since a node expected to fail high
+            // usually does so on an early move, so the late quiet moves
+            // searched here are rarely the one that matters.
+            const int lmr_cut_reduction =
+                (cut_node && eligible_for_lmr) ? lmr_improving_reduction + kCutNodeLmrIncrease
+                                               : lmr_improving_reduction;
+            const int reduction = eligible_for_lmr ? std::min(lmr_cut_reduction, depth - 1) : 0;
 
             // PVS: probe every later move with a null (zero-width)
             // window first -- cheap, since it only needs to prove
@@ -2742,10 +2802,22 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // session's design (see this function's header comment) --
             // see it for how that interacts with the two fallback steps
             // below.
-            score = -negamax(pos, depth - 1 + extension - reduction, -alpha - 1, -alpha, ply + 1,
-                              nodes, ctx, moved_piece, move.to(), move.is_capture(),
-                              path, static_eval_history,
-                              /*allow_null_move=*/true, child_mat_psqt);
+            score = -negamax(pos,
+                         depth - 1 + extension - reduction,
+                         -alpha - 1,
+                         -alpha,
+                         ply + 1,
+                         nodes,
+                         ctx,
+                         moved_piece,
+                         move.to(),
+                         move.is_capture(),
+                         path,
+                         static_eval_history,
+                         /*allow_null_move=*/true,
+                         child_mat_psqt,
+                         /*exclude_move=*/Move(),
+                         /*cut_node=*/!cut_node);
             if ((limits == nullptr || !limits->stopped) && reduction > 0 && score > alpha) {
                 // The reduced probe suggested this move might actually
                 // be good -- not trustworthy on its own (a shallower
@@ -2764,16 +2836,40 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 // kPassedPawnExtensionMinRank can still be BOTH LMR-
                 // eligible AND separately qualify for
                 // `passed_pawn_extension`.
-                score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, ply + 1, nodes, ctx,
-                                  moved_piece, move.to(), move.is_capture(), path,
-                                  static_eval_history,
-                                  /*allow_null_move=*/true, child_mat_psqt);
+                score = -negamax(pos,
+                         depth - 1 + extension,
+                         -alpha - 1,
+                         -alpha,
+                         ply + 1,
+                         nodes,
+                         ctx,
+                         moved_piece,
+                         move.to(),
+                         move.is_capture(),
+                         path,
+                         static_eval_history,
+                         /*allow_null_move=*/true,
+                         child_mat_psqt,
+                         /*exclude_move=*/Move(),
+                         /*cut_node=*/!cut_node);
             }
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
-                score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, ctx,
-                                  moved_piece, move.to(), move.is_capture(), path,
-                                  static_eval_history,
-                                  /*allow_null_move=*/true, child_mat_psqt);
+                score = -negamax(pos,
+                         depth - 1 + extension,
+                         -beta,
+                         -alpha,
+                         ply + 1,
+                         nodes,
+                         ctx,
+                         moved_piece,
+                         move.to(),
+                         move.is_capture(),
+                         path,
+                         static_eval_history,
+                         /*allow_null_move=*/true,
+                         child_mat_psqt,
+                         /*exclude_move=*/Move(),
+                         /*cut_node=*/false);
             }
         }
 
@@ -3381,17 +3477,56 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         // already-infinite beta has nothing to gain from skipping to.
         int score;
         if (i == 0 || depth == 1) {
-            score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, ctx,
-                              moved_piece, move.to(), move.is_capture(), path, static_eval_history,
-                              /*allow_null_move=*/true, child_mat_psqt);
+            score = -negamax(pos,
+                         depth - 1 + extension,
+                         -beta,
+                         -alpha,
+                         1,
+                         result.nodes,
+                         ctx,
+                         moved_piece,
+                         move.to(),
+                         move.is_capture(),
+                         path,
+                         static_eval_history,
+                         /*allow_null_move=*/true,
+                         child_mat_psqt,
+                         /*exclude_move=*/Move(),
+                         /*cut_node=*/false);
         } else {
-            score = -negamax(pos, depth - 1 + extension, -alpha - 1, -alpha, 1, result.nodes, ctx,
-                              moved_piece, move.to(), move.is_capture(), path, static_eval_history,
-                              /*allow_null_move=*/true, child_mat_psqt);
+            score = -negamax(pos,
+                         depth - 1 + extension,
+                         -alpha - 1,
+                         -alpha,
+                         1,
+                         result.nodes,
+                         ctx,
+                         moved_piece,
+                         move.to(),
+                         move.is_capture(),
+                         path,
+                         static_eval_history,
+                         /*allow_null_move=*/true,
+                         child_mat_psqt,
+                         /*exclude_move=*/Move(),
+                         /*cut_node=*/true);
             if ((limits == nullptr || !limits->stopped) && score > alpha && score < beta) {
-                score = -negamax(pos, depth - 1 + extension, -beta, -alpha, 1, result.nodes, ctx,
-                                  moved_piece, move.to(), move.is_capture(), path, static_eval_history,
-                                  /*allow_null_move=*/true, child_mat_psqt);
+                score = -negamax(pos,
+                         depth - 1 + extension,
+                         -beta,
+                         -alpha,
+                         1,
+                         result.nodes,
+                         ctx,
+                         moved_piece,
+                         move.to(),
+                         move.is_capture(),
+                         path,
+                         static_eval_history,
+                         /*allow_null_move=*/true,
+                         child_mat_psqt,
+                         /*exclude_move=*/Move(),
+                         /*cut_node=*/false);
             }
         }
 
