@@ -1691,7 +1691,7 @@ Priority Fixes section above).
           this session's depth-6 run: `bishop_eg=-21.3`) remains open as
           its own item, NOT resolved by the depth change. See
           docs/DECISIONS.md, 2026-09-29 (3).
-    - [ ] **EG-term identifiability/instability** (split out from the
+    - [x] **EG-term identifiability/instability** (split out from the
           sign-flip item above, Session 152, once the MG-side flip was
           confirmed fixed and this was confirmed NOT fixed by the same
           change): several endgame-phase term values (`bishop_eg`,
@@ -1790,10 +1790,22 @@ Priority Fixes section above).
           (sub-step (a)): `tuner::stratify_by_phase()` (`src/tuner/tune.h`/
           `.cpp`), enabled in `nightwing_tune` by the environment variable
           `NIGHTWING_TUNE_STRATIFY_PHASE=<seed>`; 3 new tests, full suite
-          756/756 locally. REMAINING: (b) run the multi-seed comparison
-          (at least four depth-6 corpora, isolated mobility, fitted K) and
-          (c) record the result; closing condition in docs/DECISIONS.md,
-          2026-10-11. This item stays open until then.
+          756/756 locally. Sub-steps (b)/(c) run the same session: four
+          depth-6 corpora (seeds 2/5/6/7, 156 games each, 9078-9112
+          positions), isolated mobility, fitted K, 100 iterations, each
+          corpus tuned plain and phase-balanced (6438-6495 positions, equal
+          count per bucket). Plain `bishop_eg` -22.7/-19.3/-17.6/-17.5,
+          `queen_eg` +5.2/+2.4/+3.4/+3.5; balanced `bishop_eg`
+          -18.5/-15.3/-14.6/-14.6, `queen_eg` +4.5/+4.2/+4.2/+7.4. Sign
+          and magnitude hold across all four seeds in both arms, so the
+          hypothesis passed; the balanced arm was not measurably MORE
+          stable than plain (bishop_eg spread 3.9 vs 5.2, queen_eg 3.2 vs
+          2.8), it shifts levels (bishop_eg about 3-4 toward zero) rather
+          than fixing instability. ITEM CLOSED: EG terms are identifiable
+          at depth 6 and ~9k positions; the earlier instability came from
+          depth and endgame-only filtering. Phase-balanced resampling stays
+          available as an optional recipe, not a requirement. See
+          docs/DECISIONS.md, 2026-10-11.
 
 ## Priority Fixes (external code review, 2026-09-17)
 

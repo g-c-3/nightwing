@@ -4,7 +4,7 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
-### 2026-10-11 — EG-term instability: test a phase-balanced corpus; resampler built, comparison pending
+### 2026-10-11 — EG-term instability: phase-balanced corpus tested; item closed
 
 **Context:** the open Tier 0 sub-item (EG-term identifiability/instability) has Findings 7-9 on record: at depth 6 and full corpus size endgame values are consistent across seeds; endgame-only filtering flipped `queen_eg`; matched-size depth 6 versus depth 8 destabilised different terms. The one controllable variable still untested is the phase mix of the corpus.
 
@@ -19,6 +19,8 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 **Alternatives considered:**
 - *Per-position weights by bucket:* rejected for now; it changes the loss function itself rather than the sample, a larger change to tuner code.
 - *Generating more endgame-heavy games:* rejected; it changes self-play and needs new corpora anyway.
+
+**Result:** four seeds (2/5/6/7), depth 6, about 9.1k positions each, isolated mobility with fitted K, 100 iterations, plain versus balanced (about 6.5k positions). Plain `bishop_eg` -22.7/-19.3/-17.6/-17.5, `queen_eg` +5.2/+2.4/+3.4/+3.5; balanced `bishop_eg` -18.5/-15.3/-14.6/-14.6, `queen_eg` +4.5/+4.2/+4.2/+7.4. The closing condition (stable on the balanced corpus) was met, and so was the plain corpus's own stability, so balancing did not add stability. Balancing shifts fitted levels (bishop_eg about 3-4 toward zero; knight_eg and bishop_mg also moved). The item was closed: the earlier instability was attributed to search depth and endgame-only filtering. Balanced resampling remains an optional recipe through the environment variable; plain full-spectrum corpora stay the default. Limits: four seeds, one iteration count, no confidence intervals.
 
 **Test risk:** low; additive tuner code only. 3 new test cases; full suite 756/756 locally.
 

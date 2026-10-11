@@ -4,7 +4,7 @@ Newest entry at top.
 
 ---
 
-### Session 207 — 2026-10-11 — Phase-stratified corpus resampler for the EG-term instability item (sub-step (a))
+### Session 207 — 2026-10-11 — Phase-stratified corpus resampler built; EG-term item tested and closed
 
 **Scoped:** the remaining open Tier 0 item (EG-term identifiability/instability) was scoped as a falsifiable test: whether endgame-term fits (`bishop_eg`, `queen_eg`) hold sign and magnitude across seeds on a phase-balanced corpus at matched size and depth 6. Design in DECISIONS.md 2026-10-11.
 
@@ -18,9 +18,11 @@ Newest entry at top.
 
 **Decisions made:** DECISIONS.md 2026-10-11.
 
-**Open:** sub-steps (b) and (c) of the EG item: the multi-seed comparison and its recorded result. The CLI path of the new environment variable was not exercised against a real corpus.
+**Results (sub-steps (b)/(c)):** four depth-6 corpora (seeds 2/5/6/7, 156 games, random_opening_plies 8, max_plies 200, 9078-9112 positions) were generated locally and tuned with `nightwing_tune --mobility 100 "" "" fit`, plain and with `NIGHTWING_TUNE_STRATIFY_PHASE=<seed>` (6438-6495 positions). Plain `bishop_eg` -22.7/-19.3/-17.6/-17.5 and `queen_eg` +5.2/+2.4/+3.4/+3.5 (seed 2 agrees with the earlier -23.5/+6.9 within corpus differences). Balanced `bishop_eg` -18.5/-15.3/-14.6/-14.6 and `queen_eg` +4.5/+4.2/+4.2/+7.4. Sign and magnitude held in both arms; the balanced arm was not measurably more stable and shifted levels (bishop_eg about 3-4 toward zero). The EG-term item was closed.
 
-**Next session start point:** Generate at least four independent depth-6 self-play corpora (distinct seeds, roughly 8.7k quiet positions each, or the CI tuning pipeline equivalent), run `NIGHTWING_TUNE_STRATIFY_PHASE=<seed> nightwing_tune --mobility 100 "" "" fit` on each, and record `queen_eg`/`bishop_eg` against the unstratified results in Findings 7-9; then close or rescope the EG item per DECISIONS.md 2026-10-11.
+**Limits:** four seeds, one iteration count (100), no confidence intervals; the CLI environment-variable path was exercised by these runs.
+
+**Next session start point:** pick the next open item from ROADMAP.md (all Tier 0 sub-items are now checked); the open candidates are pondering GUI verification and restricted nonlinear feature interactions, which now has the EG-weight identifiability question answered.
 
 ---
 
