@@ -4,6 +4,22 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-12 (2) — TT-capture-move reduction: implemented, awaiting SPRT
+
+**Context:** Session 209 left a choice between a further evaluation-interaction candidate and a search-side idea from Session 208's list; approval was given for the search-side direction, beginning with the TT-capture-move reduction. The cut-node LMR candidate had been rejected on a pooled 813-game SPRT (2026-10-11 (2)).
+
+**Decision:** `kTtCaptureLmrIncrease` (1) is added to the late-move reduction of an eligible quiet move whenever the node's transposition-table move is a non-null capture. The reduction remains clamped to `depth - 1`. Eligibility (`eligible_for_lmr`) is unchanged; since it excludes captures, the reduced move is never the TT move. The change is confined to `negamax()`'s move loop in `src/search/search.cpp`.
+
+**Rationale:** a capture that was best on an earlier visit is likely still best, so remaining quiet alternatives are less likely to matter and can be searched shallower. Credit: Stockfish-classic (`ttCapture`); Chess Programming Wiki, "Late Move Reductions".
+
+**Status:** implemented, untested for strength. Full suite 758 test cases passing locally (Release, GCC 13); `bench` moved from 36154 to 35399 nodes (-2.1%). No dedicated unit test: the change is behavioural and judged by SPRT. Debug/ASan, Windows, macOS and CI not run.
+
+**Closing condition:** the CI `uci-match` SPRT (baseline: the commit before this change; candidate: `main`; node-limited play, since fixed-depth play cannot show a node-saving change; bounds 0/+5) must accept H1, or the pooled estimate across seeds must be clearly positive with the lower interval bound above zero, using at least 1500 games in total. Otherwise the change is removed, as with the cut-node candidate.
+
+**Limitations:** the TT move may be stale or from a different position sharing the hash slot; the capture flag is trusted as in the existing ordering code. The reduction also applies to moves whose base LMR value is 0, which widens its effect beyond already-reduced moves.
+
+**Alternatives considered:** adding the increase only when the base reduction is already positive (left as a variant if the plain form is inconclusive); applying it to PV nodes (excluded for now, as no PV/non-PV flag distinction is used in this reduction site).
+
 ### 2026-10-12 — Sign-constrained fitting for the single-term tuner modes
 
 **Context:** the roadmap's "Restricted nonlinear feature interactions" item was left open after three candidates were rejected, with the note that further candidates require a fit able to express non-negative or regularised endgame weights. L2 regularisation already exists but cannot correct a sign (DECISIONS.md 2026-09-27); the king-exposure fit (2026-10-08 (3)) returned a wrong-signed, implausibly large endgame weight for exactly that reason.

@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 210 — 2026-10-12 — TT-capture-move reduction implemented
+
+**Built:** `kTtCaptureLmrIncrease` (1) and its use at the LMR reduction site in `negamax()` (`src/search/search.cpp`): one extra reduction ply for eligible quiet late moves when the TT move is a capture. Direction (b) from Session 209 was approved; design in DECISIONS.md 2026-10-12 (2).
+
+**Changed:** `src/search/search.cpp` (REPLACE), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE).
+
+**Verification:** local Release build (GCC 13, single core), raw test binary 758 test cases / 691567 assertions all passing, `bench` 36154 -> 35399 nodes (-2.1%). Debug/ASan, Windows, macOS and CI not run.
+
+**Bugs fixed:** none.
+
+**Open:** strength is not established. The change must not be considered adopted until a CI `uci-match` SPRT accepts H1 (or a pooled result meets the adoption rule); otherwise it is removed.
+
+**Next session start point:** run the CI `uci-match` SPRT with baseline = the commit before this change, candidate = `main`, 200000 nodes per move, bounds 0/+5, at least 1500 games across pooled seeds; adopt or remove `kTtCaptureLmrIncrease` according to the result, then continue with the PV-node reduction discount.
+
+---
+
 ### Session 209 — 2026-10-12 — Sign-constrained tuner fit (prerequisite for further interaction candidates)
 
 **Built:** `TuneConfig::keep_initial_sign` (`src/tuner/tune.h`) and its use in `tune_term()` (`src/tuner/tune.cpp`, new helper `clamp_to_initial_sign()`): after each gradient step every parameter is projected back onto its starting value's side of zero; zero-start parameters are unconstrained. `nightwing_tune` (`src/tuner/tune_main.cpp`) reads the environment variable `NIGHTWING_TUNE_KEEP_SIGN` for the five single-term modes. Design in DECISIONS.md 2026-10-12.
