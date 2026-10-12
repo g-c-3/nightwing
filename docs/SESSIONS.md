@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 213 — 2026-10-12 — PV-node reduction discount rejected and removed
+
+**Built:** nothing new. `src/search/search.cpp` was restored to its contents at `c1116510d4bcc3aa06993c02930e08b5a3f5b88d` (byte-identical to the pre-change file, verified against the repository).
+
+**Result:** four CI `uci-match` runs (seeds 1-4, 200000 nodes per move, SPRT bounds 0/+5, 300-minute cap, baseline `c1116510d4bcc3aa06993c02930e08b5a3f5b88d`, candidate `cbc0432d32626b10083d636488c04a47a9c124da`) pooled to 473 W / 331 D / 511 L over 1315 games: -10.0 Elo, 95% interval [-26.3, +6.2]. All four runs ended at the time cap with the SPRT continuing. Per-seed results ranged from -33.6 to +17.6 Elo. Full table in DECISIONS.md 2026-10-12 (4).
+
+**Decision:** the adoption rule was not met; the change was removed rather than run to 1500 games, since the remaining games could not realistically lift the lower bound above zero.
+
+**Changed:** `src/search/search.cpp` (REPLACE, revert), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE).
+
+**Bugs fixed:** none.
+
+**Next session start point:** choose the next search-side candidate with approval. The remaining item from the earlier candidate list is a 2-ply cut-node LMR retry, to be judged by the same acceptance rule (pooled CI `uci-match`, seeds 1-4, 200000 nodes per move, bounds 0/+5, at least 1500 games, lower bound above zero). The `search.cpp` commit must be pushed alone so that the baseline is the commit immediately before it.
+
+---
+
 ### Session 212 — 2026-10-12 — PV-node reduction discount implemented
 
 **Built:** `kPvNodeLmrDiscount` (1), the `pv_node` local (`beta - alpha_orig > 1`) and its use at the LMR reduction site in `negamax()` (`src/search/search.cpp`): one fewer reduction ply for eligible quiet late moves at PV nodes, clamped at 0 and applied after the improving discount and the TT-capture increase. Design and acceptance rule in DECISIONS.md 2026-10-12 (3).

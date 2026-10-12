@@ -4,6 +4,31 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-12 (4) — PV-node reduction discount: rejected and removed
+
+**Context:** The PV-node reduction discount (2026-10-12 (3)) was judged under the acceptance rule recorded there: CI `uci-match`, baseline `c1116510d4bcc3aa06993c02930e08b5a3f5b88d` (the commit immediately before the change), candidate `cbc0432d32626b10083d636488c04a47a9c124da`, 200000 nodes per move, SPRT bounds 0/+5, alpha = beta = 0.05, seeds 1-4, 300-minute cap.
+
+**Result:** every run reached the time cap with the SPRT still continuing (final LLR between -0.73 and +0.19 against bounds of +/-2.944). Tallies, candidate wins / draws / baseline wins:
+
+| Seed | Games | W / D / L | Elo (95% interval) |
+|---|---|---|---|
+| 1 | 404 | 135 / 99 / 170 | -30.2 [-60.0, -0.8] |
+| 2 | 296 | 118 / 75 / 103 | +17.6 [-16.5, +52.1] |
+| 3 | 311 | 101 / 79 / 131 | -33.6 [-67.5, -0.4] |
+| 4 | 304 | 119 / 78 / 107 | +13.7 [-19.9, +47.7] |
+| Pooled | 1315 | 473 / 331 / 511 | -10.0 [-26.3, +6.2] |
+
+**Decision:** the change is removed and `src/search/search.cpp` returns to its contents at `c1116510d4bcc3aa06993c02930e08b5a3f5b88d` (byte-identical, verified). `kPvNodeLmrDiscount` and the `pv_node` local no longer exist.
+
+**Rationale:** the adoption condition (pooled 95% interval lower bound above zero) was not met; the pooled point estimate is negative and the interval includes zero. The pooled game count (1315) is below the 1500 minimum, but the condition could not realistically be met by the remaining games: the lower bound is -26.3 Elo, and roughly 185 further games would narrow the interval by under 2 Elo. Further runs were therefore judged not worth their cost. The per-seed spread (-33.6 to +17.6) is consistent with the earlier observation that a single seed can swing by tens of Elo either way.
+
+**Alternatives considered:**
+- Running further seeds to reach 1500 games: rejected for the reason above.
+- Keeping the change on the strength of the two positive seeds: rejected; the pooled result governs, not individual seeds.
+- Retrying with a different discount value or a depth-scaled discount: not pursued in this entry. A retune of the same idea would be a new candidate with its own entry and approval.
+
+---
+
 ### 2026-10-12 (3) — PV-node reduction discount: implemented, strength pending
 
 **Context:** The TT-capture-move reduction was adopted (2026-10-12 (2)). The next candidate on the search-side list recorded in 2026-10-11 (2) is a discount applied to late move reductions at principal-variation nodes.
