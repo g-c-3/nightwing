@@ -363,6 +363,18 @@ constexpr double kLMRScale = 0.3;      // scale on ln(depth)*ln(move_index) (b)
 /// (DECISIONS.md 2026-10-12 (2)); removed if not accepted.
 constexpr int kTtCaptureLmrIncrease = 1;
 
+/// PV-node reduction discount (Session 212): plies SUBTRACTED from an
+/// eligible quiet late move's LMR reduction when this node is a PV node
+/// (searched with a non-null window, `beta - alpha > 1`). PV nodes are
+/// the nodes whose exact score matters and where a wrongly shortened
+/// search is least recoverable, so they reduce less than expected-cut /
+/// null-window nodes. Credit: Stockfish-classic (`if (PvNode) r -= ...`
+/// in its LMR step); Chess Programming Wiki, "Late Move Reductions".
+/// Applied after the TT-capture increase and clamped so the result is
+/// never negative. Judged by its own SPRT (DECISIONS.md 2026-10-12 (3));
+/// removed if not accepted.
+constexpr int kPvNodeLmrDiscount = 1;
+
 /// Bounds for lmr_reduction()'s precomputed table below. kMaxPly (128,
 /// search/ordering.h) is reused as the depth axis's own bound -- the
 /// same "safe, generous upper bound on remaining search depth" role it
@@ -1881,6 +1893,10 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     }
 
     const int alpha_orig = alpha;
+    // PV node = this call received a non-null window (kPvNodeLmrDiscount's
+    // doc comment above). Computed from the window as passed in, before
+    // any local narrowing of `alpha`.
+    const bool pv_node = beta - alpha_orig > 1;
     const Color us = pos.side_to_move;
     // Correction history's own key (ROADMAP.md's "Correction history"
     // item; CorrectionHistoryTable's own header comment, search/
@@ -2745,8 +2761,13 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 (!tt_move.is_null() && tt_move.is_capture())
                     ? lmr_improving_reduction + kTtCaptureLmrIncrease
                     : lmr_improving_reduction;
+            // PV-node discount (kPvNodeLmrDiscount's doc comment above):
+            // subtracted last, clamped to never go below 0.
+            const int lmr_pv_reduction =
+                pv_node ? std::max(0, lmr_tt_reduction - kPvNodeLmrDiscount)
+                        : lmr_tt_reduction;
             const int reduction =
-                eligible_for_lmr ? std::min(lmr_tt_reduction, depth - 1) : 0;
+                eligible_for_lmr ? std::min(lmr_pv_reduction, depth - 1) : 0;
 
             // PVS: probe every later move with a null (zero-width)
             // window first -- cheap, since it only needs to prove
