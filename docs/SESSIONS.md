@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 214 — 2026-10-12 — Cut-node LMR retry (increase of 2) implemented
+
+**Built:** the `cut_node` flag was threaded through `negamax()` (trailing parameter, default false; local `is_cut_node` forced false at nodes with a non-null window) and `kCutNodeLmrIncrease` (2) was added to the late-move reduction of eligible quiet moves at expected-cut nodes, in `src/search/search.cpp`. Flag propagation covers the null-move, ProbCut, singular-verification, first-move, reduced, null-window re-search and root null-window calls. Design and acceptance rule in DECISIONS.md 2026-10-12 (5).
+
+**Changed:** `src/search/search.cpp` (REPLACE), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE).
+
+**Verification:** local Release build (GCC 13, single core), zero warnings, 758 test cases / 691567 assertions all passing, `bench` 35399 -> 34076 nodes (-3.7%). Debug/ASan, Windows, macOS and CI not run before delivery.
+
+**Bugs fixed:** none.
+
+**Open:** strength is not established. The change is not adopted until a pooled CI `uci-match` result meets the adoption rule; otherwise it is removed.
+
+**Next session start point:** after the `search.cpp` commit is pushed alone and CI is green, run `uci-match` four times (seeds 1-4) with baseline = the commit immediately before that commit, candidate = that commit's full SHA, 200000 nodes per move, bounds 0/+5, 300-minute cap; pool the results. Adopt or remove `kCutNodeLmrIncrease` according to the rule; if the pooled count is below 1500 games and the interval still straddles zero with a clearly positive trend, a second batch with seeds 5-8 may be requested.
+
+---
+
 ### Session 213 — 2026-10-12 — PV-node reduction discount rejected and removed
 
 **Built:** nothing new. `src/search/search.cpp` was restored to its contents at `c1116510d4bcc3aa06993c02930e08b5a3f5b88d` (byte-identical to the pre-change file, verified against the repository).

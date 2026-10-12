@@ -4,6 +4,25 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-12 (5) — Cut-node-aware late move reductions, retry with an increase of 2: implemented, strength pending
+
+**Context:** The first cut-node attempt (increase of 1) was rejected on a pooled 813-game SPRT at -1.3 Elo, 95% interval [-22.1, +19.5] (2026-10-11 (2)), with the note that a re-attempt would need a larger effect, for example `kCutNodeLmrIncrease` = 2 as newer Stockfish versions use. The PV-node discount was rejected in 2026-10-12 (4); this is the last item on the Session 208 candidate list.
+
+**Decision:** `negamax()` gains a trailing `bool cut_node = false` parameter. `kCutNodeLmrIncrease` (2) is added to an eligible quiet late move's reduction when the node is an expected cut node, after the improving discount and the TT-capture increase and before the clamp to `depth - 1`. Flag rules follow Stockfish-classic's `cutNode`: a node searched with a non-null window as received is never a cut node whatever the caller passed (`is_cut_node = cut_node && !pv_window`); a null-window child takes the negation of its parent's flag (so null-window children of PV nodes, including the root's, are cut nodes); a full-window child is not a cut node; null-move and ProbCut children take the negation; the singular-verification search keeps its own node's flag. The ProbCut call now passes `mat_psqt` as an explicit `nullptr`, which is the value it received by default before, so its behaviour is unchanged. Only `src/search/search.cpp` changed.
+
+**Rationale:** a node expected to fail high usually does so on an early move, so late quiet moves there are rarely decisive and can be searched shallower. The earlier implementation of the same flag logic is reused; only the increase differs. Credit: Stockfish-classic (`cutNode` and its LMR term); Chess Programming Wiki, "Late Move Reductions" and "Node Types". The value 2 is a common modern setting and is not tuned for this engine.
+
+**Verification:** local Release build (GCC 13, single core), zero warnings; raw test binary 758 test cases / 691567 assertions, all passing; `bench` 35399 -> 34076 nodes (-3.7%), node count not being strength. Debug/ASan, Windows, macOS, WebAssembly and CI were not run before delivery.
+
+**Acceptance rule (set before any result is known):** same as the preceding candidates. CI `uci-match`, baseline = the commit immediately before this change, candidate = the commit containing it (full SHA), 200000 nodes per move, SPRT bounds 0/+5, alpha = beta = 0.05, seeds 1-4, 300-minute cap, pooled to at least 1500 games; adopted only if the pooled 95% interval's lower bound is above zero (or an SPRT accepts H1). Otherwise the change is removed and `search.cpp` returns to its prior contents. Per-seed results have varied by tens of Elo for candidates of this kind, so no single run is decisive. Given the earlier pooled estimate of about zero, two further batches of seeds may be needed to reach 1500 games.
+
+**Alternatives considered:**
+- An increase of 1 again: rejected; it was already tested.
+- Making the increase depend on depth or move index: rejected for the first pass; a constant keeps the change attributable.
+- Testing together with a different candidate: rejected; one change per SPRT.
+
+---
+
 ### 2026-10-12 (4) — PV-node reduction discount: rejected and removed
 
 **Context:** The PV-node reduction discount (2026-10-12 (3)) was judged under the acceptance rule recorded there: CI `uci-match`, baseline `c1116510d4bcc3aa06993c02930e08b5a3f5b88d` (the commit immediately before the change), candidate `cbc0432d32626b10083d636488c04a47a9c124da`, 200000 nodes per move, SPRT bounds 0/+5, alpha = beta = 0.05, seeds 1-4, 300-minute cap.
