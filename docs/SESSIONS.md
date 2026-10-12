@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 212 — 2026-10-12 — PV-node reduction discount implemented
+
+**Built:** `kPvNodeLmrDiscount` (1), the `pv_node` local (`beta - alpha_orig > 1`) and its use at the LMR reduction site in `negamax()` (`src/search/search.cpp`): one fewer reduction ply for eligible quiet late moves at PV nodes, clamped at 0 and applied after the improving discount and the TT-capture increase. Design and acceptance rule in DECISIONS.md 2026-10-12 (3).
+
+**Changed:** `src/search/search.cpp` (REPLACE), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE).
+
+**Verification:** local Release build (GCC 13, single core), zero warnings, raw test binary 758 test cases / 691567 assertions all passing, `bench` 35399 -> 33907 nodes (-4.2%). Debug/ASan, Windows, macOS and CI not run.
+
+**Bugs fixed:** none. One tooling note: a background build started from a tool call without `setsid` was killed when the call returned and had to be restarted.
+
+**Open:** strength is not established. The change must not be considered adopted until a pooled CI `uci-match` result meets the adoption rule; otherwise it is removed.
+
+**Next session start point:** run the CI `uci-match` with baseline = the `main` commit immediately before the `search.cpp` commit of this session, candidate = `main`, 200000 nodes per move, bounds 0/+5, seeds 1-4 pooled to at least 1500 games; adopt or remove `kPvNodeLmrDiscount` according to the result. Then the remaining search candidate: a 2-ply cut-node LMR retry (at least 1500 games), or another item chosen with approval.
+
+---
+
 ### Session 211 — 2026-10-12 — TT-capture-move reduction adopted
 
 **Built:** nothing new in source. Four CI `uci-match` result logs were analysed and the TT-capture-move reduction (Session 210) was judged against its pre-agreed adoption rule.

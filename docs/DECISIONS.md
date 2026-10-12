@@ -4,6 +4,27 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-12 (3) — PV-node reduction discount: implemented, strength pending
+
+**Context:** The TT-capture-move reduction was adopted (2026-10-12 (2)). The next candidate on the search-side list recorded in 2026-10-11 (2) is a discount applied to late move reductions at principal-variation nodes.
+
+**Decision:** `kPvNodeLmrDiscount` (1) is subtracted from the late-move reduction of an eligible quiet move whenever the node is a PV node. A PV node is defined as a call whose own window, as received, is non-null (`beta - alpha_orig > 1`), computed once into the local `pv_node` immediately after `alpha_orig` is captured. The subtraction is applied last, after the improving discount and the TT-capture increase, is clamped to never fall below 0, and the final reduction remains clamped to `depth - 1`. Eligibility (`eligible_for_lmr`), the LMR table, and every other constant are unchanged. Only `src/search/search.cpp` changed.
+
+**Rationale:** PV nodes carry the exact score of the line being played, and an over-reduced move there is the least likely to be corrected by a later re-search; nodes searched with a null window only need a bound. Reducing less at PV nodes, and by the same logic reducing more at expected-cut nodes (already adopted with the TT-capture term), is the standard asymmetry in classical engines. Credit: Stockfish-classic (`if (PvNode) r -= ...` in the LMR step); Chess Programming Wiki, "Late Move Reductions" and "Node Types". The constant is not tuned; it is a common starting value, not a claim of optimality for this engine.
+
+**Interaction notes:** the three adjustments compose additively on the reduction (improving: minus up to `kImprovingLmrDiscount`; TT capture: plus 1; PV node: minus 1), so a PV node with a capture TT move nets the TT-capture increase to zero. This was accepted as the natural composition and was not special-cased. PV status is derived from the window rather than from a threaded flag, so no call site or signature changed; null-window probes and the singular-extension verification search (which uses a null window) are therefore non-PV by construction.
+
+**Verification:** local Release build (GCC 13, single core), zero warnings; raw test binary 758 test cases / 691567 assertions, all passing (unchanged count; no dedicated unit test, since the change is behavioural and is judged by match play, as for the preceding LMR candidates). `bench` 35399 -> 33907 nodes (-4.2%); node count is not strength. Debug/ASan, Windows, macOS, WebAssembly and CI were not run.
+
+**Acceptance rule (set before any result is known):** same as the preceding candidates. CI `uci-match`, baseline = the commit immediately before this change, candidate = `main` containing it, 200000 nodes per move, SPRT bounds 0/+5, alpha = beta = 0.05, seeds 1-4, 300-minute cap, pooled to at least 1500 games; adopted only if the pooled 95% interval's lower bound is above zero (or an SPRT accepts H1). Otherwise the change is removed and `search.cpp` returns to its prior contents. The previous cut-node candidate showed that a single seed can swing by tens of Elo in either direction, so a single run is not decisive.
+
+**Alternatives considered:**
+- A discount of 2 plies, or a depth-scaled discount: rejected for the first pass; a larger value changes the search more per node and a single-ply step is the common starting point.
+- Threading an explicit `is_pv` flag through `negamax()` and `search_root()` as `cut_node` was threaded: rejected; the window already encodes the property exactly, and avoiding a signature change keeps the diff to one file and one constant.
+- Combining with a 2-ply cut-node retry in the same test: rejected; each change gets its own SPRT so a result can be attributed.
+
+---
+
 ### 2026-10-12 (2) — TT-capture-move reduction: adopted
 
 **Context:** Session 209 left a choice between a further evaluation-interaction candidate and a search-side idea from Session 208's list; approval was given for the search-side direction, beginning with the TT-capture-move reduction. The cut-node LMR candidate had been rejected on a pooled 813-game SPRT (2026-10-11 (2)).
