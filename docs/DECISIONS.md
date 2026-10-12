@@ -4,7 +4,7 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
-### 2026-10-12 (2) — TT-capture-move reduction: implemented, awaiting SPRT
+### 2026-10-12 (2) — TT-capture-move reduction: adopted
 
 **Context:** Session 209 left a choice between a further evaluation-interaction candidate and a search-side idea from Session 208's list; approval was given for the search-side direction, beginning with the TT-capture-move reduction. The cut-node LMR candidate had been rejected on a pooled 813-game SPRT (2026-10-11 (2)).
 
@@ -12,9 +12,13 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 **Rationale:** a capture that was best on an earlier visit is likely still best, so remaining quiet alternatives are less likely to matter and can be searched shallower. Credit: Stockfish-classic (`ttCapture`); Chess Programming Wiki, "Late Move Reductions".
 
-**Status:** implemented, untested for strength. Full suite 758 test cases passing locally (Release, GCC 13); `bench` moved from 36154 to 35399 nodes (-2.1%). No dedicated unit test: the change is behavioural and judged by SPRT. Debug/ASan, Windows, macOS and CI not run.
+**Status:** adopted (Session 211). At implementation: full suite 758 test cases passing locally (Release, GCC 13); `bench` moved from 36154 to 35399 nodes (-2.1%). No dedicated unit test: the change is behavioural and judged by SPRT. The CI matrix (Linux Debug/TSan, Windows, macOS, WebAssembly) passed 758/758 or the platform equivalent in all four match jobs.
 
 **Closing condition:** the CI `uci-match` SPRT (baseline: the commit before this change; candidate: `main`; node-limited play, since fixed-depth play cannot show a node-saving change; bounds 0/+5) must accept H1, or the pooled estimate across seeds must be clearly positive with the lower interval bound above zero, using at least 1500 games in total. Otherwise the change is removed, as with the cut-node candidate.
+
+**Result (Session 211):** four CI `uci-match` jobs, baseline `c6acd236abcb5e63ec1630d232e915c65e03ca21` (the commit immediately before the change; `search.cpp` verified byte-identical to the pre-change version), candidate `main` at `1de84584b318e8ee4616b47f609d4845153f47e3` (`search.cpp` verified identical to the delivered file), `go nodes 200000`, opening_plies 8, max_plies 300, SPRT bounds 0/+5 with alpha = beta = 0.05, max_games 4000, 300-minute cap. Candidate results by seed (W/D/L): seed 1: 144/105/146 (395 games, -1.8 Elo, final LLR -0.095); seed 2: 194/119/150 (463 games, +33.1 Elo, LLR 0.818); seed 3: 183/127/176 (486 games, +5.0 Elo, LLR 0.068); seed 4: 132/75/94 (301 games, +44.1 Elo, LLR 0.682). Every job ended on the time cap (exit code 124) with status Continue; none reached an SPRT bound. Pooled: 653/426/566 over 1645 games, score 52.64%, +18.4 Elo, 95% interval [+3.9, +32.9] (normal approximation on the trinomial outcome distribution), approximate pooled LLR 1.47 against bounds of +-2.944. The pooled lower interval bound is above zero and the game total exceeds 1500, so the adoption rule fixed in the closing condition is met.
+
+**Caveats on the result:** the per-seed spread (-1.8 to +44.1 Elo) is larger than chance alone makes comfortable (Cochran Q about 6.2 on 3 degrees of freedom, p about 0.10); the point estimate is likely optimistic, and a pooled SPRT bound was not reached. Node-limited play at 200000 nodes per move may not transfer exactly to time-controlled play. The change was adopted on the pre-agreed rule and may be revisited if later time-controlled testing disagrees.
 
 **Limitations:** the TT move may be stale or from a different position sharing the hash slot; the capture flag is trusted as in the existing ordering code. The reduction also applies to moves whose base LMR value is 0, which widens its effect beyond already-reduced moves.
 

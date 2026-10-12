@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 211 — 2026-10-12 — TT-capture-move reduction adopted
+
+**Built:** nothing new in source. Four CI `uci-match` result logs were analysed and the TT-capture-move reduction (Session 210) was judged against its pre-agreed adoption rule.
+
+**Settings:** baseline `c6acd23` (commit immediately before the change), candidate `main` at `1de8458`, `go nodes 200000`, bounds 0/+5, alpha = beta = 0.05, seeds 1-4, 300-minute cap.
+
+**Results:** pooled 653 W / 426 D / 566 L over 1645 games for the candidate: +18.4 Elo, 95% interval [+3.9, +32.9]. Per seed: -1.8, +33.1, +5.0, +44.1 Elo. No job reached an SPRT bound (all ended on the time cap, status Continue). Adoption rule met (at least 1500 games, lower bound above zero). Details and caveats in DECISIONS.md 2026-10-12 (2).
+
+**Changed:** `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE). No source files changed.
+
+**Bugs fixed:** none.
+
+**Decisions made:** TT-capture-move reduction adopted; the estimate is considered optimistic given the spread between seeds.
+
+**Next session start point:** implement the PV-node reduction discount in `negamax()`'s LMR site in `src/search/search.cpp` (fetch the current file first, add a named constant with credit, keep the full test suite green), then test it with the same CI `uci-match` settings (baseline = the commit immediately before the change, nodes 200000, bounds 0/+5, seeds 1-4 pooled to at least 1500 games).
+
+---
+
 ### Session 210 — 2026-10-12 — TT-capture-move reduction implemented
 
 **Built:** `kTtCaptureLmrIncrease` (1) and its use at the LMR reduction site in `negamax()` (`src/search/search.cpp`): one extra reduction ply for eligible quiet late moves when the TT move is a capture. Direction (b) from Session 209 was approved; design in DECISIONS.md 2026-10-12 (2).
