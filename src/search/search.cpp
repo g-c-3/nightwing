@@ -335,6 +335,30 @@ constexpr int kNullMoveBigReduction = 3;    // R for depth >= kNullMoveBigReduct
 constexpr int kZugzwangReductionDecrease = 1;
 constexpr int kZugzwangMinReduction = 1;
 
+/// Eval-scaled null-move reduction (Session 218): at the NMP block below,
+/// `(node_static_eval - beta) / kNullMoveEvalDivisor` extra plies are
+/// added to the probe's reduction, capped at kNullMoveEvalMaxBonus --
+/// the further the static eval stands above beta, the less likely a
+/// tempo-less probe is to fall below it, so a shallower probe is enough
+/// to confirm the cutoff. Gated exactly like the "improving" bonus next
+/// to it: only at depth >= kNullMoveBigReductionDepth (that bonus's own
+/// comment records why shallow NMP is left untouched: an ungated
+/// adjustment broke the Lucena endgame regression test, DECISIONS.md
+/// 2026-09-10 (2)), and not at nodes eval::is_zugzwang_prone() flags,
+/// where the zugzwang bias above deliberately deepens the probe.
+/// Calibrated from a probe of `node_static_eval - beta` at NMP sites with
+/// depth >= kNullMoveBigReductionDepth (Session 218; three positions,
+/// depth 12): median +50 to +130, p75 +87 to +240, p90 +148 to +387,
+/// p99 +269 to +755 (cp). A divisor of 150 therefore adds a ply at
+/// roughly one site in four in a tactical middlegame and about one in
+/// ten in a quiet one, and the cap of 2 is reached at under 10% of
+/// sites. Data-informed starting values, not tuned. Credit:
+/// Stockfish-classic (null-move reduction `min((eval - beta) / 200, 3)`
+/// term); Chess Programming Wiki, "Null Move Pruning". Judged by its
+/// own SPRT (DECISIONS.md 2026-10-14 (2)); removed if not accepted.
+constexpr int kNullMoveEvalDivisor = 150;
+constexpr int kNullMoveEvalMaxBonus = 2;
+
 /// Late move reductions (CPW "Late Move Reductions", negamax()'s move
 /// loop below) constants. Eligibility gating (kLMRMinDepth/
 /// kLMRMinMoveIndex) is unchanged from this file's original two-tier
@@ -2089,7 +2113,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // full depth instead of trusting as shallow a reduced-depth
         // check as usual in exactly the material shapes most likely to
         // make "passing" a misleadingly good-looking option.
-        if (eval::is_zugzwang_prone(eval::classify_endgame(pos))) {
+        const bool zugzwang_prone = eval::is_zugzwang_prone(eval::classify_endgame(pos));
+        if (zugzwang_prone) {
             reduction = std::max(reduction - kZugzwangReductionDecrease, kZugzwangMinReduction);
         }
         // "Improving" adjustment (ROADMAP.md's "improving flag" item;
@@ -2114,6 +2139,14 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // formula can never go negative.
         if (!improving && depth >= kNullMoveBigReductionDepth) {
             reduction += kImprovingReductionBonus;
+        }
+        // Eval-scaled bonus (kNullMoveEvalDivisor's doc comment above).
+        // `node_static_eval >= beta` is guaranteed by this block's own
+        // entry condition, so the quotient is never negative; the cap
+        // bounds it however far below any real eval `beta` might sit.
+        if (!zugzwang_prone && depth >= kNullMoveBigReductionDepth) {
+            reduction += std::min(kNullMoveEvalMaxBonus,
+                                  (node_static_eval - beta) / kNullMoveEvalDivisor);
         }
         reduction = std::min(reduction, depth - 1);
         UndoInfo null_undo;
