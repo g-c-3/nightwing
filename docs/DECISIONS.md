@@ -4,6 +4,29 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-14 (2) — Eval-scaled null-move reduction: implemented, strength pending
+
+**Context:** Second of the three candidates proposed after the Session 208 list was exhausted (2026-10-13 (2)); the first, history-based LMR, was rejected (2026-10-14). The null-move probe already requires `node_static_eval >= beta`, but its reduction depended only on depth, the zugzwang bias and the "improving" bonus, not on how far the static eval stands above beta.
+
+**Decision:** `(node_static_eval - beta) / kNullMoveEvalDivisor` (150) extra plies, capped at `kNullMoveEvalMaxBonus` (2), are added to the null-move probe's reduction after the improving bonus and before the existing clamp to `depth - 1`. The bonus is gated to `depth >= kNullMoveBigReductionDepth` (6) and skipped at nodes `eval::is_zugzwang_prone()` flags. The zugzwang test result is now held in a local (`zugzwang_prone`) so the existing zugzwang bias and the new term share one evaluation; behaviour of the existing bias is unchanged. Only `src/search/search.cpp` changed.
+
+**Gating rationale:** the improving bonus beside it records that an ungated version broke the Lucena endgame regression test (2026-09-10 (2)) and that restricting it to the big-reduction depth tier was the smallest fix. The same restriction is applied here from the start, and zugzwang-prone material is excluded because the zugzwang bias there deliberately deepens the probe.
+
+**Calibration:** a throwaway probe (not committed) recorded `node_static_eval - beta` at every null-move site with depth at least 6, depth-12 searches on three positions (a tactical position, a quiet middlegame and a rook endgame; the starting position did not produce output in the probe time). Median +50 to +130; p75 +87 to +240; p90 +148 to +387; p99 +269 to +755; maximum +1329 (centipawns). A divisor of 150 adds a ply at roughly one site in four in the tactical position and about one in ten in the quiet one, and the cap of 2 is reached at under 10% of sites. The values are data-informed starting points, not tuned.
+
+**Rationale:** the further the static eval stands above beta, the less likely a tempo-less probe is to fall back below it, so a shallower probe suffices to confirm the cutoff and the saved nodes are spent elsewhere. Credit: Stockfish-classic (null-move reduction term `min((eval - beta) / 200, 3)`); Chess Programming Wiki, "Null Move Pruning".
+
+**Verification:** local Release build (GCC 13, single core), zero warnings; raw test binary 758 test cases / 691567 assertions, all passing, including the endgame regression suite; the timing test fixed in Session 214 passed 20 of 20 runs. Depth-6 `bench` is unchanged at 35399 nodes (the big-reduction tier rarely applies that shallow); at depth 11 the search differs (tactical position 865999 -> 1571330 nodes with a different score; quiet middlegame 165748 -> 166551 nodes), so the change is active and its node-count effect is mixed and unexplained by this test alone. Node count is not strength. Debug/ASan, Windows, macOS and CI were not run before delivery.
+
+**Acceptance rule (set before any result is known):** same as the preceding candidates. CI `uci-match`, baseline = the commit immediately before the `search.cpp` commit, candidate = the `search.cpp` commit's full SHA, 200000 nodes per move, SPRT bounds 0/+5, alpha = beta = 0.05, seeds 1-4, 300-minute cap, pooled to at least 1500 games; adopted only if the pooled 95% interval's lower bound is above zero (or an SPRT accepts H1). Otherwise the change is removed and `search.cpp` returns to its prior contents.
+
+**Alternatives considered:**
+- Applying the bonus at every null-move depth: rejected; see the gating rationale above.
+- A Stockfish-sized divisor (200) or a cap of 3: rejected for the first pass; the probe shows 200 would trigger a ply at well under one site in five outside tactical positions, and a cap of 3 is reached too rarely to matter.
+- Adding a depth term to the base reduction (e.g. `depth / 3`) in the same test: rejected; one change per SPRT.
+
+---
+
 ### 2026-10-14 — History-based LMR discount: rejected and removed
 
 **Context:** The discount recorded in 2026-10-13 (2) was judged under its stated rule: CI `uci-match`, baseline `55ffb2b1baa5b2088b0006a3e138d1d2223f0cea`, candidate `aa878d0077c10035d46a52356061ff92192f7f18`, 200000 nodes per move, SPRT bounds 0/+5, alpha = beta = 0.05, seeds 1-4, 300-minute cap.

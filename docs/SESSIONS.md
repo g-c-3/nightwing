@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 218 — 2026-10-14 — Eval-scaled null-move reduction implemented
+
+**Built:** `kNullMoveEvalDivisor` (150) and `kNullMoveEvalMaxBonus` (2) were added to `src/search/search.cpp`: the null-move probe's reduction grows by `(node_static_eval - beta) / 150` plies, capped at 2, at depth 6 and above and outside zugzwang-prone material. The divisor was set from a measured distribution of `eval - beta` at null-move sites (probe not committed). Design, calibration and acceptance rule in DECISIONS.md 2026-10-14 (2).
+
+**Changed:** `src/search/search.cpp` (REPLACE), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE).
+
+**Verification:** local Release build (GCC 13, single core), zero warnings, 758 test cases / 691567 assertions all passing (including the endgame regression suite); timing test 20 of 20; depth-6 `bench` unchanged at 35399 nodes; depth-11 searches differ from the baseline. Debug/ASan, Windows, macOS and CI not run before delivery.
+
+**Bugs fixed:** none.
+
+**Open:** strength is not established; the change is not adopted until a pooled CI `uci-match` result meets the adoption rule.
+
+**Next session start point:** after the `search.cpp` commit is pushed alone and CI is green, run `uci-match` four times (seeds 1-4) with baseline = the commit immediately before that commit, candidate = that commit's full SHA, 200000 nodes per move, bounds 0/+5, 300-minute cap; pool and adopt or remove according to the rule. Remaining proposed candidate after this one: singular-extension refinements (double and negative extensions).
+
+---
+
 ### Session 217 — 2026-10-14 — History-based LMR discount rejected and removed
 
 **Built:** nothing new. `src/search/search.cpp` was restored to its contents at `55ffb2b1baa5b2088b0006a3e138d1d2223f0cea` (byte-identical, verified against the repository).
