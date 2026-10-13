@@ -314,16 +314,23 @@ TEST_CASE("search_iterative_deepening: an already-checkmated position returns a 
 
 TEST_CASE("search_iterative_deepening: a tiny time budget stops before max_depth", "[search][id]") {
     init_all();
-    // Depth 6 unpruned from the starting position is far more work than
-    // any real machine finishes in ~1ms, so this is a safe, non-flaky
+    // Depth 10 from the starting position is far more work than any real
+    // machine finishes in ~1ms (tens of thousands of nodes even with the
+    // current pruning and reductions), so this is a safe, non-flaky
     // assertion regardless of how fast or slow the CI runner is -- it
     // deliberately does NOT assert which exact depth was reached (that
     // would be timing-dependent), only that the time budget actually cut
     // the search off short of max_depth.
+    //
+    // Session 214: max_depth was 6 here. Depth 6 from the starting
+    // position is only about 2000 nodes with the current search (bench:
+    // 2177 nodes before the cut-node reduction, 2036 after), which a fast
+    // runner finishes inside 1ms, so the old assertion was marginal
+    // rather than safe and failed once on a Linux Release CI runner.
     Position pos = start_position();
-    const SearchResult result = search_iterative_deepening(pos, 6, 1);
+    const SearchResult result = search_iterative_deepening(pos, 10, 1);
     REQUIRE(result.depth_completed >= 1);
-    REQUIRE(result.depth_completed < 6);
+    REQUIRE(result.depth_completed < 10);
     REQUIRE_FALSE(result.best_move.is_null());
 }
 
