@@ -4,6 +4,32 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-13 — Cut-node-aware late move reductions (increase of 2): rejected and removed
+
+**Context:** The retry recorded in 2026-10-12 (5) was judged under its stated rule: CI `uci-match`, baseline `7e05b9f60a4d216e6968ae32586d9f3579b4bd72`, candidate `8b10d8fb10c93ce007e56d0693a91215a0085519`, 200000 nodes per move, SPRT bounds 0/+5, alpha = beta = 0.05, seeds 1-4, 300-minute cap.
+
+**Result:** all four runs reached the time cap with the SPRT continuing (final LLR between -0.237 and -0.040 against bounds of +/-2.944). Tallies, candidate wins / draws / baseline wins:
+
+| Seed | Games | W / D / L | Elo (95% interval) |
+|---|---|---|---|
+| 1 | 320 | 113 / 85 / 122 | -9.8 [-42.6, +22.9] |
+| 2 | 312 | 123 / 65 / 124 | -1.1 [-35.5, +33.3] |
+| 3 | 304 | 109 / 78 / 117 | -9.1 [-43.0, +24.6] |
+| 4 | 311 | 122 / 64 / 125 | -3.4 [-37.9, +31.1] |
+| Pooled | 1247 | 467 / 292 / 488 | -5.9 [-22.8, +11.0] |
+
+**Decision:** the change is removed and `src/search/search.cpp` returns to its contents at `7e05b9f60a4d216e6968ae32586d9f3579b4bd72` (byte-identical, verified). `kCutNodeLmrIncrease`, the `cut_node` parameter and `is_cut_node` no longer exist. The timing-test fix in `tests/search_tests.cpp` (2026-10-12 (5)) is kept: it corrects a marginal assumption independent of this change.
+
+**Rationale:** the adoption condition (pooled 95% interval lower bound above zero) was not met, and the pooled estimate is slightly negative with all four seeds at or below zero. Together with the first attempt (increase of 1: -1.3 Elo [-22.1, +19.5] over 813 games, 2026-10-11 (2)), two independent tests of the same idea at different strengths both centre near zero, so the idea is closed for this engine in its present form rather than pending a third value. The pooled game count (1247) is below 1500, but about 250 further games would narrow the interval by only a few Elo and could not lift the lower bound (-22.8) above zero.
+
+**Consequence:** the Session 208 search-side candidate list is exhausted: TT-capture-move reduction adopted (+18.4 Elo), PV-node discount rejected (-10.0 Elo), cut-node reduction rejected twice. New candidates require proposal and approval.
+
+**Alternatives considered:**
+- Running seeds 5-8 to reach 1500 games: rejected for the reason above.
+- A third increase value (3, or depth-scaled): not pursued; two results near zero give no evidence of a nearby gain.
+
+---
+
 ### 2026-10-12 (5) — Cut-node-aware late move reductions, retry with an increase of 2: implemented, strength pending
 
 **Context:** The first cut-node attempt (increase of 1) was rejected on a pooled 813-game SPRT at -1.3 Elo, 95% interval [-22.1, +19.5] (2026-10-11 (2)), with the note that a re-attempt would need a larger effect, for example `kCutNodeLmrIncrease` = 2 as newer Stockfish versions use. The PV-node discount was rejected in 2026-10-12 (4); this is the last item on the Session 208 candidate list.

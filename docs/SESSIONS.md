@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 215 — 2026-10-13 — Cut-node LMR retry rejected and removed
+
+**Built:** nothing new. `src/search/search.cpp` was restored to its contents at `7e05b9f60a4d216e6968ae32586d9f3579b4bd72` (byte-identical, verified against the repository). The timing-test fix in `tests/search_tests.cpp` from Session 214 stays.
+
+**Result:** four CI `uci-match` runs (seeds 1-4, 200000 nodes per move, SPRT bounds 0/+5, 300-minute cap, baseline `7e05b9f60a4d216e6968ae32586d9f3579b4bd72`, candidate `8b10d8fb10c93ce007e56d0693a91215a0085519`) pooled to 467 W / 292 D / 488 L over 1247 games: -5.9 Elo, 95% interval [-22.8, +11.0]. All runs ended at the time cap with the SPRT continuing; all four seeds were at or below zero. Table in DECISIONS.md 2026-10-13.
+
+**Decision:** adoption rule not met; the change was removed. With the first attempt (increase of 1, -1.3 Elo over 813 games) the cut-node idea is closed for now.
+
+**Changed:** `src/search/search.cpp` (REPLACE, revert), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE).
+
+**Bugs fixed:** none.
+
+**Next session start point:** the Session 208 candidate list is exhausted. Read the current LMR/pruning section of `search.cpp` to see which common techniques are already present, then propose two or three new search-side candidates (or another ROADMAP direction) for approval before building any. The same acceptance rule applies to each: pooled CI `uci-match`, seeds 1-4, 200000 nodes per move, bounds 0/+5, at least 1500 games, lower bound above zero, with the `search.cpp` commit pushed alone.
+
+---
+
 ### Session 214 — 2026-10-12 — Cut-node LMR retry (increase of 2) implemented
 
 **Built:** the `cut_node` flag was threaded through `negamax()` (trailing parameter, default false; local `is_cut_node` forced false at nodes with a non-null window) and `kCutNodeLmrIncrease` (2) was added to the late-move reduction of eligible quiet moves at expected-cut nodes, in `src/search/search.cpp`. Flag propagation covers the null-move, ProbCut, singular-verification, first-move, reduced, null-window re-search and root null-window calls. Design and acceptance rule in DECISIONS.md 2026-10-12 (5).
