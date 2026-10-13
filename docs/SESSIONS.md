@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 217 — 2026-10-14 — History-based LMR discount rejected and removed
+
+**Built:** nothing new. `src/search/search.cpp` was restored to its contents at `55ffb2b1baa5b2088b0006a3e138d1d2223f0cea` (byte-identical, verified against the repository).
+
+**Result:** four CI `uci-match` runs (seeds 1-4, 200000 nodes per move, SPRT bounds 0/+5, 300-minute cap, baseline `55ffb2b1baa5b2088b0006a3e138d1d2223f0cea`, candidate `aa878d0077c10035d46a52356061ff92192f7f18`) pooled to 604 W / 333 D / 586 L over 1523 games: +4.1 Elo, 95% interval [-11.3, +19.5]. All runs ended at the time cap with the SPRT continuing; two seeds were negative and two positive. Table in DECISIONS.md 2026-10-14.
+
+**Decision:** adoption rule (lower bound above zero) not met; the change was removed. The idea is not shown to be harmful, only not shown to help.
+
+**Changed:** `src/search/search.cpp` (REPLACE, revert), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE).
+
+**Bugs fixed:** none.
+
+**Next session start point:** build the second proposed candidate, the eval-scaled null-move reduction (additional reduction when static eval exceeds beta by a margin, capped, interacting with the existing zugzwang guard), after reading the current null-move block of `search.cpp` and calibrating the margin from a measured distribution of `eval - beta` at null-move sites, as was done for the history discount. Same acceptance rule: pooled CI `uci-match`, seeds 1-4, 200000 nodes per move, bounds 0/+5, at least 1500 games, lower bound above zero, with the `search.cpp` commit pushed alone.
+
+---
+
 ### Session 216 — 2026-10-13 — History-based LMR discount implemented
 
 **Built:** the search was reviewed for missing techniques and history-based late move reductions were chosen from three proposals. `kLmrHistoryDivisor` (512) and `kLmrHistoryMaxDiscount` (2) were added to `src/search/search.cpp`: an eligible quiet late move's reduction is lowered by its butterfly-history score divided by 512, clamped to [0, 2]. The divisor was set from a measured distribution of history scores at LMR sites (probe not committed). Design, calibration and acceptance rule in DECISIONS.md 2026-10-13 (2).

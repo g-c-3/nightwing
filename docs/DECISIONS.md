@@ -4,6 +4,32 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-14 — History-based LMR discount: rejected and removed
+
+**Context:** The discount recorded in 2026-10-13 (2) was judged under its stated rule: CI `uci-match`, baseline `55ffb2b1baa5b2088b0006a3e138d1d2223f0cea`, candidate `aa878d0077c10035d46a52356061ff92192f7f18`, 200000 nodes per move, SPRT bounds 0/+5, alpha = beta = 0.05, seeds 1-4, 300-minute cap.
+
+**Result:** all four runs reached the time cap with the SPRT continuing (final LLR between -0.425 and +0.570 against bounds of +/-2.944). Tallies, candidate wins / draws / baseline wins:
+
+| Seed | Games | W / D / L | Elo (95% interval) |
+|---|---|---|---|
+| 1 | 310 | 112 / 65 / 133 | -23.6 [-58.4, +10.8] |
+| 2 | 506 | 212 / 116 / 178 | +23.4 [-3.2, +50.2] |
+| 3 | 397 | 148 / 83 / 166 | -15.8 [-46.4, +14.6] |
+| 4 | 310 | 132 / 69 / 109 | +25.8 [-8.2, +60.4] |
+| Pooled | 1523 | 604 / 333 / 586 | +4.1 [-11.3, +19.5] |
+
+**Decision:** the change is removed and `src/search/search.cpp` returns to its contents at `55ffb2b1baa5b2088b0006a3e138d1d2223f0cea` (byte-identical, verified). `kLmrHistoryDivisor`, `kLmrHistoryMaxDiscount` and the history discount at the LMR site no longer exist.
+
+**Rationale:** the pooled game count met the 1500 minimum, but the adoption condition (pooled 95% interval lower bound above zero) was not met. The pooled estimate is slightly positive, but its interval spans about -11 to +20 Elo and the four seeds split two negative and two positive (-23.6 to +25.8), which is the seed-to-seed noise seen throughout this series. A true gain of the observed size (about +4 Elo) cannot be distinguished from zero without tens of thousands of games, which is beyond the available match budget; the rule set before any result was known is therefore applied as written. The result does not show the idea to be harmful, only that it was not demonstrated to help; a differently calibrated variant (for example one that also uses continuation history) would be a new candidate requiring its own proposal and approval.
+
+**Consequence:** of the three candidates proposed after the Session 208 list was exhausted, the first is closed. The eval-scaled null-move reduction is next, then the singular-extension refinements.
+
+**Alternatives considered:**
+- Running seeds 5-8 to extend the sample: rejected; halving the interval width would need roughly four times the games, and the estimate would still likely straddle zero.
+- Adopting on the positive point estimate: rejected; the rule requires the lower bound above zero, and adopting on a point estimate would let noise-level changes accumulate.
+
+---
+
 ### 2026-10-13 (2) — History-based LMR discount: implemented, strength pending
 
 **Context:** The Session 208 candidate list was exhausted by 2026-10-13. The current search was reviewed for missing techniques: it has null-move with a zugzwang guard, reverse futility, futility, razoring, ProbCut, LMP, history pruning, SEE pruning, IIR, check/passed-pawn/singular extensions, improving and TT-capture LMR adjustments, and butterfly, continuation, capture and correction history. Late move reductions did not use a move's history score; history drove only ordering and pruning. Three candidates were proposed (history-based LMR, eval-scaled null-move reduction, singular-extension refinements) and the first was approved.
