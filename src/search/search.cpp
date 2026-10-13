@@ -363,6 +363,29 @@ constexpr double kLMRScale = 0.3;      // scale on ln(depth)*ln(move_index) (b)
 /// (DECISIONS.md 2026-10-12 (2)); removed if not accepted.
 constexpr int kTtCaptureLmrIncrease = 1;
 
+/// History-based LMR discount (Session 216): an eligible quiet late
+/// move's reduction is lowered by `history.score(us, move) /
+/// kLmrHistoryDivisor` plies, clamped to [0, kLmrHistoryMaxDiscount] --
+/// moves with a strong butterfly-history record are searched less
+/// shallowly, since history is evidence the move has caused cutoffs
+/// before. One-sided on purpose: a probe of the score distribution at
+/// LMR sites (Session 216, three positions that completed within the probe time, depth 11)
+/// found a median of 0, 75% of scores between about -190 and +10, and
+/// only a thin positive tail (p90 from +15 to +1000, p99 from +440 to
+/// +4600; table range +/-8192), so a symmetric formula would almost
+/// never add a ply on the negative side and the existing late-move
+/// ordering already covers weak moves. The divisor is set so a score of
+/// 512 or more removes one ply and 1024 or more removes two (the cap);
+/// it is a data-informed starting value, not a tuned optimum.
+/// Applied after the improving discount and TT-capture increase and
+/// before the clamp to `depth - 1`. Credit: Stockfish-classic (`statScore`
+/// adjustment of the LMR reduction), Ethereal (history-scaled LMR);
+/// Chess Programming Wiki, "History Heuristic" and "Late Move
+/// Reductions". Judged by its own SPRT (DECISIONS.md 2026-10-13 (2));
+/// removed if not accepted.
+constexpr int kLmrHistoryDivisor = 512;
+constexpr int kLmrHistoryMaxDiscount = 2;
+
 /// Bounds for lmr_reduction()'s precomputed table below. kMaxPly (128,
 /// search/ordering.h) is reused as the depth axis's own bound -- the
 /// same "safe, generous upper bound on remaining search depth" role it
@@ -2745,8 +2768,19 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 (!tt_move.is_null() && tt_move.is_capture())
                     ? lmr_improving_reduction + kTtCaptureLmrIncrease
                     : lmr_improving_reduction;
+            // History discount (kLmrHistoryDivisor's doc comment above).
+            // Integer division truncates toward zero, so any score below
+            // kLmrHistoryDivisor -- including every negative one -- gives
+            // 0 and leaves the reduction unchanged. Only evaluated for
+            // eligible moves (the clamp below would discard it otherwise).
+            const int lmr_history_discount =
+                eligible_for_lmr
+                    ? std::min(kLmrHistoryMaxDiscount,
+                               std::max(0, history.score(us, move) / kLmrHistoryDivisor))
+                    : 0;
+            const int lmr_hist_reduction = std::max(0, lmr_tt_reduction - lmr_history_discount);
             const int reduction =
-                eligible_for_lmr ? std::min(lmr_tt_reduction, depth - 1) : 0;
+                eligible_for_lmr ? std::min(lmr_hist_reduction, depth - 1) : 0;
 
             // PVS: probe every later move with a null (zero-width)
             // window first -- cheap, since it only needs to prove
