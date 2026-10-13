@@ -4,6 +4,28 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-13 (2) — History-based LMR discount: implemented, strength pending
+
+**Context:** The Session 208 candidate list was exhausted by 2026-10-13. The current search was reviewed for missing techniques: it has null-move with a zugzwang guard, reverse futility, futility, razoring, ProbCut, LMP, history pruning, SEE pruning, IIR, check/passed-pawn/singular extensions, improving and TT-capture LMR adjustments, and butterfly, continuation, capture and correction history. Late move reductions did not use a move's history score; history drove only ordering and pruning. Three candidates were proposed (history-based LMR, eval-scaled null-move reduction, singular-extension refinements) and the first was approved.
+
+**Decision:** an eligible quiet late move's reduction is lowered by `history.score(us, move) / kLmrHistoryDivisor` (512) plies, clamped to [0, `kLmrHistoryMaxDiscount`] (2), applied after the improving discount and TT-capture increase and before the clamp to `depth - 1`. Integer division truncates toward zero, so every score below 512, including all negative scores, leaves the reduction unchanged. The discount is evaluated only for LMR-eligible moves. Only `src/search/search.cpp` changed.
+
+**Calibration:** a throwaway probe (not committed) recorded the history score of every LMR-eligible move at depth 11 on the positions that completed within the probe time (four were tried: the starting position, a tactical position, a quiet middlegame and an endgame; three produced output). Median 0; 75% of scores between about -190 and +10; p90 from +15 to +1003; p99 from +438 to +4618; table range +/-8192. The shape of the distribution (weak moves clustered slightly negative, a thin positive tail) is why the discount is one-sided and why the divisor is 512 rather than a Stockfish-style value that would almost never fire. The divisor and cap are data-informed starting values and not tuned.
+
+**Rationale:** a quiet move with a strong history record has caused cutoffs before in similar positions, so reducing it as deeply as an unremarkable move is likely to waste the search of the moves most likely to matter. Credit: Stockfish-classic (`statScore` adjustment of the LMR reduction); Ethereal (history-scaled LMR); Chess Programming Wiki, "History Heuristic" and "Late Move Reductions".
+
+**Verification:** local Release build (GCC 13, single core), zero warnings; raw test binary 758 test cases / 691567 assertions, all passing. The depth-6 `bench` is identical to the baseline (35399 nodes, same per-position counts), because no history score at that depth reaches the 512 threshold; at depth 11 the search differs materially (kiwipete 865999 -> 522958 nodes, the quiet middlegame 165748 -> 249136 nodes, different scores), so the change is active in real searches and its effect on node count is mixed. Node count is not strength. Debug/ASan, Windows, macOS and CI were not run before delivery.
+
+**Acceptance rule (set before any result is known):** same as the preceding candidates. CI `uci-match`, baseline = the commit immediately before the `search.cpp` commit, candidate = the `search.cpp` commit's full SHA, 200000 nodes per move, SPRT bounds 0/+5, alpha = beta = 0.05, seeds 1-4, 300-minute cap, pooled to at least 1500 games; adopted only if the pooled 95% interval's lower bound is above zero (or an SPRT accepts H1). Otherwise the change is removed and `search.cpp` returns to its prior contents.
+
+**Alternatives considered:**
+- A symmetric formula (extra reduction for very low history): rejected; weak scores are tightly clustered near zero, so it would rarely fire and the existing ordering already places those moves late.
+- Combining butterfly and continuation history into one score: rejected for the first pass; a single table keeps the effect attributable and reuses the score the pruning code already reads.
+- A divisor of 1024 or more: rejected; at depth 11 it would affect well under 10% of moves in all but the most tactical positions.
+- Testing together with the eval-scaled null-move reduction: rejected; one change per SPRT.
+
+---
+
 ### 2026-10-13 — Cut-node-aware late move reductions (increase of 2): rejected and removed
 
 **Context:** The retry recorded in 2026-10-12 (5) was judged under its stated rule: CI `uci-match`, baseline `7e05b9f60a4d216e6968ae32586d9f3579b4bd72`, candidate `8b10d8fb10c93ce007e56d0693a91215a0085519`, 200000 nodes per move, SPRT bounds 0/+5, alpha = beta = 0.05, seeds 1-4, 300-minute cap.
