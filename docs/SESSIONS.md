@@ -8,15 +8,17 @@ Newest entry at top.
 
 **Built:** the `cut_node` flag was threaded through `negamax()` (trailing parameter, default false; local `is_cut_node` forced false at nodes with a non-null window) and `kCutNodeLmrIncrease` (2) was added to the late-move reduction of eligible quiet moves at expected-cut nodes, in `src/search/search.cpp`. Flag propagation covers the null-move, ProbCut, singular-verification, first-move, reduced, null-window re-search and root null-window calls. Design and acceptance rule in DECISIONS.md 2026-10-12 (5).
 
-**Changed:** `src/search/search.cpp` (REPLACE), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE).
+**Changed:** `src/search/search.cpp` (REPLACE), `tests/search_tests.cpp` (REPLACE, timing-test fix below), `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE); `docs/ROADMAP.md` unchanged since its first delivery this session.
 
-**Verification:** local Release build (GCC 13, single core), zero warnings, 758 test cases / 691567 assertions all passing, `bench` 35399 -> 34076 nodes (-3.7%). Debug/ASan, Windows, macOS and CI not run before delivery.
+**Verification:** local Release build (GCC 13, single core), zero warnings, 758 test cases / 691567 assertions all passing, `bench` 35399 -> 34076 nodes (-3.7%). CI on `8b10d8f`: all jobs green except one step of Linux Release (below).
+
+**CI finding:** `search_iterative_deepening: a tiny time budget stops before max_depth` failed once on a fast Linux Release runner (depth 6 completed inside the 1 ms budget; startpos depth 6 is now about 2036 nodes, 2177 before). The test assumption was marginal; `max_depth` was raised from 6 to 10 and the test passed 40 of 40 local runs. Details in DECISIONS.md 2026-10-12 (5).
 
 **Bugs fixed:** none.
 
 **Open:** strength is not established. The change is not adopted until a pooled CI `uci-match` result meets the adoption rule; otherwise it is removed.
 
-**Next session start point:** after the `search.cpp` commit is pushed alone and CI is green, run `uci-match` four times (seeds 1-4) with baseline = the commit immediately before that commit, candidate = that commit's full SHA, 200000 nodes per move, bounds 0/+5, 300-minute cap; pool the results. Adopt or remove `kCutNodeLmrIncrease` according to the rule; if the pooled count is below 1500 games and the interval still straddles zero with a clearly positive trend, a second batch with seeds 5-8 may be requested.
+**Next session start point:** after the test-fix commit is pushed and CI is green, run `uci-match` four times (seeds 1-4) with baseline = `7e05b9f60a4d216e6968ae32586d9f3579b4bd72` (the commit immediately before the `search.cpp` commit `8b10d8fb10c93ce007e56d0693a91215a0085519`), candidate = `8b10d8fb10c93ce007e56d0693a91215a0085519` (engine-identical to the test-fix commit), 200000 nodes per move, bounds 0/+5, 300-minute cap; pool the results. Adopt or remove `kCutNodeLmrIncrease` according to the rule; if the pooled count is below 1500 games and the interval still straddles zero with a clearly positive trend, a second batch with seeds 5-8 may be requested.
 
 ---
 
