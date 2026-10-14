@@ -205,14 +205,6 @@ struct SearchContext {
     SearchLimits* limits = nullptr;
     int contempt_white_pov = 0;
     int tie_break_variant = 0;
-    /// Number of double singular extensions (kSingularDoubleMargin's doc
-    /// comment) currently active on the path from the root to the node
-    /// being searched: incremented immediately before the recursive call
-    /// of a double-extended move and decremented immediately after it,
-    /// so it always reflects the live recursion stack. Per-thread (each
-    /// search thread builds its own SearchContext). Bounds how many
-    /// double extensions can stack along one line.
-    int double_extensions = 0;
 };
 
 /// Fills `opt` with a TranspositionTable sized to `requested_mb`, using
@@ -782,33 +774,6 @@ constexpr int kSingularMarginPerPly = 2;
 #endif
 constexpr int kSingularDepthDivisor = 2;
 constexpr int kSingularExtensionPly = 1;
-
-/// Double singular extension (Session 220): when the verification search
-/// fails low by MORE than kSingularDoubleMargin below `singular_beta` --
-/// i.e. every alternative to the TT move is not merely short of the
-/// singular bar but far short of it -- the TT move gets
-/// kSingularDoubleExtensionPly (2) plies instead of kSingularExtensionPly
-/// (1). Restricted to non-PV (null-window) nodes, and bounded to
-/// kMaxDoubleExtensionsPerPath active double extensions along any one
-/// line (SearchContext::double_extensions) so stacked 2-ply extensions
-/// cannot make a line grow without limit; the usual `ply + 1 < kMaxPly`
-/// guard also applies. Calibrated from a probe of `singular_beta -
-/// singular_score` at verification sites (Session 220; four positions,
-/// depth 15): 28-41% of verified TT moves were singular; among those the
-/// shortfall was bimodal, p25 +6 to +16, p50 +34 to +348, p75 +128 to
-/// +623, with a heavy tail at mate-range scores (only-move positions).
-/// 150 cp therefore fires on roughly a quarter to a half of singular
-/// nodes and leaves marginal cases at the single ply. Data-informed
-/// starting values, not tuned. Credit: Stockfish-classic (double
-/// extension when `value < singularBeta - margin`, with its
-/// `doubleExtensions` path counter and non-PV restriction); Chess
-/// Programming Wiki, "Singular Extensions". Judged by its own SPRT
-/// (DECISIONS.md 2026-10-14 (4)); removed if not accepted. The companion
-/// negative extension proposed with it is deliberately NOT part of this
-/// change (one change per SPRT).
-constexpr int kSingularDoubleMargin = 150;
-constexpr int kSingularDoubleExtensionPly = 2;
-constexpr int kMaxDoubleExtensionsPerPath = 8;
 
 /// Recapture handling (ROADMAP.md's own item, Priority Fixes
 /// (2026-09-08) section; CPW "Recapture Extensions" describes the
@@ -2543,12 +2508,6 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 // No alternative move reached even singular_beta -- the
                 // TT move is judged the only genuinely good option here.
                 singular_extension = kSingularExtensionPly;
-                // Double extension (kSingularDoubleMargin's doc comment):
-                // non-PV only (null window as received), path-capped.
-                if (beta - alpha == 1 && singular_score < singular_beta - kSingularDoubleMargin &&
-                    ctx.double_extensions < kMaxDoubleExtensionsPerPath && ply + 1 < kMaxPly) {
-                    singular_extension = kSingularDoubleExtensionPly;
-                }
             }
         }
 
@@ -2676,16 +2635,9 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // even to this first move -- a checking or singular move
             // deserves the extra ply regardless of its position in the
             // ordering.
-            // Live path counter for double extensions (SearchContext::
-            // double_extensions): only the TT move at i == 0 can be
-            // double-extended, and this branch has no early exit between
-            // the increment and the matching decrement.
-            const int double_ext_active = (extension == kSingularDoubleExtensionPly) ? 1 : 0;
-            ctx.double_extensions += double_ext_active;
             score = -negamax(pos, depth - 1 + extension, -beta, -alpha, ply + 1, nodes, ctx,
                               moved_piece, move.to(), move.is_capture(), path, static_eval_history,
                               /*allow_null_move=*/true, child_mat_psqt);
-            ctx.double_extensions -= double_ext_active;
         } else {
             // Futility pruning (CPW "Futility Pruning", this function's
             // header comment): a node-level condition -- computed once,
