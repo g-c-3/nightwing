@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 219 — 2026-10-14 — Eval-scaled null-move reduction rejected and removed
+
+**Built:** nothing new. `src/search/search.cpp` was restored to its contents at `39b7b505148f6f63284dfb7435b35591102a2b52` (byte-identical, verified against the repository).
+
+**Result:** four CI `uci-match` runs (seeds 1-4, 200000 nodes per move, SPRT bounds 0/+5, 300-minute cap, baseline `39b7b505148f6f63284dfb7435b35591102a2b52`, candidate `0a22260ed4895334ed70949d5e185afc16565232`) pooled to 660 W / 399 D / 714 L over 1773 games: -10.6 Elo, 95% interval [-24.9, +3.6]. All runs ended at the time cap with the SPRT continuing; all four seeds were negative. Table in DECISIONS.md 2026-10-14 (3).
+
+**Decision:** adoption rule not met; the change was removed.
+
+**Changed:** `src/search/search.cpp` (REPLACE, revert), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE).
+
+**Bugs fixed:** none.
+
+**Next session start point:** build the last proposed candidate, singular-extension refinements (a double extension when the singular margin is large, and a negative extension when the TT value is already at or above beta), after reading the current singular block of `search.cpp` and measuring the distribution of the singular-search margin (`tt_score - singular_beta` outcomes) at those sites to set thresholds from data. Same acceptance rule: pooled CI `uci-match`, seeds 1-4, 200000 nodes per move, bounds 0/+5, at least 1500 games, lower bound above zero, with the `search.cpp` commit pushed alone. If it is rejected as well, the proposed-candidate list is exhausted and the next step is a review of other ROADMAP directions with approval.
+
+---
+
 ### Session 218 — 2026-10-14 — Eval-scaled null-move reduction implemented
 
 **Built:** `kNullMoveEvalDivisor` (150) and `kNullMoveEvalMaxBonus` (2) were added to `src/search/search.cpp`: the null-move probe's reduction grows by `(node_static_eval - beta) / 150` plies, capped at 2, at depth 6 and above and outside zugzwang-prone material. The divisor was set from a measured distribution of `eval - beta` at null-move sites (probe not committed). Design, calibration and acceptance rule in DECISIONS.md 2026-10-14 (2).

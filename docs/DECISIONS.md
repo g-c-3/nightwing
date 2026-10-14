@@ -4,6 +4,32 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-14 (3) — Eval-scaled null-move reduction: rejected and removed
+
+**Context:** The reduction recorded in 2026-10-14 (2) was judged under its stated rule: CI `uci-match`, baseline `39b7b505148f6f63284dfb7435b35591102a2b52`, candidate `0a22260ed4895334ed70949d5e185afc16565232`, 200000 nodes per move, SPRT bounds 0/+5, alpha = beta = 0.05, seeds 1-4, 300-minute cap.
+
+**Result:** all four runs reached the time cap with the SPRT continuing (final LLR between -0.435 and -0.115 against bounds of +/-2.944). Tallies, candidate wins / draws / baseline wins:
+
+| Seed | Games | W / D / L | Elo (95% interval) |
+|---|---|---|---|
+| 1 | 494 | 183 / 108 / 203 | -14.1 [-41.3, +13.0] |
+| 2 | 310 | 119 / 68 / 123 | -4.5 [-38.8, +29.8] |
+| 3 | 490 | 182 / 107 / 201 | -13.5 [-40.8, +13.7] |
+| 4 | 479 | 176 / 116 / 187 | -8.0 [-35.2, +19.1] |
+| Pooled | 1773 | 660 / 399 / 714 | -10.6 [-24.9, +3.6] |
+
+**Decision:** the change is removed and `src/search/search.cpp` returns to its contents at `39b7b505148f6f63284dfb7435b35591102a2b52` (byte-identical, verified). `kNullMoveEvalDivisor`, `kNullMoveEvalMaxBonus`, the `zugzwang_prone` local and the eval-scaled bonus no longer exist.
+
+**Rationale:** the pooled game count met the 1500 minimum and the adoption condition (pooled 95% interval lower bound above zero) was not met; every seed was negative and the pooled upper bound is only +3.6, so the result leans against the idea rather than being merely inconclusive. A plausible reading, unverified, is that at this engine's depth and eval scale the extra null-move reduction costs more in missed tactics than it saves in nodes; no experiment was run to test that.
+
+**Consequence:** two of the three candidates proposed after the Session 208 list was exhausted are closed (history-based LMR, 2026-10-14; this one). The singular-extension refinements (double and negative extensions) remain. Across the series since Session 208 the record is one adoption (TT-capture-move reduction, +18.4 Elo) against five rejections.
+
+**Alternatives considered:**
+- Running seeds 5-8: rejected; the pooled upper bound of +3.6 makes a lower bound above zero unreachable at any affordable game count.
+- A larger divisor (for example 300) so that only very large eval margins trigger the bonus: not pursued here; it would be a new candidate with its own entry and approval, and the sign of all four seeds gives no reason to expect a gain.
+
+---
+
 ### 2026-10-14 (2) — Eval-scaled null-move reduction: implemented, strength pending
 
 **Context:** Second of the three candidates proposed after the Session 208 list was exhausted (2026-10-13 (2)); the first, history-based LMR, was rejected (2026-10-14). The null-move probe already requires `node_static_eval >= beta`, but its reduction depended only on depth, the zugzwang bias and the "improving" bonus, not on how far the static eval stands above beta.
