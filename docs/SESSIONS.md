@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 220 — 2026-10-14 — Double singular extension implemented
+
+**Built:** `kSingularDoubleMargin` (150), `kSingularDoubleExtensionPly` (2) and `kMaxDoubleExtensionsPerPath` (8) were added to `src/search/search.cpp`, with a per-thread `SearchContext::double_extensions` path counter: a TT move whose singular verification fails low by more than 150 cp below `singular_beta` is extended two plies instead of one, at non-PV nodes only. Only the double extension was built from the proposed pair; the negative extension remains a separate candidate. Margin set from a measured distribution of the verification shortfall (probe not committed). Design, calibration and acceptance rule in DECISIONS.md 2026-10-14 (4).
+
+**Changed:** `src/search/search.cpp` (REPLACE), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE).
+
+**Verification:** local Release build (GCC 13, single core), zero warnings, 758 test cases / 691567 assertions all passing; timing test 20 of 20; depth-6 `bench` unchanged at 35399; depth-14 explosion check against the baseline on three positions showed no runaway growth (mixed node/time effects, details in DECISIONS.md). Debug/ASan, Windows, macOS and CI not run before delivery.
+
+**Bugs fixed:** none.
+
+**Open:** strength is not established; the change is not adopted until a pooled CI `uci-match` result meets the adoption rule.
+
+**Next session start point:** after the `search.cpp` commit is pushed alone and CI is green, run `uci-match` four times (seeds 1-4) with baseline = the commit immediately before that commit, candidate = that commit's full SHA, 200000 nodes per move, bounds 0/+5, 300-minute cap; pool and adopt or remove according to the rule. If rejected, the proposed-candidate list is exhausted apart from the separate negative-extension candidate; a review of other ROADMAP directions, with approval, is then the next step.
+
+---
+
 ### Session 219 — 2026-10-14 — Eval-scaled null-move reduction rejected and removed
 
 **Built:** nothing new. `src/search/search.cpp` was restored to its contents at `39b7b505148f6f63284dfb7435b35591102a2b52` (byte-identical, verified against the repository).

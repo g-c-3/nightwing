@@ -4,6 +4,27 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-14 (4) — Double singular extension: implemented, strength pending
+
+**Context:** Last of the three candidates proposed after the Session 208 list was exhausted (2026-10-13 (2)); history-based LMR (2026-10-14) and the eval-scaled null-move reduction (2026-10-14 (3)) were rejected. The proposal was "singular-extension refinements (double and negative extensions)". To keep each SPRT attributable, only the double extension is built here; the negative extension remains available as a separate candidate.
+
+**Decision:** when the singular verification search fails low by more than `kSingularDoubleMargin` (150) below `singular_beta`, the TT move is extended by `kSingularDoubleExtensionPly` (2) instead of `kSingularExtensionPly` (1). Conditions: the node is non-PV (`beta - alpha == 1`), `ctx.double_extensions < kMaxDoubleExtensionsPerPath` (8) and `ply + 1 < kMaxPly`. `SearchContext` gains `int double_extensions = 0`, a per-thread counter incremented immediately before the recursive call of a double-extended move (only the TT move at `i == 0` can be, and that branch has no early exit) and decremented immediately after, so it reflects the live recursion stack. No signature changed; the four `SearchContext` construction sites are unaffected because the member has a default. Only `src/search/search.cpp` changed.
+
+**Calibration:** a throwaway probe (not committed) recorded `singular_beta - singular_score` at every verification site, depth-15 searches on four positions (a tactical position, a quiet middlegame, a rook endgame and a quiet open middlegame). 28-41% of verified TT moves were singular. Among those the shortfall was bimodal: p10 +3 to +4, p25 +6 to +16, p50 +34 to +348, p75 +128 to +623, with a heavy tail at mate-range scores (positions where the TT move is the only legal move or every alternative loses at once). Over 99% of verification sites were non-PV. A margin of 150 cp therefore double-extends roughly a quarter to a half of singular nodes; marginal cases keep the single ply. Data-informed starting values, not tuned.
+
+**Rationale:** when every alternative falls far below the singular bar, the TT move is forced in a stronger sense than the single extension captures, and the extra ply goes where the horizon effect is most likely to mislead. Stacked 2-ply extensions can make a line grow without bound, hence the path counter (the standard remedy) and the non-PV restriction. Credit: Stockfish-classic (double extension when `value < singularBeta - margin`, `doubleExtensions` path counter, non-PV restriction); Chess Programming Wiki, "Singular Extensions".
+
+**Verification:** local Release build (GCC 13, single core), zero warnings; raw test binary 758 test cases / 691567 assertions, all passing; the timing test passed 20 of 20 runs. Depth-6 `bench` is unchanged at 35399 nodes (singular verification needs depth 8). Explosion check against the baseline at depth 14, single thread: tactical position 3821250 -> 5399299 nodes (10.7 s -> 11.5 s, seldepth 36 -> 33); rook endgame 1935160 -> 945744 nodes (2.1 s -> 1.2 s, seldepth 36 -> 37); quiet open middlegame 4267804 -> 6558326 nodes (7.9 s -> 11.3 s, seldepth 30 -> 32). No runaway growth, and effects are mixed by position, which is consistent with a change that moves nodes between lines. Node count and time to a fixed depth are not strength. Debug/ASan, Windows, macOS and CI were not run before delivery.
+
+**Acceptance rule (set before any result is known):** same as the preceding candidates. CI `uci-match`, baseline = the commit immediately before the `search.cpp` commit, candidate = the `search.cpp` commit's full SHA, 200000 nodes per move, SPRT bounds 0/+5, alpha = beta = 0.05, seeds 1-4, 300-minute cap, pooled to at least 1500 games; adopted only if the pooled 95% interval's lower bound is above zero (or an SPRT accepts H1). Otherwise the change is removed and `search.cpp` returns to its prior contents. Because the fixed-node match gives a node-hungrier search the same nodes, any time cost of the extension is not charged by this test; a result near zero would not by itself exclude a time-control effect, and an adopted change would warrant a later time-control sanity check.
+
+**Alternatives considered:**
+- Building the negative extension in the same test: rejected; one change per SPRT.
+- A margin of 25 cp (the Stockfish-classic figure at that engine's eval scale): rejected; with this engine's margin structure it would double-extend about two thirds of singular nodes.
+- Applying at PV nodes too: rejected; stacked double extensions on the PV are the main explosion risk and PV nodes are rare among verification sites anyway.
+
+---
+
 ### 2026-10-14 (3) — Eval-scaled null-move reduction: rejected and removed
 
 **Context:** The reduction recorded in 2026-10-14 (2) was judged under its stated rule: CI `uci-match`, baseline `39b7b505148f6f63284dfb7435b35591102a2b52`, candidate `0a22260ed4895334ed70949d5e185afc16565232`, 200000 nodes per move, SPRT bounds 0/+5, alpha = beta = 0.05, seeds 1-4, 300-minute cap.
