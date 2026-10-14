@@ -108,6 +108,7 @@
 #include "search/skill.h"
 #include "search/tt.h"
 #include "search/tunables.h"
+#include "uci/time_budget.h"
 
 namespace nightwing::uci {
 namespace {
@@ -451,83 +452,8 @@ constexpr int kMaxMultiPV = 256;
 constexpr int kMinContemptCp = -100;
 constexpr int kMaxContemptCp = 100;
 
-/// Result of allocate_time_ms() below: a SOFT budget (the ordinary,
-/// "expected" allocation for this move -- used as the early-stop
-/// threshold once the best move has stabilized, search.h's own
-/// `soft_time_limit_ms` doc comment) and a HARD budget (an upper bound
-/// the search may extend into if the position turns out to be
-/// genuinely unstable, but never exceed). `hard_ms >= soft_ms` always.
-struct TimeAllocation {
-    int soft_ms = 0;
-    int hard_ms = 0;
-};
-
-/// How much larger the hard cap is allowed to be than the soft budget
-/// (ROADMAP.md Phase 8, "Time management" -- the best-move-stability-
-/// based extension sub-item) when the position is unstable enough that
-/// the soft early-stop in search_iterative_deepening() never triggers.
-/// 3x is a common, reasonable starting point in other engines' own
-/// time-management schemes -- like kStabilityThreshold (search.cpp),
-/// explicitly NOT yet tuned for Nightwing specifically; revisit once
-/// SPRT infrastructure exists (ROADMAP.md Phase 8's own still-open
-/// "SPRT testing setup/process" item) to validate empirically rather
-/// than by feel.
-constexpr int kHardBudgetMultiplier = 3;
-
-/// Time allocation for `go wtime/btime/winc/binc` — returns both a soft
-/// (expected/normal) and a hard (maximum, extendable-into-if-unstable)
-/// budget; see TimeAllocation's own doc comment just above and
-/// search.h's `soft_time_limit_ms` doc comment on
-/// search_iterative_deepening() for how the two are actually used.
-///
-/// `movestogo` (ROADMAP.md Phase 8, "Time management" -- the
-/// "increment handling"/allocation-strategy sub-item this specific
-/// piece addresses): when the GUI provides it (a genuine "N moves until
-/// the next time control" count, standard in classical/non-increment-
-/// only time controls), it replaces this function's previous, fixed
-/// "assume roughly 20 moves remain" guess with the ACTUAL number of
-/// moves remaining -- a materially better estimate whenever it's
-/// available, since the fixed-20 guess is only ever a guess, while
-/// `movestogo` is exact information the GUI already has and is
-/// offering. Falls back to the same fixed-20 heuristic as before when
-/// `movestogo <= 0` (not provided, or a malformed non-positive value --
-/// same defensive-clamping convention as every other option/token
-/// parsed in this file).
-///
-/// Both budgets are capped at `remaining_ms / 2` (never claim more than
-/// half of what's left, regardless of `movestogo` or the hard
-/// multiplier above) — the same safety invariant this function already
-/// had before this session's changes, now applied to both numbers
-/// rather than just one.
-[[nodiscard]] TimeAllocation allocate_time_ms(int remaining_ms, int increment_ms,
-                                                int movestogo) noexcept {
-    if (remaining_ms <= 0) {
-        return {50, 50}; // Effectively "as little as possible, but not zero," for both.
-    }
-    const int divisor = movestogo > 0 ? movestogo : 20;
-    const int cap = remaining_ms / 2;
-
-    int soft = remaining_ms / divisor + increment_ms;
-    if (soft > cap) {
-        soft = cap;
-    }
-    if (soft < 1) {
-        soft = 1;
-    }
-
-    // `long long` for the multiply: guards against a theoretical
-    // overflow at extreme `remaining_ms` values before the cap below
-    // brings it back into `int` range -- cheap insurance, not a
-    // response to any observed failure.
-    long long hard = static_cast<long long>(soft) * kHardBudgetMultiplier;
-    if (hard > cap) {
-        hard = cap;
-    }
-    if (hard < soft) {
-        hard = soft; // Never let the hard cap be smaller than the soft budget.
-    }
-    return {soft, static_cast<int>(hard)};
-}
+// TimeAllocation, kHardBudgetMultiplier and allocate_time_ms() live in
+// uci/time_budget.h (Session 222) so the budget arithmetic is unit-testable.
 
 /// Result of parsing `go`'s own depth/time-control tokens (used both by
 /// start_go() for an ordinary `go`, and by start_pondering() below to
@@ -670,9 +596,15 @@ struct SearchBudget {
             budget.time_limit_ms = next_int();
             have_movetime = true;
         } else if (tok == "wtime") {
-            wtime = next_int();
+            // A negative clock (a side already in overtime) is clamped to 0, so
+            // it gets the minimal budget rather than being mistaken for an
+            // ABSENT clock (-1, the initial value) by select_own_clock_ms().
+            wtime = std::max(0, next_int());
         } else if (tok == "btime") {
-            btime = next_int();
+            // A negative clock (a side already in overtime) is clamped to 0, so
+            // it gets the minimal budget rather than being mistaken for an
+            // ABSENT clock (-1, the initial value) by select_own_clock_ms().
+            btime = std::max(0, next_int());
         } else if (tok == "winc") {
             winc = next_int();
         } else if (tok == "binc") {
@@ -759,7 +691,10 @@ struct SearchBudget {
         // soft_time_limit_ms stays 0 -- SearchBudget's own doc comment on why.
     } else {
         const bool white_to_move = pos.side_to_move == board::Color::White;
-        const int remaining = white_to_move ? wtime : btime;
+        // select_own_clock_ms() (uci/time_budget.h): the side to move's own
+        // clock, or the opponent's as an estimate when only that one was
+        // sent, so a single-clock `go` is still time-bounded.
+        const int remaining = select_own_clock_ms(wtime, btime, white_to_move);
         if (remaining >= 0) {
             const int increment = white_to_move ? winc : binc;
             const TimeAllocation alloc = allocate_time_ms(remaining, increment, movestogo);
@@ -781,26 +716,7 @@ struct SearchBudget {
         }
     }
 
-    if (budget.time_limit_ms > 0) {
-        budget.time_limit_ms -= move_overhead_ms;
-        if (budget.time_limit_ms < 1) {
-            budget.time_limit_ms = 1;
-        }
-    }
-    if (budget.soft_time_limit_ms > 0) {
-        budget.soft_time_limit_ms -= move_overhead_ms;
-        if (budget.soft_time_limit_ms < 1) {
-            budget.soft_time_limit_ms = 1;
-        }
-        // Move Overhead could, in principle, be large enough relative
-        // to a tiny soft budget to push soft above hard after both were
-        // independently clamped to >= 1 above -- keep the invariant
-        // "soft <= hard" (SearchBudget's/TimeAllocation's own doc
-        // comments) true after overhead is applied too, not just before.
-        if (budget.soft_time_limit_ms > budget.time_limit_ms) {
-            budget.soft_time_limit_ms = budget.time_limit_ms;
-        }
-    }
+    apply_move_overhead(budget.time_limit_ms, budget.soft_time_limit_ms, move_overhead_ms);
     return budget;
 }
 
