@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 222 — 2026-10-14 — Debug sanitizer verification and ROADMAP footer reconciliation
+
+**Built:** nothing in `src/` or `tests/`. The closing summary paragraph of `docs/ROADMAP.md` was corrected: it still named the Release Automation phase as "next up", although every item of that section is checked. It now records that no sequential phase remains and lists the items that are still open.
+
+**Direction chosen:** of the three directions proposed after Session 221 (search-constant SPSA tuning, a restricted eval-interaction candidate, housekeeping and test work), search-constant SPSA tuning was selected first, then dropped before any code was written. A truncated read of the ROADMAP SPSA item had hidden that sub-steps (2a)–(2d) were already built and that the Session 205–206 re-validation had shelved (2e) and step (3) (DECISIONS.md 2026-10-10). Housekeeping was carried out instead.
+
+**Verification:** local Debug build with AddressSanitizer and UndefinedBehaviorSanitizer (GCC 13, Ninja, the repository's own `-O0 -fsanitize=address,undefined` Debug flags) of the then-current `main`: zero compiler warnings, 758 test cases passing, no sanitizer report in the test log, 241 s of test time. Release, Windows, macOS, wasm and ThreadSanitizer configurations were not run locally.
+
+**Bugs fixed:** none.
+
+**Changed:** `docs/ROADMAP.md` (REPLACE), `docs/SESSIONS.md` (REPLACE).
+
+**Next session start point:** review time management in the search and UCI layers (allocation from `wtime`/`btime`/`winc`/`binc`/`movestogo`, `movetime`, low-time safety, ponder-time handling), reading `src/search/` time-control code and the existing timing tests first, and report any defect or missing test with a proposed fix for approval before any change is made. A real search-constant tuning run is not the next step; it stays shelved unless a larger tuning budget is approved.
+
+---
+
 ### Session 221 — 2026-10-14 — Double singular extension rejected and removed
 
 **Built:** nothing new. `src/search/search.cpp` was restored to its contents at `1916f1c6d242ae0389b9ac32f98dcf7654319be0` (byte-identical, verified against the repository).
