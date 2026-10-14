@@ -4,6 +4,24 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-15 (1) — Single-clock `go` is time-bounded; time-budget arithmetic extracted to `time_budget.h`
+
+**Context:** A review of time management (Session 223) found that `compute_search_budget()` treated a missing clock for the side to move as "no time control". `go btime 6000` with White to move searched unbounded until `stop` (no `bestmove` within 10 s on the real engine), whereas `go wtime 6000 btime 6000` returned in 0.44 s on the same position. A GUI sending only one clock would therefore lose on time. The budget arithmetic also sat in an anonymous namespace in `src/uci/uci.cpp`, so tests could only check that a legal `bestmove` came back, not the numbers.
+
+**Decision:**
+- When the side to move has no clock but the opponent's clock was given, the opponent's clock is used as the estimate. When neither clock was given, behaviour is unchanged (`go infinite` and a bare `go` stay unbounded).
+- A negative clock value from the GUI is clamped to 0 at parse time, so a side already in overtime receives the 50 ms minimum budget and is not mistaken for an absent clock. Previously a negative own clock produced an unbounded search.
+- `TimeAllocation`, `kHardBudgetMultiplier`, `allocate_time_ms()`, the clock selection (`select_own_clock_ms()`) and the Move Overhead step (`apply_move_overhead()`) moved to the header-only `src/uci/time_budget.h`, with unit tests in `tests/time_budget_tests.cpp`.
+- `allocate_time_ms()` now accumulates in `long long`: `remaining / divisor + increment` could overflow `int` (undefined behaviour) for an extreme clock with a positive increment.
+
+**Rationale:** An unbounded search under a clock is strictly worse than a bounded estimate, and equal clocks are the normal case in a real game. Compliant GUIs send both clocks, so the change does not alter their behaviour. The allocation scheme (remaining/20 + increment, half-of-remaining cap, 3x hard multiplier) is unchanged, and `tests/pondering_tests.cpp` still relies on the same 50 ms minimum.
+
+**Alternatives considered:** Using a fixed default budget when the own clock is missing (arbitrary, and worse than a real clock value). Leaving the behaviour and only documenting it (leaves a flag-fall risk). Keeping the helpers in the anonymous namespace and testing only through `go` (cannot pin the arithmetic).
+
+**Verification:** 773 of 773 tests pass in a Release build (758 existing plus 15 new test cases), with zero compiler warnings. On the real engine, `go btime 6000` with White to move now returns in 0.92 s, `go wtime -500 btime 6000` in 0.11 s, and `go infinite` remains unbounded.
+
+**Open observation (not changed):** the soft early stop fires only after the best move has been stable for `kStabilityThreshold` (4) iterations, and is checked only at the start of an iteration. In an unstable position the search therefore routinely runs to the hard budget (3x soft); the Kiwipete position above used 0.92 s against a 0.3 s soft budget. Whether this costs strength in timed play was not measured.
+
 ### 2026-10-14 (5) — Double singular extension: rejected and removed
 
 **Context:** The double extension recorded in 2026-10-14 (4) was judged under its stated rule: CI `uci-match`, baseline `1916f1c6d242ae0389b9ac32f98dcf7654319be0` (the commit immediately before the `search.cpp` commit), candidate `4ca6dfb764e94e017cdfbb5df70e04010f5c5d0c`, 200000 nodes per move, SPRT bounds 0/+5, alpha = beta = 0.05, seeds 1-4, 300-minute cap.

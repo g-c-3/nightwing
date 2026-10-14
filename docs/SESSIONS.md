@@ -4,6 +4,29 @@ Newest entry at top.
 
 ---
 
+### Session 223 — 2026-10-15 — Time-management review: single-clock fix and budget unit tests
+
+**Built:**
+- `src/uci/time_budget.h` (NEW): header-only `TimeAllocation`, `kHardBudgetMultiplier`, `allocate_time_ms()`, `select_own_clock_ms()` and `apply_move_overhead()`, extracted from the anonymous namespace of `src/uci/uci.cpp`.
+- `src/uci/uci.cpp`: includes the header, uses the extracted functions, and clamps negative `wtime`/`btime` to 0.
+- `tests/time_budget_tests.cpp` (NEW): 15 test cases covering the default divisor, increment, `movestogo`, the half-of-remaining cap, the 50 ms minimum, a soft <= hard <= remaining/2 sweep, overflow, clock selection and Move Overhead.
+- `tests/CMakeLists.txt`: registers the new test file.
+
+**Bugs fixed:**
+- Cause: a missing clock for the side to move was treated as "no time control". Fix: the opponent's clock is used as the estimate when only that one is given. Why correct: `go btime 6000` with White to move returned no `bestmove` within 10 s before the change and returns in 0.92 s after it; `go infinite` is still unbounded.
+- Cause: a negative own clock also fell through to an unbounded search. Fix: clamped to 0 at parse time, giving the 50 ms minimum. Why correct: `go wtime -500 btime 6000` returns in 0.11 s.
+- Cause: `remaining / divisor + increment` could overflow `int`. Fix: `long long` accumulation. Why correct: covered by a test with `INT_MAX` remaining and a positive increment.
+
+**Verification:** Release build, zero warnings, 773 of 773 tests passing (758 plus 15 new cases). The Debug sanitizer configuration was not re-run on this change.
+
+**Decisions made:** docs/DECISIONS.md 2026-10-15 (1).
+
+**Open:** whether the soft early stop lets unstable positions run to the full 3x hard budget often enough to cost strength in timed play was observed once (0.92 s against a 0.3 s soft budget) but not measured.
+
+**Next session start point:** run a clock-simulation self-play check (a sudden-death game at a short time control through `nightwing_uci_match_cli` or an equivalent harness that decrements a real clock) to measure the ratio of time used to the soft budget per move and the final clock margin, then report whether `kStabilityThreshold` or the stability stop needs a change, for approval before any search change.
+
+---
+
 ### Session 222 — 2026-10-14 — Debug sanitizer verification and ROADMAP footer reconciliation
 
 **Built:** nothing in `src/` or `tests/`. The closing summary paragraph of `docs/ROADMAP.md` was corrected: it still named the Release Automation phase as "next up", although every item of that section is checked. It now records that no sequential phase remains and lists the items that are still open.
