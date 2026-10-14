@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 221 — 2026-10-14 — Double singular extension rejected and removed
+
+**Built:** nothing new. `src/search/search.cpp` was restored to its contents at `1916f1c6d242ae0389b9ac32f98dcf7654319be0` (byte-identical, verified against the repository).
+
+**Result:** four CI `uci-match` runs (seeds 1-4, 200000 nodes per move, SPRT bounds 0/+5, 300-minute cap, baseline `1916f1c6d242ae0389b9ac32f98dcf7654319be0`, candidate `4ca6dfb764e94e017cdfbb5df70e04010f5c5d0c`) pooled to 551 W / 298 D / 564 L over 1413 games: -3.2 Elo, 95% interval [-19.3, +12.9]. All runs ended at the time cap with the SPRT continuing; the seeds split two against two. Table in DECISIONS.md 2026-10-14 (5).
+
+**Decision:** adoption rule not met; the change was removed. The pooled count is below 1500 but the missing games could not change the outcome.
+
+**Changed:** `src/search/search.cpp` (REPLACE, revert), `docs/ROADMAP.md`, `docs/DECISIONS.md`, `docs/SESSIONS.md` (REPLACE).
+
+**Bugs fixed:** none.
+
+**Next session start point:** the proposed search-candidate list is exhausted (one adoption, six rejections since Session 208). Review the unchecked and blocked ROADMAP items and propose two or three directions of a different kind than single-constant search tweaks (for example eval terms with enough sample size to resolve, time management, or code-quality and test work), for approval before any is built. The negative singular extension remains available as an explicitly approved single candidate only. Any new candidate keeps the same acceptance rule and the `search.cpp`/eval commit pushed alone.
+
+---
+
 ### Session 220 — 2026-10-14 — Double singular extension implemented
 
 **Built:** `kSingularDoubleMargin` (150), `kSingularDoubleExtensionPly` (2) and `kMaxDoubleExtensionsPerPath` (8) were added to `src/search/search.cpp`, with a per-thread `SearchContext::double_extensions` path counter: a TT move whose singular verification fails low by more than 150 cp below `singular_beta` is extended two plies instead of one, at non-PV nodes only. Only the double extension was built from the proposed pair; the negative extension remains a separate candidate. Margin set from a measured distribution of the verification shortfall (probe not committed). Design, calibration and acceptance rule in DECISIONS.md 2026-10-14 (4).

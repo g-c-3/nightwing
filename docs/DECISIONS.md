@@ -4,6 +4,32 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-14 (5) — Double singular extension: rejected and removed
+
+**Context:** The double extension recorded in 2026-10-14 (4) was judged under its stated rule: CI `uci-match`, baseline `1916f1c6d242ae0389b9ac32f98dcf7654319be0` (the commit immediately before the `search.cpp` commit), candidate `4ca6dfb764e94e017cdfbb5df70e04010f5c5d0c`, 200000 nodes per move, SPRT bounds 0/+5, alpha = beta = 0.05, seeds 1-4, 300-minute cap.
+
+**Result:** all four runs reached the time cap with the SPRT continuing (final LLR between -0.362 and +0.202 against bounds of +/-2.944). Tallies, candidate wins / draws / baseline wins:
+
+| Seed | Games | W / D / L | Elo (95% interval) |
+|---|---|---|---|
+| 1 | 318 | 120 / 60 / 138 | -19.7 [-54.4, +14.7] |
+| 2 | 477 | 190 / 109 / 178 | +8.7 [-18.7, +36.2] |
+| 3 | 315 | 118 / 60 / 137 | -21.0 [-55.9, +13.5] |
+| 4 | 303 | 123 / 69 / 111 | +13.8 [-20.6, +48.4] |
+| Pooled | 1413 | 551 / 298 / 564 | -3.2 [-19.3, +12.9] |
+
+**Decision:** the change is removed and `src/search/search.cpp` returns to its contents at `1916f1c6d242ae0389b9ac32f98dcf7654319be0` (byte-identical, verified). `kSingularDoubleMargin`, `kSingularDoubleExtensionPly`, `kMaxDoubleExtensionsPerPath`, `SearchContext::double_extensions` and the double-extension branch no longer exist.
+
+**Rationale:** the adoption condition (pooled 95% interval lower bound above zero) was not met; the pooled estimate is slightly negative with an interval of about +/-16 Elo, and the seeds split two against two. The pooled game count (1413) is below 1500, but the 87 missing games would narrow the interval by well under one Elo and could not lift a lower bound of -19.3 above zero. The fixed-node format does not charge the extension for its extra search time (2026-10-14 (4)), so a time-control comparison could only look worse than this result, not better.
+
+**Consequence:** the three candidates proposed after the Session 208 list was exhausted are now all closed: history-based LMR (+4.1 Elo [-11.3, +19.5], 2026-10-14), eval-scaled null-move reduction (-10.6 Elo [-24.9, +3.6], 2026-10-14 (3)) and this one. Across the series since Session 208 the record is one adoption (TT-capture-move reduction, +18.4 Elo) against six rejections, each of the six landing between about -11 and +4 Elo pooled. This is consistent with the search constants being near a local optimum for single-change tweaks at this resolution: each further batch costs about five hours of CI and has produced intervals of roughly +/-16 Elo that cannot resolve gains of the size these changes plausibly offer. The negative singular extension, left as a separate candidate in 2026-10-14 (4), is not pursued automatically; it would need explicit approval, and a review of other ROADMAP directions is recommended instead.
+
+**Alternatives considered:**
+- Running seeds 5-8: rejected; the pooled upper bound of +12.9 and a negative point estimate make a lower bound above zero unreachable at any affordable game count.
+- Retrying with a different margin: not pursued; the probe showed a bimodal shortfall, so a larger margin would mostly shrink the triggered set toward the mate-range, only-move cases the single extension already handles.
+
+---
+
 ### 2026-10-14 (4) — Double singular extension: implemented, strength pending
 
 **Context:** Last of the three candidates proposed after the Session 208 list was exhausted (2026-10-13 (2)); history-based LMR (2026-10-14) and the eval-scaled null-move reduction (2026-10-14 (3)) were rejected. The proposal was "singular-extension refinements (double and negative extensions)". To keep each SPRT attributable, only the double extension is built here; the negative extension remains available as a separate candidate.
