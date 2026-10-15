@@ -4,6 +4,26 @@ Newest entry at top.
 
 ---
 
+### Session 225 — 2026-10-15 — Clock mode for the UCI match runner
+
+**Built:**
+- `src/tuner/uci_match.h`, `src/tuner/uci_match.cpp`: `UciMatchConfig::base_time_ms`/`increment_ms`, per-game clocks measured by the referee, time-forfeit handling (stop and drain, abort if the engine does not answer), `UciMatchResult::time_forfeits_a/_b`, and the exposed helpers `uci_clock_go_command()` and `clock_after_move()`.
+- `src/tuner/uci_match_main.cpp`: `--base-time MS` and `--increment MS`, and a `time_forfeits` output line.
+- `.github/workflows/ci.yml`: input `ucimatch_clock` ("base_ms increment_ms", default "0 0"), validated and passed to the runner. The workflow is now at the 25-input limit.
+- `tests/uci_match_tests.cpp`: 7 new cases. `tests/fake_uci_engine.cpp`: new `slow` mode.
+
+**Bugs fixed:** none.
+
+**Verification:** Release build, zero warnings, 787 of 787 tests passing. A four-game CLI match on a 3 s + 0.05 s clock finished with no time forfeits and no illegal moves. The Debug sanitizer configuration and the workflow itself (a real dispatch) were not run.
+
+**Decisions made:** docs/DECISIONS.md 2026-10-15 (3).
+
+**Open:** the revised soft-budget rule (Session 224) has not yet been judged by play; the increment policy leaves the clock near twice the increment.
+
+**Next session start point:** read the result of a `uci-match` workflow run with `ucimatch_clock` = `10000 100`, baseline = the parent of the Session 224 soft-budget commit (the commit that added `src/search/iteration_control.h`), candidate = `main`, SPRT bounds 0 and 5, and a game cap that fits the 300-minute limit. Decide from the SPRT and the `time_forfeits` line whether to keep the rule; if the run has not been dispatched, state that and continue with the increment-policy review (`allocate_time_ms()` in `src/uci/time_budget.h`).
+
+---
+
 ### Session 224 — 2026-10-15 — Clock simulation and soft-budget revision
 
 **Built:**

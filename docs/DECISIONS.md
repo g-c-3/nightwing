@@ -4,6 +4,26 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-15 (3) — Real-clock mode for the UCI match runner
+
+**Context:** The soft-budget revision (2026-10-15 (2)) changes only how time is spent, so fixed-depth, node-limited and `movetime` matches cannot judge it: none of them uses the soft/hard budgets, the stability stop or Move Overhead. A match on a real game clock was missing.
+
+**Decision:** `UciMatchConfig` gained `base_time_ms` and `increment_ms`. When `base_time_ms > 0` (clock mode, highest precedence over `movetime_ms`, `nodes` and `depth`):
+- Each side starts every game with `base_time_ms`. Each `go` is `go wtime W btime B winc I binc I`.
+- The referee measures wall-clock time from writing `go` to receiving `bestmove` (the preceding `position` command is not charged), subtracts it from the mover's clock, then adds the increment. Random opening plies use no clock.
+- A move taking longer than the mover's remaining clock loses the game on time. The time check precedes the legality check, so such a game is counted as a time forfeit and not as an illegal move.
+- The wait for `bestmove` is the mover's clock plus 1000 ms. On expiry the referee sends `stop` and drains the reply (up to 5000 ms), then records a time forfeit; an engine that does not answer `stop` aborts the match, as a timeout always did before.
+- `UciMatchResult` reports `time_forfeits_a` and `time_forfeits_b`; the CLI gained `--base-time MS` and `--increment MS` and prints a `time_forfeits` line in clock mode.
+- CI: one new `workflow_dispatch` input `ucimatch_clock` ("base_ms increment_ms", default "0 0" = off). One input holds both numbers because the workflow is now at GitHub's limit of 25 inputs.
+
+**Rationale:** Time management can only be judged where the clock is part of the game. Judging wall time at the referee, with both engines launched as separate processes and moving alternately, applies the same measurement to both sides.
+
+**Limits:** Timed games depend on runner CPU speed and load, so results are noisier than node-limited play and are not reproducible. Engine start-up, pipe latency and the referee's own move validation sit inside or beside the measured time by a few milliseconds.
+
+**Alternatives considered:** Adding the clock to the in-process `play_match()` (cannot compare two builds); a separate time-control tool (duplicates the referee); counting a slow `bestmove` as an abort (would end a whole SPRT run for one flag).
+
+**Verification:** 787 of 787 tests pass in a Release build with zero compiler warnings (780 existing plus 7 new cases in `tests/uci_match_tests.cpp`, using a new `slow` mode of `tests/fake_uci_engine.cpp`). A four-game clock-mode CLI match (3 s + 0.05 s) completed with zero time forfeits and zero illegal moves. The workflow YAML parses with exactly 25 dispatch inputs, and the new shell parsing was exercised on valid and invalid values.
+
 ### 2026-10-15 (2) — Soft time budget revised: fractional stop and hard-cap prediction at iteration boundaries
 
 **Context:** A clock-simulation self-play measurement (12 games per control, 6 openings, both colours, 100 plies, a real decrementing clock; harness `tests/tools/clock_sim.py`) showed that the soft time budget was effectively ignored. At 20 s sudden death, 99% of moves used more than the soft budget, the median move used 3.00x the soft budget (the full hard cap), and the clocks ended near 35-65 ms after about 50 moves each. At 10 s + 0.1 s, the median was 1.02x but the 90th percentile 3.01x. The cause was the old rule: stop only when the best move was stable for 4 iterations AND elapsed >= soft, checked only at iteration start. An iteration started just under the soft budget usually needed longer than the slack, ran to the hard cap, and was discarded wholesale (an interrupted iteration's result is not used).
