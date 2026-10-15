@@ -122,6 +122,12 @@ on:
         description: "uci-match: base seed for the random openings"
         required: false
         default: "1"
+      # One input holds both numbers: GitHub allows at most 25 workflow_dispatch
+      # inputs and this workflow is at the limit once this one is added.
+      ucimatch_clock:
+        description: "uci-match: optional game clock as two space-separated integers, base_ms increment_ms (for example '10000 100' = 10 s + 0.1 s per side). '0 0' (default) = off. Above 0 base = each side plays on a real clock (go wtime/btime/winc/binc) and losing on time loses the game; this is the only mode in which time-management code (soft/hard budgets, stability stop) affects the result, and it overrides ucimatch_movetime_ms, ucimatch_nodes and ucimatch_depth. Timed games depend on runner CPU speed, so expect more noise than node-limited play."
+        required: false
+        default: "0 0"
       # spsa pipeline (nightwing_spsa, eval mobility or material weights).
       # One input holds all the settings because GitHub allows at most 25
       # workflow_dispatch inputs and this workflow already used 24.
@@ -877,6 +883,7 @@ jobs:
       DEPTH: ${{ inputs.ucimatch_depth }}
       MOVETIME_MS: ${{ inputs.ucimatch_movetime_ms }}
       NODES: ${{ inputs.ucimatch_nodes }}
+      CLOCK_SETTINGS: ${{ inputs.ucimatch_clock }}
       OPTIONS_B: ${{ inputs.ucimatch_options_b }}
       SPRT_SETTINGS: ${{ inputs.ucimatch_sprt }}
       MAX_GAMES: ${{ inputs.ucimatch_max_games }}
@@ -939,6 +946,12 @@ jobs:
               exit 1
             fi
           done
+          # ucimatch_clock: exactly two non-negative integers, "base_ms increment_ms".
+          read -r CLOCK_BASE CLOCK_INC CLOCK_EXTRA <<< "$CLOCK_SETTINGS"
+          if ! [[ "$CLOCK_BASE" =~ ^[0-9]+$ ]] || ! [[ "$CLOCK_INC" =~ ^[0-9]+$ ]] || [ -n "$CLOCK_EXTRA" ]; then
+            echo "ucimatch_clock must be two non-negative integers 'base_ms increment_ms' (got '$CLOCK_SETTINGS')" >&2
+            exit 1
+          fi
           {
             echo "ELO0=$ELO0"
             echo "ELO1=$ELO1"
@@ -989,7 +1002,10 @@ jobs:
         run: |
           set +e
           CONTROL=(--depth "$DEPTH")
-          if [ "$MOVETIME_MS" -gt 0 ]; then
+          read -r CLOCK_BASE CLOCK_INC <<< "$CLOCK_SETTINGS"
+          if [ "$CLOCK_BASE" -gt 0 ]; then
+            CONTROL=(--base-time "$CLOCK_BASE" --increment "$CLOCK_INC")
+          elif [ "$MOVETIME_MS" -gt 0 ]; then
             CONTROL=(--movetime "$MOVETIME_MS")
           elif [ "$NODES" -gt 0 ]; then
             CONTROL=(--nodes "$NODES")
