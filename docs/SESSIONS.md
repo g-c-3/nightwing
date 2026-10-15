@@ -4,6 +4,29 @@ Newest entry at top.
 
 ---
 
+### Session 224 — 2026-10-15 — Clock simulation and soft-budget revision
+
+**Built:**
+- `tests/tools/clock_sim.py` (NEW): engine-vs-engine harness with a real decrementing clock; reports per-move time against the soft and hard budgets, flags and final clocks.
+- `src/search/iteration_control.h` (NEW): `should_start_next_iteration()` and its constants.
+- `src/search/search.cpp`: the soft early stop in `search_iterative_deepening()` now uses that rule and tracks the previous iteration's duration.
+- `src/search/search.h`: contract comment on `soft_time_limit_ms` updated.
+- `tests/iteration_control_tests.cpp` (NEW): 7 test cases. `tests/CMakeLists.txt` registers it. `tests/search_tests.cpp`: one stale comment corrected (no test logic changed).
+
+**Measurement:** under the old rule the median move used 3.00x the soft budget at 20 s sudden death, 99% of moves exceeded it, and clocks ended near 35-65 ms. After the change: median 1.26x, 90th percentile 2.80x, lowest final clock 327 ms, no flags (full table in docs/DECISIONS.md 2026-10-15 (2)).
+
+**Bugs fixed:** cause: the soft stop was checked only at iteration start and only for a stable best move, so iterations were routinely started that ran into the hard cap and were discarded. Fix: fractional stop (3/5 of soft when stable, 1/1 when not) plus refusal of a depth predicted (3x the previous iteration) to pass the hard cap. Why correct: measured clock usage above; the hard cap and callers without a soft budget are unchanged.
+
+**Verification:** Release build, zero warnings, 780 of 780 tests passing. The Debug sanitizer configuration was not re-run.
+
+**Decisions made:** docs/DECISIONS.md 2026-10-15 (2).
+
+**Open:** playing strength of the change is unmeasured; the increment policy leaves the clock near twice the increment; the 10 s + 0.1 s control was not re-run with the final growth constant.
+
+**Next session start point:** add a clock mode to the match tool (`src/tuner/uci_match.*`, `uci_match_main.cpp`, with tests): `go wtime/btime/winc/binc` per move from a per-game decrementing clock, a time-forfeit result, and a CI workflow input for the time control, so the revised soft-budget rule can be judged by SPRT against the previous commit. Read the current `UciMatchConfig` and match loop first.
+
+---
+
 ### Session 223 — 2026-10-15 — Time-management review: single-clock fix and budget unit tests
 
 **Built:**

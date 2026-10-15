@@ -51,7 +51,8 @@ src/
 │   │                           # continuation history, capture history,
 │   │                           # correction history
 │   ├── quiescence.cpp/.h
-│   └── see.cpp/.h, skill.cpp/.h
+│   ├── see.cpp/.h, skill.cpp/.h
+│   └── iteration_control.h     # pure rule: start another iterative-deepening depth under a soft/hard budget?
 ├── eval/
 │   ├── eval.cpp/.h             # top-level eval, tapered eval
 │   ├── psqt.cpp/.h             # piece-square tables

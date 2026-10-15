@@ -4,6 +4,37 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-15 (2) — Soft time budget revised: fractional stop and hard-cap prediction at iteration boundaries
+
+**Context:** A clock-simulation self-play measurement (12 games per control, 6 openings, both colours, 100 plies, a real decrementing clock; harness `tests/tools/clock_sim.py`) showed that the soft time budget was effectively ignored. At 20 s sudden death, 99% of moves used more than the soft budget, the median move used 3.00x the soft budget (the full hard cap), and the clocks ended near 35-65 ms after about 50 moves each. At 10 s + 0.1 s, the median was 1.02x but the 90th percentile 3.01x. The cause was the old rule: stop only when the best move was stable for 4 iterations AND elapsed >= soft, checked only at iteration start. An iteration started just under the soft budget usually needed longer than the slack, ran to the hard cap, and was discarded wholesale (an interrupted iteration's result is not used).
+
+**Decision:** `search_iterative_deepening()` now calls `should_start_next_iteration()` (`src/search/iteration_control.h`) before each depth when a soft budget exists:
+- A stable best move (unchanged for `kStabilityThreshold` = 4 iterations) ends the search once elapsed time reaches 3/5 of the soft budget; an unstable best move ends it at 1/1 of the soft budget.
+- A depth is not started when `elapsed + 3 x (duration of the previous iteration)` would pass the hard cap.
+- Callers with no soft budget (fixed depth, `movetime`, infinite) are unchanged. The hard cap is unchanged. All constants are starting values and not tuned.
+
+**Measured effect (same harness, same openings):**
+
+| Control | Rule | Median time/soft | p90 time/soft | Moves at >= 90% of hard | Lowest final clock |
+|---|---|---|---|---|---|
+| 20 s + 0 | old | 3.00 | 3.21 | 64% | 34 ms |
+| 20 s + 0 | growth 2 | 1.38 | 3.00 | 15% | 208 ms |
+| 20 s + 0 | growth 3 (adopted) | 1.26 | 2.80 | 11% | 327 ms |
+| 10 s + 0.1 s | old | 1.02 | 3.01 | 85% | 197 ms |
+| 10 s + 0.1 s | growth 2 | 1.14 | 2.26 | 20% | 208 ms |
+
+No flags occurred in any run. Mean reached depth was about the same before and after (for example 11.3 against 11.8 at the largest clocks), which indicates most of the removed time was spent on discarded iterations. The 10 s + 0.1 s control was not re-run with growth 3.
+
+**Rationale:** An iteration predicted to overrun the hard cap is discarded anyway, so refusing it costs nothing. The fractional stop spends the soft budget as intended and leaves the hard cap as an emergency limit.
+
+**Not validated:** playing strength. The match tool (`uci_match`) supports only `movetime` and `nodes`, so CI cannot judge time management; a clock mode for `uci_match` is the next step. The result is a measurement of clock usage only, on a single-core machine with Python I/O overhead of a few milliseconds per move.
+
+**Open (not changed):** with an increment the clock settles near twice the increment (about 200 ms at +0.1 s), because the soft budget adds the whole increment and the cap is half the remaining clock. That leaves little margin against GUI latency.
+
+**Alternatives considered:** lowering `kHardBudgetMultiplier` from 3 (does not remove the cause: the discarded iterations remain); growth estimate 2 (slightly worse p90 and final clock, see table).
+
+**Verification:** 780 of 780 tests pass in a Release build with zero compiler warnings (773 existing plus 7 new cases in `tests/iteration_control_tests.cpp`).
+
 ### 2026-10-15 (1) — Single-clock `go` is time-bounded; time-budget arithmetic extracted to `time_budget.h`
 
 **Context:** A review of time management (Session 223) found that `compute_search_budget()` treated a missing clock for the side to move as "no time control". `go btime 6000` with White to move searched unbounded until `stop` (no `bestmove` within 10 s on the real engine), whereas `go wtime 6000 btime 6000` returned in 0.44 s on the same position. A GUI sending only one clock would therefore lose on time. The budget arithmetic also sat in an anonymous namespace in `src/uci/uci.cpp`, so tests could only check that a legal `bestmove` came back, not the numbers.
