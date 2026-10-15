@@ -1603,9 +1603,11 @@ TEST_CASE("search_iterative_deepening: soft_time_limit_ms never allows the searc
     // to have a best move that keeps changing across shallow iterations
     // -- genuine search instability (the same phenomenon documented in
     // docs/DECISIONS.md, 2026-09-05 (2), for MultiPV) -- so the
-    // stability streak required for an early stop never accumulates,
-    // and the search should run the full hard budget regardless of
-    // `soft_time_limit_ms` being set.
+    // stability streak required for the EARLY (3/5 of soft) stop never
+    // accumulates. Since Session 224 such a search still ends once the
+    // whole soft budget is spent (search/iteration_control.h) rather than
+    // running the full hard budget; this test only pins the upper bound:
+    // the hard cap must never be exceeded.
     Position pos = start_position();
     const auto t0 = std::chrono::steady_clock::now();
     const SearchResult result =
