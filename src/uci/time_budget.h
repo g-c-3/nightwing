@@ -40,6 +40,17 @@ inline constexpr int kHardBudgetMultiplier = 3;
 /// Moves assumed to remain when the GUI gives no `movestogo`.
 inline constexpr int kDefaultMovesToGo = 20;
 
+/// Bounds and default of the share of the increment added to the soft
+/// budget, in percent (the `IncrementPercent` UCI option, uci.cpp). 100 is
+/// the original behaviour -- the whole increment is spent on top of
+/// remaining/divisor -- and is the default, so nothing changes until the
+/// option is set. Lower values keep a larger clock reserve: the clock
+/// settles near (1 - percent/100) x increment x divisor above the floor
+/// rather than a few increments (Session 226 simulation, docs/SESSIONS.md).
+inline constexpr int kMinIncrementPercent = 0;
+inline constexpr int kMaxIncrementPercent = 100;
+inline constexpr int kDefaultIncrementPercent = 100;
+
 /// Time allocation for `go wtime/btime/winc/binc` -- returns both a soft
 /// (expected/normal) and a hard (maximum, extendable-into-if-unstable)
 /// budget.
@@ -55,8 +66,13 @@ inline constexpr int kDefaultMovesToGo = 20;
 /// @param remaining_ms  The side to move's own remaining clock, in ms.
 /// @param increment_ms  The side to move's own increment per move, in ms.
 /// @param movestogo     Moves until the next time control, or <= 0 if unknown.
-[[nodiscard]] inline TimeAllocation allocate_time_ms(int remaining_ms, int increment_ms,
-                                                       int movestogo) noexcept {
+/// @param increment_percent  Share of `increment_ms` added to the soft
+///                      budget, clamped to [kMinIncrementPercent,
+///                      kMaxIncrementPercent]; the default (100) adds all
+///                      of it, exactly as before this parameter existed.
+[[nodiscard]] inline TimeAllocation
+allocate_time_ms(int remaining_ms, int increment_ms, int movestogo,
+                 int increment_percent = kDefaultIncrementPercent) noexcept {
     if (remaining_ms <= 0) {
         return {50, 50};
     }
@@ -66,7 +82,13 @@ inline constexpr int kDefaultMovesToGo = 20;
     // `long long` throughout: `remaining_ms / divisor + increment_ms` can
     // exceed INT_MAX for an extreme remaining clock plus a positive
     // increment (signed overflow, i.e. undefined behaviour, in `int`).
-    long long soft_wide = static_cast<long long>(remaining_ms / divisor) + increment_ms;
+    if (increment_percent < kMinIncrementPercent) {
+        increment_percent = kMinIncrementPercent;
+    } else if (increment_percent > kMaxIncrementPercent) {
+        increment_percent = kMaxIncrementPercent;
+    }
+    const long long increment_share = static_cast<long long>(increment_ms) * increment_percent / 100;
+    long long soft_wide = static_cast<long long>(remaining_ms / divisor) + increment_share;
     if (soft_wide > cap) {
         soft_wide = cap;
     }

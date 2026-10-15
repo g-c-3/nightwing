@@ -455,6 +455,15 @@ constexpr int kMaxContemptCp = 100;
 // TimeAllocation, kHardBudgetMultiplier and allocate_time_ms() live in
 // uci/time_budget.h (Session 222) so the budget arithmetic is unit-testable.
 
+/// Current value of the `IncrementPercent` UCI option (share of the
+/// increment added to the soft budget, uci/time_budget.h). Session-lifetime
+/// state like the other options: written by handle_setoption() and read by
+/// compute_search_budget(), both on the UCI input thread; run() resets it to
+/// kDefaultIncrementPercent so one session's value never leaks into the next.
+/// A file-scope variable rather than a threaded parameter, to keep the
+/// option's footprint to a few lines (Session 226).
+int g_increment_percent = kDefaultIncrementPercent;
+
 /// Result of parsing `go`'s own depth/time-control tokens (used both by
 /// start_go() for an ordinary `go`, and by start_pondering() below to
 /// save the SAME budget a non-ponder `go` from this position would have
@@ -697,7 +706,7 @@ struct SearchBudget {
         const int remaining = select_own_clock_ms(wtime, btime, white_to_move);
         if (remaining >= 0) {
             const int increment = white_to_move ? winc : binc;
-            const TimeAllocation alloc = allocate_time_ms(remaining, increment, movestogo);
+            const TimeAllocation alloc = allocate_time_ms(remaining, increment, movestogo, g_increment_percent);
             budget.soft_time_limit_ms = alloc.soft_ms;
             budget.time_limit_ms = alloc.hard_ms;
             budget.max_depth = kTimedSearchMaxDepth;
@@ -1004,6 +1013,18 @@ void handle_setoption(int& num_threads, std::size_t& hash_size_mb, int& move_ove
             move_overhead_ms = value;
         } catch (const std::exception&) {
             // Non-integer value -- ignore, leaving move_overhead_ms unchanged.
+        }
+    } else if (name == "IncrementPercent") {
+        try {
+            int value = std::stoi(tokens[value_start]);
+            if (value < kMinIncrementPercent) {
+                value = kMinIncrementPercent;
+            } else if (value > kMaxIncrementPercent) {
+                value = kMaxIncrementPercent;
+            }
+            g_increment_percent = value;
+        } catch (const std::exception&) {
+            // Non-integer value -- ignore, leaving the option unchanged.
         }
     } else if (name == "MultiPV") {
         try {
@@ -1972,6 +1993,7 @@ void run(std::istream& in, std::ostream& out) {
     std::optional<search::TranspositionTable> persistent_tt;
     emplace_persistent_tt(persistent_tt, hash_size_mb);
     int move_overhead_ms = kMinMoveOverheadMs;
+    g_increment_percent = kDefaultIncrementPercent; // `IncrementPercent`: per-session
     // `MultiPV` (ROADMAP.md Phase 8, "Full UCI option set" -- the last
     // sub-item, completing this bullet): same session-lifetime,
     // `setoption`-driven, not-reset-by-`ucinewgame` convention as
@@ -2087,6 +2109,10 @@ void run(std::istream& in, std::ostream& out) {
                 << kMinHashMB << " max " << kMaxHashMB << '\n';
             out << "option name Move Overhead type spin default " << kMinMoveOverheadMs << " min "
                 << kMinMoveOverheadMs << " max " << kMaxMoveOverheadMs << '\n';
+            // `IncrementPercent` (Session 226): share of the increment
+            // spent on top of remaining/divisor; default 100 = unchanged.
+            out << "option name IncrementPercent type spin default " << kDefaultIncrementPercent
+                << " min " << kMinIncrementPercent << " max " << kMaxIncrementPercent << '\n';
             // `MultiPV` (ROADMAP.md Phase 8, "Full UCI option set" --
             // the last sub-item) -- same standard `spin` syntax;
             // kMinMultiPV/kMaxMultiPV's own doc comment above has the
