@@ -107,6 +107,23 @@ struct UciMatchConfig {
     /// for a deterministic engine but node counts are approximate.
     int nodes = 0;
 
+    /// When greater than 0, the match is played on a real game clock
+    /// (Session 225): each side starts every game with `base_time_ms`, each
+    /// `go` carries `wtime`/`btime`/`winc`/`binc`, the referee measures the
+    /// wall-clock time from sending `go` to receiving `bestmove`, subtracts
+    /// it from the mover's clock and then adds `increment_ms`. A side whose
+    /// move takes longer than its remaining clock loses the game on time
+    /// (counted as a loss, reported in UciMatchResult::time_forfeits_*).
+    /// Takes precedence over `movetime_ms`, `nodes` and `depth`. This is the
+    /// only mode in which time management (soft/hard budgets, the stability
+    /// stop, Move Overhead) affects the result, so it is the mode a change to
+    /// that code must be judged in. Random opening plies use no clock.
+    int base_time_ms = 0;
+
+    /// Increment added to the mover's clock after each of its moves in clock
+    /// mode (see `base_time_ms`). Ignored otherwise.
+    int increment_ms = 0;
+
     /// Random opening plies at the start of each game (see match.h).
     int random_opening_plies = 8;
 
@@ -137,6 +154,12 @@ struct UciMatchResult {
     /// included in `tally` as a loss for the offending engine).
     int illegal_moves_a = 0;
     int illegal_moves_b = 0;
+
+    /// Games lost on time in clock mode (UciMatchConfig::base_time_ms > 0);
+    /// already included in `tally` as a loss for the engine that ran out of
+    /// time.
+    int time_forfeits_a = 0;
+    int time_forfeits_b = 0;
 
     /// True when the match stopped early because an engine crashed,
     /// closed its pipe, or timed out; `error` then says which.
@@ -192,10 +215,26 @@ private:
                                             std::uint64_t base_seed,
                                             const UciMatchConfig& config = {});
 
-/// Builds the `go` command line a match sends for `config`: `go movetime N`
-/// when `movetime_ms` > 0, else `go nodes N` when `nodes` > 0, else
+/// Builds the `go` command line a match sends for `config`: in clock mode
+/// (`base_time_ms` > 0) the opening `go wtime B btime B winc I binc I`
+/// (the per-move form is uci_clock_go_command()), else `go movetime N` when
+/// `movetime_ms` > 0, else `go nodes N` when `nodes` > 0, else
 /// `go depth N`. Exposed for tests.
 [[nodiscard]] std::string uci_go_command(const UciMatchConfig& config);
+
+/// Builds the per-move clock-mode `go` line from the clocks as they stand
+/// before the move: `go wtime W btime B winc I binc I`. Exposed for tests.
+[[nodiscard]] std::string uci_clock_go_command(long long white_ms, long long black_ms,
+                                               int increment_ms);
+
+/// Decides the outcome of one clock-mode move. `clock_ms` is the mover's
+/// clock before the move, `elapsed_ms` the measured wall time from `go` to
+/// `bestmove`, `increment_ms` the increment. Returns true when the move was
+/// made in time, and then sets `new_clock_ms` to `clock_ms - elapsed_ms +
+/// increment_ms`; returns false when `elapsed_ms > clock_ms` (loss on time;
+/// `new_clock_ms` is left at 0). Exposed for tests.
+[[nodiscard]] bool clock_after_move(long long clock_ms, long long elapsed_ms, int increment_ms,
+                                    long long& new_clock_ms) noexcept;
 
 /// Extracts the move token from a UCI `bestmove` line. Returns an empty
 /// string if `line` is not a `bestmove` line or carries no move token.

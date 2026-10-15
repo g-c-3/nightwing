@@ -530,6 +530,7 @@ using board::UndoInfo;
 struct GameOutcome {
     double white_score = 0.5; ///< 1 White won, 0 Black won, 0.5 draw.
     int illegal_by = -1;      ///< 0 White, 1 Black sent an illegal move, -1 none.
+    int time_forfeit_by = -1; ///< 0 White, 1 Black lost on time (clock mode), -1 none.
     bool aborted = false;     ///< An engine crashed/closed/timed out.
     std::string error;
 };
@@ -612,6 +613,10 @@ struct UciMatchSession::Impl {
         Position pos = board::start_position();
         std::vector<std::uint64_t> history;
         std::vector<std::string> played;
+        // Clock mode (UciMatchConfig::base_time_ms): each side's remaining time.
+        const bool clock_mode = config.base_time_ms > 0;
+        long long clock_white_ms = config.base_time_ms;
+        long long clock_black_ms = config.base_time_ms;
 
         for (int ply = 0; ply < config.max_plies; ++ply) {
             MoveList moves;
@@ -658,21 +663,67 @@ struct UciMatchSession::Impl {
                         position_cmd += m;
                     }
                 }
-                if (!mover.write_line(position_cmd) || !mover.write_line(go_command())) {
+                long long& mover_clock_ms = white_to_move ? clock_white_ms : clock_black_ms;
+                const std::string go_line =
+                    clock_mode ? uci_clock_go_command(clock_white_ms, clock_black_ms,
+                                                      config.increment_ms)
+                               : go_command();
+                // The clock starts when `go` is written, so the position
+                // command is sent first and is not charged to the mover.
+                if (!mover.write_line(position_cmd)) {
+                    outcome.aborted = true;
+                    outcome.error = mover_spec.name + ": could not write to the engine (crashed?)";
+                    return outcome;
+                }
+                const auto go_sent = Clock::now();
+                if (!mover.write_line(go_line)) {
                     outcome.aborted = true;
                     outcome.error = mover_spec.name + ": could not write to the engine (crashed?)";
                     return outcome;
                 }
 
-                const auto deadline = Clock::now() + std::chrono::milliseconds(go_timeout_ms());
+                // Clock mode waits for the mover's clock plus a grace period
+                // (an engine that ignores the clock is stopped and forfeits
+                // on time instead of aborting the match).
+                constexpr int kClockGraceMs = 1000;
+                constexpr int kStopReplyMs = 5000;
+                const int wait_ms =
+                    clock_mode ? static_cast<int>(std::min<long long>(
+                                     mover_clock_ms + kClockGraceMs, 2000000000LL))
+                               : go_timeout_ms();
+                const auto deadline = go_sent + std::chrono::milliseconds(wait_ms);
                 std::string line;
                 std::string text;
+                bool timed_out_in_clock_mode = false;
                 for (;;) {
                     const ReadStatus status = mover.read_line(line, remaining_ms(deadline));
                     if (status == ReadStatus::Timeout) {
-                        outcome.aborted = true;
-                        outcome.error = mover_spec.name + ": timed out waiting for 'bestmove'";
-                        return outcome;
+                        if (!clock_mode) {
+                            outcome.aborted = true;
+                            outcome.error = mover_spec.name + ": timed out waiting for 'bestmove'";
+                            return outcome;
+                        }
+                        // Resynchronise: stop the search and drain its bestmove
+                        // so the next game starts from a clean protocol state.
+                        mover.write_line("stop");
+                        const auto stop_deadline =
+                            Clock::now() + std::chrono::milliseconds(kStopReplyMs);
+                        bool drained = false;
+                        while (mover.read_line(line, remaining_ms(stop_deadline)) ==
+                               ReadStatus::Line) {
+                            if (line.rfind("bestmove", 0) == 0) {
+                                drained = true;
+                                break;
+                            }
+                        }
+                        if (!drained) {
+                            outcome.aborted = true;
+                            outcome.error = mover_spec.name +
+                                            ": did not answer 'stop' after running out of time";
+                            return outcome;
+                        }
+                        timed_out_in_clock_mode = true;
+                        break;
                     }
                     if (status == ReadStatus::Closed) {
                         outcome.aborted = true;
@@ -683,6 +734,23 @@ struct UciMatchSession::Impl {
                         text = parse_bestmove_line(line);
                         break;
                     }
+                }
+
+                if (clock_mode) {
+                    const long long elapsed_ms =
+                        timed_out_in_clock_mode
+                            ? mover_clock_ms + 1
+                            : std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  Clock::now() - go_sent)
+                                  .count();
+                    long long new_clock_ms = 0;
+                    if (!clock_after_move(mover_clock_ms, elapsed_ms, config.increment_ms,
+                                          new_clock_ms)) {
+                        outcome.time_forfeit_by = white_to_move ? 0 : 1;
+                        outcome.white_score = white_to_move ? 0.0 : 1.0;
+                        return outcome;
+                    }
+                    mover_clock_ms = new_clock_ms;
                 }
 
                 if (!find_legal_move(moves, text, move)) {
@@ -768,6 +836,14 @@ bool UciMatchSession::play_game(int game_index, std::uint64_t seed) {
             ++s.result.illegal_moves_b;
         }
     }
+    if (outcome.time_forfeit_by >= 0) {
+        const bool a_flagged = (outcome.time_forfeit_by == 0) == a_white;
+        if (a_flagged) {
+            ++s.result.time_forfeits_a;
+        } else {
+            ++s.result.time_forfeits_b;
+        }
+    }
     return true;
 }
 
@@ -797,6 +873,9 @@ UciMatchResult play_uci_match(const UciEngineSpec& spec_a, const UciEngineSpec& 
 }
 
 std::string uci_go_command(const UciMatchConfig& config) {
+    if (config.base_time_ms > 0) {
+        return uci_clock_go_command(config.base_time_ms, config.base_time_ms, config.increment_ms);
+    }
     if (config.movetime_ms > 0) {
         return "go movetime " + std::to_string(config.movetime_ms);
     }
@@ -804,6 +883,21 @@ std::string uci_go_command(const UciMatchConfig& config) {
         return "go nodes " + std::to_string(config.nodes);
     }
     return "go depth " + std::to_string(config.depth);
+}
+
+std::string uci_clock_go_command(long long white_ms, long long black_ms, int increment_ms) {
+    return "go wtime " + std::to_string(white_ms) + " btime " + std::to_string(black_ms) +
+           " winc " + std::to_string(increment_ms) + " binc " + std::to_string(increment_ms);
+}
+
+bool clock_after_move(long long clock_ms, long long elapsed_ms, int increment_ms,
+                      long long& new_clock_ms) noexcept {
+    if (elapsed_ms > clock_ms) {
+        new_clock_ms = 0;
+        return false;
+    }
+    new_clock_ms = clock_ms - elapsed_ms + increment_ms;
+    return true;
 }
 
 std::string parse_bestmove_line(const std::string& line) {

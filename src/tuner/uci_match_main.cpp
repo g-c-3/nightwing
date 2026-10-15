@@ -15,6 +15,11 @@
 //   --movetime MS        use `go movetime MS` instead of a fixed depth
 //   --nodes N            use `go nodes N` instead of a fixed depth (ignored
 //                        when --movetime is given)
+//   --base-time MS       play on a game clock: each side starts every game
+//                        with MS milliseconds and `go` carries wtime/btime/
+//                        winc/binc; running out of time loses the game.
+//                        Overrides --movetime, --nodes and --depth
+//   --increment MS       per-move increment for --base-time (default 0)
 //   --opening-plies N    random opening plies per game (default 8)
 //   --max-plies N        game-length cap in plies (default 300)
 //   --seed S             base seed for the random openings (default 1)
@@ -53,7 +58,7 @@ using nightwing::tuner::UciMatchSession;
 void print_usage() {
     std::fprintf(stderr,
                  "usage: nightwing_uci_match <engine_a> <engine_b> [--games N] [--depth N] "
-                 "[--movetime MS] [--nodes N]\n"
+                 "[--movetime MS] [--nodes N] [--base-time MS] [--increment MS]\n"
                  "         [--opening-plies N] [--max-plies N] [--seed S] [--opt-a Name=Value]... "
                  "[--opt-b Name=Value]...\n"
                  "         [--sprt E0 E1 [ALPHA BETA]] [--keep-own-book]\n"
@@ -132,6 +137,14 @@ int main(int argc, char** argv) {
             const char* v = next("--nodes");
             if (v == nullptr) return 2;
             config.nodes = std::atoi(v);
+        } else if (arg == "--base-time") {
+            const char* v = next("--base-time");
+            if (v == nullptr) return 2;
+            config.base_time_ms = std::atoi(v);
+        } else if (arg == "--increment") {
+            const char* v = next("--increment");
+            if (v == nullptr) return 2;
+            config.increment_ms = std::atoi(v);
         } else if (arg == "--opening-plies") {
             const char* v = next("--opening-plies");
             if (v == nullptr) return 2;
@@ -214,6 +227,10 @@ int main(int argc, char** argv) {
                 t.draws, t.wins_a);
     std::printf("illegal_moves: baseline=%d candidate=%d\n", result.illegal_moves_a,
                 result.illegal_moves_b);
+    if (config.base_time_ms > 0) {
+        std::printf("time_forfeits: baseline=%d candidate=%d\n", result.time_forfeits_a,
+                    result.time_forfeits_b);
+    }
     // MatchResult::elo_diff() is A minus B; the candidate's view is the negation.
     std::printf("candidate_elo_vs_baseline=%.1f (rough; see match.h on sample size)\n",
                 -t.elo_diff());
