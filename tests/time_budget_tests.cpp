@@ -13,7 +13,10 @@
 
 using nightwing::uci::allocate_time_ms;
 using nightwing::uci::apply_move_overhead;
+using nightwing::uci::kDefaultIncrementPercent;
 using nightwing::uci::kHardBudgetMultiplier;
+using nightwing::uci::kMaxIncrementPercent;
+using nightwing::uci::kMinIncrementPercent;
 using nightwing::uci::select_own_clock_ms;
 using nightwing::uci::TimeAllocation;
 
@@ -162,4 +165,49 @@ TEST_CASE("time_budget: apply_move_overhead keeps soft <= hard", "[uci][time_man
         REQUIRE(hard >= 1);
         REQUIRE(soft >= 1);
     }
+}
+
+// --- IncrementPercent (Session 226) ---
+
+TEST_CASE("time_budget: the default increment share is 100 and equals the two-argument form",
+          "[uci][time_management]") {
+    REQUIRE(kDefaultIncrementPercent == 100);
+    for (int inc : {0, 100, 1000, 5000}) {
+        const TimeAllocation a = allocate_time_ms(60000, inc, 0);
+        const TimeAllocation b = allocate_time_ms(60000, inc, 0, 100);
+        REQUIRE(a.soft_ms == b.soft_ms);
+        REQUIRE(a.hard_ms == b.hard_ms);
+    }
+}
+
+TEST_CASE("time_budget: a lower increment percent adds proportionally less to the soft budget",
+          "[uci][time_management]") {
+    // 60000 / 20 = 3000 base; increment 1000.
+    REQUIRE(allocate_time_ms(60000, 1000, 0, 75).soft_ms == 3750);
+    REQUIRE(allocate_time_ms(60000, 1000, 0, 50).soft_ms == 3500);
+    REQUIRE(allocate_time_ms(60000, 1000, 0, 0).soft_ms == 3000);
+    REQUIRE(allocate_time_ms(60000, 1000, 0, 75).hard_ms == 3750 * kHardBudgetMultiplier);
+}
+
+TEST_CASE("time_budget: an out-of-range increment percent is clamped, never over- or under-spends",
+          "[uci][time_management]") {
+    const TimeAllocation full = allocate_time_ms(60000, 1000, 0, kMaxIncrementPercent);
+    const TimeAllocation none = allocate_time_ms(60000, 1000, 0, kMinIncrementPercent);
+    for (int pct : {101, 1000, INT_MAX}) {
+        REQUIRE(allocate_time_ms(60000, 1000, 0, pct).soft_ms == full.soft_ms);
+    }
+    for (int pct : {-1, -100, INT_MIN}) {
+        REQUIRE(allocate_time_ms(60000, 1000, 0, pct).soft_ms == none.soft_ms);
+    }
+}
+
+TEST_CASE("time_budget: increment percent keeps the half-clock cap and survives a huge increment",
+          "[uci][time_management]") {
+    const TimeAllocation a = allocate_time_ms(1000, 5000, 0, 75);
+    REQUIRE(a.soft_ms == 500);
+    REQUIRE(a.hard_ms == 500);
+    // increment * percent must not overflow int.
+    const TimeAllocation big = allocate_time_ms(INT_MAX, INT_MAX, 0, 75);
+    REQUIRE(big.soft_ms == INT_MAX / 2);
+    REQUIRE(big.hard_ms == INT_MAX / 2);
 }
