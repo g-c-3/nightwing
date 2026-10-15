@@ -22,6 +22,7 @@
 #include "eval/eval.h"
 #include "eval/eval_cache.h"
 #include "eval/pawn_tt.h"
+#include "search/iteration_control.h"
 #include "search/ordering.h"
 #include "search/quiescence.h"
 #include "search/see.h"
@@ -4340,6 +4341,11 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // loop below only ever reads `stable_count` inside that same guard.
     Move stable_move = result.best_move;
     int stable_count = 1;
+    // Elapsed time (ms since `start_time`) at the start of the previous
+    // iteration-loop pass; the difference to the next pass is the duration
+    // of the iteration that just completed (should_start_next_iteration()).
+    // Starts at 0, so for depth 2 it is the duration of depth 1.
+    long long iteration_mark_ms = 0;
 
     // Lazy SMP (ROADMAP.md Phase 7, search.h's own doc comment on this
     // function's `num_threads` parameter has the full contract): spawn
@@ -4386,19 +4392,24 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             }
         }
         // Soft time-management early stop (ROADMAP.md Phase 8, "Time
-        // management" -- search.h's own `soft_time_limit_ms` doc
-        // comment has the full mechanism): a no-op whenever
-        // `soft_time_limit_ms <= 0` (this parameter's default), so
-        // every pre-existing caller reaches the `external_stop` check
-        // just below exactly as before. Checked independently of, and
-        // in addition to, the hard `time_limit_ms` check just above --
-        // this one can only stop the loop EARLIER than that one would
-        // have, never later.
-        if (soft_time_limit_ms > 0 && stable_count >= kStabilityThreshold) {
-            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                         std::chrono::steady_clock::now() - start_time)
-                                         .count();
-            if (elapsed_ms >= soft_time_limit_ms) {
+        // management" -- search.h's own `soft_time_limit_ms` doc comment
+        // has the full mechanism), revised in Session 224: decided by
+        // should_start_next_iteration() (search/iteration_control.h), which
+        // ends the search once a fraction of the soft budget is spent
+        // (smaller when the best move is stable) and refuses an iteration
+        // predicted to overrun the hard cap. A no-op whenever
+        // `soft_time_limit_ms <= 0` (this parameter's default). Checked
+        // independently of, and in addition to, the hard `time_limit_ms`
+        // check just above -- this one can only stop the loop EARLIER than
+        // that one would have, never later.
+        if (soft_time_limit_ms > 0) {
+            const long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now() - start_time)
+                                          .count();
+            const long long last_iteration_ms = now_ms - iteration_mark_ms;
+            iteration_mark_ms = now_ms;
+            if (!should_start_next_iteration(now_ms, last_iteration_ms, soft_time_limit_ms,
+                                              time_limit_ms, stable_count >= kStabilityThreshold)) {
                 break;
             }
         }

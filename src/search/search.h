@@ -645,16 +645,20 @@ using IterationCallback = std::function<void(const SearchResult&)>;
 /// (and expected, though not enforced here, to be <= `time_limit_ms`),
 /// the loop tracks how many CONSECUTIVE completed iterations have
 /// reported the identical `best_move` ("stability" -- CPW-adjacent
-/// convention, not a term from a specific cited source); once that
-/// streak reaches search.cpp's own `kStabilityThreshold` AND elapsed
-/// time has passed `soft_time_limit_ms`, the loop stops early, on the
-/// theory that a best move that hasn't changed across several
-/// increasingly-deep iterations is unlikely to change again and further
-/// search time is better saved for a future, harder move. If the best
-/// move keeps changing (an unstable, genuinely difficult position), the
-/// loop keeps going past `soft_time_limit_ms` all the way to
-/// `time_limit_ms` (the hard cap) exactly as it already would have
-/// without this parameter -- `soft_time_limit_ms` can only make a
+/// convention, not a term from a specific cited source). Since Session
+/// 224 the loop applies should_start_next_iteration()
+/// (search/iteration_control.h) before each new depth: it stops once
+/// 3/5 of `soft_time_limit_ms` has elapsed when the best move has been
+/// stable for search.cpp's own `kStabilityThreshold` iterations, or once
+/// the whole soft budget has elapsed when it has not, and it also
+/// declines a depth whose predicted cost (three times the previous
+/// iteration's) would pass `time_limit_ms`, because an interrupted
+/// iteration's result is discarded anyway. An unstable position
+/// therefore gets up to the full soft budget plus the overshoot of one
+/// iteration, not (as before Session 224) the whole hard budget almost
+/// every move, which a clock simulation showed drained a sudden-death
+/// clock to about 40 ms by move 50. `time_limit_ms` stays the hard cap
+/// exactly as before -- `soft_time_limit_ms` can only make a
 /// search STOP EARLIER than `time_limit_ms` would have alone, never
 /// later and never past it. This early stop applies to the single-line
 /// path only -- search_iterative_deepening_multipv() (this parameter is
