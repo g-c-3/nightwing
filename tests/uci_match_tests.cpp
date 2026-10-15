@@ -158,3 +158,99 @@ TEST_CASE("play_uci_match: an engine that never answers go times out and aborts 
     CHECK(result.error.find("timed out") != std::string::npos);
     CHECK(result.tally.games_played == 0);
 }
+
+// ---------------------------------------------------------------------------
+// Clock mode (Session 225): UciMatchConfig::base_time_ms / increment_ms.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("uci_clock_go_command: formats both clocks and both increments", "[tuner][uci_match]") {
+    CHECK(uci_clock_go_command(60000, 59000, 500) ==
+          "go wtime 60000 btime 59000 winc 500 binc 500");
+    CHECK(uci_clock_go_command(0, 1, 0) == "go wtime 0 btime 1 winc 0 binc 0");
+}
+
+TEST_CASE("uci_go_command: clock mode beats movetime, nodes and depth", "[tuner][uci_match]") {
+    UciMatchConfig config;
+    config.depth = 7;
+    config.nodes = 1000;
+    config.movetime_ms = 50;
+    CHECK(uci_go_command(config) == "go movetime 50");
+
+    config.base_time_ms = 10000;
+    config.increment_ms = 100;
+    CHECK(uci_go_command(config) == "go wtime 10000 btime 10000 winc 100 binc 100");
+}
+
+TEST_CASE("clock_after_move: subtracts elapsed time and adds the increment",
+          "[tuner][uci_match]") {
+    long long clock = -1;
+    REQUIRE(clock_after_move(1000, 300, 50, clock));
+    CHECK(clock == 750);
+
+    REQUIRE(clock_after_move(1000, 0, 0, clock));
+    CHECK(clock == 1000);
+
+    // Using exactly the whole clock is still in time; the increment follows.
+    REQUIRE(clock_after_move(1000, 1000, 100, clock));
+    CHECK(clock == 100);
+}
+
+TEST_CASE("clock_after_move: taking longer than the clock loses on time", "[tuner][uci_match]") {
+    long long clock = 123;
+    CHECK_FALSE(clock_after_move(1000, 1001, 500, clock));
+    CHECK(clock == 0);
+    CHECK_FALSE(clock_after_move(0, 1, 0, clock));
+}
+
+TEST_CASE("play_uci_match: a clock-mode match against the real engine finishes cleanly",
+          "[tuner][uci_match]") {
+    init_all();
+    UciMatchConfig config = fast_config(2);
+    config.base_time_ms = 3000;
+    config.increment_ms = 100;
+    config.max_plies = 24;
+
+    const UciMatchResult result = play_uci_match(real_engine("A"), real_engine("B"), 1, config);
+
+    CHECK_FALSE(result.aborted);
+    CHECK(result.error.empty());
+    CHECK(result.tally.games_played == 2);
+    CHECK(result.illegal_moves_a == 0);
+    CHECK(result.illegal_moves_b == 0);
+}
+
+TEST_CASE("play_uci_match: running out of time in clock mode loses the game, not the match",
+          "[tuner][uci_match]") {
+    init_all();
+    UciMatchConfig config = fast_config(2);
+    config.base_time_ms = 300;
+    config.increment_ms = 0;
+
+    // The fake takes 600 ms per move against a 300 ms clock. The time
+    // forfeit must be judged before its (illegal) move, so it is counted as
+    // a time forfeit and not an illegal move, in both colour assignments.
+    const UciMatchResult result =
+        play_uci_match(real_engine("A"), fake_engine("slow"), 1, config);
+
+    CHECK_FALSE(result.aborted);
+    CHECK(result.tally.games_played == 2);
+    CHECK(result.time_forfeits_b == 2);
+    CHECK(result.time_forfeits_a == 0);
+    CHECK(result.illegal_moves_b == 0);
+    CHECK(result.tally.wins_a == 2);
+}
+
+TEST_CASE("play_uci_match: a clock-mode engine that ignores stop aborts the match",
+          "[tuner][uci_match]") {
+    init_all();
+    UciMatchConfig config = fast_config(2);
+    config.base_time_ms = 200;
+
+    const UciMatchResult result =
+        play_uci_match(real_engine("A"), fake_engine("hang"), 1, config);
+
+    CHECK(result.aborted);
+    CHECK(result.error.find("stop") != std::string::npos);
+    CHECK(result.tally.games_played == 0);
+}
+
