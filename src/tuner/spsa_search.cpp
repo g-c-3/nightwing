@@ -28,7 +28,7 @@ const std::vector<SearchTunableInfo>& search_tunable_table() {
         {"IIRMinDepth", 4, 2, 12, 1},
         {"SingularMarginPerPly", 2, 1, 8, 1},
         {"ImprovingFutilityDelta", 60, 0, 200, 15},
-        {"AspirationInitialDelta", 25, 5, 100, 6},
+        {"AspirationInitialDelta", 25, 1, 100, 6},
     };
     return table;
 }
