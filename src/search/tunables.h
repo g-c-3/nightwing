@@ -65,7 +65,7 @@ inline constexpr std::array<TunableSpec, 7> kSearchTunableSpecs = {{
     {"IIRMinDepth", &SearchTunables::iir_min_depth, 4, 2, 12},
     {"SingularMarginPerPly", &SearchTunables::singular_margin_per_ply, 2, 1, 8},
     {"ImprovingFutilityDelta", &SearchTunables::improving_futility_delta, 60, 0, 200},
-    {"AspirationInitialDelta", &SearchTunables::aspiration_initial_delta, 25, 5, 100},
+    {"AspirationInitialDelta", &SearchTunables::aspiration_initial_delta, 25, 1, 100},
 }};
 
 /// Sets the tunable named `name` to `value`, clamped to its [min, max].
