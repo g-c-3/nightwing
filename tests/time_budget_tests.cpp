@@ -14,6 +14,7 @@
 using nightwing::uci::allocate_time_ms;
 using nightwing::uci::apply_move_overhead;
 using nightwing::uci::kDefaultIncrementPercent;
+using nightwing::uci::kEngineIncrementPercent;
 using nightwing::uci::kHardBudgetMultiplier;
 using nightwing::uci::kMaxIncrementPercent;
 using nightwing::uci::kMinIncrementPercent;
@@ -210,4 +211,13 @@ TEST_CASE("time_budget: increment percent keeps the half-clock cap and survives 
     const TimeAllocation big = allocate_time_ms(INT_MAX, INT_MAX, 0, 75);
     REQUIRE(big.soft_ms == INT_MAX / 2);
     REQUIRE(big.hard_ms == INT_MAX / 2);
+}
+
+TEST_CASE("time_budget: the engine's IncrementPercent default is 75 and within the option range",
+          "[uci][time_management]") {
+    REQUIRE(kEngineIncrementPercent == 75);
+    REQUIRE(kEngineIncrementPercent >= kMinIncrementPercent);
+    REQUIRE(kEngineIncrementPercent <= kMaxIncrementPercent);
+    // 60000 / 20 = 3000 base; increment 1000 -> 3000 + 750.
+    REQUIRE(allocate_time_ms(60000, 1000, 0, kEngineIncrementPercent).soft_ms == 3750);
 }
