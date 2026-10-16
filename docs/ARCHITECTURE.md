@@ -77,7 +77,7 @@ src/
 │   └── cpu_features.cpp/.h      # BMI2/POPCNT runtime detection
 ├── uci/
 │   ├── uci.cpp/.h                # UCI protocol loop
-│   └── time_budget.h             # pure time-budget arithmetic (allocation, clock choice, Move Overhead)
+│   └── time_budget.h             # pure time-budget arithmetic (allocation incl. the IncrementPercent share, clock choice, Move Overhead)
 ├── bench.cpp / bench_positions.h
 └── main.cpp
 tests/                            # ~48 files; one per src/ module plus

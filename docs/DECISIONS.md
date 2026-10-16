@@ -4,6 +4,27 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-17 (1) — Soft-budget rule retained; IncrementPercent option with default 75
+
+**Context:** The soft-budget revision (2026-10-15 (2)) had not been judged by play. With the real-clock match mode (2026-10-15 (3)) available, both it and the increment policy of `allocate_time_ms()` (soft budget = remaining/divisor plus the whole increment) could be measured. A clock simulation indicated that spending the whole increment each move lets the clock settle near three to five increments.
+
+**Decision:**
+- The Session 224 soft-budget rule is retained. Four `uci-match` runs at `10000 100` against its parent commit (`1c40b9d`) all accepted H1 at SPRT bounds 0 and 10: 498 / 164 / 202 over 864 games, +124.0 Elo (95% interval +102.6 to +146.4), with no time forfeits and no illegal moves. The size reflects the baseline running its clock down by routinely using about three times its soft budget, so it applies to this time-management fix on a fast control and is not a general search gain.
+- A `IncrementPercent` UCI option (spin, 0 to 100) scales the increment added to the soft budget. The default is 75 (`kEngineIncrementPercent`, `src/uci/time_budget.h`). `allocate_time_ms()` keeps its own default of 100 so direct callers and the arithmetic tests are unchanged.
+- Evidence for 75 against 100 (engine B against engine A on one commit): +14.3 Elo (interval +1.9 to +26.8, 2329 games) at `10000 100` and +15.5 Elo (interval +6.6 to +24.5, 4659 games) at `5000 50`, all eight runs positive; combined +15.1 Elo (interval +7.9 to +22.4, 6988 games). Every run stopped at the 300-minute limit without crossing an SPRT bound. The adoption rule was fixed before the second batch: adopt if its pooled interval excludes zero and the first batch stays positive.
+
+**Rationale:** Keeping part of the increment in reserve costs little search time and protects against the clock bleeding down; the measured result is positive at both controls. A UCI option allowed a single-commit comparison through the existing `ucimatch_options_b` input (both engines built with `NIGHTWING_SEARCH_TUNING=ON`, no search behaviour change), with no second build.
+
+**Alternatives considered:**
+- Tuning-build-only tunable in `src/search/tunables.h`: rejected, because it would have changed hard-coded parameter counts in `tests/spsa_search_tests.cpp` and added a parameter that node-limited SPSA runs cannot influence.
+- Changing `kDefaultIncrementPercent` itself to 75: rejected, because it would have changed the results of the existing arithmetic tests and of direct callers.
+- Threading the value as a parameter through `handle_setoption()` and the `go` handlers: rejected in favour of a file-scope variable reset in `run()`, a smaller footprint.
+- Testing 50 first: deferred; 75 had been measured and 50 had not.
+
+**Consequences:** Engine A in any later increment comparison also runs at 75 unless `IncrementPercent` is set on both sides. The `time_forfeits` figure is not printed when the workflow time limit stops a run, so cut-off runs carry no forfeit data. `IncrementPercent=50` remains untested.
+
+---
+
 ### 2026-10-15 (3) — Real-clock mode for the UCI match runner
 
 **Context:** The soft-budget revision (2026-10-15 (2)) changes only how time is spent, so fixed-depth, node-limited and `movetime` matches cannot judge it: none of them uses the soft/hard budgets, the stability stop or Move Overhead. A match on a real game clock was missing.

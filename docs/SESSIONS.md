@@ -4,6 +4,36 @@ Newest entry at top.
 
 ---
 
+### Session 226 — 2026-10-17 — Soft-budget SPRT result and the IncrementPercent option
+
+**Built:**
+- `src/uci/time_budget.h`: `allocate_time_ms()` gained a trailing `increment_percent` parameter (default `kDefaultIncrementPercent` = 100, clamped to `kMinIncrementPercent`..`kMaxIncrementPercent` = 0..100) scaling the increment added to the soft budget; the product is computed in 64 bits. New constant `kEngineIncrementPercent` = 75, the engine's UCI default.
+- `src/uci/uci.cpp`: new `IncrementPercent` spin option (default 75, min 0, max 100), parsed in `setoption` (out-of-range values clamped, non-integers ignored), advertised in the `uci` reply, passed to `allocate_time_ms()` from `compute_search_budget()`, and reset per session in `run()`. Held in a file-scope `g_increment_percent`.
+- `tests/time_budget_tests.cpp`: 5 new cases (default equals the old form, proportional scaling, clamping, half-clock cap and overflow safety, engine default).
+
+**Measurements:**
+- Soft-budget rule (Session 224) judged by play: baseline `1c40b9d` (the parent of `86a278d`, which added `src/search/iteration_control.h`) against `main` `e432f11`; engine-affecting differences limited to `src/search/search.cpp`, `src/search/search.h` and `src/search/iteration_control.h`. Four `uci-match` runs, clock `10000 100`, SPRT bounds 0 and 10, seeds 1, 100001, 200001, 300001. All four accepted H1 (LLR 2.949 to 3.016 against bound 2.944). Pooled 498 wins, 164 draws, 202 losses over 864 games: +124.0 Elo, 95% interval +102.6 to +146.4. No time forfeits and no illegal moves on either side.
+- Increment policy: a clock simulation of the Session 224 budget (assumed usage mix, Move Overhead taken from the budget) showed the lowest clock settling near 3x to 5x the increment at weight 1.0 and 8x to 10x at 0.75. Engine B at `IncrementPercent=75` against engine A at 100, same commit (both engines built with `NIGHTWING_SEARCH_TUNING=ON`, forced by `ucimatch_options_b`), SPRT bounds -5 and 5. Every run stopped at the 300-minute limit (runner exit code 124), inconclusive.
+  - Clock `10000 100`, seeds 1, 100001, 200001, 300001: 957 / 511 / 861 over 2329 games, +14.3 Elo, interval +1.9 to +26.8 (per run +10.8, +7.2, +33.5, +5.9).
+  - Clock `5000 50`, seeds 400001, 500001, 600001, 700001: 1980 / 907 / 1772 over 4659 games, +15.5 Elo, interval +6.6 to +24.5 (per run +11.3, +11.6, +22.4, +16.7).
+  - Both batches combined: 6988 games, +15.1 Elo, interval +7.9 to +22.4. Intervals treat games as independent and are not corrected for multiple looks.
+
+**Bugs fixed:** none.
+
+**Verification:** Release build in a sandbox, zero warnings, 792 of 792 tests passing; `uci` output advertises `option name IncrementPercent type spin default 75 min 0 max 100`. The CI matrix for the commit carrying the `IncrementPercent` option passed on every job (791 tests, 789 on the Debug sanitizer jobs, 796 on the search tuning build); the later default change (100 to 75) was verified only in the sandbox Linux Release build. The workflow was not re-run on it.
+
+**Decisions made:** docs/DECISIONS.md 2026-10-17 (1).
+
+**Open:**
+- The `time_forfeits` line is absent from all eight increment-policy runs: the workflow's time limit stops the runner before it prints its final summary, so the secondary forfeit check was not available.
+- `IncrementPercent=50` has not been tested.
+- Engine A now also defaults to 75, so any later increment comparison must set `IncrementPercent` on both sides.
+- The Debug sanitizer configuration and Windows and macOS builds have not run the default change.
+
+**Next session start point:** take the partial SPSA tuner item in ROADMAP.md: read its status note and the most recent SPSA entry in docs/DECISIONS.md, then prepare the next search-constant SPSA run. The `IncrementPercent` default does not affect node-limited tuning runs.
+
+---
+
 ### Session 225 — 2026-10-15 — Clock mode for the UCI match runner
 
 **Built:**
