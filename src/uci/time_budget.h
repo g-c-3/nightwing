@@ -40,16 +40,23 @@ inline constexpr int kHardBudgetMultiplier = 3;
 /// Moves assumed to remain when the GUI gives no `movestogo`.
 inline constexpr int kDefaultMovesToGo = 20;
 
-/// Bounds and default of the share of the increment added to the soft
-/// budget, in percent (the `IncrementPercent` UCI option, uci.cpp). 100 is
-/// the original behaviour -- the whole increment is spent on top of
-/// remaining/divisor -- and is the default, so nothing changes until the
-/// option is set. Lower values keep a larger clock reserve: the clock
-/// settles near (1 - percent/100) x increment x divisor above the floor
-/// rather than a few increments (Session 226 simulation, docs/SESSIONS.md).
+/// Bounds of the share of the increment added to the soft budget, in
+/// percent (the `IncrementPercent` UCI option, uci.cpp).
 inline constexpr int kMinIncrementPercent = 0;
 inline constexpr int kMaxIncrementPercent = 100;
+
+/// Default of the `increment_percent` parameter of allocate_time_ms(): 100,
+/// the original behaviour -- the whole increment is spent on top of
+/// remaining/divisor. Kept at 100 so direct callers and the arithmetic unit
+/// tests are unaffected; the engine's own default is kEngineIncrementPercent.
 inline constexpr int kDefaultIncrementPercent = 100;
+
+/// Default of the `IncrementPercent` UCI option, i.e. what the engine uses
+/// unless a GUI sets the option (Session 226). 75 keeps a larger clock
+/// reserve than 100: it scored +15.5 Elo (95% interval +6.6..+24.5, 4659
+/// games, four runs, all positive) at 5 s + 0.05 s, and +14.3 (+1.9..+26.8,
+/// 2329 games) at 10 s + 0.1 s, against 100 -- docs/SESSIONS.md, Session 226.
+inline constexpr int kEngineIncrementPercent = 75;
 
 /// Time allocation for `go wtime/btime/winc/binc` -- returns both a soft
 /// (expected/normal) and a hard (maximum, extendable-into-if-unstable)

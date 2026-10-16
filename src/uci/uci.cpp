@@ -459,10 +459,10 @@ constexpr int kMaxContemptCp = 100;
 /// increment added to the soft budget, uci/time_budget.h). Session-lifetime
 /// state like the other options: written by handle_setoption() and read by
 /// compute_search_budget(), both on the UCI input thread; run() resets it to
-/// kDefaultIncrementPercent so one session's value never leaks into the next.
+/// kEngineIncrementPercent so one session's value never leaks into the next.
 /// A file-scope variable rather than a threaded parameter, to keep the
 /// option's footprint to a few lines (Session 226).
-int g_increment_percent = kDefaultIncrementPercent;
+int g_increment_percent = kEngineIncrementPercent;
 
 /// Result of parsing `go`'s own depth/time-control tokens (used both by
 /// start_go() for an ordinary `go`, and by start_pondering() below to
@@ -1993,7 +1993,7 @@ void run(std::istream& in, std::ostream& out) {
     std::optional<search::TranspositionTable> persistent_tt;
     emplace_persistent_tt(persistent_tt, hash_size_mb);
     int move_overhead_ms = kMinMoveOverheadMs;
-    g_increment_percent = kDefaultIncrementPercent; // `IncrementPercent`: per-session
+    g_increment_percent = kEngineIncrementPercent; // `IncrementPercent`: per-session
     // `MultiPV` (ROADMAP.md Phase 8, "Full UCI option set" -- the last
     // sub-item, completing this bullet): same session-lifetime,
     // `setoption`-driven, not-reset-by-`ucinewgame` convention as
@@ -2110,8 +2110,8 @@ void run(std::istream& in, std::ostream& out) {
             out << "option name Move Overhead type spin default " << kMinMoveOverheadMs << " min "
                 << kMinMoveOverheadMs << " max " << kMaxMoveOverheadMs << '\n';
             // `IncrementPercent` (Session 226): share of the increment
-            // spent on top of remaining/divisor; default 100 = unchanged.
-            out << "option name IncrementPercent type spin default " << kDefaultIncrementPercent
+            // spent on top of remaining/divisor; default 75 (time_budget.h).
+            out << "option name IncrementPercent type spin default " << kEngineIncrementPercent
                 << " min " << kMinIncrementPercent << " max " << kMaxIncrementPercent << '\n';
             // `MultiPV` (ROADMAP.md Phase 8, "Full UCI option set" --
             // the last sub-item) -- same standard `spin` syntax;
