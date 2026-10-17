@@ -764,7 +764,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.pipeline == 'spsa'
     runs-on: ubuntu-latest
     name: SPSA tuning (eval weights or search constants)
-    timeout-minutes: 355
+    timeout-minutes: 330
 
     steps:
       - name: Checkout
