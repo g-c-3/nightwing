@@ -796,9 +796,14 @@ jobs:
       # Positional args (spsa_main.cpp's own header comment):
       #   nightwing_spsa [iterations] [games_per_iteration] [search_depth] [seed]
       #                  [c] [r0] [validation_games] [start_scale] [target]
-      #                  [engine_path] [nodes]
-      # (engine_path and nodes are used by target 3 only; engine_path is
-      # always the tuning build's own ./src/nightwing.)
+      #                  [engine_path] [nodes] [time_limit_seconds]
+      # (engine_path, nodes and time_limit_seconds are used by target 3 only;
+      # engine_path is always the tuning build's own ./src/nightwing.)
+      # time_limit_seconds is 18000 (300 minutes): with the 330-minute job
+      # timeout that leaves 30 minutes for checkout, the build and the summary.
+      # When the limit is reached the tuner stops before an iteration that
+      # would overrun, prints the theta reached so far and exits 0, so the
+      # result is kept instead of the job being killed with no output.
       - name: Run SPSA
         working-directory: build
         env:
@@ -822,7 +827,7 @@ jobs:
           if [ "$NW_TUNING" = "ON" ]; then
             ./src/nightwing_spsa "$SPSA_ITERATIONS" "$SPSA_GAMES" "$SPSA_DEPTH" \
               "$SPSA_SEED" "$SPSA_C" "$SPSA_R0" "$SPSA_VALIDATION" "$SPSA_START" "$SPSA_TARGET" \
-              "$PWD/src/nightwing" "$SPSA_NODES" \
+              "$PWD/src/nightwing" "$SPSA_NODES" 18000 \
               2> >(tee spsa_progress.txt >&2) | tee spsa_result.txt
           else
             ./src/nightwing_spsa "$SPSA_ITERATIONS" "$SPSA_GAMES" "$SPSA_DEPTH" \
@@ -833,6 +838,10 @@ jobs:
             case "$SPSA_TARGET" in 1) SPSA_NAME="eval material weights" ;; 2) SPSA_NAME="eval material weights, mg/eg tied" ;; 3) SPSA_NAME="search constants" ;; *) SPSA_NAME="eval mobility weights" ;; esac
             echo "### SPSA result ($SPSA_NAME)"
             echo ""
+            if grep -q 'stopped early' spsa_progress.txt; then
+              echo "**$(grep -h 'stopped early' spsa_progress.txt)**"
+              echo ""
+            fi
             if [ "$NW_TUNING" = "ON" ]; then
               echo "iterations=$SPSA_ITERATIONS games/iter=$SPSA_GAMES nodes/move=$SPSA_NODES seed=$SPSA_SEED c_scale=$SPSA_C r0=$SPSA_R0 validation=$SPSA_VALIDATION start_scale=$SPSA_START target=$SPSA_TARGET"
             else
@@ -851,6 +860,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload SPSA artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: spsa-results
