@@ -7,7 +7,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <cmath>
+#include <thread>
 #include <vector>
 
 #include "eval/mobility.h"
@@ -128,5 +130,47 @@ TEST_CASE("spsa: ParameterRef adapter round-trips MobilityWeights", "[tuner][sps
     REQUIRE(kMobilityParameters[0].get(changed) == kMobilityParameters[0].get(base) + 5.0);
     for (std::size_t i = 1; i < kMobilityParameters.size(); ++i) {
         REQUIRE(kMobilityParameters[i].get(changed) == kMobilityParameters[i].get(base));
+    }
+}
+
+TEST_CASE("spsa: a time limit stops the run early and keeps the partial result", "[tuner][spsa]") {
+    const std::vector<SpsaParam> params = {{"a", 0.0, 1.0, -100.0, 100.0}, {"b", 0.0, 1.0, -100.0, 100.0}};
+    SpsaConfig cfg;
+    cfg.iterations = 1000;
+    cfg.time_limit_seconds = 0.2;
+    const SpsaMatchFn slow = [](const std::vector<double>&, const std::vector<double>&, std::uint64_t) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        return 0.6;
+    };
+    const auto start = std::chrono::steady_clock::now();
+    const SpsaResult r = run_spsa(params, cfg, slow);
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    REQUIRE(r.stopped_early);
+    REQUIRE(r.iterations_run >= 1);
+    REQUIRE(r.iterations_run < 1000);
+    REQUIRE(r.plus_scores.size() == static_cast<std::size_t>(r.iterations_run));
+    REQUIRE(r.theta.size() == 2);
+    // The prediction check stops before an iteration that would overrun, so the
+    // run ends within one iteration (20 ms) of the limit, with scheduling slack.
+    REQUIRE(seconds < 0.2 + 0.5);
+}
+
+TEST_CASE("spsa: no time limit, or a generous one, runs every iteration", "[tuner][spsa]") {
+    const std::vector<SpsaParam> params = {{"a", 0.0, 1.0, -100.0, 100.0}};
+    const SpsaMatchFn instant = [](const std::vector<double>&, const std::vector<double>&, std::uint64_t) {
+        return 0.5;
+    };
+    SpsaConfig cfg;
+    cfg.iterations = 25;
+    SECTION("default (unlimited)") {
+        const SpsaResult r = run_spsa(params, cfg, instant);
+        REQUIRE_FALSE(r.stopped_early);
+        REQUIRE(r.iterations_run == 25);
+    }
+    SECTION("generous limit") {
+        cfg.time_limit_seconds = 3600.0;
+        const SpsaResult r = run_spsa(params, cfg, instant);
+        REQUIRE_FALSE(r.stopped_early);
+        REQUIRE(r.iterations_run == 25);
     }
 }
