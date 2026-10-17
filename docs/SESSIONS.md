@@ -4,6 +4,35 @@ Newest entry at top.
 
 ---
 
+### Session 227 — 2026-10-17 — Search-constant SPSA run and two SPRT validations; tuned vector not adopted
+
+**Built:**
+- `src/search/tunables.h` and `src/tuner/spsa_search.cpp`: the `AspirationInitialDelta` minimum was lowered from 5 to 1 in both mirrored tables, because the 2026-10-10 re-validation run had been clamped at the old limit. The `IIRMinDepth` minimum was deliberately kept at 2: `kIIRReduction` is 1, so a lower minimum would pass depth 0 into the move loop; the limit is structural, not a soft range. CI was green for the commit (11 jobs, 0 errors; Linux Release 792 of 792 tests, search-tuning build 797 of 797).
+- No default constant, `bench` value, test or documentation other than this entry was changed. `main` still carries the previous defaults.
+
+**Measurements:**
+- SPSA run (`spsa` pipeline, target 3, settings `20 16 6 7 1.5 8 0 1 3 100000`: 20 iterations of 16 games, 100000 nodes per move, seed 7, `c` multiplier 1.5, `r0` 8, start scale 1): 320 games in 1 h 33 min (about 17.5 s per game; the pre-run estimate of 3.5 h had assumed linear scaling from the 20000-node run and was about 2.3 times too slow). Mean plus-score over the 20 iterations 0.484 (range 0.19 to 0.81); the first iteration scored 0.812. Final theta: `NullMoveReduction` 5.0 (default 2), `NullMoveBigReduction` 3.1 (3), `ProbCutMargin` 105.8 (200), `IIRMinDepth` 2.0 (4, at its floor), `SingularMarginPerPly` 7.5 (2, near its maximum of 8), `ImprovingFutilityDelta` 4.0 (60, near its minimum of 0), `AspirationInitialDelta` 40.8 (25, inside its widened range).
+- SPRT 1 (`uci-match`, baseline and candidate both `main` built with `NIGHTWING_SEARCH_TUNING=ON`, tuned vector rounded and sent to engine B: `NullMoveReduction=5 NullMoveBigReduction=3 ProbCutMargin=106 IIRMinDepth=2 SingularMarginPerPly=8 ImprovingFutilityDelta=4 AspirationInitialDelta=41`; clock `10000 100`; SPRT bounds 0 and 15, alpha and beta 0.05; seed 800001): AcceptH1 at game 482 (LLR 2.981 against 2.944), 215 wins, 114 draws, 153 losses, score 0.564, +44.9 Elo (95% interval +17.9 to +72.5, games treated as independent). No illegal moves, no time forfeits. Run time 4 h 09 min.
+- Search regression found while preparing adoption: with the six defaults changed and `IIRMinDepth` 2, the existing test "production path: KBPK -- the wrong bishop for a rook pawn's corner stays near balanced" failed (score -323, requirement within 80 of zero). Position `6k1/8/7P/8/8/8/2b5/6K1 w - - 0 1`, scores at depths 6, 7, 8 and 10: previous defaults 0, 0, 0, 0; tuned vector -323, 0, -231, -277; tuned vector with only `IIRMinDepth` reverted to 4 0, 0, 0, 0. Reverting any other single constant did not fix depth 6. 797 of 797 tests passed in the search-tuning build with the other six constants adopted and `IIRMinDepth` 4.
+- SPRT 2 (same setup, `IIRMinDepth=4` in the options string, seed 900001): stopped at the 300-minute limit (runner exit code 124), LLR -1.451 of bounds ±2.944, inconclusive. 583 games, 223 wins, 122 draws, 238 losses, score 0.487, -8.9 Elo (interval -34.1 to +16.1). No illegal moves, no time forfeits.
+- Both runs pooled (not a valid single SPRT because the vectors differ in `IIRMinDepth`): 1065 games, 438 / 236 / 391, +15.3 Elo (interval -3.1 to +33.8).
+
+**Bugs fixed:** none. The KBPK result above is attributed to `IIRMinDepth` 2 and was not fixed because the vector was not adopted.
+
+**Verification:** a sandbox search-tuning build compiled with zero warnings and passed 21 of 21 SPSA and tunables tests after the range change, and 797 of 797 with the partial adoption described above. The partial adoption (six defaults changed, edits to `src/search/search.cpp`, `src/search/tunables.h`, `src/tuner/spsa_search.cpp`, `tests/tunables_tests.cpp` and `tests/spsa_search_tests.cpp`) was kept in the sandbox only and was not committed. The default (non-tuning) configuration was not rebuilt after those edits. Debug/ASan, Windows, macOS and WebAssembly were covered only by the CI run of the range-change commit.
+
+**Decisions made:** docs/DECISIONS.md 2026-10-17 (2).
+
+**Open:**
+- Whether any of the tuned constants has a real effect is undetermined. The two runs differ by about 54 Elo, which is within sampling noise for runs of this size (difference standard error about 33 Elo).
+- With `NullMoveReduction` 5 and `NullMoveBigReduction` 3, the reduction is larger at depth 3 to 5 than at depth 6 and above (search.cpp selects the big reduction only at `kNullMoveBigReductionDepth` or deeper). The tiers are inverted in the tuned vector; this was not examined further.
+- The SPSA plus-score trace (mean 0.484) gives no evidence of a consistent gradient at 320 games.
+- A replication SPSA run with a different seed has not been made.
+
+**Next session start point:** run a replication SPSA run (`spsa` pipeline, `60 16 6 11 1 8 0 1 3 100000`, about 960 games, about 4.7 h at the measured pace, inside the 355-minute job timeout); if its final theta moves in the same direction as Session 227 on at least `NullMoveReduction`, `ProbCutMargin` and `ImprovingFutilityDelta`, validate each of those constants alone by `uci-match` SPRT, otherwise shelve search-constant tuning again in ROADMAP.md.
+
+---
+
 ### Session 226 — 2026-10-17 — Soft-budget SPRT result and the IncrementPercent option
 
 **Built:**

@@ -4,6 +4,27 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-17 (2) — SPSA search-constant vector not adopted; AspirationInitialDelta minimum widened
+
+**Context:** The 2026-10-10 re-validation shelved search-constant tuning after a 20000-node SPSA result failed to carry to timed play. Its lessons called for a realistic tuning budget and for widening the ranges at which constants had been clamped. A new run was made at 100000 nodes per move, and its output was validated by SPRT at a timed control before any default was considered for change.
+
+**Decision:**
+- The `AspirationInitialDelta` minimum was lowered from 5 to 1 in `src/search/tunables.h` and `src/tuner/spsa_search.cpp`. The `IIRMinDepth` minimum stays at 2 because `kIIRReduction` is 1 and a lower minimum would pass depth 0 into the move loop.
+- The SPSA output (20 iterations, 320 games, 100000 nodes per move) was not adopted. SPRT 1 of the full rounded vector accepted H1 (215 / 114 / 153 over 482 games, +44.9 Elo, interval +17.9 to +72.5), but the vector contains `IIRMinDepth` 2, with which an existing test position (`6k1/8/7P/8/8/8/2b5/6K1 w - - 0 1`, a drawn wrong-bishop ending) is scored -323, -231 and -277 at depths 6, 8 and 10 where the previous defaults score 0 at every depth tested. SPRT 2 of the same vector with `IIRMinDepth` 4 was inconclusive and slightly negative (223 / 122 / 238 over 583 games, -8.9 Elo, interval -34.1 to +16.1, LLR -1.451, stopped at the 300-minute limit).
+- No default constant was changed; `bench` remains 36154 nodes.
+
+**Rationale:** Adopting a vector that fails an existing endgame test would either break the rule that tests stay green or require weakening the test to hide a real search error. The remaining candidate (`IIRMinDepth` 4) has no positive evidence: the two runs differ by about 54 Elo, within sampling noise (difference standard error about 33 Elo), and the plus-score trace of the SPSA run averaged 0.484, so a consistent gradient was not shown. A single accepted SPRT at alpha 0.05 against a lower bound of 0 Elo is weak evidence when the same vector, minus one constant, does not reproduce it.
+
+**Alternatives considered:**
+- Adopt the full vector and relax the KBPK test: rejected, because the failure reproduces at several depths and indicates a search error, not a fragile assertion.
+- Adopt the six constants with `IIRMinDepth` 4 on the strength of the first SPRT: rejected, because that combination was not the one validated and its own SPRT did not confirm a gain.
+- Pool the two runs (+15.3 Elo, interval -3.1 to +33.8): rejected as a decision basis, because the vectors differ and the interval includes zero.
+- Retire search-constant tuning: deferred; a replication run is cheap at the measured 17.5 s per game.
+
+**Consequences:** The tuner tooling is unchanged except for the range. The measured SPSA throughput at 100000 nodes (about 17.5 s per game, 960 games in about 4.7 h) fits the 355-minute `spsa-tune` timeout. The tuned values and the KBPK reproduction are recorded here for any later replication. The inverted null-move tiers in the tuned vector (reduction 5 below depth 6, reduction 3 from depth 6) were not investigated.
+
+---
+
 ### 2026-10-17 (1) — Soft-budget rule retained; IncrementPercent option with default 75
 
 **Context:** The soft-budget revision (2026-10-15 (2)) had not been judged by play. With the real-clock match mode (2026-10-15 (3)) available, both it and the increment policy of `allocate_time_ms()` (soft budget = remaining/divisor plus the whole increment) could be measured. A clock simulation indicated that spending the whole increment each move lets the clock settle near three to five increments.
