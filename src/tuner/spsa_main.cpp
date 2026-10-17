@@ -8,7 +8,12 @@
 // match_main.cpp):
 //   nightwing_spsa [iterations] [games_per_iteration] [search_depth] [seed]
 //                  [c] [r0] [validation_games] [start_scale] [target]
-//                  [engine_path] [nodes]
+//                  [engine_path] [nodes] [time_limit_seconds]
+// time_limit_seconds (default 0 = unlimited) bounds the SPSA iterations: the
+// run stops before an iteration that is predicted to overrun it (mean of the
+// completed iterations), prints the theta reached so far plus a "stopped
+// early" line on stderr, and skips the final validation. Used by the CI job
+// so a long run ends with a partial result instead of a timeout kill.
 // start_scale multiplies every (non-anchored) default weight to form the
 // starting vector (default 1 = the compiled-in defaults; a value far from 1
 // is a deliberately wrong start, to check that SPSA recovers toward the
@@ -70,7 +75,7 @@ void print_progress(const nightwing::tuner::SpsaResult& result);
 /// Runs SPSA over the search constants of a tuning binary (target 3).
 int run_search_target(const std::string& engine, int iterations, int games, int nodes,
                       std::uint64_t seed, double c_scale, double r0, int validation_games,
-                      double start_scale) {
+                      double start_scale, double time_limit_seconds) {
     using namespace nightwing::tuner;
     if (engine.empty()) {
         std::fprintf(stderr, "target 3 requires engine_path (a NIGHTWING_SEARCH_TUNING=ON binary)\n");
@@ -80,6 +85,7 @@ int run_search_target(const std::string& engine, int iterations, int games, int 
     cfg.spsa.iterations = iterations;
     cfg.spsa.seed = seed;
     cfg.spsa.r0 = r0;
+    cfg.spsa.time_limit_seconds = time_limit_seconds;
     cfg.match.num_games = games;
     cfg.match.nodes = nodes;
     cfg.engine_command = engine;
@@ -119,7 +125,7 @@ int run_search_target(const std::string& engine, int iterations, int games, int 
             std::printf("%s=%.1f\n", params[i].name.c_str(),
                         i < result.theta.size() ? result.theta[i] : params[i].start);
         }
-        if (validation_games > 0) {
+        if (validation_games > 0 && !result.stopped_early) {
             const UciMatchResult r = play_search_match(engine, defaults, result.theta, default_theta,
                                                        seed + 1000003ULL, vm);
             if (r.aborted) {
@@ -141,6 +147,11 @@ int run_search_target(const std::string& engine, int iterations, int games, int 
 void print_progress(const nightwing::tuner::SpsaResult& result) {
     for (std::size_t k = 0; k < result.plus_scores.size(); ++k) {
         std::fprintf(stderr, "iter %zu plus_score=%.3f\n", k + 1, result.plus_scores[k]);
+    }
+    if (result.stopped_early) {
+        std::fprintf(stderr, "stopped early: time limit reached after %d completed iterations; "
+                             "theta is the value after the last completed iteration\n",
+                     result.iterations_run);
     }
 }
 
@@ -176,6 +187,7 @@ int main(int argc, char** argv) {
     int nodes = tuner::kDefaultSearchMatchNodes;
     if (argc > 10) engine_path = argv[10];
     if (argc > 11) nodes = std::atoi(argv[11]);
+    if (argc > 12) spsa.time_limit_seconds = std::atof(argv[12]);
     spsa.seed = seed;
 
     if (target < 0 || target > 3) {
@@ -187,12 +199,13 @@ int main(int argc, char** argv) {
     }
     if (target == 3) {
         return run_search_target(engine_path, spsa.iterations, match.num_games, nodes, seed,
-                                 c >= 0.0 ? c : 1.0, spsa.r0, validation_games, start_scale);
+                                 c >= 0.0 ? c : 1.0, spsa.r0, validation_games, start_scale,
+                                 spsa.time_limit_seconds);
     }
 
     tuner::SpsaMobilityConfig mob;
     tuner::SpsaMaterialConfig mat;
-    mob.spsa = spsa;
+    mob.spsa = spsa; // carries time_limit_seconds to the eval targets too
     mob.match = match;
     mob.start_scale = start_scale;
     mat.spsa = spsa;
@@ -230,7 +243,7 @@ int main(int argc, char** argv) {
         for (const auto& ref : tuner::kMaterialParameters) {
             std::printf("%s=%.1f\n", ref.name, ref.get(tuned));
         }
-        if (validation_games > 0) {
+        if (validation_games > 0 && !result.stopped_early) {
             print_validation(tuner::play_material_match(tuned, eval::default_material_weights(),
                                                         seed + 1000003ULL, vm));
         }
@@ -249,7 +262,7 @@ int main(int argc, char** argv) {
     for (const auto& ref : tuner::kMobilityParameters) {
         std::printf("%s=%.1f\n", ref.name, ref.get(tuned));
     }
-    if (validation_games > 0) {
+    if (validation_games > 0 && !result.stopped_early) {
         print_validation(tuner::play_mobility_match(tuned, eval::default_mobility_weights(), seed + 1000003ULL, vm));
     }
     return 0;

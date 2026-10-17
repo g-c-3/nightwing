@@ -71,6 +71,14 @@ struct SpsaConfig {
     double alpha = 0.602;
     double gamma = 0.101;
     std::uint64_t seed = 1;
+    /// Wall-clock budget for the whole run, in seconds; 0 (the default) means
+    /// unlimited. Checked before each iteration after the first: the run
+    /// stops, keeping the theta reached so far, when the elapsed time plus
+    /// the mean duration of the completed iterations would exceed the budget.
+    /// The first iteration always runs. Added 2026-10-17 so a long tuning job
+    /// ends with a usable partial result instead of being killed by a CI
+    /// timeout (which prints nothing).
+    double time_limit_seconds = 0.0;
 };
 
 /// Plays theta+ against theta- and returns theta+'s score in [0, 1]
@@ -85,6 +93,10 @@ struct SpsaResult {
     std::vector<double> theta;          ///< Final parameter vector, same order as the input.
     int iterations_run = 0;
     std::vector<double> plus_scores;    ///< theta+'s score per iteration (progress trace).
+    /// True when the run ended before `config.iterations` because of
+    /// `config.time_limit_seconds`; `theta` is then the vector after the last
+    /// completed iteration and `iterations_run` is the number completed.
+    bool stopped_early = false;
 };
 
 /// Runs SPSA from each parameter's `start`, calling `match` once per

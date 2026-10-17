@@ -6,6 +6,7 @@
 #include "tuner/spsa.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <random>
 
@@ -30,7 +31,18 @@ SpsaResult run_spsa(const std::vector<SpsaParam>& params, const SpsaConfig& conf
     std::vector<double> minus(n);
     std::vector<double> delta(n);
 
+    const auto run_start = std::chrono::steady_clock::now();
+
     for (int k = 0; k < config.iterations; ++k) {
+        if (k > 0 && config.time_limit_seconds > 0.0) {
+            const double elapsed =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - run_start).count();
+            const double mean_iteration = elapsed / static_cast<double>(k);
+            if (elapsed + mean_iteration > config.time_limit_seconds) {
+                result.stopped_early = true;
+                break;
+            }
+        }
         const double ck_scale = 1.0 / std::pow(static_cast<double>(k) + 1.0, config.gamma);
         const double rk = config.r0 / std::pow(a_const + static_cast<double>(k) + 1.0, config.alpha);
 
