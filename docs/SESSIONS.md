@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 236 — 2026-10-19 — Wrong-bishop KBPK: partial fix
+
+**Built:** `is_wrong_bishop_fortress()` (`src/eval/minor_piece_endgame.h/.cpp`): KBPK, all attacking pawns on one rook file, bishop of the wrong colour for the promotion corner, defending king no farther from the corner than the attacking king, and either the defending king on or beside the corner or the existing rule-of-the-square test. `evaluate()` (`src/eval/eval.cpp`) divides the whole score by `kWrongBishopFortressDivisor` (8) when it holds, and the lazy-evaluation early return is skipped for such positions. Tests: three cases in `tests/minor_piece_endgame_tests.cpp` (recognition for both rook files and both colours; right bishop, far defending king and nearer attacking king rejected; static scores near zero for the wrong bishop and above 3.00 for the right bishop).
+
+**Measurements:** 817 of 817 `ctest` (Release, sandbox). Depth-16 search of `7k/8/7K/7P/8/8/8/5B2 w`: about +4.9 (was +6.0 at depth 14); a-file mirror about +4.4 (was +7.0); the right-bishop control still mate in 5.
+
+**Bugs fixed:** the lazy-evaluation early return bypassed any whole-score adjustment (found when the first version of the scaling changed nothing in search).
+
+**Decisions made:** none recorded; the divisor of 8 and the corner-adjacent rule are provisional until the item is closed.
+
+**Open:** ROADMAP.md "External review fix: wrong-bishop KBPK" remains open (search score still about +4.4 to +4.9); the optional review items; the environment- or hardware-bound items and the shelved SPSA step (3).
+
+**Next session start point:** find which leaf positions in the principal variation of `7k/8/7K/7P/8/8/8/5B2 w` still score as a win (print `evaluate()` along the PV; a probe from `6k1/8/6K1/7P/8/8/4B3/8 b` leaves the corner area), correct the predicate, add a regression test on the search score at fixed depth, then queue an SPRT.
+
+---
+
 ### Session 235 — 2026-10-19 — External review fixes, batch 1, implemented
 
 **Built:** ROADMAP.md "External review fixes, batch 1", items (a) to (e). (a) `parse_fen` legality validation (`src/board/fen.cpp`, `fen.h`): exactly one king per side, no pawn on rank 1 or 8, kings not adjacent, the side not to move not in check, every castling right backed by its king and rook, and an en passant square consistent with the side to move. (b) `go movetime 0` treated as unbounded. (c) `info string invalid FEN: <reason>` for an invalid `position fen`. (d) an explicit `quit` stops and joins a bounded search. (e) stale `go` comments corrected. Tests: 11 new cases in `tests/fen_tests.cpp`, 6 in `tests/uci_tests.cpp`.
