@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <sstream>
 
 #include "board/board.h"
@@ -870,6 +871,102 @@ UciMatchResult play_uci_match(const UciEngineSpec& spec_a, const UciEngineSpec& 
     UciMatchResult result = session.result();
     session.stop();
     return result;
+}
+
+const char* sprt_status_text(SprtStatus status) noexcept {
+    switch (status) {
+        case SprtStatus::AcceptH0:
+            return "AcceptH0 (no improvement -- reject the change)";
+        case SprtStatus::AcceptH1:
+            return "AcceptH1 (real improvement -- accept the change)";
+        case SprtStatus::Continue:
+        default:
+            return "Continue (inconclusive)";
+    }
+}
+
+UciMatchRunOutcome run_uci_match_loop(UciMatchSession& session, const UciMatchRunOptions& options) {
+    UciMatchRunOutcome outcome;
+    auto report = [&](const std::string& line) {
+        if (options.progress) {
+            options.progress(line);
+        }
+    };
+    for (int game = 0; game < options.max_games; ++game) {
+        if (options.stop_flag != nullptr && *options.stop_flag != 0) {
+            outcome.stopped_by_request = true;
+            break;
+        }
+        if (!session.play_game(game, options.base_seed + static_cast<std::uint64_t>(game))) {
+            // `timeout` signals the whole process group, so the engines can be
+            // killed together with the runner. An abort that coincides with
+            // a stop request is therefore the stop, not an engine failure;
+            // the interrupted game is not in the tally.
+            if (options.stop_flag != nullptr && *options.stop_flag != 0) {
+                outcome.stopped_by_request = true;
+            }
+            break;
+        }
+        const auto& t = session.result().tally;
+        report("game " + std::to_string(t.games_played) + " done: B wins=" +
+               std::to_string(t.wins_b) + " draws=" + std::to_string(t.draws) +
+               " A wins=" + std::to_string(t.wins_a));
+
+        // Check the SPRT after each completed colour pair.
+        if (options.use_sprt && t.games_played % 2 == 0) {
+            outcome.sprt_state = compute_sprt(t.wins_b, t.draws, t.wins_a, options.sprt);
+            char buffer[160];
+            std::snprintf(buffer, sizeof buffer, "  llr=%.3f bounds=[%.3f, %.3f] status=%s",
+                          outcome.sprt_state.llr, outcome.sprt_state.lower_bound,
+                          outcome.sprt_state.upper_bound,
+                          sprt_status_text(outcome.sprt_state.status));
+            report(buffer);
+            if (outcome.sprt_state.status != SprtStatus::Continue) {
+                break;
+            }
+        }
+    }
+    return outcome;
+}
+
+std::string format_uci_match_summary(const UciMatchConfig& config, const UciMatchResult& result,
+                                     const UciMatchRunOptions& options,
+                                     const UciMatchRunOutcome& outcome) {
+    const auto& t = result.tally;
+    std::string out;
+    char buffer[256];
+    std::snprintf(buffer, sizeof buffer, "games=%d candidate_wins=%d draws=%d baseline_wins=%d\n",
+                  t.games_played, t.wins_b, t.draws, t.wins_a);
+    out += buffer;
+    std::snprintf(buffer, sizeof buffer, "illegal_moves: baseline=%d candidate=%d\n",
+                  result.illegal_moves_a, result.illegal_moves_b);
+    out += buffer;
+    if (config.base_time_ms > 0) {
+        std::snprintf(buffer, sizeof buffer, "time_forfeits: baseline=%d candidate=%d\n",
+                      result.time_forfeits_a, result.time_forfeits_b);
+        out += buffer;
+    }
+    // MatchResult::elo_diff() is A minus B; the candidate's view is the negation.
+    std::snprintf(buffer, sizeof buffer,
+                  "candidate_elo_vs_baseline=%.1f (rough; see match.h on sample size)\n",
+                  -t.elo_diff());
+    out += buffer;
+    if (options.use_sprt) {
+        std::snprintf(buffer, sizeof buffer, "sprt: llr=%.3f status=%s\n", outcome.sprt_state.llr,
+                      sprt_status_text(outcome.sprt_state.status));
+        out += buffer;
+    }
+    if (outcome.stopped_by_request) {
+        std::snprintf(buffer, sizeof buffer,
+                      "STOPPED: termination requested after %d of %d games -- partial result, "
+                      "inconclusive\n",
+                      t.games_played, options.max_games);
+        out += buffer;
+    }
+    if (result.aborted && !outcome.stopped_by_request) {
+        out += "ABORTED: " + result.error + "\n";
+    }
+    return out;
 }
 
 std::string uci_go_command(const UciMatchConfig& config) {

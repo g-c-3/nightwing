@@ -46,13 +46,16 @@
 // specification only; no code was taken from cutechess-cli, fastchess,
 // OpenBench, or any other tool.
 
+#include <csignal>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "tuner/match.h"
+#include "tuner/sprt.h"
 
 namespace nightwing::tuner {
 
@@ -214,6 +217,66 @@ private:
                                             const UciEngineSpec& spec_b,
                                             std::uint64_t base_seed,
                                             const UciMatchConfig& config = {});
+
+/// Parameters of run_uci_match_loop(): how many games to request and how
+/// the run may end early.
+struct UciMatchRunOptions {
+    /// Maximum number of games to play.
+    int max_games = 100;
+
+    /// Game `i` is seeded `base_seed + i`.
+    std::uint64_t base_seed = 1;
+
+    /// When true, the SPRT (sprt.h) is evaluated for B-minus-A after every
+    /// completed colour pair and the loop ends once it accepts H0 or H1.
+    bool use_sprt = false;
+    SprtConfig sprt;
+
+    /// Optional stop request, polled before each game starts. A signal
+    /// handler may set it (the type is the one the C++ standard allows a
+    /// handler to write). When it is non-zero the loop plays no further
+    /// game, so the tally never contains a half-played game. A game that
+    /// is already running is allowed to finish.
+    const volatile std::sig_atomic_t* stop_flag = nullptr;
+
+    /// Optional sink for one-line progress messages (no trailing newline).
+    std::function<void(const std::string&)> progress;
+};
+
+/// What run_uci_match_loop() ended with.
+struct UciMatchRunOutcome {
+    /// Last SPRT state computed (default-constructed when `use_sprt` was
+    /// false or no colour pair finished).
+    SprtState sprt_state;
+
+    /// True when the loop skipped at least one requested game because
+    /// `stop_flag` was set, or a game was interrupted while it was set
+    /// (the process group, engines included, may be signalled together),
+    /// i.e. the result is a partial one and not an engine failure.
+    bool stopped_by_request = false;
+};
+
+/// Plays games on an already started `session` until `options.max_games`
+/// are done, the SPRT decides, the session aborts, or `options.stop_flag`
+/// is set. Cumulative counts stay in `session.result()`. Used by the
+/// `nightwing_uci_match` command line so that a workflow time limit
+/// (SIGTERM from `timeout`) ends the run with a normal summary instead of
+/// no data.
+UciMatchRunOutcome run_uci_match_loop(UciMatchSession& session, const UciMatchRunOptions& options);
+
+/// Formats the end-of-run summary printed by `nightwing_uci_match`: the
+/// tally, illegal moves, `time_forfeits` (clock mode only), the rough Elo,
+/// the SPRT line when `use_sprt`, a `STOPPED` line when
+/// `outcome.stopped_by_request`, and an `ABORTED` line when the session
+/// aborted for any other reason. Every line ends in a newline. Exposed for tests.
+[[nodiscard]] std::string format_uci_match_summary(const UciMatchConfig& config,
+                                                   const UciMatchResult& result,
+                                                   const UciMatchRunOptions& options,
+                                                   const UciMatchRunOutcome& outcome);
+
+/// Human-readable name of an SPRT status, as printed in progress and
+/// summary lines.
+[[nodiscard]] const char* sprt_status_text(SprtStatus status) noexcept;
 
 /// Builds the `go` command line a match sends for `config`: in clock mode
 /// (`base_time_ms` > 0) the opening `go wtime B btime B winc I binc I`

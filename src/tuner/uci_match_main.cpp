@@ -30,11 +30,19 @@
 //                        H1 for B-minus-A; checked after every 2 games
 //   --keep-own-book      do not send `OwnBook false` to the engines
 //
-// Exit status: 0 = finished, 2 = bad usage, 3 = an engine failed to
-// start or aborted the match.
+// Stop request: SIGTERM or SIGINT (for example `timeout` at a workflow's
+// wall-clock limit) sets a flag that is polled before each game. The game
+// in progress finishes, no further game starts, and the normal summary --
+// including `time_forfeits` in clock mode -- is printed with a `STOPPED`
+// line, so a cut-off run still carries its full tally.
+//
+// Exit status: 0 = finished (or stopped by SIGTERM/SIGINT after printing
+// the summary), 2 = bad usage, 3 = an engine failed to start or aborted
+// the match.
 //
 // From-scratch implementation.
 
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -49,11 +57,17 @@
 namespace {
 
 using nightwing::tuner::SprtConfig;
-using nightwing::tuner::SprtState;
-using nightwing::tuner::SprtStatus;
 using nightwing::tuner::UciEngineSpec;
 using nightwing::tuner::UciMatchConfig;
+using nightwing::tuner::UciMatchRunOptions;
 using nightwing::tuner::UciMatchSession;
+
+/// Set by the signal handler; polled by run_uci_match_loop() before each game.
+volatile std::sig_atomic_t g_stop_requested = 0;
+
+extern "C" void handle_stop_signal(int) {
+    g_stop_requested = 1;
+}
 
 void print_usage() {
     std::fprintf(stderr,
@@ -73,18 +87,6 @@ bool parse_option(const std::string& text, UciEngineSpec& spec) {
     }
     spec.options.emplace_back(text.substr(0, eq), text.substr(eq + 1));
     return true;
-}
-
-const char* status_name(SprtStatus status) {
-    switch (status) {
-        case SprtStatus::AcceptH0:
-            return "AcceptH0 (no improvement -- reject the change)";
-        case SprtStatus::AcceptH1:
-            return "AcceptH1 (real improvement -- accept the change)";
-        case SprtStatus::Continue:
-        default:
-            return "Continue (inconclusive)";
-    }
 }
 
 } // namespace
@@ -195,53 +197,33 @@ int main(int argc, char** argv) {
                  static_cast<unsigned long long>(base_seed),
                  use_sprt ? " (SPRT enabled)" : "");
 
+    // Installed before the engines start so a stop request during start-up is
+    // also honoured at the first game boundary.
+    std::signal(SIGTERM, handle_stop_signal);
+    std::signal(SIGINT, handle_stop_signal);
+
     UciMatchSession session(spec_a, spec_b, config);
     if (!session.start()) {
         std::fprintf(stderr, "failed to start engines: %s\n", session.result().error.c_str());
         return 3;
     }
 
-    SprtState state;
-    for (int game = 0; game < max_games; ++game) {
-        if (!session.play_game(game, base_seed + static_cast<std::uint64_t>(game))) {
-            break;
-        }
-        const auto& t = session.result().tally;
-        std::fprintf(stderr, "game %d done: B wins=%d draws=%d A wins=%d\n", t.games_played,
-                     t.wins_b, t.draws, t.wins_a);
+    UciMatchRunOptions options;
+    options.max_games = max_games;
+    options.base_seed = base_seed;
+    options.use_sprt = use_sprt;
+    options.sprt = sprt_config;
+    options.stop_flag = &g_stop_requested;
+    options.progress = [](const std::string& line) { std::fprintf(stderr, "%s\n", line.c_str()); };
 
-        // Check the SPRT after each completed colour pair.
-        if (use_sprt && t.games_played % 2 == 0) {
-            state = nightwing::tuner::compute_sprt(t.wins_b, t.draws, t.wins_a, sprt_config);
-            std::fprintf(stderr, "  llr=%.3f bounds=[%.3f, %.3f] status=%s\n", state.llr,
-                         state.lower_bound, state.upper_bound, status_name(state.status));
-            if (state.status != SprtStatus::Continue) {
-                break;
-            }
-        }
-    }
+    const nightwing::tuner::UciMatchRunOutcome outcome =
+        nightwing::tuner::run_uci_match_loop(session, options);
 
     const nightwing::tuner::UciMatchResult& result = session.result();
-    const auto& t = result.tally;
-    std::printf("games=%d candidate_wins=%d draws=%d baseline_wins=%d\n", t.games_played, t.wins_b,
-                t.draws, t.wins_a);
-    std::printf("illegal_moves: baseline=%d candidate=%d\n", result.illegal_moves_a,
-                result.illegal_moves_b);
-    if (config.base_time_ms > 0) {
-        std::printf("time_forfeits: baseline=%d candidate=%d\n", result.time_forfeits_a,
-                    result.time_forfeits_b);
-    }
-    // MatchResult::elo_diff() is A minus B; the candidate's view is the negation.
-    std::printf("candidate_elo_vs_baseline=%.1f (rough; see match.h on sample size)\n",
-                -t.elo_diff());
-    if (use_sprt) {
-        std::printf("sprt: llr=%.3f status=%s\n", state.llr, status_name(state.status));
-    }
-    if (result.aborted) {
-        std::printf("ABORTED: %s\n", result.error.c_str());
-        session.stop();
-        return 3;
-    }
+    const std::string summary =
+        nightwing::tuner::format_uci_match_summary(config, result, options, outcome);
+    std::fputs(summary.c_str(), stdout);
+    std::fflush(stdout);
     session.stop();
-    return 0;
+    return (result.aborted && !outcome.stopped_by_request) ? 3 : 0;
 }
