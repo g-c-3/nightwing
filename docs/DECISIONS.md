@@ -12,7 +12,7 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 **Rationale:** Every candidate targeted a term that is active in a small fraction of positions. The SPRT bounds in use (0/+5) can only confirm a gain of about 5 Elo, which such terms are unlikely to reach, so a sixth attempt would cost a session and about an hour of CI for a low chance of an acceptable result.
 
-**Follow-up opened:** `IncrementPercent` above the default 75 is to be tested through the clock-based SPRT (ROADMAP.md "Time-management: IncrementPercent above 75"), because the 50 run (DECISIONS.md 2026-10-18 (3)) was slightly negative.
+**Correction (same session):** a follow-up test of `IncrementPercent=100` against 75 was first proposed here and then withdrawn. The value 100 had already been measured against 75 (DECISIONS.md 2026-10-17 (1)): eight clock-based runs, 6988 games in total, +15.1 Elo for 75 (interval +7.9 to +22.4), all runs positive. 100 is the old behaviour, the whole increment added to the soft budget. With 50 tested on 2026-10-18 (3) as well, the values 50, 75 and 100 are all covered, and no further `IncrementPercent` run is planned.
 
 ---
 

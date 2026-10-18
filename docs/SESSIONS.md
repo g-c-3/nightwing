@@ -4,19 +4,19 @@ Newest entry at top.
 
 ---
 
-### Session 233 — 2026-10-18 — Restricted nonlinear interactions item closed; IncrementPercent 100 test prepared
+### Session 233 — 2026-10-18 — Restricted nonlinear interactions item closed; proposed IncrementPercent=100 test withdrawn as a repeat
 
 **Built:** nothing in `src/` or `tests/`. Documentation only.
 
-**Measurements:** none. The valid range of `IncrementPercent` was read from `src/uci/time_budget.h` (0 to 100), so 100 is accepted by the engine.
+**Measurements:** none. The valid range of `IncrementPercent` was read from `src/uci/time_budget.h` (0 to 100).
 
-**Bugs fixed:** none.
+**Bugs fixed:** none. A planning error was found and corrected: an `IncrementPercent=100` against 75 run had been proposed and added to ROADMAP.md, but DECISIONS.md 2026-10-17 (1) already recorded that comparison (eight runs, 6988 games, +15.1 Elo for 75, interval +7.9 to +22.4). The proposal was withdrawn and the ROADMAP.md item removed; the existing decision records were checked before proposing and should have been checked first.
 
-**Decisions made:** docs/DECISIONS.md 2026-10-18 (6): the restricted nonlinear interactions item is closed after five rejected candidates; a follow-up test of `IncrementPercent` above 75 is opened.
+**Decisions made:** docs/DECISIONS.md 2026-10-18 (6): the restricted nonlinear interactions item is closed after five rejected candidates; no further `IncrementPercent` run is planned (50, 75 and 100 are all measured).
 
-**Open:** `IncrementPercent=100` against 75 through the clock-based SPRT (ROADMAP.md "Time-management: IncrementPercent above 75"); real-GUI pondering interop, NUMA allocation and distributed search (environment or hardware bound); SPSA step (3) (shelved).
+**Open:** real-GUI pondering interop, NUMA allocation and distributed search (environment or hardware bound); SPSA step (3) (shelved). No sequential task is defined.
 
-**Next session start point:** dispatch `uci-match` with baseline and candidate both `main`, `ucimatch_options_b` = `IncrementPercent=100`, `ucimatch_clock` = `10000 100`, `ucimatch_sprt` = `0 15 0.05 0.05`, max games 4000, time limit 300, opening plies 8, max plies 300, seed 1; the job summary carries the partial tally and `time_forfeits` if the limit stops it. Record the result in docs/DECISIONS.md and tick the new ROADMAP.md item.
+**Next session start point:** no sequential task is defined; select the next item from the open list in ROADMAP.md (or name a new one) before any work starts, and read the relevant DECISIONS.md entries before proposing a test.
 
 ---
 
