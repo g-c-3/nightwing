@@ -9,6 +9,10 @@
 // misbehaving engine (NIGHTWING_FAKE_ENGINE_PATH, tests/fake_uci_engine.cpp)
 // are both launched as genuine child processes.
 
+#include <csignal>
+#include <string>
+#include <vector>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "board/attacks.h"
@@ -254,3 +258,111 @@ TEST_CASE("play_uci_match: a clock-mode engine that ignores stop aborts the matc
     CHECK(result.tally.games_played == 0);
 }
 
+
+TEST_CASE("format_uci_match_summary: reports forfeits and a STOPPED line for a cut-off run",
+          "[tuner][uci_match]") {
+    UciMatchConfig config;
+    config.base_time_ms = 10000;
+    UciMatchResult result;
+    result.tally.games_played = 10;
+    result.tally.wins_a = 3;
+    result.tally.wins_b = 5;
+    result.tally.draws = 2;
+    result.time_forfeits_a = 1;
+    result.time_forfeits_b = 2;
+    UciMatchRunOptions options;
+    options.max_games = 100;
+    options.use_sprt = true;
+    UciMatchRunOutcome outcome;
+    outcome.stopped_by_request = true;
+
+    const std::string text = format_uci_match_summary(config, result, options, outcome);
+
+    CHECK(text.find("games=10 candidate_wins=5 draws=2 baseline_wins=3\n") != std::string::npos);
+    CHECK(text.find("time_forfeits: baseline=1 candidate=2\n") != std::string::npos);
+    CHECK(text.find("sprt: llr=") != std::string::npos);
+    CHECK(text.find("STOPPED: termination requested after 10 of 100 games") != std::string::npos);
+    CHECK(text.find("ABORTED") == std::string::npos);
+    CHECK(text.back() == '\n');
+}
+
+TEST_CASE("format_uci_match_summary: no time_forfeits line outside clock mode, ABORTED when aborted",
+          "[tuner][uci_match]") {
+    UciMatchConfig config; // base_time_ms == 0
+    UciMatchResult result;
+    result.aborted = true;
+    result.error = "engine B closed its pipe";
+    UciMatchRunOptions options;
+    UciMatchRunOutcome outcome;
+
+    const std::string text = format_uci_match_summary(config, result, options, outcome);
+
+    CHECK(text.find("time_forfeits") == std::string::npos);
+    CHECK(text.find("sprt:") == std::string::npos);
+    CHECK(text.find("STOPPED") == std::string::npos);
+    CHECK(text.find("ABORTED: engine B closed its pipe\n") != std::string::npos);
+}
+
+TEST_CASE("run_uci_match_loop: a stop flag set before the first game plays nothing",
+          "[tuner][uci_match]") {
+    init_all();
+    UciMatchSession session(real_engine("A"), real_engine("B"), fast_config(4));
+    REQUIRE(session.start());
+
+    volatile std::sig_atomic_t stop = 1;
+    UciMatchRunOptions options;
+    options.max_games = 4;
+    options.stop_flag = &stop;
+    const UciMatchRunOutcome outcome = run_uci_match_loop(session, options);
+
+    CHECK(outcome.stopped_by_request);
+    CHECK(session.result().tally.games_played == 0);
+    CHECK_FALSE(session.result().aborted);
+    session.stop();
+}
+
+TEST_CASE("run_uci_match_loop: a stop request between games keeps the finished games only",
+          "[tuner][uci_match]") {
+    init_all();
+    UciMatchSession session(real_engine("A"), real_engine("B"), fast_config(4));
+    REQUIRE(session.start());
+
+    volatile std::sig_atomic_t stop = 0;
+    std::vector<std::string> lines;
+    UciMatchRunOptions options;
+    options.max_games = 4;
+    options.stop_flag = &stop;
+    options.progress = [&](const std::string& line) {
+        lines.push_back(line);
+        stop = 1; // stop requested right after the first game is reported
+    };
+    const UciMatchRunOutcome outcome = run_uci_match_loop(session, options);
+
+    CHECK(outcome.stopped_by_request);
+    CHECK(session.result().tally.games_played == 1);
+    CHECK_FALSE(session.result().aborted);
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].rfind("game 1 done:", 0) == 0);
+
+    const std::string text =
+        format_uci_match_summary(fast_config(4), session.result(), options, outcome);
+    CHECK(text.find("STOPPED: termination requested after 1 of 4 games") != std::string::npos);
+    session.stop();
+}
+
+TEST_CASE("run_uci_match_loop: without a stop request all games are played and not flagged stopped",
+          "[tuner][uci_match]") {
+    init_all();
+    UciMatchSession session(real_engine("A"), real_engine("B"), fast_config(2));
+    REQUIRE(session.start());
+
+    volatile std::sig_atomic_t stop = 0;
+    UciMatchRunOptions options;
+    options.max_games = 2;
+    options.stop_flag = &stop;
+    const UciMatchRunOutcome outcome = run_uci_match_loop(session, options);
+
+    CHECK_FALSE(outcome.stopped_by_request);
+    CHECK(session.result().tally.games_played == 2);
+    session.stop();
+}
