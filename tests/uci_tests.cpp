@@ -8,6 +8,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <regex>
 #include <sstream>
@@ -39,9 +40,11 @@ void init_all() {
     init_zobrist_keys();
 }
 
-/// Runs `commands` (one UCI command per element) through uci::run() and
-/// returns everything written to `out` as a single string.
-std::string run_uci(const std::vector<std::string>& commands) {
+/// Runs `commands` EXACTLY as given (one UCI command per element) through
+/// uci::run() and returns everything written to `out` as a single string.
+/// A `quit` is processed as a real `quit`, which stops a search still in
+/// flight (external review batch 1 (d), 2026-10-18).
+std::string run_uci_raw(const std::vector<std::string>& commands) {
     std::ostringstream in_builder;
     for (const std::string& cmd : commands) {
         in_builder << cmd << '\n';
@@ -50,6 +53,20 @@ std::string run_uci(const std::vector<std::string>& commands) {
     std::ostringstream out;
     nightwing::uci::run(in, out);
     return out.str();
+}
+
+/// Like run_uci_raw(), but a TRAILING `quit` is dropped, so the script ends
+/// by end of input instead. Nearly every test here uses a final `quit` only
+/// as a terminator and expects the `go` before it to run to completion and
+/// print its `info`/`bestmove` lines; since an explicit `quit` now stops a
+/// search at once while end of input still lets it finish, the terminator
+/// is dropped to keep those tests deterministic. A `quit` anywhere but last
+/// is kept, and the tests of `quit` itself use run_uci_raw().
+std::string run_uci(std::vector<std::string> commands) {
+    if (!commands.empty() && commands.back() == "quit") {
+        commands.pop_back();
+    }
+    return run_uci_raw(commands);
 }
 
 /// Returns true if `haystack` contains `needle` as a substring.
@@ -1366,4 +1383,82 @@ TEST_CASE("uci: OwnBook survives 'ucinewgame' (session-lifetime option, like eve
     const std::string out = run_uci({"setoption name OwnBook value false", "ucinewgame",
                                      "position startpos", "go depth 2", "quit"});
     REQUIRE(contains(out, "info depth"));
+}
+
+// ---------------------------------------------------------------------------
+// External review batch 1 (2026-10-18; docs/DECISIONS.md 2026-10-18 (7)):
+// FEN legality reporting, `go movetime 0`, and `quit` during a bounded
+// search. Kiwipete is used wherever a search must really run, because the
+// start position is answered from the opening book without searching.
+// ---------------------------------------------------------------------------
+
+namespace {
+constexpr const char* kKiwipeteFen = "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1";
+} // namespace
+
+TEST_CASE("uci: an illegal 'position fen' reports 'info string invalid FEN:' and does not crash",
+          "[uci][fen]") {
+    init_all();
+    const char* bad_fens[] = {
+        "8/8/8/8/8/8/8/8 w - - 0 1",                // no kings
+        "4k3/8/8/8/8/8/8/8 w - - 0 1",              // white king missing
+        "8/8/8/8/8/8/8/4K3 w - - 0 1",              // black king missing
+        "8/8/8/3kK3/8/8/8/8 w - - 0 1",             // adjacent kings
+        "4k3/8/8/8/8/8/8/4K3 w K - 0 1",            // castling right without a rook
+        "4k3/4R3/8/8/8/8/8/4K3 w - - 0 1",          // side not to move is in check
+    };
+    for (const char* fen : bad_fens) {
+        const std::string out = run_uci({std::string("position fen ") + fen, "go depth 1"});
+        INFO(fen);
+        REQUIRE(contains(out, "info string invalid FEN:"));
+    }
+}
+
+TEST_CASE("uci: an illegal 'position fen' leaves the previous position in place", "[uci][fen]") {
+    init_all();
+    // Bare kings: the only legal moves are king moves. If the illegal FEN
+    // had replaced the position the search would have nothing to play.
+    const std::string out = run_uci({"position fen 4k3/8/8/8/8/8/8/4K3 w - - 0 1",
+                                     "position fen 8/8/8/8/8/8/8/8 w - - 0 1",
+                                     "go depth 1"});
+    REQUIRE(contains(out, "info string invalid FEN:"));
+    REQUIRE(contains(out, "bestmove e1"));
+}
+
+TEST_CASE("uci: a valid 'position fen' prints no invalid-FEN message", "[uci][fen]") {
+    init_all();
+    const std::string out = run_uci({std::string("position fen ") + kKiwipeteFen, "isready"});
+    REQUIRE_FALSE(contains(out, "invalid FEN"));
+    REQUIRE(contains(out, "readyok"));
+}
+
+TEST_CASE("uci: 'go movetime 0' followed by 'quit' exits instead of hanging", "[uci][quit]") {
+    init_all();
+    // `movetime 0` is an unbounded search. `quit` must abandon it (no
+    // bestmove) -- before the fix the search was treated as bounded and
+    // `quit` joined a search nothing would ever stop.
+    const std::string out =
+        run_uci_raw({std::string("position fen ") + kKiwipeteFen, "go movetime 0", "quit"});
+    REQUIRE_FALSE(contains(out, "bestmove"));
+}
+
+TEST_CASE("uci: 'go movetime 0' followed by 'stop' returns a bestmove", "[uci][quit]") {
+    init_all();
+    const std::string out =
+        run_uci_raw({std::string("position fen ") + kKiwipeteFen, "go movetime 0", "stop", "quit"});
+    REQUIRE(contains(out, "bestmove "));
+}
+
+TEST_CASE("uci: an explicit 'quit' during a bounded search stops it promptly", "[uci][quit]") {
+    init_all();
+    const auto start = std::chrono::steady_clock::now();
+    const std::string out =
+        run_uci_raw({std::string("position fen ") + kKiwipeteFen, "go movetime 8000", "quit"});
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - start)
+                                .count();
+    // The search would otherwise run the full 8000 ms.
+    REQUIRE(elapsed_ms < 4000);
+    // A stopped search still reports its move, as for any `stop`.
+    REQUIRE(contains(out, "bestmove "));
 }

@@ -57,7 +57,15 @@ void init_all() {
 /// than shared across files (matching this test suite's existing
 /// convention throughout of small, self-contained per-file anonymous-
 /// namespace helpers rather than a shared test-utility header).
-std::string run_uci(const std::vector<std::string>& commands) {
+std::string run_uci(std::vector<std::string> commands) {
+    // A trailing `quit` is dropped so the script ends by end of input: an
+    // explicit `quit` stops a bounded search in flight at once (external
+    // review batch 1 (d), 2026-10-18), while end of input lets it finish
+    // and print its `bestmove`, which the tests below that end with
+    // `go depth N` + `quit` rely on. A `quit` that is not last is kept.
+    if (!commands.empty() && commands.back() == "quit") {
+        commands.pop_back();
+    }
     std::ostringstream in_builder;
     for (const std::string& cmd : commands) {
         in_builder << cmd << '\n';

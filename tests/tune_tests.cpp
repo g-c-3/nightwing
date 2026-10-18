@@ -129,6 +129,7 @@ TEST_CASE("compute_loss: a position whose evaluate() strongly disagrees with its
     // White has an extra queen -- evaluate() strongly favors White --
     // but labeled as a Black win (0.0), a strong disagreement.
     Position pos;
+    pos.castling_rights = 0; // hand-built, no rooks: parse_fen() rejects castling rights without them
     pos.side_to_move = Color::White;
     pos.place_piece(make_square(4, 0), Piece::WhiteKing);
     pos.place_piece(make_square(4, 7), Piece::BlackKing);
@@ -233,6 +234,7 @@ TEST_CASE("tune: a training set that consistently disagrees with the starting we
     // not knight_mg (whose gradient is close enough to zero at this
     // exact phase that it may not move at all, correctly).
     Position pos;
+    pos.castling_rights = 0; // hand-built, no rooks: parse_fen() rejects castling rights without them
     pos.side_to_move = Color::White;
     pos.place_piece(make_square(4, 0), Piece::WhiteKing);
     pos.place_piece(make_square(4, 7), Piece::BlackKing);
@@ -278,6 +280,7 @@ TEST_CASE("tune: pawn_mg/pawn_eg never move, even under training data that stron
     // above, which can't distinguish "correctly anchored" from
     // "coincidentally zero gradient").
     Position pos;
+    pos.castling_rights = 0; // hand-built, no rooks: parse_fen() rejects castling rights without them
     pos.side_to_move = Color::White;
     pos.place_piece(make_square(4, 0), Piece::WhiteKing);
     pos.place_piece(make_square(4, 7), Piece::BlackKing);
@@ -987,6 +990,7 @@ TEST_CASE("tune: a non-zero l2_lambda adds exactly the closed-form 2*lambda*valu
     // Same knight-imbalance fixture as the pre-existing "reduces loss"
     // test above.
     Position pos;
+    pos.castling_rights = 0; // hand-built, no rooks: parse_fen() rejects castling rights without them
     pos.side_to_move = Color::White;
     pos.place_piece(make_square(4, 0), Piece::WhiteKing);
     pos.place_piece(make_square(4, 7), Piece::BlackKing);
@@ -1072,6 +1076,7 @@ TEST_CASE("tune: an l2_lambda past l2_update_is_stable()'s own threshold really 
           "[tuner][tune]") {
     init_all();
     Position pos;
+    pos.castling_rights = 0; // hand-built, no rooks: parse_fen() rejects castling rights without them
     pos.side_to_move = Color::White;
     pos.place_piece(make_square(4, 0), Piece::WhiteKing);
     pos.place_piece(make_square(4, 7), Piece::BlackKing);
@@ -1125,6 +1130,7 @@ TEST_CASE("compute_psqt_gradient: agrees with a hand-rolled finite-difference pr
     // A lone White knight on b1, otherwise bare kings -- same fixture
     // shape as this file's existing Tier 0 Step 4 test above.
     Position pos;
+    pos.castling_rights = 0; // hand-built, no rooks: parse_fen() rejects castling rights without them
     pos.side_to_move = Color::White;
     pos.place_piece(make_square(4, 0), Piece::WhiteKing);
     pos.place_piece(make_square(4, 7), Piece::BlackKing);
@@ -1185,6 +1191,7 @@ TEST_CASE("tune_psqt: a training signal that consistently disagrees with a delib
     // current table says" signal, the PSQT-side counterpart to this
     // file's existing material-side "reduces loss" test above.
     Position pos;
+    pos.castling_rights = 0; // hand-built, no rooks: parse_fen() rejects castling rights without them
     pos.side_to_move = Color::White;
     pos.place_piece(make_square(4, 0), Piece::WhiteKing);
     pos.place_piece(make_square(4, 7), Piece::BlackKing);
@@ -1254,6 +1261,7 @@ TEST_CASE("tune_psqt: a diluted, mixed (partly-contradicting) training signal st
     // movement rather than silently vanishing into round_to_int()'s own
     // granularity.
     Position pos;
+    pos.castling_rights = 0; // hand-built, no rooks: parse_fen() rejects castling rights without them
     pos.side_to_move = Color::White;
     pos.place_piece(make_square(4, 0), Piece::WhiteKing);
     pos.place_piece(make_square(4, 7), Piece::BlackKing);

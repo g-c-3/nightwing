@@ -409,8 +409,10 @@ TEST_CASE("order_moves: capture history re-ranks two captures that MVV-LVA alone
 
 TEST_CASE("order_moves: the TT move is always ordered first when present", "[ordering]") {
     init_all();
-    // White queen e4, rook c4, knight b4; Black rook c6, pawn d5, king e8.
-    Position pos = parse_fen("4k3/8/2r5/3p4/1NR1Q3/8/8/4K3 w - - 0 1");
+    // White queen e4, rook c4, knight b4; Black rook c6, pawn d5, king g8
+    // (not e8: parse_fen() now rejects a position where the side not to
+    // move is in check, and a king on e8 would face the queen on e4).
+    Position pos = parse_fen("6k1/8/2r5/3p4/1NR1Q3/8/8/4K3 w - - 0 1");
 
     const Move qxd5(make_square(4, 3), make_square(3, 4), MoveFlag::Capture); // small MVV-LVA score
     const Move rxc6(make_square(2, 3), make_square(2, 5), MoveFlag::Capture); // large MVV-LVA score
@@ -435,7 +437,7 @@ TEST_CASE("order_moves: the TT move is always ordered first when present", "[ord
 TEST_CASE("order_moves: MVV -- capturing the more valuable victim ranks first regardless of attacker",
           "[ordering]") {
     init_all();
-    Position pos = parse_fen("4k3/8/2r5/3p4/1NR1Q3/8/8/4K3 w - - 0 1");
+    Position pos = parse_fen("6k1/8/2r5/3p4/1NR1Q3/8/8/4K3 w - - 0 1");
     const Move qxd5(make_square(4, 3), make_square(3, 4), MoveFlag::Capture); // Q captures pawn
     const Move rxc6(make_square(2, 3), make_square(2, 5), MoveFlag::Capture); // R captures rook
 
@@ -453,7 +455,7 @@ TEST_CASE("order_moves: MVV -- capturing the more valuable victim ranks first re
 
 TEST_CASE("order_moves: LVA -- among equal victims, the cheaper attacker ranks first", "[ordering]") {
     init_all();
-    Position pos = parse_fen("4k3/8/2r5/3p4/1NR1Q3/8/8/4K3 w - - 0 1");
+    Position pos = parse_fen("6k1/8/2r5/3p4/1NR1Q3/8/8/4K3 w - - 0 1");
     const Move qxd5(make_square(4, 3), make_square(3, 4), MoveFlag::Capture); // Queen captures the pawn
     const Move nxd5(make_square(1, 3), make_square(3, 4), MoveFlag::Capture); // Knight captures the same pawn
 
@@ -473,7 +475,7 @@ TEST_CASE("order_moves: captures rank above non-capture promotions", "[ordering]
     init_all();
     // White pawn on a7 (about to promote), queen on e4 able to capture
     // the black pawn on d5 -- both moves available in the same position.
-    Position pos = parse_fen("4k3/P7/8/3p4/4Q3/8/8/4K3 w - - 0 1");
+    Position pos = parse_fen("6k1/P7/8/3p4/4Q3/8/8/4K3 w - - 0 1");
     const Move promo(make_square(0, 6), make_square(0, 7), MoveFlag::PromoQueen); // a7a8=Q
     const Move qxd5(make_square(4, 3), make_square(3, 4), MoveFlag::Capture);
 
@@ -799,7 +801,7 @@ TEST_CASE("order_moves: a nonzero tie_break_variant never displaces the TT move 
     // it, regardless of which variant is used -- checked here with
     // several distinct variants, not just one, since the jitter is
     // itself a function of `tie_break_variant`.
-    Position pos = parse_fen("4k3/8/2r5/3p4/1NR1Q3/8/8/4K3 w - - 0 1");
+    Position pos = parse_fen("6k1/8/2r5/3p4/1NR1Q3/8/8/4K3 w - - 0 1");
     const Move qxd5(make_square(4, 3), make_square(3, 4), MoveFlag::Capture);
     const Move rxc6(make_square(2, 3), make_square(2, 5), MoveFlag::Capture);
 
