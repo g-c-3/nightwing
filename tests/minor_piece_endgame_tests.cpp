@@ -13,8 +13,13 @@
 // a8 and h1 are both light.
 
 #include <catch2/catch_test_macros.hpp>
+#include <cstdlib>
 
+#include "board/attacks.h"
 #include "board/board.h"
+#include "board/fen.h"
+#include "board/masks.h"
+#include "eval/eval.h"
 #include "eval/minor_piece_endgame.h"
 
 using namespace nightwing::board;
@@ -169,4 +174,47 @@ TEST_CASE("minor_piece_endgame_value: KnightVsBishop -- unblocked pawns favor Wh
     pos.place_piece(make_square(4, 3), Piece::WhitePawn); // e4
     pos.place_piece(make_square(3, 4), Piece::BlackPawn); // d5
     REQUIRE(minor_piece_endgame_value(pos) == kBishopOpenPositionBonusPerOpenPawn * 2);
+}
+
+// ---------------------------------------------------------------------------
+// Wrong-bishop fortress scaling (Session 235, external review fix): the
+// whole evaluation is divided by kWrongBishopFortressDivisor, so a dead
+// draw no longer scores like a won game.
+// ---------------------------------------------------------------------------
+
+namespace {
+bool fortress(const char* fen) {
+    init_masks();
+    init_magic_bitboards();
+    return is_wrong_bishop_fortress(parse_fen(fen));
+}
+int static_eval(const char* fen) {
+    init_masks();
+    init_magic_bitboards();
+    return nightwing::eval::evaluate(parse_fen(fen));
+}
+} // namespace
+
+TEST_CASE("is_wrong_bishop_fortress: recognizes both rook files and both colours",
+          "[eval][minor_piece_endgame][fortress]") {
+    REQUIRE(fortress("7k/8/7K/7P/8/8/8/5B2 w - - 0 1"));  // h-file, White, light bishop vs dark h8
+    REQUIRE(fortress("k7/8/K7/P7/8/8/8/2B5 w - - 0 1"));  // a-file, White, dark bishop vs light a8
+    REQUIRE(fortress("5b2/8/8/8/7p/7k/8/7K b - - 0 1"));  // h-file, Black, wrong bishop for h1
+}
+
+TEST_CASE("is_wrong_bishop_fortress: not for the right bishop, a far defending king, or a closer "
+          "attacking king", "[eval][minor_piece_endgame][fortress]") {
+    REQUIRE_FALSE(fortress("7k/8/7K/7P/8/8/8/6B1 w - - 0 1")); // dark bishop, right for h8
+    REQUIRE_FALSE(fortress("4k3/8/7K/7P/8/8/8/5B2 w - - 0 1")); // defending king too far
+    REQUIRE_FALSE(fortress("8/6K1/8/7P/8/8/8/k4B2 w - - 0 1")); // attacking king nearer the corner
+    REQUIRE_FALSE(fortress("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"));
+}
+
+TEST_CASE("evaluate: a wrong-bishop fortress scores near a draw, the right bishop a clear win",
+          "[eval][minor_piece_endgame][fortress]") {
+    REQUIRE(std::abs(static_eval("7k/8/7K/7P/8/8/8/5B2 w - - 0 1")) < 100);
+    REQUIRE(std::abs(static_eval("k7/8/K7/P7/8/8/8/2B5 w - - 0 1")) < 100);
+    REQUIRE(std::abs(static_eval("5b2/8/8/8/7p/7k/8/7K b - - 0 1")) < 100);
+    // Control: the right bishop must stay a clear win.
+    REQUIRE(std::abs(static_eval("7k/8/7K/7P/8/8/8/6B1 w - - 0 1")) > 300);
 }
