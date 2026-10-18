@@ -4,6 +4,34 @@ Newest entry at top.
 
 ---
 
+### Session 228 — 2026-10-18 — SPSA wall-clock limit; two more search-constant SPSA runs; search-constant tuning shelved again
+
+**Built:**
+- `src/tuner/spsa.h`, `src/tuner/spsa.cpp`: `SpsaConfig::time_limit_seconds` (0 = unlimited) and `SpsaResult::stopped_early`. Before each iteration after the first, the run stops when elapsed time plus the mean duration of the completed iterations would exceed the limit, keeping the theta after the last completed iteration.
+- `src/tuner/spsa_main.cpp`: optional twelfth argument `time_limit_seconds`. On an early stop the progress output ends with a "stopped early" line, the theta reached so far is printed, the exit code is 0 and final validation is skipped.
+- `.github/workflows/ci.yml`: the `spsa-tune` job timeout lowered from 355 to 330 minutes; the tuner is given 18000 seconds (300 minutes), leaving 30 minutes for checkout, build and summary; the job summary shows the "stopped early" line; the artifact upload step runs under `if: always()`.
+- `tests/spsa_tests.cpp`: two tests (an early stop that keeps a partial result and stays near the limit; no early stop with no limit or a generous limit). The search-tuning build passed 799 of 799 tests in the sandbox. An 8-second limit on a tiny target-3 run stopped after 3 of 50 iterations, exited 0 and printed all seven values. On a hosted runner a 3-iteration run succeeded in 31 seconds, and the 60-iteration run below stopped by the limit with a successful job and uploaded artifacts.
+
+**Measurements:**
+- SPSA run 2 (`40 16 6 11 1 8 0 1 3 100000`, seed 11, `c` multiplier 1): 40 iterations, 640 games, mean plus-score 0.513, about 298 minutes for the whole job (about 27 s per game). Final theta: `NullMoveReduction` 2.4, `NullMoveBigReduction` 3.2, `ProbCutMargin` 125.8, `IIRMinDepth` 3.3, `SingularMarginPerPly` 3.6, `ImprovingFutilityDelta` 56.2, `AspirationInitialDelta` 22.5.
+- SPSA run 3 (`60 16 6 11 1 8 0 1 3 100000`, same seed as run 2): stopped by the 300-minute limit after 39 completed iterations (624 games, mean plus-score 0.499, about 299 minutes for the whole job, about 29 s per game). Final theta: `NullMoveReduction` 2.7, `NullMoveBigReduction` 3.3, `ProbCutMargin` 204.9, `IIRMinDepth` 2.2, `SingularMarginPerPly` 1.8, `ImprovingFutilityDelta` 61.1, `AspirationInitialDelta` 24.7. Runs 2 and 3 shared the seed (the perturbation directions of early iterations coincide) but the game results and final values differ.
+- Comparison with Session 227 run 1 (320 games, `c` 1.5): its large moves (`NullMoveReduction` 5.0, `ImprovingFutilityDelta` 4.0, `AspirationInitialDelta` 40.8) were not reproduced; runs 2 and 3 ended near the defaults. `ProbCutMargin` ended at 105.8, 125.8 and 204.9 (default 200), so even the one constant that moved down in the first two runs did not hold in the third.
+- Throughput at 100000 nodes per move on the hosted runner: about 27 to 29 s per game, so a 300-minute tuner budget is about 620 to 640 games; the 17.5 s per game seen in run 1 was not representative.
+
+**Bugs fixed:** none in the engine. A 3-iteration smoke run (seed 1, 2000 nodes) was at first read as a replication; the summary header (iterations, games per iteration, nodes) identifies such runs and must be read before interpreting values.
+
+**Verification:** the SPSA job ran without errors on a hosted runner for the 3-iteration run and the 60-iteration run. The full CI matrix result for the tuner commit (Windows, macOS, ThreadSanitizer) was not seen in this session.
+
+**Decisions made:** docs/DECISIONS.md 2026-10-18 (1).
+
+**Open:**
+- No search constant has validated evidence of a gain; defaults and `bench` (36154 nodes) are unchanged.
+- Session 227's next-step instruction (a 60-iteration replication) is superseded by this entry; that replication ran as run 3 and stopped at 39 iterations.
+
+**Next session start point:** implement the ROADMAP.md "Time-management follow-ups" item: make the UCI match runner print its summary (including `time_forfeits`) when the workflow time limit stops a run, then add a test, then run `IncrementPercent=50` through the clock-based SPRT.
+
+---
+
 ### Session 227 — 2026-10-17 — Search-constant SPSA run and two SPRT validations; tuned vector not adopted
 
 **Built:**

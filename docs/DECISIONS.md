@@ -4,6 +4,25 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-18 (1) — SPSA wall-clock limit adopted; search-constant tuning shelved again
+
+**Context:** Session 227 left a replication SPSA run as the next step. A 60-iteration run configured for about 4.7 hours was killed by the 355-minute job timeout with no output, because the tuner printed its results only after the last iteration. Throughput at 100000 nodes per move proved to be 27 to 29 s per game, not the 17.5 s seen in the first run.
+
+**Decision:**
+- The SPSA tuner gained a wall-clock limit. The run stops before an iteration whose predicted end (elapsed plus the mean completed iteration) would exceed the limit, prints the theta reached so far and exits 0. CI passes 18000 seconds with a 330-minute job timeout, and uploads artifacts under `if: always()`.
+- Search-constant SPSA tuning (target 3) was shelved again. No default constant was changed, and no further SPRT of an SPSA-derived vector was run.
+
+**Rationale:** The limit turns a timeout kill into a usable partial result at no cost to runs that finish. For tuning, two replication runs (40 iterations and 39 completed iterations, about 640 games each, mean plus-scores 0.513 and 0.499) ended near the defaults, did not reproduce the first run's large moves, and disagreed on `ProbCutMargin` (125.8 and 204.9 against a default of 200). The earlier recorded criterion (validate a constant by SPRT only if it moves the same way across runs, otherwise shelve) is not met by any constant at a meaningful magnitude.
+
+**Alternatives considered:**
+- SPRT of `ProbCutMargin` near 116 (the only constant that moved down in two of three runs): rejected, because about 550 timed games per 300 minutes can resolve only differences of roughly +30 Elo or more, and a single constant is not expected to reach that.
+- Larger `c` or more iterations to raise the signal: rejected for this budget; the first run's larger `c` produced moves that did not replicate.
+- Keep the 355-minute timeout without a tuner limit: rejected, because a kill yields no output.
+
+**Consequences:** A tuning run now ends with a partial result and an explicit "stopped early" line. A future search-constant attempt would need a far larger game budget than one 300-minute job provides (about 620 games at 100000 nodes); none is scheduled. The recorded runs are documented in SESSIONS.md (Sessions 227 and 228).
+
+---
+
 ### 2026-10-17 (2) — SPSA search-constant vector not adopted; AspirationInitialDelta minimum widened
 
 **Context:** The 2026-10-10 re-validation shelved search-constant tuning after a 20000-node SPSA result failed to carry to timed play. Its lessons called for a realistic tuning budget and for widening the ranges at which constants had been clamped. A new run was made at 100000 nodes per move, and its output was validated by SPRT at a timed control before any default was considered for change.
