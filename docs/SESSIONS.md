@@ -4,6 +4,40 @@ Newest entry at top.
 
 ---
 
+### Session 233 — 2026-10-18 — Restricted nonlinear interactions item closed; IncrementPercent 100 test prepared
+
+**Built:** nothing in `src/` or `tests/`. Documentation only.
+
+**Measurements:** none. The valid range of `IncrementPercent` was read from `src/uci/time_budget.h` (0 to 100), so 100 is accepted by the engine.
+
+**Bugs fixed:** none.
+
+**Decisions made:** docs/DECISIONS.md 2026-10-18 (6): the restricted nonlinear interactions item is closed after five rejected candidates; a follow-up test of `IncrementPercent` above 75 is opened.
+
+**Open:** `IncrementPercent=100` against 75 through the clock-based SPRT (ROADMAP.md "Time-management: IncrementPercent above 75"); real-GUI pondering interop, NUMA allocation and distributed search (environment or hardware bound); SPSA step (3) (shelved).
+
+**Next session start point:** dispatch `uci-match` with baseline and candidate both `main`, `ucimatch_options_b` = `IncrementPercent=100`, `ucimatch_clock` = `10000 100`, `ucimatch_sprt` = `0 15 0.05 0.05`, max games 4000, time limit 300, opening plies 8, max plies 300, seed 1; the job summary carries the partial tally and `time_forfeits` if the limit stops it. Record the result in docs/DECISIONS.md and tick the new ROADMAP.md item.
+
+---
+
+### Session 232 — 2026-10-18 — Candidate 5 SPRT: not won; gate reverted
+
+**Built:** nothing new. `src/eval/piece_bonuses.h`, `src/eval/piece_bonuses.cpp` and `tests/piece_bonuses_tests.cpp` were restored to their state at `c0e65ec` (the rook-on-7th gate and its three tests removed).
+
+**Measurements:** SPRT 0/+5 at depth 6, 4000 games (all played): 1771-391-1838, -5.8 Elo (about -16 to +4), LLR -1.528, inconclusive. CI green on the gate commit on every job (802 of 802 on Linux, Windows; ThreadSanitizer 802 test cases; search-tuning build 807 of 807; macOS 800 of 800; WebAssembly checks passed).
+
+**Bugs fixed:** none.
+
+**Decisions made:** docs/DECISIONS.md 2026-10-18 (5): candidate 5 rejected; reverted per procedure.
+
+**Verification:** the revert was a restoration of the three files from `c0e65ec`; it was not rebuilt separately, and CI for the revert commit was not seen.
+
+**Open:** the open items of ROADMAP.md are unchanged. Restricted nonlinear interactions: five candidates rejected, none defined; further work needs a new idea or a decision to close the item.
+
+**Next session start point:** decide whether to close the restricted nonlinear interactions item as exhausted (five candidates rejected) or to define a sixth; if closed, the remaining open items are hardware- or environment-bound (real-GUI pondering interop, NUMA allocation, distributed search) and the SPSA step (3), which is shelved. Say "Go" to continue.
+
+---
+
 ### Session 231 — 2026-10-18 — Nonlinear interaction candidate 5: rook-on-7th gated by target presence (built, SPRT pending)
 
 **Built:**

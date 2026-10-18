@@ -4,6 +4,32 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-18 (6) — Restricted nonlinear feature interactions item closed as exhausted
+
+**Context:** Five candidates were tried: passed pawns x king distance, bishop pair x locked pawns (both rejected without a fit), rook count x file openness, king attackers x exposure (both rejected after Texel fits failed their sanity checks), and a rook-on-7th target gate (SPRT 0/+5 at depth 6, 4000 games, -5.8 Elo, inconclusive; DECISIONS.md 2026-10-18 (5)).
+
+**Decision:** The item is closed. No sixth candidate is defined. Ideas noted but not pursued: a knight-outpost bonus scaled by challenging enemy minor pieces, a rook-behind-passed-pawn bonus gated on rank, a king-attack weight gated on enemy queen presence, and a bishop-pair bonus scaled by pawn count (related to the rejected candidate 2). None was scoped against the existing terms.
+
+**Rationale:** Every candidate targeted a term that is active in a small fraction of positions. The SPRT bounds in use (0/+5) can only confirm a gain of about 5 Elo, which such terms are unlikely to reach, so a sixth attempt would cost a session and about an hour of CI for a low chance of an acceptable result.
+
+**Follow-up opened:** `IncrementPercent` above the default 75 is to be tested through the clock-based SPRT (ROADMAP.md "Time-management: IncrementPercent above 75"), because the 50 run (DECISIONS.md 2026-10-18 (3)) was slightly negative.
+
+---
+
+### 2026-10-18 (5) — Candidate 5 (rook-on-7th target gate) not won; reverted
+
+**Run:** `uci-match` SPRT, baseline `c0e65ec70ce600f852e53569d1ad919588fb3e61` (the commit before the gate), candidate `main` carrying the gate (DECISIONS.md 2026-10-18 (4)), both ordinary production builds, fixed depth 6, 8 random opening plies, 300-ply cap, seed 1, bounds 0 and +5, alpha and beta 0.05, 4000-game cap.
+
+**Result:** all 4000 games were played without either bound being crossed: 1771 candidate wins, 391 draws, 1838 baseline wins; score 0.4916; -5.8 Elo (normal-approximation 95% interval about -16 to +4, games treated as independent); LLR -1.528 against bounds of about +/-2.944. No illegal moves. The run took about 66 minutes. CI for the commit was green on every job (Linux Release and Debug, Windows Debug and Release 802 of 802, ThreadSanitizer 802 test cases, search-tuning build 807 of 807, macOS 800 of 800, WebAssembly protocol checks).
+
+**Decision:** The gate is not accepted, since a positive result was required and the point estimate is negative. `piece_bonuses.h`, `piece_bonuses.cpp` and `piece_bonuses_tests.cpp` were restored to their state at `c0e65ec` (flat `kRookOnSeventhBonus`, no gate tests). Candidate 5 is the fifth rejected restricted nonlinear interaction.
+
+**Rationale:** The result does not show the gate to be harmful (the interval includes zero), but it shows no gain and the documented procedure is to remove a candidate that does not win. The term is rarely active, so a gain of the 5 Elo size the bounds target was unlikely in either case.
+
+**Note:** the draw rate in this match (about 10%) is low for a strong-engine match; the 8-random-ply openings at depth 6 produce many decisive games, which shortens SPRTs but widens the variance per game.
+
+---
+
 ### 2026-10-18 (4) — Restricted nonlinear interaction, candidate 5: rook on the 7th rank gated by target presence
 
 **Context:** Candidates 1 to 4 of the ROADMAP.md "Restricted nonlinear feature interactions" item were rejected (passed pawns x king distance, bishop pair x locked pawns, rook count x file openness, king attackers x exposure), the last two after Texel fits that failed their sanity checks. The earlier lesson was that new multi-weight terms overlapping existing ones are hard to fit. A candidate was therefore sought that adds no new constants and does not overlap another term. The existing `kRookOnSeventhBonus` ({10, 20}) was applied as a flat bonus whenever a rook stood on the relative 7th rank; its own doc comment recorded the "only when the enemy king is on its back rank or enemy pawns are present" refinement as deliberately deferred until a test could judge it.
