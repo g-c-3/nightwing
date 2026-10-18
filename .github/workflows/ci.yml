@@ -1005,8 +1005,10 @@ jobs:
       # Engine A = baseline, engine B = candidate: nightwing_uci_match
       # reports the SPRT from B's side, so AcceptH1 means the candidate
       # is better. Exit code 124 is `timeout` stopping the match at the
-      # wall-clock limit: that is an inconclusive result, not a failure,
-      # and the partial tally is recovered from the progress log below.
+      # wall-clock limit: that is an inconclusive result, not a failure.
+      # The runner catches the SIGTERM, plays no further game and prints
+      # its normal summary (tally, time_forfeits, SPRT line, a STOPPED
+      # line), so `match_result.txt` carries the full partial result.
       # Exit code 3 is the runner reporting an engine crash/timeout.
       - name: Run UCI match
         run: |
@@ -1044,15 +1046,17 @@ jobs:
             fi
             echo
             if [ "$rc" -eq 124 ]; then
-              echo "**Stopped at the ${TIME_LIMIT_MIN}-minute limit -- inconclusive.** Last progress lines:"
-              echo '```'
-              tail -n 4 match_progress.log
-              echo '```'
-            else
-              echo '```'
-              cat match_result.txt
-              echo '```'
+              echo "**Stopped at the ${TIME_LIMIT_MIN}-minute limit -- inconclusive.** Partial result:"
             fi
+            echo '```'
+            if [ -s match_result.txt ]; then
+              cat match_result.txt
+            else
+              # Fallback: no summary was written (the runner was killed
+              # before it could print one), so show the last progress lines.
+              tail -n 4 match_progress.log
+            fi
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           cat match_result.txt
           if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
