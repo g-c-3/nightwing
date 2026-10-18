@@ -4,6 +4,26 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-18 (3) — `IncrementPercent=50` tested against the default 75 by clock-based SPRT; not adopted
+
+**Context:** ROADMAP.md "Time-management follow-ups" (added 2026-10-17) left open whether `IncrementPercent=50` is better than the default 75 (`kEngineIncrementPercent`, src/uci/time_budget.h). The match runner change of 2026-10-18 (2) made a time-limited run report its full tally.
+
+**Run:** `uci-match` workflow, baseline and candidate both `main` (both built with `NIGHTWING_SEARCH_TUNING=ON` because options were sent), `IncrementPercent=50` sent to engine B only, clock `10000 100`, SPRT bounds 0 and 15, alpha and beta 0.05, seed 1, 8 random opening plies, 300-ply cap, 300-minute limit.
+
+**Result:** stopped at the limit (`timeout` exit code 124) after 592 of 4000 games: 214 candidate wins, 145 draws, 233 baseline wins; score 0.484; -11.2 Elo (normal-approximation 95% interval about -36 to +13, games treated as independent); LLR -1.818 against bounds of about -2.944 and +2.944. No illegal moves and no time forfeits for either engine.
+
+**Decision:** The default stays at 75. The result is inconclusive and its point estimate is slightly negative; it gives no evidence that 50 is better, and no change to `kEngineIncrementPercent` or `bench` (36154 nodes) was made. No further `IncrementPercent` run is planned. Zero time forfeits on both sides at a 10 s + 0.1 s clock gives no sign that either value is unsafe at that control.
+
+**Rationale:** The bounds (0/15) can only confirm a large gain; a small difference in either direction would need on the order of 2000 or more timed games (about seven 300-minute runs, DECISIONS.md 2026-10-09), which is out of proportion for a parameter with no indicated advantage.
+
+**Alternatives considered:**
+- Repeating the run with other seeds: rejected, because the point estimate favours the default and the expected effect is small.
+- Testing a value above 75: not requested; left open.
+
+**Verification of the runner change:** this is its first real use on GitHub Actions. The stopped run printed the complete summary (tally, `time_forfeits`, SPRT line, `STOPPED` line), as designed in 2026-10-18 (2). The push carrying it was green on every job seen (Linux Release, Linux Debug and Windows Debug/Release 799 of 799, ThreadSanitizer 799 test cases, search-tuning build 804 of 804, macOS 797 of 797, WebAssembly protocol checks all passed).
+
+---
+
 ### 2026-10-18 (2) — UCI match runner prints its summary when stopped by a termination signal
 
 **Context:** The `uci-match` workflow stops a run at its wall-clock limit with `timeout --signal=TERM`. The runner (`nightwing_uci_match`) printed its summary only after the game loop ended, so a cut-off run left an empty `match_result.txt`. The job summary then showed only the last progress lines, and `time_forfeits` (clock mode) was lost for exactly the long runs where it matters. Session 227's second SPRT (583 games, stopped at the limit) is an example: the forfeit count was not recorded.

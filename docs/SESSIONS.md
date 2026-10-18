@@ -4,6 +4,27 @@ Newest entry at top.
 
 ---
 
+### Session 230 — 2026-10-18 — `IncrementPercent=50` against 75 through the clock-based SPRT; Session 229 verified on CI
+
+**Built:** nothing in `src/`, `tests/` or the workflow. Documentation only.
+
+**Measurements:**
+- `uci-match` run (baseline and candidate `main`, `IncrementPercent=50` to engine B, clock `10000 100`, SPRT 0/15, seed 1, 300-minute limit): stopped at the limit after 592 of 4000 games, 214 candidate wins, 145 draws, 233 baseline wins, score 0.484, -11.2 Elo (95% interval about -36 to +13), LLR -1.818 of bounds about +/-2.944, inconclusive. No illegal moves, no time forfeits. The baseline ref field of the dispatch had been set to `main` (the default pointed at an old commit).
+- The Session 229 runner change worked on GitHub Actions: the time-limit stop (exit code 124) produced the full summary with `time_forfeits` and the `STOPPED` line in `match_result.txt`.
+- CI for the push carrying Session 229: Linux Release, Linux Debug, Windows Release and Windows Debug 799 of 799; ThreadSanitizer 799 test cases; search-tuning build 804 of 804; macOS Debug and Release 797 of 797 (the two BMI2/PEXT tests exist on x86 only); WebAssembly protocol checks all passed; no compiler warnings counted in the Linux and Windows logs.
+
+**Bugs fixed:** none.
+
+**Decisions made:** docs/DECISIONS.md 2026-10-18 (3): the default of 75 stays; no further `IncrementPercent` run planned.
+
+**Open:**
+- Pondering interop against a real GUI, restricted nonlinear eval interactions (no candidate defined), SPSA step (3) (shelved), NUMA allocation and distributed search remain open and unchanged.
+- The Windows behaviour of the runner's signal handling was not observed (the run was on Linux).
+
+**Next session start point:** no sequential task is defined. Choose among the open items in ROADMAP.md's final section (or name a new one); the recommended candidate is a new restricted nonlinear eval interaction scoped against the existing king-safety and rook terms, using `keep_initial_sign` for its fit. Say "Go" to start.
+
+---
+
 ### Session 229 — 2026-10-18 — UCI match runner prints its summary on a termination signal
 
 **Built:**
