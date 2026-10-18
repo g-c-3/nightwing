@@ -183,9 +183,10 @@ std::size_t apply_uci_moves(Position& pos, const std::vector<std::string>& move_
 }
 
 /// Handles `position [startpos | fen <fen>] [moves <m1> <m2> ...]`.
-/// Malformed input (missing startpos/fen, an unparseable FEN) is
-/// ignored, leaving `pos` unchanged, rather than throwing — same
-/// robustness rationale as apply_uci_moves() above.
+/// Malformed input (missing startpos/fen, an unparseable or illegal FEN)
+/// is ignored, leaving `pos` unchanged, rather than throwing — same
+/// robustness rationale as apply_uci_moves() above. An invalid FEN also
+/// writes `info string invalid FEN: <reason>` to `out`.
 ///
 /// `history` is cleared unconditionally at the top: a `position` command
 /// always fully (re)specifies the game from `startpos`/`fen`, exactly
@@ -229,8 +230,28 @@ void handle_position(Position& pos, std::vector<std::uint64_t>& history,
             ++idx;
         }
         try {
-            pos = board::parse_fen(fen);
-        } catch (const std::invalid_argument&) {
+            // Parsed into a local and assigned only on success. Writing
+            // `pos = board::parse_fen(fen)` directly let the optimizer
+            // (-O3 + LTO) construct the result in place in `pos`, so a FEN
+            // that threw part-way through (e.g. a bad piece character after
+            // some pieces were placed) left `pos` half-filled and the next
+            // `go` searched garbage and crashed (found 2026-10-19 while
+            // verifying external review batch 1 (c)).
+            const Position parsed = board::parse_fen(fen);
+            pos = parsed;
+        } catch (const std::invalid_argument& e) {
+            // Reported rather than silently dropped (external review
+            // batch 1 (c), 2026-10-18): without this a GUI sending an
+            // illegal FEN got no sign of it and the next `go` searched
+            // the PREVIOUS position. The position itself is still left
+            // unchanged, exactly as before.
+            std::string reason = e.what();
+            const std::string prefix = "parse_fen: ";
+            if (reason.rfind(prefix, 0) == 0) {
+                reason.erase(0, prefix.size());
+            }
+            out << "info string invalid FEN: " << reason << '\n';
+            out.flush();
             return;
         }
     } else {
@@ -497,9 +518,9 @@ struct SearchBudget {
     int soft_time_limit_ms = 0;
 
     /// True only for a genuinely unbounded search: an explicit `go
-    /// infinite`, or a bare `go` with no depth/time-control tokens at
-    /// all -- set exactly once, in this function's own final `else`
-    /// branch below, rather than inferred later from `max_depth`/
+    /// infinite`, a bare `go` with no depth/time-control tokens at
+    /// all, or `go movetime 0` (no depth) -- set in this function's own
+    /// final `else` branch and its `movetime` branch below, rather than inferred later from `max_depth`/
     /// `time_limit_ms` happening to match kTimedSearchMaxDepth/0, since
     /// an explicit `depth <kTimedSearchMaxDepth>` with no time control
     /// would otherwise be indistinguishable from the true unbounded
@@ -550,9 +571,9 @@ struct SearchBudget {
 /// Parses `go`'s own `[depth N] [movetime N] [wtime W btime B [winc I]
 /// [binc I] [movestogo N]]` tokens (any combination; `movestogo` feeds
 /// allocate_time_ms() above -- see that function's own doc comment;
-/// other unrecognized sub-options like `infinite`/`ponder`/`mate`/
-/// `nodes` are still ignored here, same as handle_go()'s own former
-/// inline version of this logic) into
+/// `nodes` becomes a soft node limit, `mate N` a depth ceiling of 2*N
+/// plies, `searchmoves` a root-move restriction; `infinite` and `ponder`
+/// are handled by the callers) into
 /// a concrete depth ceiling and millisecond budget — extracted into its
 /// own function so start_pondering() can compute and SAVE the same
 /// budget an ordinary (non-ponder) `go` from this exact position would
@@ -698,6 +719,16 @@ struct SearchBudget {
         budget.max_depth = kTimedSearchMaxDepth;
         // time_limit_ms is already set from movetime above.
         // soft_time_limit_ms stays 0 -- SearchBudget's own doc comment on why.
+        if (budget.time_limit_ms <= 0) {
+            // `go movetime 0` (or a negative/malformed value, which
+            // next_int() turns into 0 or a negative number): a zero limit
+            // means NO limit to the search, so it is genuinely unbounded,
+            // like `go infinite`. Left marked bounded, `quit` or end of
+            // input would join a search nothing can ever stop (external
+            // review batch 1 (b), 2026-10-18).
+            budget.time_limit_ms = 0;
+            budget.unbounded = true;
+        }
     } else {
         const bool white_to_move = pos.side_to_move == board::Color::White;
         // select_own_clock_ms() (uci/time_budget.h): the side to move's own
@@ -1177,9 +1208,11 @@ void abandon_go(GoState& go) {
 }
 
 /// Handles `go [depth N] [movetime N] [wtime W btime B [winc I]
-/// [binc I] [movestogo N]]` (any combination; unrecognized sub-options
-/// like `infinite`/`ponder`/`mate`/`nodes` are accepted but ignored --
-/// see this file's header comment) by launching the search on
+/// [binc I] [movestogo N] [nodes N] [mate N] [searchmoves ...]]` (any
+/// combination; `nodes` is a soft node limit, `mate N` a depth ceiling of
+/// 2*N plies, `searchmoves` a root-move restriction, and `infinite`/
+/// `ponder` are handled by the caller -- compute_search_budget() has the
+/// details) by launching the search on
 /// `go.thread` and returning immediately -- ROADMAP.md Priority Fixes,
 /// 2026-09-22, item 1. run()'s own command loop keeps reading further
 /// lines while the search runs, exactly as it already does for `go
@@ -2076,6 +2109,10 @@ void run(std::istream& in, std::ostream& out) {
     // starts (this file's own established convention, extended here).
     std::mutex out_mutex;
     std::string line;
+    // True only when the loop ended on an explicit `quit` (not on `in`
+    // running out of lines): see the finish_go()/handle_go_stop() choice at
+    // the end of this function.
+    bool quit_requested = false;
 
     while (std::getline(in, line)) {
         const std::vector<std::string> tokens = tokenize(line);
@@ -2282,6 +2319,7 @@ void run(std::istream& in, std::ostream& out) {
             abandon_pondering(ponder);
             run_bench(out);
         } else if (cmd == "quit") {
+            quit_requested = true;
             break;
         }
         // debug, register, and anything else unrecognized (including a
@@ -2317,7 +2355,20 @@ void run(std::istream& in, std::ostream& out) {
     // discarded instead, to avoid hanging here forever. A no-op on the
     // overwhelmingly common path where nothing was searching when the
     // loop ended.
-    finish_go(go);
+    //
+    // An EXPLICIT `quit` (external review batch 1 (d), 2026-10-18) instead
+    // stops a bounded search at once: a GUI that quits mid-search wants the
+    // process gone, not a wait for the remaining time (observed: 8.0 s for
+    // `go movetime 8000` quit after 1 s). handle_go_stop() sets the stop
+    // flag and joins; the search thread still prints its `bestmove`, as it
+    // does for any `stop`. End of input keeps the finish-and-print
+    // behaviour above, which scripted runs (and the tests) rely on; an
+    // unbounded search is abandoned in both cases, as before.
+    if (quit_requested && !go.unbounded) {
+        handle_go_stop(go);
+    } else {
+        finish_go(go);
+    }
 }
 
 } // namespace nightwing::uci
