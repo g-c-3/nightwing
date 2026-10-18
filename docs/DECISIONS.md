@@ -4,6 +4,26 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-18 (2) — UCI match runner prints its summary when stopped by a termination signal
+
+**Context:** The `uci-match` workflow stops a run at its wall-clock limit with `timeout --signal=TERM`. The runner (`nightwing_uci_match`) printed its summary only after the game loop ended, so a cut-off run left an empty `match_result.txt`. The job summary then showed only the last progress lines, and `time_forfeits` (clock mode) was lost for exactly the long runs where it matters. Session 227's second SPRT (583 games, stopped at the limit) is an example: the forfeit count was not recorded.
+
+**Decision:**
+- The match loop and the summary text moved from `uci_match_main.cpp` into the library (`run_uci_match_loop()`, `format_uci_match_summary()`, `sprt_status_text()` in `src/tuner/uci_match.h/.cpp`) so both are testable. The command line is now a thin wrapper.
+- The command line installs SIGTERM and SIGINT handlers that set a `volatile std::sig_atomic_t` flag. The loop polls it before each game and plays no further game once it is set. The summary is printed with a `STOPPED: termination requested after N of M games -- partial result, inconclusive` line, and the exit status is 0.
+- An abort that coincides with a set stop flag is reported as a stop, not as an engine failure: `timeout` signals the whole process group, so the engines can be killed together with the runner. The interrupted game is not counted in the tally, so the tally holds finished games only.
+- The workflow job summary prints `match_result.txt` for a timed-out run (exit code 124 from `timeout` is unchanged), falling back to the last progress lines only when that file is empty.
+
+**Rationale:** A game is never half-counted, because the flag is polled between games and an interrupted game is discarded. A signal handler that only sets a `sig_atomic_t` flag is the portable, async-signal-safe form. Keeping the loop in the library allows tests without sending real signals; the signal path itself was exercised once by hand (`timeout --signal=TERM 45s` on a clock-mode run: 13 games tallied, summary printed, no orphan engine processes).
+
+**Alternatives considered:**
+- Letting the in-flight game finish after the signal: rejected, because `timeout` signals the whole process group and the engines normally die with the runner, so finishing the game is not reliably possible.
+- Parsing the tally from the progress log in the workflow: rejected, because the log carries no forfeit counts.
+
+**Verification gap:** The workflow change was validated as YAML and the runner behaviour in the sandbox only; the `uci-match` job itself has not run on GitHub Actions with this change.
+
+---
+
 ### 2026-10-18 (1) — SPSA wall-clock limit adopted; search-constant tuning shelved again
 
 **Context:** Session 227 left a replication SPSA run as the next step. A 60-iteration run configured for about 4.7 hours was killed by the 355-minute job timeout with no output, because the tuner printed its results only after the last iteration. Throughput at 100000 nodes per move proved to be 27 to 29 s per game, not the 17.5 s seen in the first run.

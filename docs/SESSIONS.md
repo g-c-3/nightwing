@@ -4,6 +4,31 @@ Newest entry at top.
 
 ---
 
+### Session 229 — 2026-10-18 — UCI match runner prints its summary on a termination signal
+
+**Built:**
+- `src/tuner/uci_match.h`, `src/tuner/uci_match.cpp`: `UciMatchRunOptions`, `UciMatchRunOutcome`, `run_uci_match_loop()` (plays games until the maximum, an SPRT decision, an abort, or a stop flag), `format_uci_match_summary()` (tally, illegal moves, `time_forfeits` in clock mode, rough Elo, SPRT line, a `STOPPED` line, an `ABORTED` line) and `sprt_status_text()`.
+- `src/tuner/uci_match_main.cpp`: reduced to argument parsing plus the library loop; SIGTERM and SIGINT set a `sig_atomic_t` flag (installed before the engines start). A stop prints the full summary with a `STOPPED` line and exits 0. An abort that coincides with a stop request is reported as a stop, not as an engine failure.
+- `.github/workflows/ci.yml`: the `uci-match` job summary prints `match_result.txt` for a run stopped at the time limit (the progress-tail fallback remains for an empty file); step comments updated.
+- `tests/uci_match_tests.cpp`: five tests (two summary-format tests, and three loop tests: stop flag set before the first game, stop requested after the first game, no stop request).
+
+**Measurements:**
+- Sandbox, Linux, GCC, Release: zero warnings; 799 of 799 `ctest` (five new); the 16 `uci_match` tests pass.
+- Real signal path: `timeout --signal=TERM 45s nightwing_uci_match` with the same engine on both sides, clock mode `1000 20`, SPRT 0/15: exit code 124 from `timeout`, 13 games tallied, `time_forfeits` line present, `STOPPED ... after 13 of 200 games` line present, no `ABORTED` line, no orphan engine processes. A 12-second limit stopped before any game finished and printed an all-zero summary with the `STOPPED` line.
+
+**Bugs fixed:** none in the engine. Design finding: `timeout` signals the whole process group, so the engines die together with the runner; the interrupted game is therefore discarded rather than finished.
+
+**Verification:** the workflow YAML parses. The `uci-match` job has not run on GitHub Actions with this change, and the full CI matrix (Windows, macOS, ThreadSanitizer, WebAssembly) was not seen. The Windows build of the runner uses `std::signal` from `<csignal>`; its SIGTERM behaviour on Windows was not checked.
+
+**Decisions made:** docs/DECISIONS.md 2026-10-18 (2).
+
+**Open:**
+- `IncrementPercent=50` has not been tested against 75 through the clock-based SPRT (the second half of the ROADMAP.md "Time-management follow-ups" item). That run needs a `uci-match` dispatch.
+
+**Next session start point:** run the `uci-match` workflow with `ucimatch_options_b` set to `IncrementPercent=50`, a clock of `10000 100`, SPRT bounds 0/15 (`candidate` and `baseline` both the current `main`, so both builds use the tuning configuration only if search-tuning options are sent; otherwise a plain build), then record the result, including `time_forfeits`, in docs/DECISIONS.md and tick the ROADMAP.md item.
+
+---
+
 ### Session 228 — 2026-10-18 — SPSA wall-clock limit; two more search-constant SPSA runs; search-constant tuning shelved again
 
 **Built:**
