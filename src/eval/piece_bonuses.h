@@ -76,6 +76,15 @@ inline constexpr Score kRookSemiOpenFileBonus = {12, 6};
 /// defenders to contest the rank or shield the king, the same general
 /// "matters more with less on the board" pattern mobility.h's own
 /// constants already follow.
+///
+/// GATED (Session 231, ROADMAP.md restricted nonlinear interactions,
+/// candidate 5): piece_bonus_value() grants this bonus only while the
+/// rook has a target on that rank's neighbourhood -- at least one enemy
+/// pawn still on the (relative) 7th rank, or the enemy king still on its
+/// own (relative) 8th rank. The two conditions are an OR, so the classic
+/// pig (rook on 7th with the king cut off) and the pawn-raiding rook are
+/// both kept; only a rook on an empty 7th rank against a king that has
+/// already left the back rank is no longer rewarded. No new constants.
 inline constexpr Score kRookOnSeventhBonus = {10, 20};
 
 /// Evaluates bishop pair + rook-on-open/semi-open-file + rook-on-7th-

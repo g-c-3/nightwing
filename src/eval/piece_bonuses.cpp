@@ -23,6 +23,13 @@ using board::Square;
     return (c == Color::White) ? 6 : 1;
 }
 
+/// Returns the relative-8th-rank index (0..7) for color `c` -- rank index 7
+/// (rank8) for White, 0 (rank1) for Black. Used to ask whether the ENEMY
+/// king still sits on its own back rank.
+[[nodiscard]] constexpr int eighth_rank_for(Color c) noexcept {
+    return (c == Color::White) ? 7 : 0;
+}
+
 } // namespace
 
 Score piece_bonus_value(const Position& pos) noexcept {
@@ -42,6 +49,20 @@ Score piece_bonus_value(const Position& pos) noexcept {
         const Bitboard enemy_pawns = pos.pieces(enemy, PieceType::Pawn);
         const int seventh_rank = seventh_rank_for(c);
 
+        // Rook-on-7th gate (CPW "Rook on Seventh Rank"): the bonus is only
+        // earned when the rook has something to attack -- an enemy pawn
+        // still on that rank, or the enemy king still confined to its own
+        // back rank. Otherwise a rook on the 7th rank is just a rook on a
+        // rank. This turns the flat bonus into a conjunction of "rook on
+        // 7th" and "target present" (Session 231, ROADMAP.md restricted
+        // nonlinear interactions, candidate 5); it adds no new constants.
+        const Bitboard enemy_king_bb = pos.pieces(enemy, PieceType::King);
+        const bool enemy_king_on_back_rank =
+            enemy_king_bb != 0 &&
+            board::rank_of(board::bitscan_forward(enemy_king_bb)) == eighth_rank_for(c);
+        const bool seventh_has_target =
+            enemy_king_on_back_rank || (enemy_pawns & board::rank_mask(seventh_rank)) != 0;
+
         Bitboard rooks = pos.pieces(c, PieceType::Rook);
         while (rooks != 0) {
             const Square sq = board::pop_lsb(rooks);
@@ -56,7 +77,7 @@ Score piece_bonus_value(const Position& pos) noexcept {
                 }
             }
 
-            if (board::rank_of(sq) == seventh_rank) {
+            if (seventh_has_target && board::rank_of(sq) == seventh_rank) {
                 side_score += kRookOnSeventhBonus;
             }
         }
