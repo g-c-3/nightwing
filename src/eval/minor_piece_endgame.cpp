@@ -218,6 +218,55 @@ using board::Square;
 
 } // namespace
 
+bool is_wrong_bishop_fortress(const Position& pos) noexcept {
+    if (classify_endgame(pos) != EndgameSignature::KBPK) {
+        return false;
+    }
+    const bool white_side = pos.pieces(Color::White, PieceType::Bishop) != 0;
+    const Color attacker = white_side ? Color::White : Color::Black;
+    const Bitboard attacker_pawns = pos.pieces(attacker, PieceType::Pawn);
+
+    // Every attacking pawn on the same rook file.
+    const Square first_pawn_sq = board::bitscan_forward(attacker_pawns);
+    const int pawn_file = board::file_of(first_pawn_sq);
+    if (pawn_file != 0 && pawn_file != 7) {
+        return false;
+    }
+    Bitboard remaining = attacker_pawns;
+    while (remaining != 0) {
+        if (board::file_of(board::pop_lsb(remaining)) != pawn_file) {
+            return false;
+        }
+    }
+
+    // The bishop must NOT control the promotion corner's colour.
+    const Square corner_sq = board::make_square(pawn_file, (attacker == Color::White) ? 7 : 0);
+    const Square bishop_sq = board::bitscan_forward(pos.pieces(attacker, PieceType::Bishop));
+    if (is_light_square(bishop_sq) == is_light_square(corner_sq)) {
+        return false;
+    }
+
+    const Square attacker_king_sq = board::bitscan_forward(pos.pieces(attacker, PieceType::King));
+    const Square defender_king_sq =
+        board::bitscan_forward(pos.pieces(board::opposite(attacker), PieceType::King));
+    const int defender_dist = board::chebyshev_distance(defender_king_sq, corner_sq);
+    const int attacker_dist = board::chebyshev_distance(attacker_king_sq, corner_sq);
+
+    // An attacking king at least as near the corner can drive the defender
+    // out, so there is no fortress.
+    if (defender_dist > attacker_dist) {
+        return false;
+    }
+    // A defending king on the corner or beside it cannot be dislodged, and
+    // this holds whoever is to move and however far the pawn has advanced
+    // (h6+Kg8 with White to move is still a draw: h7+ Kh8). Farther away,
+    // fall back on the same rule-of-the-square test the penalty uses.
+    if (defender_dist <= 1) {
+        return true;
+    }
+    return wrong_bishop_corner_value(pos, attacker) != Score{};
+}
+
 Score minor_piece_endgame_value(const Position& pos) noexcept {
     switch (classify_endgame(pos)) {
         case EndgameSignature::KBPK: {

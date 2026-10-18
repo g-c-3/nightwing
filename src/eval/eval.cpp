@@ -159,8 +159,12 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     // partial, approximate value is returned directly.
     if (lazy_eval_requested) {
         const int lazy_score = taper(score, phase);
-        if (lazy_score - kLazyEvalMargin > *lazy_beta_white ||
-            lazy_score + kLazyEvalMargin < *lazy_alpha_white) {
+        // A wrong-bishop fortress is excluded: its true value is scaled
+        // towards a draw below, which the material-and-PSQT-only lazy
+        // score cannot see (Session 235, external review fix).
+        if ((lazy_score - kLazyEvalMargin > *lazy_beta_white ||
+             lazy_score + kLazyEvalMargin < *lazy_alpha_white) &&
+            !is_wrong_bishop_fortress(pos)) {
             return lazy_score;
         }
     }
@@ -230,7 +234,7 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     // itself behind a cheap early-out check computed once and shared)
     // -- this becomes more attractive, not less, with each further
     // Phase 6 item that adds its own consumer.
-    const int result = taper(score + pawn_score + mobility_value(pos, mobility_weights) +
+    int result = taper(score + pawn_score + mobility_value(pos, mobility_weights) +
                                   king_safety_value(pos, king_safety_weights) +
                                   piece_bonus_value(pos) +
                                   knight_outpost_value(pos) + space_value(pos, space_weights) +
@@ -241,6 +245,15 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
                                   minor_piece_endgame_value(pos) + fortress_value(pos) +
                                   basic_mate_value(pos),
                               phase);
+
+    // Wrong-bishop corner fortress: a dead draw that the additive terms
+    // above cannot express (the pawn's advancement bonus outgrows the flat
+    // penalty as it is pushed, so the search score climbed with depth);
+    // scale the whole score towards zero instead (ROADMAP.md external
+    // review fix, Session 235; eval/minor_piece_endgame.h).
+    if (is_wrong_bishop_fortress(pos)) {
+        result /= kWrongBishopFortressDivisor;
+    }
 
     if (eval_cache_usable) {
         eval_cache->store(pos.zobrist_hash, result);

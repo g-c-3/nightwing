@@ -69,4 +69,26 @@ inline constexpr Score kBishopOpenPositionBonusPerOpenPawn{6, 10};
 /// calls it unconditionally as one more additive term.
 [[nodiscard]] Score minor_piece_endgame_value(const board::Position& pos) noexcept;
 
+/// Divisor applied to the whole static evaluation when
+/// is_wrong_bishop_fortress() holds (added Session 235, external review
+/// fix). The flat kWrongBishopCornerDrawPenalty above is only a few
+/// tenths of a pawn once the rest of the evaluation is counted, and a
+/// pawn pushed towards promotion outgrows it, so the search score of a
+/// dead draw climbed with depth (+6.0 at depth 14 for 7k/8/7K/7P/8/8/8/5B2 w).
+/// Dividing the full score by this keeps a small residual in favour of the
+/// side with the extra material without calling the position a win.
+inline constexpr int kWrongBishopFortressDivisor = 8;
+
+/// True when the position is a recognized wrong-bishop corner fortress:
+/// EndgameSignature::KBPK, every attacking pawn on one rook file, the
+/// bishop NOT controlling that file's promotion-corner colour, the
+/// defending king able to reach the corner in time (the same rule-of-the-
+/// square test minor_piece_endgame_value() uses), and additionally the
+/// defending king no farther from the corner than the attacking king
+/// (an attacking king that gets to the corner first can drive the defender
+/// out, so no fortress). Used by eval::evaluate() to scale the whole
+/// score towards a draw. Pure function of `pos`; side-to-move independent
+/// apart from the shared rule-of-the-square tempo term.
+[[nodiscard]] bool is_wrong_bishop_fortress(const board::Position& pos) noexcept;
+
 } // namespace nightwing::eval
