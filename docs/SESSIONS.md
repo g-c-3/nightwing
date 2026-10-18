@@ -4,6 +4,28 @@ Newest entry at top.
 
 ---
 
+### Session 231 — 2026-10-18 — Nonlinear interaction candidate 5: rook-on-7th gated by target presence (built, SPRT pending)
+
+**Built:**
+- `src/eval/piece_bonuses.cpp`, `src/eval/piece_bonuses.h`: the rook-on-7th bonus is granted only when an enemy pawn stands on the relative 7th rank or the enemy king stands on its relative 8th rank. No new constants; bishop-pair and file bonuses unchanged. A doc comment on `kRookOnSeventhBonus` records the gate.
+- `tests/piece_bonuses_tests.cpp`: three tests (no target gives no bonus; either target alone keeps the bonus; colour symmetry).
+- Scoping: the ROADMAP.md item's four earlier candidates were rejected; the candidate was chosen because it adds no tunable constants (so no Texel fit) and does not overlap another term (`kRookOpenFileBonus`, `kRookSemiOpenFileBonus` and king safety are untouched).
+
+**Measurements:** sandbox Linux GCC Release, zero warnings, 802 of 802 `ctest`; `bench` 35399 nodes before and 35249 after (the CI-recorded 36154 was not reproduced in the sandbox for the unchanged tree, so only the before/after pair is meaningful).
+
+**Bugs fixed:** none.
+
+**Verification:** CI for the commit was not seen. No SPRT has run; the gate is unproven in strength terms.
+
+**Decisions made:** docs/DECISIONS.md 2026-10-18 (4).
+
+**Open:**
+- SPRT acceptance of candidate 5 (see next start point). If it fails, the gate and its tests are removed.
+
+**Next session start point:** after CI is green for the candidate commit, dispatch `uci-match` with baseline = the commit immediately before this change (full 40-character SHA), candidate = the commit carrying it, depth 6, `ucimatch_options_b` empty, SPRT `0 5 0.05 0.05`, max games 4000, time limit 300, then record the result in docs/DECISIONS.md and either keep the gate or revert it.
+
+---
+
 ### Session 230 — 2026-10-18 — `IncrementPercent=50` against 75 through the clock-based SPRT; Session 229 verified on CI
 
 **Built:** nothing in `src/`, `tests/` or the workflow. Documentation only.

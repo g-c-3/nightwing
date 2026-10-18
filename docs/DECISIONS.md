@@ -4,6 +4,24 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-18 (4) — Restricted nonlinear interaction, candidate 5: rook on the 7th rank gated by target presence
+
+**Context:** Candidates 1 to 4 of the ROADMAP.md "Restricted nonlinear feature interactions" item were rejected (passed pawns x king distance, bishop pair x locked pawns, rook count x file openness, king attackers x exposure), the last two after Texel fits that failed their sanity checks. The earlier lesson was that new multi-weight terms overlapping existing ones are hard to fit. A candidate was therefore sought that adds no new constants and does not overlap another term. The existing `kRookOnSeventhBonus` ({10, 20}) was applied as a flat bonus whenever a rook stood on the relative 7th rank; its own doc comment recorded the "only when the enemy king is on its back rank or enemy pawns are present" refinement as deliberately deferred until a test could judge it.
+
+**Decision:**
+- `piece_bonus_value()` (src/eval/piece_bonuses.cpp) grants the 7th-rank bonus only when the rook has a target: at least one enemy pawn on the relative 7th rank, or the enemy king on its relative 8th rank (OR of the two conditions). Everything else in the term (bishop pair, open and semi-open file bonuses) is unchanged. No new constant, no new `ParameterRef`, no change to `evaluate()`'s signature; the term is not part of the Texel-tunable parameter set, so no fit is needed.
+- Three tests were added (no target gives no bonus, either target alone keeps it, colour symmetry); the existing 7th-rank tests pass unchanged because their positions place the enemy king on its back rank.
+
+**Measurements (sandbox, Linux, GCC, Release):** zero warnings; 802 of 802 `ctest` (three new). `bench` nodes 35399 before and 35249 after (the sandbox baseline differs from the 36154 recorded for CI builds; the before/after pair is the relevant comparison). Time per bench run was within noise (63 ms and 58 ms).
+
+**Acceptance procedure (not yet run):** `uci-match` SPRT with baseline the commit before the change and candidate the commit carrying it, fixed depth 6, bounds 0/+5 as for candidates 1 to 3, one interaction at a time. If it is not won, the gate and its tests are removed and the flat bonus restored, as for candidates 1 to 4.
+
+**Alternatives considered:**
+- Scaling the bonus continuously by the number of enemy pawns on the 7th rank: rejected for the first test, because it adds a constant and is harder to attribute.
+- A knight-outpost interaction scaled by enemy minor pieces that can challenge it: not chosen; it overlaps the existing outpost conditions more than the rook gate overlaps anything.
+
+---
+
 ### 2026-10-18 (3) — `IncrementPercent=50` tested against the default 75 by clock-based SPRT; not adopted
 
 **Context:** ROADMAP.md "Time-management follow-ups" (added 2026-10-17) left open whether `IncrementPercent=50` is better than the default 75 (`kEngineIncrementPercent`, src/uci/time_budget.h). The match runner change of 2026-10-18 (2) made a time-limited run report its full tally.
