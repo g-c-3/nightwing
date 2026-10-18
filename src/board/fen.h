@@ -24,7 +24,16 @@ namespace nightwing::board {
 /// (init_zobrist_keys() is called internally, idempotently, same as
 /// start_position()).
 /// Throws std::invalid_argument if `fen` is malformed (wrong number of
-/// ranks/files, unrecognized characters, missing required fields).
+/// ranks/files, unrecognized characters, missing required fields) or
+/// describes a position movegen cannot safely handle: not exactly one
+/// king per side, a pawn on rank 1 or 8, adjacent kings, the side not to
+/// move in check, a castling right without its king and rook on their
+/// home squares, or an en passant square inconsistent with the side to
+/// move (wrong rank, occupied, no enemy pawn in front of it, or its
+/// origin square occupied). An en passant square that no pawn can
+/// actually capture onto is accepted, since GUIs commonly emit those.
+/// Also calls init_masks() and init_magic_bitboards() (both idempotent)
+/// for the check test.
 [[nodiscard]] Position parse_fen(const std::string& fen);
 
 /// Serializes `pos` back to a FEN string. Round-trips with parse_fen()

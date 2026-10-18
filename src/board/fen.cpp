@@ -8,6 +8,9 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "board/attacks.h"
+#include "board/masks.h"
+#include "board/movegen.h"
 #include "board/zobrist.h"
 
 namespace nightwing::board {
@@ -50,6 +53,105 @@ char piece_to_char(Piece p) {
         case Piece::None: return '.'; // unreachable: caller only calls this for occupied squares
     }
     return '.'; // unreachable for a valid Piece; keeps -Wreturn-type quiet
+}
+
+
+/// Rejects a parsed Position that no legal game could reach in a way that
+/// would crash or corrupt move generation (added 2026-10-18, external
+/// review batch 1 (a); docs/DECISIONS.md 2026-10-18 (7)). Checked, in
+/// order: exactly one king per side; no pawn on rank 1 or 8; kings not
+/// adjacent; the side NOT to move not in check; every castling right
+/// backed by its king and rook on their home squares; and any en passant
+/// square consistent with the side to move (correct rank, empty, enemy
+/// pawn just in front of it, its origin square empty).
+///
+/// Deliberately NOT checked: that a pawn of the side to move can actually
+/// capture onto the en passant square. FENs written by many GUIs and
+/// libraries record the square after every double push, capturable or
+/// not, and rejecting those would refuse ordinary input; movegen already
+/// handles an uncapturable en passant square harmlessly.
+///
+/// Preconditions: pos's bitboards and mailbox are populated; init_masks()
+/// and init_magic_bitboards() have run (parse_fen() calls both first).
+/// Throws std::invalid_argument naming the first violated rule.
+void validate_position(const Position& pos, const std::string& fen) {
+    constexpr Bitboard kBackRanks = 0xFF000000000000FFULL; // rank 1 and rank 8
+
+    for (const Color c : {Color::White, Color::Black}) {
+        const int kings = popcount(pos.pieces(c, PieceType::King));
+        if (kings != 1) {
+            throw std::invalid_argument(
+                std::string("parse_fen: ") + (c == Color::White ? "white" : "black") +
+                " must have exactly one king (found " + std::to_string(kings) + "): " + fen);
+        }
+    }
+
+    const Bitboard white_king_bb = pos.pieces(Color::White, PieceType::King);
+    const Bitboard black_king_bb = pos.pieces(Color::Black, PieceType::King);
+    const Square white_king = bitscan_forward(white_king_bb);
+    const Square black_king = bitscan_forward(black_king_bb);
+
+    const Bitboard all_pawns = pos.pieces(Color::White, PieceType::Pawn) |
+                               pos.pieces(Color::Black, PieceType::Pawn);
+    if ((all_pawns & kBackRanks) != 0) {
+        throw std::invalid_argument("parse_fen: a pawn stands on rank 1 or rank 8: " + fen);
+    }
+
+    if ((king_attacks(white_king) & black_king_bb) != 0) {
+        throw std::invalid_argument("parse_fen: the two kings are adjacent: " + fen);
+    }
+
+    // The side that just moved cannot have left its own king attacked by
+    // the side to move... i.e. the side NOT to move must not be in check.
+    const Color stm = pos.side_to_move;
+    const Color other = opposite(stm);
+    const Square other_king = (other == Color::White) ? white_king : black_king;
+    if (is_square_attacked(pos, other_king, stm)) {
+        throw std::invalid_argument(
+            "parse_fen: the side not to move is in check (an unreachable position): " + fen);
+    }
+
+    struct CastlingRequirement {
+        std::uint8_t flag;
+        Color color;
+        Square king_sq;
+        Square rook_sq;
+        const char* name;
+    };
+    const CastlingRequirement requirements[] = {
+        {castling::kWhiteKingside, Color::White, make_square(4, 0), make_square(7, 0), "K"},
+        {castling::kWhiteQueenside, Color::White, make_square(4, 0), make_square(0, 0), "Q"},
+        {castling::kBlackKingside, Color::Black, make_square(4, 7), make_square(7, 7), "k"},
+        {castling::kBlackQueenside, Color::Black, make_square(4, 7), make_square(0, 7), "q"},
+    };
+    for (const CastlingRequirement& req : requirements) {
+        if ((pos.castling_rights & req.flag) == 0) continue;
+        if (pos.piece_at(req.king_sq) != make_piece(req.color, PieceType::King) ||
+            pos.piece_at(req.rook_sq) != make_piece(req.color, PieceType::Rook)) {
+            throw std::invalid_argument(
+                std::string("parse_fen: castling right '") + req.name +
+                "' has no king and rook on their home squares: " + fen);
+        }
+    }
+
+    if (pos.en_passant_square != kNoEnPassantSquare) {
+        const Square ep = pos.en_passant_square;
+        // White to move: Black just double-pushed, so the target is on
+        // rank 6 (index 5), the pawn now on rank 5 (index 4), and the
+        // pawn's origin on rank 7 (index 6). Mirrored for Black to move.
+        const bool white_to_move = (stm == Color::White);
+        const int expected_rank = white_to_move ? 5 : 2;
+        const int pawn_rank = white_to_move ? 4 : 3;
+        const int origin_rank = white_to_move ? 6 : 1;
+        const Square pawn_sq = make_square(file_of(ep), pawn_rank);
+        const Square origin_sq = make_square(file_of(ep), origin_rank);
+        const Piece enemy_pawn = make_piece(other, PieceType::Pawn);
+        if (rank_of(ep) != expected_rank || !pos.is_empty(ep) || !pos.is_empty(origin_sq) ||
+            pos.piece_at(pawn_sq) != enemy_pawn) {
+            throw std::invalid_argument(
+                "parse_fen: en passant square is inconsistent with the position: " + fen);
+        }
+    }
 }
 
 } // namespace
@@ -143,6 +245,12 @@ Position parse_fen(const std::string& fen) {
 
     pos.halfmove_clock = static_cast<std::uint8_t>(halfmove);
     pos.fullmove_number = static_cast<std::uint16_t>(fullmove);
+
+    // validate_position() needs the attack tables (check detection); both
+    // initializers are idempotent, same as init_zobrist_keys() below.
+    init_masks();
+    init_magic_bitboards();
+    validate_position(pos, fen);
 
     init_zobrist_keys();
     pos.zobrist_hash = compute_hash(pos);
