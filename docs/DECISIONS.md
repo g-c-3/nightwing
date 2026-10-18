@@ -4,6 +4,20 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-19 (1) — External review batch 1: validation, `quit` and test-helper choices
+
+**Context:** ROADMAP.md batch 1 (DECISIONS.md 2026-10-18 (7)) was implemented. Three points departed from, or went beyond, the recorded wording.
+
+**Decision 1 — en passant validation:** `parse_fen` rejects an en passant square on the wrong rank for the side to move, occupied, without an enemy pawn in front of it, or with its origin square occupied. It does not require a pawn that can capture onto the square. FENs written by many GUIs and libraries record the square after every double push, so rejecting those would refuse ordinary input; move generation already handles an uncapturable en passant square harmlessly. Alternative considered: rejecting or clearing such squares, which would also change the round trip through `to_fen`.
+
+**Decision 2 — `quit`:** an explicit `quit` stops and joins a bounded search (the search still prints its `bestmove`); end of input keeps the finish-and-print behaviour; an unbounded search is abandoned in both cases. Because most existing UCI tests end with `quit` only as a terminator and expect the preceding `go` to complete, the `run_uci` helpers in `tests/uci_tests.cpp` and `tests/pondering_tests.cpp` drop a trailing `quit`; a new `run_uci_raw` helper keeps it for the tests of `quit` itself. Alternative considered: stopping only time-bounded searches on `quit`, rejected as an inconsistent rule. Consequence: a script that pipes `go depth N` followed by `quit` no longer reliably receives the result and must end by end of input or wait for `bestmove`.
+
+**Decision 3 — position handler:** `handle_position` parses a FEN into a local and assigns it only on success, because assigning the result of `parse_fen` directly allowed a half-filled position after a throw under -O3 with LTO.
+
+**Rationale:** each change keeps the full test suite green (814 of 814) while closing the confirmed crashes, hang and silent failures.
+
+---
+
 ### 2026-10-18 (7) — External review validated; fix batches recorded
 
 **Context:** An external review of the engine (single document, two passes) reported bugs, protocol issues, performance notes and test gaps. Each claim was checked against the current `main` (Release and ASan/UBSan builds in a sandbox, the engine driven over UCI, with the opening book disabled where a search was needed, because the start position is otherwise answered from the book).

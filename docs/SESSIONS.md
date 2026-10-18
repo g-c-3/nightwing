@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 235 — 2026-10-19 — External review fixes, batch 1, implemented
+
+**Built:** ROADMAP.md "External review fixes, batch 1", items (a) to (e). (a) `parse_fen` legality validation (`src/board/fen.cpp`, `fen.h`): exactly one king per side, no pawn on rank 1 or 8, kings not adjacent, the side not to move not in check, every castling right backed by its king and rook, and an en passant square consistent with the side to move. (b) `go movetime 0` treated as unbounded. (c) `info string invalid FEN: <reason>` for an invalid `position fen`. (d) an explicit `quit` stops and joins a bounded search. (e) stale `go` comments corrected. Tests: 11 new cases in `tests/fen_tests.cpp`, 6 in `tests/uci_tests.cpp`.
+
+**Measurements:** full `ctest` in a sandbox (Release, -O3 with LTO, one core): 814 of 814 passed, zero warnings. A first run with the source changes alone failed 13 tests; a second failed 3 (below).
+
+**Bugs fixed:** (1) Existing test fixtures were illegal positions and were corrected: five FENs in `tests/ordering_tests.cpp` (Black king on e8 facing a White queen on e4, White to move; the king moved to g8) and eight hand-built positions in `tests/tune_tests.cpp` (default castling rights without rooks; `castling_rights = 0` set). (2) Latent crash in the `position fen` handler (`src/uci/uci.cpp`): `pos = board::parse_fen(fen)` let -O3 with LTO construct the result directly in `pos`, so a FEN that threw part-way through (for example a bad piece character after some pieces) left `pos` half-filled and the next search crashed in `bishop_attacks`. The result is now parsed into a local and assigned only on success. It was found because three tests segfaulted only in the Release test binary, and was located with a SIGSEGV backtrace handler and a small harness.
+
+**Decisions made:** docs/DECISIONS.md 2026-10-19 (1): an uncapturable en passant square is accepted; an explicit `quit` stops a bounded search while end of input still lets it finish; the `run_uci` helpers in `tests/uci_tests.cpp` and `tests/pondering_tests.cpp` drop a trailing `quit` so the existing tests keep their finish-and-print behaviour.
+
+**Open:** ROADMAP.md "External review fix: wrong-bishop KBPK" (judged by SPRT); the optional review items; plus the environment- or hardware-bound items and the shelved SPSA step (3). The pondering GUI interoperability check remains unverified.
+
+**Next session start point:** implement ROADMAP.md "External review fix: wrong-bishop KBPK scored as a win": read `src/eval/minor_piece_endgame.cpp` (`wrong_bishop_corner_value`), reproduce `7k/8/7K/7P/8/8/8/5B2 w` at depth 14, scale the score toward a draw when the pattern holds for both rook files and both colours, keep the right-bishop control unchanged, add tests, and queue an SPRT.
+
+---
+
 ### Session 234 — 2026-10-18 — External review validated; fix items recorded
 
 **Built:** nothing in `src/` or `tests/`. Documentation only.
