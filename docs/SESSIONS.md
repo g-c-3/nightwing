@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 234 — 2026-10-18 — External review validated; fix items recorded
+
+**Built:** nothing in `src/` or `tests/`. Documentation only.
+
+**Measurements:** current `main` built in a sandbox (Release; an ASan/UBSan Debug build for the en passant and castling cases) and driven over UCI. Confirmed: crashes on illegal FENs (no king, missing king, adjacent kings, castling rights without a rook, side not to move in check), a wrong-bishop KBPK draw scored +6.0 (depth 14), `go movetime 0` plus `quit` hanging, a silent bad-FEN, `quit` waiting for a bounded search (8.0 s). Not confirmed: `go nodes`/`go mate` ignored (both implemented; the node limit is soft), a 350 ms startup (17 ms), a bogus en passant crash. The sandbox test count was 799.
+
+**Bugs fixed:** none yet (recorded for the next session).
+
+**Decisions made:** docs/DECISIONS.md 2026-10-18 (7): the review's confirmed items are recorded as ROADMAP.md batch 1 (robustness), a separate wrong-bishop item, and optional low-priority items.
+
+**Open:** ROADMAP.md "External review fixes, batch 1" (a) to (e); "External review fix: wrong-bishop KBPK"; the optional review items; plus the environment- or hardware-bound items and the shelved SPSA step (3).
+
+**Next session start point:** implement ROADMAP.md "External review fixes, batch 1" in order (a) to (e): read `src/board/fen.cpp`, `src/uci/uci.cpp` (`compute_search_budget`, the `position` handler, `finish_go` and the end of `run()`) and `tests/` for the existing FEN and UCI tests first, add a regression test for every case in the item, keep the existing tests green, and deliver each changed file in full.
+
+---
+
 ### Session 233 — 2026-10-18 — Restricted nonlinear interactions item closed; proposed IncrementPercent=100 test withdrawn as a repeat
 
 **Built:** nothing in `src/` or `tests/`. Documentation only.

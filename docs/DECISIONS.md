@@ -4,6 +4,30 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-18 (7) — External review validated; fix batches recorded
+
+**Context:** An external review of the engine (single document, two passes) reported bugs, protocol issues, performance notes and test gaps. Each claim was checked against the current `main` (Release and ASan/UBSan builds in a sandbox, the engine driven over UCI, with the opening book disabled where a search was needed, because the start position is otherwise answered from the book).
+
+**Confirmed:**
+- Illegal FENs crash the engine (SIGSEGV in Release): no king, one king missing, adjacent kings, castling rights without a rook (also a global-buffer-overflow under ASan), and the side not to move in check (not in the review). `parse_fen` checks syntax only.
+- A wrong-bishop KBPK draw is scored as a win (about +6.0 at depth 14; the a-file mirror about +7.0); the right-bishop control scores a mate. The static score is about +1.5, so the fixed penalty is not the whole mechanism.
+- `go movetime 0` followed by `quit` or end of input does not exit (still running at a 25 s timeout); `go wtime 0 btime 0` is fine.
+- A bad `position fen` is silently ignored and the next `go` plays from the previous position.
+- `quit` during a bounded search waits for it to finish (8.0 s for `go movetime 8000`).
+- 63 `__popcountdi2` call sites and one `popcnt` instruction (deliberate, documented in `src/CMakeLists.txt`); `search.cpp` 4649 lines and `uci.cpp` 2323 lines; `src/bench.cpp` is a perft tool whose header still calls a search bench future work.
+
+**Not confirmed or corrected:**
+- "`go nodes` and `go mate` are ignored" is false: both are implemented (a soft node limit checked per iteration, and a `2*n`-ply depth ceiling for `mate`). The review was probably misled by a stale comment above the `go` parser. The valid point is that the node limit is not exact (`go nodes 1` searched 1945 nodes).
+- Startup of about 350 ms did not reproduce (17 ms for startup plus `isready` in a Release build); a 2048 MB hash took 12.6 s in the sandbox, which is environment-dependent.
+- A bogus en passant square did not crash in Release or under ASan/UBSan.
+- The test count is 799, not 797. The review's claims about colour symmetry, sanitizer cleanliness of search, multi-thread behaviour and time-management accuracy were not rechecked.
+
+**Decision:** The confirmed robustness items form batch 1 (ROADMAP.md "External review fixes, batch 1"): FEN legality validation, the `go movetime 0` hang, the invalid-FEN message, `quit` stopping a bounded search, and the stale comment. The wrong-bishop fix is a separate item because it changes evaluation and needs an SPRT. The remaining items are optional and low priority.
+
+**Rationale:** The crashes and hangs affect any GUI or script that sends malformed input and are small, testable fixes; evaluation and performance changes need strength testing and are kept apart so a failed experiment does not block the robustness fixes.
+
+---
+
 ### 2026-10-18 (6) — Restricted nonlinear feature interactions item closed as exhausted
 
 **Context:** Five candidates were tried: passed pawns x king distance, bishop pair x locked pawns (both rejected without a fit), rook count x file openness, king attackers x exposure (both rejected after Texel fits failed their sanity checks), and a rook-on-7th target gate (SPRT 0/+5 at depth 6, 4000 games, -5.8 Elo, inconclusive; DECISIONS.md 2026-10-18 (5)).
