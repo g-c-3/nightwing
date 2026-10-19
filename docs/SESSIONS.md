@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 237 — 2026-10-19 — Wrong-bishop KBPK: static draw for dead material; search inconsistency isolated
+
+**Built:** `is_insufficient_material_position()` (`src/eval/endgame.h/.cpp`): no pawns, rooks or queens, and at most one minor piece, or one bishop each on same-coloured squares. `evaluate()` (`src/eval/eval.cpp`) returns 0 when it holds, only when no weights override is set. New test case in `tests/endgame_tests.cpp`.
+
+**Measurements:** 818 of 818 test cases (692,813 assertions), Release, sandbox, one core. Depth-16 search of `7k/8/7K/7P/8/8/8/5B2 w`: about +5.25, unchanged by the fix; the right-bishop control `7k/8/7K/7P/8/8/8/6B1 w` still reports mate in 5. An exhaustive scan of 72,720 wrong-bishop positions with the defending king on g8, h8, h7 or g7 found no static score above +1.2. With every pruning rule, reduction, extension and lazy evaluation disabled in a scratch build the search score stayed at +5 to +6. A plain alpha-beta over `evaluate()` without quiescence stayed at +0.2 to +1.6 to depth 9. The same position and depth gave several pawns of difference between searching all replies together and searching one reply alone (`7k/8/8/5K1P/8/8/8/3B4 b`: -5.5 against -1.5 for `Kg7`).
+
+**Bugs fixed:** (1) Quiescence stand-pat on a king-and-minor against king position (reached by capturing or promoting away the last pawn) scored a won minor-piece ending, because the insufficient-material draw was only checked inside `negamax()`. (2) A first version returning 0 unconditionally broke 10 tuner and evaluation tests that probe weight sensitivity with bare-minor positions; the shortcut was gated on the default-weights path.
+
+**Decisions made:** docs/DECISIONS.md 2026-10-19 (2).
+
+**Open:** ROADMAP.md "External review fix: wrong-bishop KBPK" remains open: the search score is still about +5 on a dead draw and is shown not to come from pruning, extensions, lazy evaluation or the static evaluation near the corner; the cause is a search inconsistency (full-width and single-reply searches disagree). The optional review items; the environment- or hardware-bound items and the shelved SPSA step (3).
+
+**Next session start point:** instrument `negamax()` for a fixed-depth search of `7k/8/8/5K1P/8/8/8/3B4 b`, logging each Black reply's returned score, bound type and TT depth; test by disabling repetition draws and TT cutoffs one at a time to find which produces the -5.5 against -1.5 discrepancy; fix it, add a regression test on the fixed-depth search score of the dead-draw positions, and queue an SPRT.
+
+---
+
 ### Session 236 — 2026-10-19 — Wrong-bishop KBPK: partial fix
 
 **Built:** `is_wrong_bishop_fortress()` (`src/eval/minor_piece_endgame.h/.cpp`): KBPK, all attacking pawns on one rook file, bishop of the wrong colour for the promotion corner, defending king no farther from the corner than the attacking king, and either the defending king on or beside the corner or the existing rule-of-the-square test. `evaluate()` (`src/eval/eval.cpp`) divides the whole score by `kWrongBishopFortressDivisor` (8) when it holds, and the lazy-evaluation early return is skipped for such positions. Tests: three cases in `tests/minor_piece_endgame_tests.cpp` (recognition for both rook files and both colours; right bishop, far defending king and nearer attacking king rejected; static scores near zero for the wrong bishop and above 3.00 for the right bishop).

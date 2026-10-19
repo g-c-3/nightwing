@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-19 (2) — Static evaluation returns 0 for insufficient material, default weights only
+
+**Context:** Quiescence stands pat on `evaluate()`. A king-and-minor against king position reached by capturing or promoting away the last pawn was scored as a won minor-piece ending, which inflated search scores of dead draws such as wrong-bishop KBPK lines.
+
+**Decision:** `evaluate()` returns 0 when `is_insufficient_material_position()` holds (the same rule as `search.cpp`'s draw check). The shortcut is skipped whenever any material, PSQT, mobility, space, threats, king-safety or pawns weights override is set, the same condition under which the evaluation cache is skipped.
+
+**Rationale:** Ten tuner and evaluation tests use bare-minor positions to verify that candidate weights change the score; an unconditional 0 made those positions blind to every override. The shortcut belongs to the engine's default path; tuner callers need the raw weight response.
+
+**Alternatives considered:** an unconditional early return (rejected: breaks the tuner probes); handling the case only in quiescence (rejected: the static evaluation is also reached through other callers, and the rule is a property of the position, not of the search).
+
+---
+
 ### 2026-10-19 (1) — External review batch 1: validation, `quit` and test-helper choices
 
 **Context:** ROADMAP.md batch 1 (DECISIONS.md 2026-10-18 (7)) was implemented. Three points departed from, or went beyond, the recorded wording.
