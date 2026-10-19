@@ -16,7 +16,9 @@ Newest entry at top.
 
 **Open:** ROADMAP.md "External review fix: wrong-bishop KBPK" remains open: the search score is still about +5 on a dead draw and is shown not to come from pruning, extensions, lazy evaluation or the static evaluation near the corner; the cause is a search inconsistency (full-width and single-reply searches disagree). The optional review items; the environment- or hardware-bound items and the shelved SPSA step (3).
 
-**Next session start point:** instrument `negamax()` for a fixed-depth search of `7k/8/8/5K1P/8/8/8/3B4 b`, logging each Black reply's returned score, bound type and TT depth; test by disabling repetition draws and TT cutoffs one at a time to find which produces the -5.5 against -1.5 discrepancy; fix it, add a regression test on the fixed-depth search score of the dead-draw positions, and queue an SPRT.
+**Later in the session:** scratch builds (not delivered) with TT cutoffs disabled, then with repetition detection also disabled, still gave -4.9 to -5.6 for every Black reply of `7k/8/8/5K1P/8/8/8/3B4 b` from depth 11, while depth 10 gave about -1.5; so neither the TT nor repetition handling is the cause. The pawn hash and evaluation cache leave the static scan unchanged, and a child position scores the same with or without game history. A depth-5 leaf scan found large quiescence scores only in Black blunder lines.
+
+**Next session start point:** from one full-width fixed-depth search of `7k/8/8/5K1P/8/8/8/3B4 b`, log at depths 10 and 11 the leaf (position, static and quiescence value) backing up as each Black reply's score and compare the two depths; examine quiescence (check and promotion handling, stalemate leaves), correction history and extension interplay; fix, add a regression test on the fixed-depth search score of the dead-draw positions, and queue an SPRT.
 
 ---
 
