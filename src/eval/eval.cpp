@@ -5,6 +5,7 @@
 #include "board/zobrist.h"
 #include "eval/basic_mates.h"
 #include "eval/fortress.h"
+#include "eval/endgame.h"
 #include "eval/king_pawn_endgame.h"
 #include "eval/king_safety.h"
 #include "eval/king_tropism.h"
@@ -113,6 +114,19 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     // term besides material+PSQT, and caching it under this position's
     // plain zobrist key would silently hand that approximation to a
     // LATER, non-lazy caller wanting the real, full result.
+    // Dead-drawn material (bare kings, one minor, same-coloured bishops):
+    // never a won bishop/knight ending, whatever the material table says.
+    // Skipped whenever any weights override is set, for the same reason
+    // eval_cache is (below): tuner/test callers passing candidate weight
+    // vectors must see those weights act on every position, including
+    // bare-minor probes; the shortcut belongs to the default engine path.
+    if ((material_weights == nullptr) && (psqt_weights == nullptr) &&
+        (mobility_weights == nullptr) && (space_weights == nullptr) &&
+        (threats_weights == nullptr) && (king_safety_weights == nullptr) &&
+        (pawns_weights == nullptr) && is_insufficient_material_position(pos)) {
+        return 0;
+    }
+
     const bool lazy_eval_requested = (lazy_alpha_white != nullptr) && (lazy_beta_white != nullptr);
     const bool eval_cache_usable = (eval_cache != nullptr) && (material_weights == nullptr) &&
                                     (psqt_weights == nullptr) && (mobility_weights == nullptr) &&

@@ -180,4 +180,13 @@ enum class EndgameSignature : std::uint8_t {
     return sig == EndgameSignature::RookEndgame;
 }
 
+/// True when neither side can ever deliver checkmate by any legal
+/// sequence of moves this rule covers: no pawns/rooks/queens, and either
+/// at most one minor piece in total or exactly one bishop each on the
+/// same colour of square. Same rule as search.cpp's draw-by-rule check;
+/// evaluate() uses it to return 0 so a quiescence stand-pat on a
+/// position reached by capturing the last pawn is not scored as a won
+/// bishop or knight ending (Session 237, wrong-bishop KBPK fix).
+[[nodiscard]] bool is_insufficient_material_position(const board::Position& pos) noexcept;
+
 } // namespace nightwing::eval

@@ -156,4 +156,26 @@ EndgameSignature classify_endgame(const Position& pos) noexcept {
     return EndgameSignature::None;
 }
 
+bool is_insufficient_material_position(const Position& pos) noexcept {
+    for (const Color col : {Color::White, Color::Black}) {
+        if (pos.pieces(col, PieceType::Pawn) != 0 || pos.pieces(col, PieceType::Rook) != 0 ||
+            pos.pieces(col, PieceType::Queen) != 0) {
+            return false;
+        }
+    }
+    const int wn = board::popcount(pos.pieces(Color::White, PieceType::Knight));
+    const int bn = board::popcount(pos.pieces(Color::Black, PieceType::Knight));
+    const int wb = board::popcount(pos.pieces(Color::White, PieceType::Bishop));
+    const int bb = board::popcount(pos.pieces(Color::Black, PieceType::Bishop));
+    const int minors = wn + bn + wb + bb;
+    if (minors <= 1) {
+        return true;
+    }
+    if (minors == 2 && wb == 1 && bb == 1) {
+        return is_light_square(board::bitscan_forward(pos.pieces(Color::White, PieceType::Bishop))) ==
+               is_light_square(board::bitscan_forward(pos.pieces(Color::Black, PieceType::Bishop)));
+    }
+    return false;
+}
+
 } // namespace nightwing::eval
