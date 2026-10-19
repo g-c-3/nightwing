@@ -16,6 +16,7 @@
 
 #include "board/board.h"
 #include "eval/endgame.h"
+#include "eval/eval.h"
 
 using namespace nightwing::board;
 using namespace nightwing::eval;
@@ -283,4 +284,60 @@ TEST_CASE("is_zugzwang_prone: true for RookEndgame, false for every other signat
     REQUIRE_FALSE(is_zugzwang_prone(EndgameSignature::KBPK));
     REQUIRE_FALSE(is_zugzwang_prone(EndgameSignature::OppositeColoredBishops));
     REQUIRE_FALSE(is_zugzwang_prone(EndgameSignature::KnightVsBishop));
+}
+
+TEST_CASE("is_insufficient_material_position / evaluate(): dead-drawn material scores 0, never a "
+          "won minor-piece ending -- added Session 237 (wrong-bishop KBPK fix)",
+          "[eval][endgame][insufficient]") {
+    // Bare kings, king + one bishop, king + one knight: all dead draws.
+    Position kbk = empty_position();
+    kbk.place_piece(make_square(4, 0), Piece::WhiteKing);
+    kbk.place_piece(make_square(4, 7), Piece::BlackKing);
+    kbk.place_piece(make_square(2, 0), Piece::WhiteBishop);
+    REQUIRE(is_insufficient_material_position(kbk));
+    REQUIRE(evaluate(kbk) == 0);
+
+    Position knk = empty_position(Color::Black);
+    knk.place_piece(make_square(4, 0), Piece::WhiteKing);
+    knk.place_piece(make_square(4, 7), Piece::BlackKing);
+    knk.place_piece(make_square(1, 7), Piece::BlackKnight);
+    REQUIRE(is_insufficient_material_position(knk));
+    REQUIRE(evaluate(knk) == 0);
+
+    Position kk = empty_position();
+    kk.place_piece(make_square(4, 0), Piece::WhiteKing);
+    kk.place_piece(make_square(4, 7), Piece::BlackKing);
+    REQUIRE(is_insufficient_material_position(kk));
+    REQUIRE(evaluate(kk) == 0);
+
+    // Same-coloured bishops (c1 and f8 are both dark): dead draw.
+    Position same = empty_position();
+    same.place_piece(make_square(4, 0), Piece::WhiteKing);
+    same.place_piece(make_square(4, 7), Piece::BlackKing);
+    same.place_piece(make_square(2, 0), Piece::WhiteBishop);
+    same.place_piece(make_square(5, 7), Piece::BlackBishop);
+    REQUIRE(is_insufficient_material_position(same));
+    REQUIRE(evaluate(same) == 0);
+
+    // Not dead: opposite-coloured bishops (c1 dark, c8 light), any pawn,
+    // two knights, bishop + knight.
+    Position opp = same;
+    opp.remove_piece(make_square(5, 7));
+    opp.place_piece(make_square(2, 7), Piece::BlackBishop);
+    REQUIRE_FALSE(is_insufficient_material_position(opp));
+
+    Position pawn = kbk;
+    pawn.place_piece(make_square(0, 1), Piece::WhitePawn);
+    REQUIRE_FALSE(is_insufficient_material_position(pawn));
+
+    Position nn = empty_position();
+    nn.place_piece(make_square(4, 0), Piece::WhiteKing);
+    nn.place_piece(make_square(4, 7), Piece::BlackKing);
+    nn.place_piece(make_square(1, 0), Piece::WhiteKnight);
+    nn.place_piece(make_square(6, 0), Piece::WhiteKnight);
+    REQUIRE_FALSE(is_insufficient_material_position(nn));
+
+    Position bn = kbk;
+    bn.place_piece(make_square(1, 0), Piece::WhiteKnight);
+    REQUIRE_FALSE(is_insufficient_material_position(bn));
 }
