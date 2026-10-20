@@ -2345,7 +2345,24 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             ? std::max(0, kFutilityMargins[static_cast<std::size_t>(depth)] -
                               (improving ? 0 : kImprovingFutilityMarginDelta))
             : 0;
-    const bool futility_prune_node = futility_may_apply && static_eval + futility_margin <= alpha;
+    // "Dangerous position" exemption for every forward-pruning rule on quiet
+    // moves below (futility, late-move and history pruning): when the
+    // opponent has a pawn on its own 7th rank (one step from promotion), the
+    // static eval is not a reliable bound on the quiet replies, because a
+    // king blockade/stalemate resource (e.g. wrong-colored-bishop + rook-pawn
+    // fortress: Kh8 against a pawn on h7) looks hopelessly lost statically yet
+    // holds the draw. Pruning those replies removed every non-first quiet
+    // move and the node returned a spurious winning score (KBPK wrong-bishop
+    // search inconsistency, SESSIONS 237/238). Same family of exemptions as
+    // CPW "Futility Pruning" (dangerous positions / pawn pushes are not
+    // pruned) and Stockfish-classic's advanced-pawn-push guard.
+    const board::Bitboard enemy_seventh_rank_mask =
+        us == Color::White ? 0x000000000000FF00ULL : 0x00FF000000000000ULL;
+    const bool enemy_pawn_on_seventh =
+        (pos.pieces(us == Color::White ? Color::Black : Color::White, board::PieceType::Pawn) &
+         enemy_seventh_rank_mask) != 0;
+    const bool futility_prune_node =
+        futility_may_apply && !enemy_pawn_on_seventh && static_eval + futility_margin <= alpha;
 
     int best = -kInfinity;
     Move best_move; // Move() default (null) unless overwritten below — every real position has >=1 move here.
@@ -2660,7 +2677,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // eligibility, checked first since it can skip the move
             // entirely -- no reduced probe, no PVS null-window search at
             // all.
-            if (!us_in_check && move_is_quiet && !move_gives_check && depth <= kLMPMaxDepth &&
+            if (!us_in_check && !enemy_pawn_on_seventh && move_is_quiet && !move_gives_check &&
+                depth <= kLMPMaxDepth &&
                 quiets_tried >= kLMPMoveCountLimits[static_cast<std::size_t>(depth)] &&
                 alpha > -kMateThreshold) {
                 board::unmake_move(pos, move, undo);
@@ -2675,7 +2693,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // already been tried), either sufficient on its own to skip
             // the move. Same not-in-check/quiet/non-check-giving/
             // mate-range guards as LMP, for the same reasons.
-            if (!us_in_check && move_is_quiet && !move_gives_check &&
+            if (!us_in_check && !enemy_pawn_on_seventh && move_is_quiet && !move_gives_check &&
                 depth <= kHistoryPruningMaxDepth && alpha > -kMateThreshold &&
                 history.score(us, move) < kHistoryPruningThresholds[static_cast<std::size_t>(depth)]) {
                 board::unmake_move(pos, move, undo);
