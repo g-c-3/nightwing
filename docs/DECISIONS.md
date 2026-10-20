@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-20 (1) — Quiescence delta pruning disabled in sparse endgames; pawn-on-7th pruning exemption deferred
+
+**Context:** The wrong-bishop KBPK search score (about +5 on a dead draw) was traced to quiescence delta pruning skipping a capture that reaches an insufficient-material draw (`...Kxh8` winning the last rook of K+R+B vs K); the wrong value was then reused through the transposition table.
+
+**Decision:** Delta pruning is skipped when 5 or fewer pieces (kings included) are on the board (`kDeltaPruningMinPieces` in `src/search/quiescence.cpp`). An exemption from futility, LMP and history pruning when the opponent has a pawn on its 7th rank was prototyped and not adopted. History-pruning thresholds were not changed.
+
+**Rationale:** The guard removes the measured cause at negligible cost (positions with 5 or fewer pieces are tiny trees) and keeps all 820 tests green. The pawn-on-7th exemption fixed one fortress position but moved two existing KBPK tests from 0 to about -1.1 to -1.6, which indicates a separate accuracy problem in the unpruned search of that fortress; adopting it would trade a known-good result for an unexplained one. The positive history-pruning thresholds change playing strength and require an SPRT before any change.
+
+**Alternatives considered:** a guard based on an exact post-capture insufficient-material test (rejected: needs make/unmake per candidate, more code for the same effect at this piece count); the pawn-on-7th exemption on futility only (rejected: did not fix the position) or on LMP and history only (rejected: broke two tests).
+
+---
+
 ### 2026-10-19 (2) — Static evaluation returns 0 for insufficient material, default weights only
 
 **Context:** Quiescence stands pat on `evaluate()`. A king-and-minor against king position reached by capturing or promoting away the last pawn was scored as a won minor-piece ending, which inflated search scores of dead draws such as wrong-bishop KBPK lines.

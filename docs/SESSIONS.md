@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 238 — 2026-10-20 — Wrong-bishop KBPK: root cause found (quiescence delta pruning feeding the TT)
+
+**Built:** `src/search/quiescence.cpp`: delta pruning is skipped when 5 or fewer pieces (kings included) remain (`kDeltaPruningMinPieces`), because a capture there can reach an insufficient-material draw that the material-only estimate cannot see. Two regression tests: `tests/quiescence_tests.cpp` (capture of the last rook with `...Kxh8` must not be pruned) and `tests/search_tests.cpp` (iterative deepening of `7k/8/8/5K1P/8/8/8/3B4 b` stays within 300 cp at depths 7 to 10). The existing delta-pruning test position in `tests/quiescence_tests.cpp` gained four pawns so it exceeds the piece threshold.
+
+**Measurements:** 820 of 820 test cases, Release, sandbox. `7k/8/8/5K1P/8/8/8/3B4 b`: about -1.0 to -1.6 at depths 9 to 13 (previously about -5.5 from depth 11). Method: a depth-5 and depth-7 PV descent showed child scores inconsistent with the parent; per-move tracing showed a rook underpromotion child returning at once; razoring's quiescence call returned -840 for `7R/6k1/8/6K1/8/8/2B5/8 b`; the cause was delta pruning skipping `...Kxh8`. With TT cutoffs disabled the inflated scores disappeared (this differs from a Session 237 scratch observation made at the root position).
+
+**Bugs fixed:** quiescence delta pruning skipping a capture that leads to a dead draw, with the wrong score then stored as an Exact TT entry by the razoring path's parent node.
+
+**Tried and not shipped:** exempting futility, LMP and history pruning when the opponent has a pawn on its 7th rank. It fixed the depth-6 anomaly of `7k/7P/8/6K1/4B3/8/8/8 w` (+1393 against 0 at neighbouring depths) but moved two existing KBPK tests (`6k1/8/7P/8/8/8/2b5/6K1 w`) from 0 to about -1.1 to -1.6; the futility-only variant did not fix the position and the LMP-and-history-only variant caused the same two test shifts. The depth-5 blip of the original position traces to history pruning with positive thresholds (300, 150, 50).
+
+**Decisions made:** docs/DECISIONS.md 2026-10-20 (1).
+
+**Open:** ROADMAP.md "External review fix: wrong-bishop KBPK" remains PARTIAL with two measured items (history-pruning thresholds; pawn-on-7th forward pruning) and a re-measure of the Session 234 positions. Next session start point: re-measure `7k/8/7K/7P/8/8/8/5B2 w` at depths 12 to 20 with the Session 238 build, then investigate why the unpruned search of `6k1/8/7P/8/8/8/2b5/6K1 w` scores about -1.1 to -1.6 instead of 0.
+
+---
+
 ### Session 237 — 2026-10-19 — Wrong-bishop KBPK: static draw for dead material; search inconsistency isolated
 
 **Built:** `is_insufficient_material_position()` (`src/eval/endgame.h/.cpp`): no pawns, rooks or queens, and at most one minor piece, or one bishop each on same-coloured squares. `evaluate()` (`src/eval/eval.cpp`) returns 0 when it holds, only when no weights override is set. New test case in `tests/endgame_tests.cpp`.
