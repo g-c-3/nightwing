@@ -10,7 +10,7 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 **Decision:** The thresholds are 0, -1000, -2000, -3000 for depths 0 to 3, so only moves with clearly bad history are pruned.
 
-**Rationale:** Measured over 110 games against the previous build the change scored 91 wins, 6 draws and 13 losses (about +300 Elo by the rough estimate of `match.h`, on 1 CPU at 50 ms and 150 ms per move) and removed the anomaly; all 822 tests pass. Negative thresholds follow the usual form of history pruning (CPW "History Heuristic"; Stockfish-classic and Ethereal prune only below a negative, depth-scaled history).
+**Rationale:** Measured over 228 games against the previous build the change scored 172 wins, 20 draws and 36 losses (about +239 Elo, 95% interval about +191 to +297; pooled SPRT LLR 3.47 for 0 against +5 Elo with bounds ±2.94, H1 accepted; games on 1 CPU at 50 ms and 150 ms per move, random 8-ply openings, no illegal moves) and removed the anomaly; all 822 tests pass. Negative thresholds follow the usual form of history pruning (CPW "History Heuristic"; Stockfish-classic and Ethereal prune only below a negative, depth-scaled history).
 
 **Alternatives considered:** 0 at every depth (not measured); thresholds -500 or -1500 per depth and a different maximum depth (deferred to an SPRT on more hardware); keeping the positive values (rejected: measured loss).
 
