@@ -59,6 +59,13 @@ void run(std::istream& in, std::ostream& out);
 /// sized TT changes replacement-eviction timing) — see docs/DECISIONS.md
 /// for the full reasoning and what's deliberately NOT configurable here
 /// as a result.
-void run_bench(std::ostream& out);
+///
+/// `depth` (added Session 241) selects the fixed search depth for every
+/// bench position. Any value <= 0 (the default) means bench::kBenchDepth,
+/// so the bare `bench` command and the CI/PGO/regression uses are
+/// unchanged. A larger value is clamped to kMaxBenchDepth (see uci.cpp).
+/// Reproducibility is per depth: node totals are only comparable between
+/// runs at the same depth.
+void run_bench(std::ostream& out, int depth = 0);
 
 } // namespace nightwing::uci

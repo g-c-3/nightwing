@@ -1932,7 +1932,18 @@ void finish_pondering(PonderState& ponder) {
 
 } // namespace
 
-void run_bench(std::ostream& out) {
+void run_bench(std::ostream& out, int depth) {
+    // depth <= 0 selects the shared default (bench::kBenchDepth); an
+    // oversized request is clamped so a typo cannot ask for an
+    // effectively endless run or exceed the search's ply tables
+    // (search::kMaxPly is 128).
+    constexpr int kMaxBenchDepth = 40;
+    if (depth <= 0) {
+        depth = bench::kBenchDepth;
+    } else if (depth > kMaxBenchDepth) {
+        depth = kMaxBenchDepth;
+    }
+
     std::uint64_t total_nodes = 0;
     const auto t0 = std::chrono::steady_clock::now();
 
@@ -1942,9 +1953,9 @@ void run_bench(std::ostream& out) {
         // default Hash size — this function's own doc comment (uci.h)
         // has the full reproducibility rationale for why neither is
         // configurable here.
-        const search::SearchResult result = search::search_fixed_depth(pos, bench::kBenchDepth);
+        const search::SearchResult result = search::search_fixed_depth(pos, depth);
         total_nodes += result.nodes;
-        out << bench_pos.name << ": depth " << bench::kBenchDepth << " nodes " << result.nodes
+        out << bench_pos.name << ": depth " << depth << " nodes " << result.nodes
             << " score " << result.score << " bestmove " << result.best_move.to_uci() << '\n';
     }
 
@@ -2317,7 +2328,17 @@ void run(std::istream& in, std::ostream& out) {
             // writes.
             abandon_go(go);
             abandon_pondering(ponder);
-            run_bench(out);
+            // Optional second token: fixed depth (`bench 8`). Absent or
+            // non-numeric means the default depth, like the CLI path.
+            int bench_depth = 0;
+            if (tokens.size() > 1) {
+                try {
+                    bench_depth = std::stoi(tokens[1]);
+                } catch (const std::exception&) {
+                    bench_depth = 0;
+                }
+            }
+            run_bench(out, bench_depth);
         } else if (cmd == "quit") {
             quit_requested = true;
             break;
