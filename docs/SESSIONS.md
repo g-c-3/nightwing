@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+### Session 240 — 2026-10-20 — History-pruning thresholds made negative; wrong-bishop item closed
+
+**Built:** `src/search/search.cpp`: `kHistoryPruningThresholds` changed from 0, 300, 150, 50 to 0, -1000, -2000, -3000.
+
+**Measurements:** 822 of 822 test cases. Candidate (new thresholds) against the previous build using `nightwing_uci_match`, 1 CPU, random 8-ply openings: 46 wins, 3 draws, 5 losses over 54 games (50 ms per move, seed 11); 37 wins, 1 draw, 6 losses over 44 games (50 ms, seed 23); 8 wins, 2 draws, 2 losses over 12 games (150 ms, seed 31); total 91 wins, 6 draws, 13 losses over 110 games, no illegal moves. The first run was started as an SPRT (0 to 5 Elo) and was interrupted by the sandbox at 54 games, so the later runs were fixed-length. `7k/8/8/5K1P/8/8/8/3B4 b`: about -0.2 to -1.6 at depths 1 to 12 (depth 5 previously about -4.9). `7k/8/7K/7P/8/8/8/5B2 w`: up to +2.1 at depths 1 to 10 with no jump. `7k/7P/8/6K1/4B3/8/8/8 w` and `6k1/8/7P/8/8/8/2b5/6K1 w`: within +0.9 and -0.2.
+
+**Findings:** The positive thresholds (300, 150, 50) pruned nearly every quiet move after the first at depth 3 or less, because history values lie between -8192 and 8192 and most moves have values near zero. The negative values prune only moves with demonstrably bad history. The depth-5 blip of the wrong-bishop position and a large strength loss shared this cause.
+
+**Decisions made:** docs/DECISIONS.md 2026-10-20 (3).
+
+**Open:** ROADMAP.md "External review fix: wrong-bishop KBPK" is closed. A new item covers tuning the threshold values by SPRT and confirming the strength gain on a larger sample. Next session start point: next incomplete item in ROADMAP.md after the threshold follow-up (optional low-priority external-review items, only if measured).
+
+---
+
 ### Session 239 — 2026-10-20 — Wrong-bishop KBPK: pawn-on-7th pruning exemption and lone-minor scaling
 
 **Built:** `src/search/search.cpp`: LMP, history pruning and futility pruning are skipped when the opponent has a pawn on its own 7th rank (`enemy_pawn_on_seventh`). `src/eval/endgame.h/.cpp`: `is_lone_minor_side()` and `kLoneMinorUnwinnableDivisor` (8). `src/eval/eval.cpp`: a score favouring a side that holds one minor piece and no pawns, rooks or queens is divided by 8 (default-weights path only; the lazy-evaluation early return excludes such positions). Tests: a lone-minor unit and evaluate test in `tests/endgame_tests.cpp`; an iterative-deepening regression for `7k/7P/8/6K1/4B3/8/8/8 w` in `tests/search_tests.cpp`.

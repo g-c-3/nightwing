@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-20 (3) — History-pruning thresholds changed to negative values
+
+**Context:** `kHistoryPruningThresholds` was 0, 300, 150, 50 (depths 0 to 3) and the rule prunes a late quiet move when its history score is below the threshold. History scores lie in [-8192, 8192] and most moves hold values near zero, so the positive thresholds removed nearly all unproven quiet moves at shallow depth. This produced a one-iteration anomaly on a wrong-bishop fortress (about -4.9 at depth 5) and weakened play.
+
+**Decision:** The thresholds are 0, -1000, -2000, -3000 for depths 0 to 3, so only moves with clearly bad history are pruned.
+
+**Rationale:** Measured over 110 games against the previous build the change scored 91 wins, 6 draws and 13 losses (about +300 Elo by the rough estimate of `match.h`, on 1 CPU at 50 ms and 150 ms per move) and removed the anomaly; all 822 tests pass. Negative thresholds follow the usual form of history pruning (CPW "History Heuristic"; Stockfish-classic and Ethereal prune only below a negative, depth-scaled history).
+
+**Alternatives considered:** 0 at every depth (not measured); thresholds -500 or -1500 per depth and a different maximum depth (deferred to an SPRT on more hardware); keeping the positive values (rejected: measured loss).
+
+---
+
 ### 2026-10-20 (2) — Pawn-on-7th forward-pruning exemption adopted; lone-minor scores scaled
 
 **Context:** The pawn-on-7th exemption deferred in 2026-10-20 (1) fixed one fortress position but moved two existing KBPK tests to about -1.1 to -1.6. The cause was found to be the static evaluation: a bishop against a blocked pawn was scored as a clear advantage although a pawnless side with a lone minor piece cannot force mate.
