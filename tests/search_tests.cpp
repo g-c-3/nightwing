@@ -1645,3 +1645,21 @@ TEST_CASE("search_iterative_deepening: wrong-bishop KBPK (SESSIONS 237 position)
     });
     REQUIRE(checked >= 4);
 }
+
+TEST_CASE("search_iterative_deepening: a pawn on the 7th rank next to a fortress does not make "
+          "forward pruning drop the blockade reply (Session 238)",
+          "[search][fortress][regression]") {
+    init_all();
+    // Used to return +1393cp at depth 6 only (0 at depths 4, 5, 7, 8): futility/LMP/history
+    // pruning removed ...Kh8 while the enemy pawn stood on h7.
+    Position pos = parse_fen("7k/7P/8/6K1/4B3/8/8/8 w - - 0 1");
+    int checked = 0;
+    (void)search_iterative_deepening(pos, 8, 0, {}, [&](const SearchResult& r) {
+        if (r.depth_completed >= 4) {
+            REQUIRE(r.score > -300);
+            REQUIRE(r.score < 300);
+            ++checked;
+        }
+    });
+    REQUIRE(checked >= 5);
+}

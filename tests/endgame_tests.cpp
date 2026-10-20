@@ -15,6 +15,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "board/board.h"
+#include "board/fen.h"
 #include "eval/endgame.h"
 #include "eval/eval.h"
 
@@ -340,4 +341,20 @@ TEST_CASE("is_insufficient_material_position / evaluate(): dead-drawn material s
     Position bn = kbk;
     bn.place_piece(make_square(1, 0), Piece::WhiteKnight);
     REQUIRE_FALSE(is_insufficient_material_position(bn));
+}
+
+TEST_CASE("is_lone_minor_side / evaluate(): a side with a single minor and no pawns is never scored "
+          "as clearly winning (Session 238)",
+          "[eval][endgame][lone-minor]") {
+    // White: K + Bf1 (lone minor). Black: K + pawn d2. The bishop merely wins the pawn into
+    // a dead draw, so the raw "bishop out-counts pawn" score must be scaled towards zero.
+    Position pos = parse_fen("4k3/8/8/8/8/8/3p4/4KB2 w - - 0 1");
+    REQUIRE(is_lone_minor_side(pos, Color::White));
+    REQUIRE_FALSE(is_lone_minor_side(pos, Color::Black));
+    REQUIRE(evaluate(pos) < 100);
+
+    // Two minors, a rook, or any pawn disqualifies the side.
+    REQUIRE_FALSE(is_lone_minor_side(parse_fen("4k3/8/8/8/8/8/8/2B1KB2 w - - 0 1"), Color::White));
+    REQUIRE_FALSE(is_lone_minor_side(parse_fen("4k3/8/8/8/8/8/P7/4KB2 w - - 0 1"), Color::White));
+    REQUIRE_FALSE(is_lone_minor_side(parse_fen("4k3/8/8/8/8/8/8/R3KB2 w - - 0 1"), Color::White));
 }
