@@ -72,6 +72,14 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
 /// same caveat as every other margin constant in this codebase.
 constexpr int kDeltaMargin = 200;
 
+/// Delta pruning is disabled when this many pieces or fewer (kings
+/// included) remain: a capture there can reach an insufficient-material
+/// draw that the material-only delta estimate cannot see (see the
+/// dead-draw exemption comment in quiescence_impl()). 5 = two kings plus
+/// at most three other pieces, the largest set a single capture can turn
+/// into K vs K / K+minor vs K / same-colour-bishops.
+constexpr int kDeltaPruningMinPieces = 5;
+
 /// Returns true if `pos.side_to_move`'s king is currently attacked.
 /// Deliberately duplicated from search.cpp's own private helper of the
 /// same behavior (rather than shared) -- small, stable, and this
@@ -338,7 +346,21 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
     // into the per-move condition below specifically to make this
     // safety reasoning visible in one place instead of repeated at
     // every candidate.
-    const bool delta_pruning_may_apply = !us_in_check && alpha < kMateThreshold;
+    // Dead-draw exemption (Session 238; same family as the "unreliable
+    // material-only estimate" caveats CPW's "Delta Pruning" lists for
+    // endgames): with at most kDeltaPruningMinPieces total pieces on the
+    // board (both kings included), a capture can leave a dead-drawn
+    // insufficient-material position (K vs K, K+minor vs K, ...) whose
+    // eval::evaluate() value is 0 regardless of how large the material
+    // deficit looked a moment earlier. This material-only check cannot see
+    // that -- e.g. Kxh8 winning a rook that was the last thing keeping
+    // K+R+B vs K alive scored as "-840cp + 500cp + margin < alpha" and the
+    // capture was skipped, so razoring and the search above it trusted a
+    // lost-looking fortress as a win (the wrong-bishop KBPK search
+    // inconsistency, SESSIONS 237). Skipping delta pruning this sparse costs
+    // essentially nothing: the node counts involved are tiny.
+    const bool delta_pruning_may_apply = !us_in_check && alpha < kMateThreshold &&
+                                         board::popcount(pos.occupied()) > kDeltaPruningMinPieces;
 
     order_captures_first(candidates, pos);
 
