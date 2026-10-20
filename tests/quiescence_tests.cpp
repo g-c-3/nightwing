@@ -95,7 +95,11 @@ TEST_CASE("quiescence: delta pruning skips a capture whose value can't plausibly
     // bounded material edge). With delta pruning working, the capture
     // is skipped before ever reaching the recursive call that would
     // search it: nodes stays at 1 (only the top-level call).
-    Position pos = parse_fen("4k3/8/8/3p4/8/8/8/3QK3 w - - 0 1");
+    // Pawns a2/b2/a7/b7 added (Session 238) so the board holds more than
+    // kDeltaPruningMinPieces (search/quiescence.cpp): delta pruning is
+    // deliberately disabled in very sparse endgames, where a capture can
+    // reach an insufficient-material draw the material estimate can't see.
+    Position pos = parse_fen("4k3/pp6/8/3p4/8/8/PP6/3QK3 w - - 0 1");
     std::uint64_t nodes = 0;
     (void)quiescence(pos, /*alpha=*/5000, /*beta=*/1'000'000, 0, nodes, /*include_checks=*/false);
     REQUIRE(nodes == 1);
@@ -299,4 +303,19 @@ TEST_CASE("quiescence: detects stalemate as a draw with include_checks=false too
     const int score = quiescence(pos, -1'000'000, 1'000'000, 0, nodes, /*include_checks=*/false);
     REQUIRE(score == kDrawScore);
     REQUIRE(nodes == 1);
+}
+
+TEST_CASE("quiescence: delta pruning does not skip a capture that reaches an insufficient-material "
+          "draw (Kxh8 winning the last rook of K+R+B vs K)",
+          "[quiescence][delta]") {
+    init_all();
+    // Black king g7 can capture the white rook on h8 for free, leaving K+B vs K -- a
+    // dead draw (eval 0). Material alone says -840cp + 500cp + 200cp margin < alpha, so an
+    // unguarded delta pruning skips the capture and returns the -840cp stand-pat (Session
+    // 238; the wrong-bishop KBPK search inconsistency). With the window just above that
+    // stand-pat, the correct result is a fail-high (>= beta) from the capture.
+    Position pos = parse_fen("7R/6k1/8/6K1/8/8/2B5/8 b - - 0 1");
+    std::uint64_t nodes = 0;
+    const int score = quiescence(pos, -34, -33, 1, nodes, /*include_checks=*/true);
+    REQUIRE(score >= -33);
 }

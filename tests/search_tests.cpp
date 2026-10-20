@@ -1626,3 +1626,22 @@ TEST_CASE("search_iterative_deepening: soft_time_limit_ms never allows the searc
     REQUIRE(elapsed_ms <= 800);
 }
 
+
+TEST_CASE("search_iterative_deepening: wrong-bishop KBPK (SESSIONS 237 position) stays a draw "
+          "score at depths 7-10",
+          "[search][fortress][regression]") {
+    init_all();
+    // Used to jump to about -5.0 at depths 9-12 (a stale +840cp Exact TT entry produced by
+    // delta pruning skipping Kxh8 in a razoring quiescence call). Depth 5's single-iteration
+    // blip (history pruning) is a separate, still-open item and deliberately not asserted.
+    Position pos = parse_fen("7k/8/8/5K1P/8/8/8/3B4 b - - 0 1");
+    int checked = 0;
+    (void)search_iterative_deepening(pos, 10, 0, {}, [&](const SearchResult& r) {
+        if (r.depth_completed >= 7) {
+            REQUIRE(r.score > -300);
+            REQUIRE(r.score < 300);
+            ++checked;
+        }
+    });
+    REQUIRE(checked >= 4);
+}
