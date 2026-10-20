@@ -12,11 +12,11 @@
 // a pass/fail gate) whenever a movegen or make/unmake change might
 // affect throughput, to sanity-check it didn't regress silently.
 //
-// Once real search exists (Phase 2+), this will grow into the engine's
-// actual search-based bench (the conventional meaning of "bench" for a
-// UCI engine — a fixed-depth/fixed-time search used to sanity-check
-// build reproducibility across commits). For now, with no search yet,
-// perft_bulk() throughput is the closest available proxy.
+// The engine's search-based bench (the conventional meaning of "bench"
+// for a UCI engine) is a separate thing and already exists: the UCI
+// `bench [depth]` command and `./nightwing bench [depth]`
+// (uci::run_bench(), src/uci/uci.cpp, over src/bench_positions.h). This
+// standalone tool stays a perft throughput baseline only.
 
 #include <cstdio>
 #include <chrono>

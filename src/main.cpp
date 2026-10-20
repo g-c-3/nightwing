@@ -19,10 +19,13 @@
 // runs uci::run_bench() and exits immediately WITHOUT starting the
 // interactive UCI loop or initializing the opening book (irrelevant to
 // what bench measures — run_bench() calls search_fixed_depth()
-// directly, never touching book::book_move() at all).
+// directly, never touching book::book_move() at all). An optional second
+// argument sets the fixed depth (`./nightwing bench 8`); the default is
+// unchanged.
 
 #include <cstring>
 #include <iostream>
+#include <string>
 
 #include "board/attacks.h"
 #include "board/board.h"
@@ -44,7 +47,17 @@ int main(int argc, char** argv) {
     nightwing::board::init_zobrist_keys();
 
     if (argc > 1 && std::strcmp(argv[1], "bench") == 0) {
-        nightwing::uci::run_bench(std::cout);
+        // Optional depth: `./nightwing bench 8`. Absent or non-numeric
+        // means the default depth (run_bench()'s depth <= 0 case).
+        int bench_depth = 0;
+        if (argc > 2) {
+            try {
+                bench_depth = std::stoi(argv[2]);
+            } catch (const std::exception&) {
+                bench_depth = 0;
+            }
+        }
+        nightwing::uci::run_bench(std::cout, bench_depth);
         return 0;
     }
 
