@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+### Session 241 — 2026-10-21 — `bench` depth argument; stale bench header fixed; Threads/Hash clamping confirmed present
+
+**Built:** `src/uci/uci.h`, `src/uci/uci.cpp`: `run_bench(std::ostream&, int depth = 0)`; depth 0 or below selects `bench::kBenchDepth` (6), values above 40 are clamped; UCI `bench [depth]` parses an optional second token (non-numeric gives the default). `src/main.cpp`: `./nightwing bench [depth]`. `src/bench.cpp`: header no longer says a search bench is future work and points to `bench [depth]`. `tests/uci_tests.cpp`: one new test case for `bench 2` (per-position lines at depth 2 and a total matching an independent computation).
+
+**Measurements:** 823 of 823 test cases (117 `[uci]`, 706 others), Release build, 1 CPU. `./nightwing bench` total unchanged at 62276 nodes (depth 6); `bench 3` gives 6001 nodes; `bench 2` over UCI gives 2956 nodes; `bench abc` runs depth 6.
+
+**Findings:** Clamping of `Threads` and `Hash` was already implemented, so that part of the optional external-review item was closed without a change. The History-pruning threshold tuning item (Session 240 follow-up) needs a multi-core machine and longer time controls and remains open.
+
+**Decisions made:** none requiring a DECISIONS.md entry.
+
+**Open:** ROADMAP.md optional external-review item now lists: `go nodes` precision, runtime POPCNT dispatch, splitting `search.cpp`/`uci.cpp`, sanitizer CI job; each only if measured. Next session start point: next incomplete item in ROADMAP.md (the sanitizer CI job is the one that needs no strength measurement), or the history-pruning threshold tuning if multi-core hardware is available.
+
+---
+
 ### Session 240 — 2026-10-20 — History-pruning thresholds made negative; wrong-bishop item closed
 
 **Built:** `src/search/search.cpp`: `kHistoryPruningThresholds` changed from 0, 300, 150, 50 to 0, -1000, -2000, -3000.
