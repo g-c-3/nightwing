@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-20 (2) — Pawn-on-7th forward-pruning exemption adopted; lone-minor scores scaled
+
+**Context:** The pawn-on-7th exemption deferred in 2026-10-20 (1) fixed one fortress position but moved two existing KBPK tests to about -1.1 to -1.6. The cause was found to be the static evaluation: a bishop against a blocked pawn was scored as a clear advantage although a pawnless side with a lone minor piece cannot force mate.
+
+**Decision:** (1) Futility, LMP and history pruning are skipped when the opponent has a pawn on its 7th rank. (2) `evaluate()` divides a score that favours a side holding exactly one knight or bishop and no pawns, rooks or queens by `kLoneMinorUnwinnableDivisor` (8), on the default-weights path only; the lazy-evaluation early return is bypassed for such positions. History-pruning thresholds remain unchanged.
+
+**Rationale:** The two changes together keep all 822 tests green and remove both measured anomalies. The divisor mirrors the wrong-bishop fortress divisor so the value approaches zero while keeping a small gradient. Restricting the scaling to the default-weights path follows the existing insufficient-material rule (tuner and weight-override tests need weights to act on every position). The idea follows Stockfish-classic's material scale factor of 0 for a pawnless side below a rook in non-pawn material.
+
+**Alternatives considered:** scaling to exactly zero (rejected: removes the search gradient); applying the rule to all weight paths (rejected: broke five tuner and override tests); exempting only futility, or only LMP and history, from the pawn-on-7th rule (rejected in Session 238: one did not fix the position, the other moved existing tests).
+
+---
+
 ### 2026-10-20 (1) — Quiescence delta pruning disabled in sparse endgames; pawn-on-7th pruning exemption deferred
 
 **Context:** The wrong-bishop KBPK search score (about +5 on a dead draw) was traced to quiescence delta pruning skipping a capture that reaches an insufficient-material draw (`...Kxh8` winning the last rook of K+R+B vs K); the wrong value was then reused through the transposition table.

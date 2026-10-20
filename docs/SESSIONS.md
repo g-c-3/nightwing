@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 239 — 2026-10-20 — Wrong-bishop KBPK: pawn-on-7th pruning exemption and lone-minor scaling
+
+**Built:** `src/search/search.cpp`: LMP, history pruning and futility pruning are skipped when the opponent has a pawn on its own 7th rank (`enemy_pawn_on_seventh`). `src/eval/endgame.h/.cpp`: `is_lone_minor_side()` and `kLoneMinorUnwinnableDivisor` (8). `src/eval/eval.cpp`: a score favouring a side that holds one minor piece and no pawns, rooks or queens is divided by 8 (default-weights path only; the lazy-evaluation early return excludes such positions). Tests: a lone-minor unit and evaluate test in `tests/endgame_tests.cpp`; an iterative-deepening regression for `7k/7P/8/6K1/4B3/8/8/8 w` in `tests/search_tests.cpp`.
+
+**Measurements:** 822 of 822 test cases, Release, sandbox. `7k/7P/8/6K1/4B3/8/8/8 w`: 0 to +90 at depths 1 to 9 (previously +1393 at depth 6). `6k1/8/7P/8/8/8/2b5/6K1 w`: about -0.15 at depths 1 to 11. The Session 237 position stays at -0.1 to -1.6 apart from the depth-5 blip. Right-bishop control: mate in 5.
+
+**Findings:** The two KBPK tests that broke when the exemption was tried in Session 238 scored about -1.1 to -1.6 because the static evaluation counted a lone bishop against a blocked pawn as a clear advantage, while the search correctly declined the capture into a dead draw; a pawnless side with one minor piece cannot force mate, so the advantage was an artefact. Scaling it removed the plateau and made the exemption adoptable. The scaling is restricted to the default-weights path because tuner and override tests require weights to act on every position (the same rule as the insufficient-material shortcut).
+
+**Bugs fixed:** forward pruning removing the blockade reply while an enemy pawn stands on its 7th rank; lone-minor advantage overstated by the static evaluation.
+
+**Decisions made:** docs/DECISIONS.md 2026-10-20 (2).
+
+**Open:** ROADMAP.md "External review fix: wrong-bishop KBPK" remains PARTIAL: only the history-pruning thresholds (positive 300, 150, 50) remain, requiring an SPRT. Next session start point: run a self-play or SPRT comparison of negative history-pruning thresholds (for example 0, -2000, -1500, -1000 per depth) against the current build; if not adopted, close the ROADMAP item with the thresholds recorded as a known limitation.
+
+---
+
 ### Session 238 — 2026-10-20 — Wrong-bishop KBPK: root cause found (quiescence delta pruning feeding the TT)
 
 **Built:** `src/search/quiescence.cpp`: delta pruning is skipped when 5 or fewer pieces (kings included) remain (`kDeltaPruningMinPieces`), because a capture there can reach an insufficient-material draw that the material-only estimate cannot see. Two regression tests: `tests/quiescence_tests.cpp` (capture of the last rook with `...Kxh8` must not be pruned) and `tests/search_tests.cpp` (iterative deepening of `7k/8/8/5K1P/8/8/8/3B4 b` stays within 300 cp at depths 7 to 10). The existing delta-pruning test position in `tests/quiescence_tests.cpp` gained four pawns so it exceeds the piece threshold.
