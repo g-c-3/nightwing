@@ -178,4 +178,13 @@ bool is_insufficient_material_position(const Position& pos) noexcept {
     return false;
 }
 
+bool is_lone_minor_side(const Position& pos, Color side) noexcept {
+    if (pos.pieces(side, PieceType::Pawn) != 0 || pos.pieces(side, PieceType::Rook) != 0 ||
+        pos.pieces(side, PieceType::Queen) != 0) {
+        return false;
+    }
+    return board::popcount(pos.pieces(side, PieceType::Knight) |
+                           pos.pieces(side, PieceType::Bishop)) == 1;
+}
+
 } // namespace nightwing::eval

@@ -178,7 +178,8 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
         // score cannot see (Session 235, external review fix).
         if ((lazy_score - kLazyEvalMargin > *lazy_beta_white ||
              lazy_score + kLazyEvalMargin < *lazy_alpha_white) &&
-            !is_wrong_bishop_fortress(pos)) {
+            !is_wrong_bishop_fortress(pos) && !is_lone_minor_side(pos, board::Color::White) &&
+            !is_lone_minor_side(pos, board::Color::Black)) {
             return lazy_score;
         }
     }
@@ -267,6 +268,24 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     // review fix, Session 235; eval/minor_piece_endgame.h).
     if (is_wrong_bishop_fortress(pos)) {
         result /= kWrongBishopFortressDivisor;
+    }
+
+    // A side with only a lone minor piece cannot force mate, so a score
+    // that favours it (its piece out-counting the opponent's pawns) is not
+    // winning: at best it wins the pawns into a dead draw (Session 238,
+    // KBPK wrong-bishop follow-up; eval/endgame.h is_lone_minor_side()).
+    // Default-weights path only, like the insufficient-material shortcut at
+    // the top: tuner/test callers passing candidate weights must see them
+    // act on every position.
+    const bool default_weights_path =
+        (material_weights == nullptr) && (psqt_weights == nullptr) &&
+        (mobility_weights == nullptr) && (space_weights == nullptr) &&
+        (threats_weights == nullptr) && (king_safety_weights == nullptr) &&
+        (pawns_weights == nullptr);
+    if (default_weights_path &&
+        ((result > 0 && is_lone_minor_side(pos, board::Color::White)) ||
+         (result < 0 && is_lone_minor_side(pos, board::Color::Black)))) {
+        result /= kLoneMinorUnwinnableDivisor;
     }
 
     if (eval_cache_usable) {

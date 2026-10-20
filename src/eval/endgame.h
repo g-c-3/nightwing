@@ -189,4 +189,19 @@ enum class EndgameSignature : std::uint8_t {
 /// bishop or knight ending (Session 237, wrong-bishop KBPK fix).
 [[nodiscard]] bool is_insufficient_material_position(const board::Position& pos) noexcept;
 
+/// Divisor applied to a score that favours a side holding nothing but a
+/// lone minor piece (see is_lone_minor_side()). 8 mirrors
+/// kWrongBishopFortressDivisor: the value is pulled close to a draw while
+/// keeping a small gradient so the search is not left on a flat plateau.
+inline constexpr int kLoneMinorUnwinnableDivisor = 8;
+
+/// True when `side` has exactly one knight or bishop and no pawns, rooks
+/// or queens. Such a side can never deliver checkmate by force, so a score
+/// that says it is ahead is an artefact of counting its piece against the
+/// opponent's pawns (e.g. K+B vs K+P where the bishop merely wins the pawn
+/// into a dead draw). evaluate() scales those scores towards zero.
+/// Source of the idea: Stockfish-classic material.cpp, scale factor 0 for a
+/// pawnless side whose non-pawn material is below a rook; CPW "Material".
+[[nodiscard]] bool is_lone_minor_side(const board::Position& pos, board::Color side) noexcept;
+
 } // namespace nightwing::eval
