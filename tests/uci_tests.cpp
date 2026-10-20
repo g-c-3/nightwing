@@ -1152,6 +1152,23 @@ TEST_CASE("uci: 'bench' command's reported total node count matches an independe
     REQUIRE(contains(out, "Nodes searched  : " + std::to_string(expected_total)));
 }
 
+TEST_CASE("uci: 'bench <depth>' searches every shared position to that depth and its total "
+          "matches an independent computation at the same depth",
+          "[uci][bench]") {
+    init_all();
+    const std::string out = run_uci({"bench 2", "quit"});
+    REQUIRE(contains(out, "startpos: depth 2 nodes "));
+    REQUIRE(contains(out, "kiwipete: depth 2 nodes "));
+    REQUIRE_FALSE(contains(out, "depth 6 nodes "));
+
+    std::uint64_t expected_total = 0;
+    for (const auto& bench_pos : nightwing::bench::kBenchPositions) {
+        nightwing::board::Position pos = nightwing::board::parse_fen(bench_pos.fen);
+        expected_total += nightwing::search::search_fixed_depth(pos, 2).nodes;
+    }
+    REQUIRE(contains(out, "Nodes searched  : " + std::to_string(expected_total)));
+}
+
 TEST_CASE("uci: 'bench' followed by an ordinary 'go' still works normally -- bench doesn't leave "
           "the engine in a bad state",
           "[uci][bench]") {
