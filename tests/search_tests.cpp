@@ -1663,3 +1663,33 @@ TEST_CASE("search_iterative_deepening: a pawn on the 7th rank next to a fortress
     });
     REQUIRE(checked >= 5);
 }
+
+TEST_CASE("search_iterative_deepening: max_nodes is a cumulative whole-search budget, not a "
+          "per-iteration one -- ROADMAP.md external-review item, `go nodes` precision "
+          "(Session 244)",
+          "[search][id][nodes][cumulative]") {
+    init_all();
+    Position pos = start_position();
+    for (const std::uint64_t limit : {std::uint64_t{1000}, std::uint64_t{5000}, std::uint64_t{20000}}) {
+        const SearchResult r =
+            search_iterative_deepening(pos, /*max_depth=*/20, /*time_limit_ms=*/0, /*game_history=*/{},
+                                        /*on_iteration=*/nullptr, /*material_weights=*/nullptr,
+                                        /*eval_weights=*/nullptr, /*num_threads=*/1,
+                                        /*external_stop=*/nullptr, /*hash_size_mb=*/kDefaultTTSizeMB,
+                                        /*multi_pv=*/1, /*soft_time_limit_ms=*/0, /*contempt_cp=*/0,
+                                        /*external_tt=*/nullptr, /*max_nodes=*/limit);
+        INFO("limit " << limit << " nodes " << r.nodes);
+        // The limit is tested on every node and accumulates across
+        // iterations, so the total never exceeds it by more than a handful
+        // of nodes (depth 1 always completes, hence the lower-bound caveat
+        // only for tiny limits).
+        REQUIRE(r.nodes <= limit + 64);
+        REQUIRE_FALSE(r.best_move.is_null());
+    }
+    // A limit of 1 still returns the mandatory depth-1 move and nothing deeper.
+    const SearchResult one =
+        search_iterative_deepening(pos, 20, 0, {}, nullptr, nullptr, nullptr, 1, nullptr,
+                                    kDefaultTTSizeMB, 1, 0, 0, nullptr, /*max_nodes=*/1);
+    REQUIRE_FALSE(one.best_move.is_null());
+    REQUIRE(one.depth_completed == 1);
+}
