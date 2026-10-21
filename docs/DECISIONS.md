@@ -4,6 +4,20 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-22 (1) — `go nodes` is a cumulative, per-node-tested budget
+
+**Context:** The node limit compared a per-call counter against `max_nodes`, so each depth iteration had its own budget and the whole search could run far past the requested value (`go nodes 1` ran 1945 nodes in the Session 234 review; the start position with `go nodes 100000` ran 177,136 nodes). The check also ran only every 2048 nodes.
+
+**Decision:** `max_nodes` bounds the whole search. `SearchLimits::nodes_base` carries the nodes already spent, the test runs on every node, and no new iteration starts once the budget is spent. Depth 1 remains unconditional so that a legal move is always returned. Searches without a node limit are unchanged (bench 62276 nodes at depth 6).
+
+**Rationale:** the UCI meaning of `go nodes` is a total budget; the per-iteration behaviour made small limits meaningless and node-limited matches uneven. The added cost is one comparison per node, and only when a limit is set.
+
+**Consequence:** node-limited `uci-match` and SPSA runs (`go nodes 200000`) search less deep per move after this change than before it. Both sides of a single run use the same build, so each run stays internally valid, but numbers must not be compared across the change.
+
+**Alternatives considered:** keeping the per-iteration meaning and documenting it (rejected: contradicts the protocol); stopping on the next 2048-node boundary only (rejected: overshoot of up to one interval, large for small limits).
+
+---
+
 ### 2026-10-21 (1) — History-pruning thresholds set to -100, -200, -300
 
 **Context:** The 2026-10-20 (3) thresholds (0, -1000, -2000, -3000) were found never to fire. A probe at the pruning site over 553,790 candidate quiet moves at depth 3 or less (single-threaded bench at depth 11) recorded a lowest history score of -472; only about 1.9% were below -100 and 0.17% below -300. Builds with -500 per depth, -2000 per depth, a maximum depth of 5, and the gate disabled all searched 5,346,560 nodes at bench depth 11, identical to main. The gain recorded on 2026-10-20 (3) therefore came from removing the former positive thresholds, not from the negative values.

@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 244 — 2026-10-22 — `go nodes` made a cumulative, node-exact budget
+
+**Built:** `src/search/search.h`: `SearchLimits::nodes_base` (nodes already spent by earlier iterations and aspiration attempts). `src/search/search.cpp` and `src/search/quiescence.cpp`: the node-limit test is now `nodes + nodes_base >= max_nodes`, evaluated on every node instead of only every 2048 nodes; `search_iterative_deepening()` and its MultiPV variant start no new depth once the budget is spent and set `nodes_base` per iteration, per aspiration retry and per MultiPV line. `tests/search_tests.cpp`: one new test case (`[search][id][nodes][cumulative]`).
+
+**Cause:** the node counter restarted for every `search_root()` call, so `max_nodes` bounded each iteration separately and the total could exceed it by the sum of all iterations; the periodic check interval added further slack for small limits.
+
+**Measurements:** Release build, zero warnings; 824 of 824 test cases (one new); `bench` unchanged at 62276 nodes at depth 6 (no node limit, so the default path is identical). Start position, `go nodes N`, last completed depth and nodes: N=1 depth 1 (20 nodes), N=100 depth 2 (54), N=1000 depth 3 (140), N=10000 depth 6 (4244), N=100000 depth 8 (49508); before: N=1000 depth 5 (2100), N=100000 depth 10 (177136).
+
+**Findings:** the CI result of Session 243's change could not be read (GitHub API rate limit); `main` was confirmed to carry the 0/-100/-200/-300 table.
+
+**Decisions made:** see DECISIONS.md 2026-10-22 (1).
+
+**Open:** CI for this change not yet seen. Node-limited `uci-match` and SPSA runs (`go nodes 200000`) now search less deep per move than before the change; results are comparable only between builds on the same side of this commit. ROADMAP.md optional external-review item still lists runtime POPCNT dispatch and splitting `search.cpp`/`uci.cpp`, each only if measured; the history-pruning follow-up (non-overlapping seeds, maximum depth above 3, longer time controls) remains optional.
+
+**Next session start point:** read the CI result of the commit containing this change (all jobs, 824 test cases), then take the next incomplete item in ROADMAP.md.
+
+---
+
 ### Session 243 — 2026-10-21 — History-pruning threshold study on hosted runners; -100/-200/-300 adopted
 
 **Built:** `src/search/search.cpp`: `kHistoryPruningThresholds` changed from 0, -1000, -2000, -3000 to 0, -100, -200, -300, with the doc comment corrected (thresholds grow more negative with depth) and extended with the measured calibration. No other file changed.
