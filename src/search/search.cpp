@@ -557,7 +557,7 @@ constexpr std::array<int, kLMPMaxDepth + 1> kLMPMoveCountLimits = {
 /// specifically.
 constexpr int kHistoryPruningMaxDepth = 3;
 constexpr std::array<int, kHistoryPruningMaxDepth + 1> kHistoryPruningThresholds = {
-    0, -1000, -2000, -3000,
+    0, -100, -200, -300, // EXPERIMENT hp-100
 };
 
 /// SEE-based (bad-)capture pruning (CPW doesn't have a single canonical
