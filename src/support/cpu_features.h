@@ -20,9 +20,22 @@ namespace nightwing::support {
 /// Safe to call more than once (idempotent).
 void detect_cpu_features();
 
-/// Returns true if the running CPU supports BMI2 (PEXT/PDEP instructions).
-/// Only meaningful after detect_cpu_features() has been called.
+/// Returns true if the running CPU supports BMI2 (PEXT/PDEP instructions)
+/// AND PEXT is worth using on it: AMD Zen 1/2 (family 0x17) implement PEXT
+/// in microcode, where it is slower than magic bitboards, so this reports
+/// false there (the portable magic path is used instead; search results are
+/// identical). Idea credit: Stockfish's build notes and CPW ("BMI2",
+/// "Magic Bitboards"). Only meaningful after detect_cpu_features().
 bool cpu_has_bmi2();
+
+/// Pure helper for the Zen 1/2 rule above, taking raw CPUID values:
+/// leaf 0 vendor registers (`vendor_ebx`/`vendor_edx`/`vendor_ecx`, the
+/// "AuthenticAMD" string) and leaf 1 `eax` (family/model/stepping). Returns
+/// true for AMD CPUs with display family 0x17 (Zen 1, Zen+, Zen 2) or any
+/// earlier AMD family; false for Intel, Zen 3 and later (family >= 0x19) and
+/// unknown vendors. Exposed for unit testing.
+bool cpu_pext_is_slow(unsigned vendor_ebx, unsigned vendor_edx, unsigned vendor_ecx,
+                      unsigned leaf1_eax);
 
 /// Returns true if the running CPU supports the POPCNT instruction.
 /// Only meaningful after detect_cpu_features() has been called.

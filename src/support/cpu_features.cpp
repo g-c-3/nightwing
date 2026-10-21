@@ -10,6 +10,8 @@
 
 #if defined(_MSC_VER)
 #include <intrin.h>
+#elif (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
+#include <cpuid.h>
 #endif
 
 namespace nightwing::support {
@@ -33,6 +35,21 @@ void build_summary() {
 
 } // namespace
 
+bool cpu_pext_is_slow(unsigned vendor_ebx, unsigned vendor_edx, unsigned vendor_ecx,
+                      unsigned leaf1_eax) {
+    // "AuthenticAMD" in CPUID leaf 0: EBX "Auth", EDX "enti", ECX "cAMD".
+    const bool is_amd =
+        vendor_ebx == 0x68747541u && vendor_edx == 0x69746e65u && vendor_ecx == 0x444d4163u;
+    if (!is_amd) {
+        return false;
+    }
+    unsigned family = (leaf1_eax >> 8) & 0xFu;
+    if (family == 0xFu) {
+        family += (leaf1_eax >> 20) & 0xFFu; // extended family
+    }
+    return family <= 0x17u; // Zen 1/2 are 0x17; Zen 3+ (0x19, 0x1A) have fast PEXT
+}
+
 void detect_cpu_features() {
     if (g_detected) {
         return;
@@ -52,11 +69,29 @@ void detect_cpu_features() {
         __cpuidex(info7, 7, 0);
         g_has_bmi2 = (info7[1] & (1 << 8)) != 0; // EBX bit 8
     }
+    if (g_has_bmi2) {
+        int v[4] = {0, 0, 0, 0};
+        int l1[4] = {0, 0, 0, 0};
+        __cpuid(v, 0);
+        __cpuid(l1, 1);
+        if (cpu_pext_is_slow(static_cast<unsigned>(v[1]), static_cast<unsigned>(v[3]),
+                             static_cast<unsigned>(v[2]), static_cast<unsigned>(l1[0]))) {
+            g_has_bmi2 = false;
+        }
+    }
 #elif (defined(__GNUC__) || defined(__clang__)) && \
       (defined(__x86_64__) || defined(__i386__))
     __builtin_cpu_init();
     g_has_bmi2 = __builtin_cpu_supports("bmi2");
     g_has_popcnt = __builtin_cpu_supports("popcnt");
+    if (g_has_bmi2) {
+        unsigned a = 0, b = 0, c = 0, d = 0;
+        unsigned eax1 = 0, unused_b = 0, unused_c = 0, unused_d = 0;
+        if (__get_cpuid(0, &a, &b, &c, &d) && __get_cpuid(1, &eax1, &unused_b, &unused_c, &unused_d) &&
+            cpu_pext_is_slow(b, d, c, eax1)) {
+            g_has_bmi2 = false;
+        }
+    }
 #else
     // Non-x86 target (e.g. ARM/Apple Silicon) or unknown compiler: BMI2 and
     // POPCNT are x86 ISA extensions and simply don't apply here — reporting
