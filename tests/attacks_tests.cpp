@@ -176,3 +176,17 @@ TEST_CASE("PEXT and magic paths agree with each other, when the host CPU support
     }
 }
 #endif
+
+TEST_CASE("cpu_pext_is_slow: AMD Zen 1/2 (family 0x17) is flagged, Zen 3+ and Intel are not -- "
+          "external review, Session 245",
+          "[cpu][pext]") {
+    using nightwing::support::cpu_pext_is_slow;
+    // CPUID leaf 0 vendor registers for "AuthenticAMD" / "GenuineIntel".
+    constexpr unsigned kAmdB = 0x68747541u, kAmdD = 0x69746e65u, kAmdC = 0x444d4163u;
+    constexpr unsigned kIntelB = 0x756e6547u, kIntelD = 0x49656e69u, kIntelC = 0x6c65746eu;
+    REQUIRE(cpu_pext_is_slow(kAmdB, kAmdD, kAmdC, 0x00800F12u));  // Zen 1 (family 0x17)
+    REQUIRE(cpu_pext_is_slow(kAmdB, kAmdD, kAmdC, 0x00870F10u));  // Zen 2 (family 0x17)
+    REQUIRE_FALSE(cpu_pext_is_slow(kAmdB, kAmdD, kAmdC, 0x00A20F10u)); // Zen 3 (0x19)
+    REQUIRE_FALSE(cpu_pext_is_slow(kAmdB, kAmdD, kAmdC, 0x00B00F21u)); // Zen 5 (0x1A)
+    REQUIRE_FALSE(cpu_pext_is_slow(kIntelB, kIntelD, kIntelC, 0x000506E3u)); // Skylake
+}

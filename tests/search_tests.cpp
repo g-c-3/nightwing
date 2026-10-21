@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "board/attacks.h"
@@ -1692,4 +1693,34 @@ TEST_CASE("search_iterative_deepening: max_nodes is a cumulative whole-search bu
                                     kDefaultTTSizeMB, 1, 0, 0, nullptr, /*max_nodes=*/1);
     REQUIRE_FALSE(one.best_move.is_null());
     REQUIRE(one.depth_completed == 1);
+}
+
+TEST_CASE("search_iterative_deepening: multi_pv larger than the searchmoves list never yields a "
+          "null best move or null MultiPV lines -- external review, Session 245",
+          "[search][id][multipv][searchmoves]") {
+    init_all();
+    Position pos = start_position();
+    MoveList legal;
+    generate_legal_moves(pos, legal);
+    std::vector<Move> allowed;
+    for (const Move& m : legal) {
+        const std::string s = m.to_uci();
+        if (s == "e2e4" || s == "d2d4") {
+            allowed.push_back(m);
+        }
+    }
+    REQUIRE(allowed.size() == 2);
+    const SearchResult r =
+        search_iterative_deepening(pos, /*max_depth=*/4, /*time_limit_ms=*/0, /*game_history=*/{},
+                                    /*on_iteration=*/nullptr, /*material_weights=*/nullptr,
+                                    /*eval_weights=*/nullptr, /*num_threads=*/1,
+                                    /*external_stop=*/nullptr, /*hash_size_mb=*/kDefaultTTSizeMB,
+                                    /*multi_pv=*/8, /*soft_time_limit_ms=*/0, /*contempt_cp=*/0,
+                                    /*external_tt=*/nullptr, /*max_nodes=*/0, allowed);
+    REQUIRE_FALSE(r.best_move.is_null());
+    REQUIRE((r.best_move == allowed[0] || r.best_move == allowed[1]));
+    REQUIRE(r.multipv_lines.size() == 2);
+    for (const SearchResult& line : r.multipv_lines) {
+        REQUIRE_FALSE(line.best_move.is_null());
+    }
 }
