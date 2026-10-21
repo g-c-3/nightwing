@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+### Session 242 — 2026-10-21 — Sanitizer fuzz CI job
+
+**Built:** `tests/fuzz/uci_fuzz.py` (new): randomized multi-thread UCI fuzz driver for the real `nightwing` binary; the engine's own `bestmove` is played onward, so no second move generator is needed. `.github/workflows/ci.yml`: new job `sanitizer-fuzz` with an `ASan+UBSan` leg (default Debug build) and a `ThreadSanitizer` leg (`-DNIGHTWING_ENABLE_TSAN=ON`), each building only the `nightwing` target and running the fuzz for 120 s with `--seed` set to the run number and up to 4 threads. The existing `tsan-test` and Debug `build-and-test` legs, which run the unit-test suite under the sanitizers, are unchanged.
+
+**Measurements:** Local Debug builds confirmed instrumented (`__asan_init`, `__tsan_init` present). Fuzz at 60 s, seed 7: ASan/UBSan binary 62 games and 346 searches, TSan binary 69 games and 398 searches, no reports, clean exit after the final `quit` race. Release binary at 25 s: seeds 1 and 2 clean. A fake engine printing a ThreadSanitizer line on stderr made the driver fail with the report quoted, so detection works. No C++ files changed, so the 823 test cases were not re-run. `ci.yml` parsed as valid YAML.
+
+**Bugs fixed (in the new script):** an `isready` sent mid-search could be answered after the search's `bestmove`, so the driver waited for a `bestmove` already consumed and timed out; `bestmove` lines seen while waiting for another prefix are now kept and used.
+
+**Decisions made:** none requiring a DECISIONS.md entry (a Python driver was chosen over a C++ test because it exercises the shipped binary over the real UCI pipe and needs no CMake changes).
+
+**Open:** the job has not yet run on GitHub-hosted runners; the first CI run confirms the 120 s budget and that Debug builds fit in the 30-minute timeout. If it reports a sanitizer finding, treat it as a real bug and fix with cause/fix/why. ROADMAP.md optional external-review item now lists: `go nodes` precision, runtime POPCNT dispatch, splitting `search.cpp`/`uci.cpp`; each only if measured. Next session start point: read the first `sanitizer-fuzz` CI result (fix any finding), then the history-pruning threshold tuning if multi-core hardware is available.
+
+---
+
 ### Session 241 — 2026-10-21 — `bench` depth argument; stale bench header fixed; Threads/Hash clamping confirmed present
 
 **Built:** `src/uci/uci.h`, `src/uci/uci.cpp`: `run_bench(std::ostream&, int depth = 0)`; depth 0 or below selects `bench::kBenchDepth` (6), values above 40 are clamped; UCI `bench [depth]` parses an optional second token (non-numeric gives the default). `src/main.cpp`: `./nightwing bench [depth]`. `src/bench.cpp`: header no longer says a search bench is future work and points to `bench [depth]`. `tests/uci_tests.cpp`: one new test case for `bench 2` (per-position lines at depth 2 and a total matching an independent computation).
