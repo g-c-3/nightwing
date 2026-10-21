@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+### Session 243 — 2026-10-21 — History-pruning threshold study on hosted runners; -100/-200/-300 adopted
+
+**Built:** `src/search/search.cpp`: `kHistoryPruningThresholds` changed from 0, -1000, -2000, -3000 to 0, -100, -200, -300, with the doc comment corrected (thresholds grow more negative with depth) and extended with the measured calibration. No other file changed.
+
+**Findings:** (1) The Session 240 table never fires: lowest history score at the pruning site was -472 over 553,790 candidates; variants -500, -2000, maximum depth 5 and gate-off were node-identical to main at bench depths 9 and 11. (2) Round one on GitHub-hosted runners (`uci-match`, `go movetime 100`, 300-minute cap, none reached an SPRT bound): -50/-100/-150 +1.7 Elo (1445 games), -100/-200/-300 +13.2 (1480), -200/-400/-600 -9.6 (1451). (3) Four re-runs of -100/-200/-300 with seeds 2000 to 5000 (5862 games): +6.3 Elo, 95% interval -1.5 to +14.2, one-sided p about 0.06, all four positive. Seed ranges overlapped by about 450 openings between adjacent runs. (4) Earlier same session: bench depth argument (Session 241) and sanitizer-fuzz CI job (Session 242) confirmed on CI, both legs green in about 2.4 minutes, 823/823 tests on Linux and Windows, 821/821 on macOS.
+
+**Measurements:** 823/823 test cases locally (117 `[uci]`, 706 others); bench depth 6 unchanged at 62276 nodes; depth 11 5,224,911 nodes against 5,346,560 before.
+
+**Decisions made:** see DECISIONS.md 2026-10-21 (1).
+
+**Open:** the adoption rests on weak evidence (interval includes zero); it can be reverted with one table. Optional: a further batch of re-runs with non-overlapping seeds, a maximum depth above 3, longer time controls. ROADMAP.md optional external-review item still lists: `go nodes` precision, runtime POPCNT dispatch, splitting `search.cpp`/`uci.cpp`. Next session start point: read the CI result of the commit containing this change, then the next incomplete item in ROADMAP.md.
+
+---
+
 ### Session 242 — 2026-10-21 — Sanitizer fuzz CI job
 
 **Built:** `tests/fuzz/uci_fuzz.py` (new): randomized multi-thread UCI fuzz driver for the real `nightwing` binary; the engine's own `bestmove` is played onward, so no second move generator is needed. `.github/workflows/ci.yml`: new job `sanitizer-fuzz` with an `ASan+UBSan` leg (default Debug build) and a `ThreadSanitizer` leg (`-DNIGHTWING_ENABLE_TSAN=ON`), each building only the `nightwing` target and running the fuzz for 120 s with `--seed` set to the run number and up to 4 threads. The existing `tsan-test` and Debug `build-and-test` legs, which run the unit-test suite under the sanitizers, are unchanged.

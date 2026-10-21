@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-21 (1) — History-pruning thresholds set to -100, -200, -300
+
+**Context:** The 2026-10-20 (3) thresholds (0, -1000, -2000, -3000) were found never to fire. A probe at the pruning site over 553,790 candidate quiet moves at depth 3 or less (single-threaded bench at depth 11) recorded a lowest history score of -472; only about 1.9% were below -100 and 0.17% below -300. Builds with -500 per depth, -2000 per depth, a maximum depth of 5, and the gate disabled all searched 5,346,560 nodes at bench depth 11, identical to main. The gain recorded on 2026-10-20 (3) therefore came from removing the former positive thresholds, not from the negative values.
+
+**Decision:** The thresholds are 0, -100, -200, -300 for depths 0 to 3 (maximum depth unchanged at 3). Bench at depth 6 is unchanged (62276 nodes); at depth 11 it is 5,224,911 nodes against 5,346,560.
+
+**Rationale:** Self-play at `go movetime 100`, 8 random opening plies, on GitHub-hosted runners against the never-firing table. Round one (one run each): -50/-100/-150 +1.7 Elo (1445 games), -100/-200/-300 +13.2 (1480), -200/-400/-600 -9.6 (1451); none reached an SPRT bound (0 to +4 Elo, 0.05/0.05) within the 300-minute cap. The chosen table was then re-run four times with seeds 2000, 3000, 4000, 5000 (5862 games; 2352 wins, 1265 draws, 2245 losses): +6.3 Elo, 95% interval -1.5 to +14.2, one-sided p about 0.06, every run positive (+10.5, +2.4, +5.0, +7.5). The round-one figure is biased upward by choosing the best of three, so only the re-runs count as evidence. No illegal moves in any run. All 823 test cases pass.
+
+**Alternatives considered:** keeping -1000/-2000/-3000 (equivalent to disabling the gate; node-identical in bench); -50/-100/-150 and -200/-400/-600 (inconclusive, point estimates about 0 and negative); a maximum depth above 3 (not measured); an SPSA search over the values (not done; the thresholds are not tunables). The adoption rests on weak evidence and is cheap to revert (one table in `src/search/search.cpp`); a multi-core or longer-time-control confirmation remains possible.
+
+---
+
 ### 2026-10-20 (3) — History-pruning thresholds changed to negative values
 
 **Context:** `kHistoryPruningThresholds` was 0, 300, 150, 50 (depths 0 to 3) and the rule prunes a late quiet move when its history score is below the threshold. History scores lie in [-8192, 8192] and most moves hold values near zero, so the positive thresholds removed nearly all unproven quiet moves at shallow depth. This produced a one-iteration anomaly on a wrong-bishop fortress (about -4.9 at depth 5) and weakened play.
