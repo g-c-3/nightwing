@@ -4231,7 +4231,23 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     if (multi_pv > 1) {
         MoveList root_moves;
         board::generate_legal_moves(pos, root_moves);
-        const int max_lines = std::min(multi_pv, root_moves.size());
+        // `searchmoves` shrinks the candidate set: lines beyond the number
+        // of listed legal moves would have a null best move (bestmove 0000,
+        // bogus `pv a1a1` lines -- external review, Session 245), so the
+        // line count is capped by the FILTERED root move count.
+        int candidate_moves = root_moves.size();
+        if (!searchmoves.empty()) {
+            candidate_moves = 0;
+            for (const Move& m : root_moves) {
+                for (const Move& allowed : searchmoves) {
+                    if (m == allowed) {
+                        ++candidate_moves;
+                        break;
+                    }
+                }
+            }
+        }
+        const int max_lines = std::min(multi_pv, candidate_moves);
         if (max_lines > 1) {
             return search_iterative_deepening_multipv(pos, max_depth, time_limit_ms, game_history,
                                                         on_iteration, material_weights, eval_weights,
