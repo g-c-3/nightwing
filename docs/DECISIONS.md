@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-22 (2) — PEXT disabled on AMD Zen 1/2
+
+**Context:** An external review noted that CPU detection enabled PEXT on any CPU reporting BMI2, including AMD Zen 1/2 (family 0x17), where PEXT is implemented in microcode and is slower than magic bitboards.
+
+**Decision:** `cpu_has_bmi2()` reports false on AMD CPUs of family 0x17 or earlier (CPUID vendor "AuthenticAMD", display family from leaf 1 including the extended family). Intel and AMD Zen 3 and later are unchanged. The rule is the pure function `cpu_pext_is_slow()`, unit-tested over raw CPUID values.
+
+**Rationale:** the fallback is the existing magic path and produces identical attacks and node counts; only speed changes. The slowdown on Zen 1/2 is documented in the Stockfish build notes and on CPW; it was not measured on AMD hardware here.
+
+**Alternatives considered:** leaving detection as it was (rejected: known slow path on a common CPU family); a UCI option to force PEXT (not needed now).
+
+---
+
 ### 2026-10-22 (1) — `go nodes` is a cumulative, per-node-tested budget
 
 **Context:** The node limit compared a per-call counter against `max_nodes`, so each depth iteration had its own budget and the whole search could run far past the requested value (`go nodes 1` ran 1945 nodes in the Session 234 review; the start position with `go nodes 100000` ran 177,136 nodes). The check also ran only every 2048 nodes.

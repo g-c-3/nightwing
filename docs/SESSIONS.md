@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 245 — 2026-10-22 — External review triage: `searchmoves` with MultiPV fixed, PEXT gated on Zen 1/2
+
+**Built:** `src/search/search.cpp`: `search_iterative_deepening()` caps the MultiPV line count by the number of root moves that match `searchmoves`, not by the unfiltered legal-move count. `src/support/cpu_features.h` and `.cpp`: `cpu_pext_is_slow()` (pure function over raw CPUID values) and a vendor/family check that reports BMI2 as unavailable on AMD family 0x17 and earlier, so the magic-bitboard path is used there. `tests/search_tests.cpp`: one new case (`[search][id][multipv][searchmoves]`). `tests/attacks_tests.cpp`: one new case (`[cpu][pext]`).
+
+**Bugs fixed:** `searchmoves` with `Skill Level` below 20 (internal MultiPV) or `MultiPV` above the number of listed moves printed `bestmove 0000` (1 of 4 reproduction runs) and `info ... multipv 6 depth 0 ... pv a1a1` lines. Cause: `max_lines` was computed from the unfiltered legal-move count, so surplus lines had a null best move. Fix: `max_lines = min(multi_pv, filtered root move count)`, falling through to the single-line path when one candidate remains. Correct because every line now has at least one searchable root move.
+
+**Triage of the external review:** the `go nodes` finding was already fixed in Session 244; the illegal-move finding did not reproduce (an `info string` is printed); `actions/checkout@v7` exists (CI green); the remaining findings were recorded in ROADMAP.md as optional items.
+
+**Measurements:** Release build, zero warnings; 826 of 826 test cases (two new); `bench` unchanged at 62276 nodes at depth 6; 8 of 8 `Skill Level 3` plus `searchmoves` runs returned a listed move with no null lines. The PEXT gate could not be exercised on AMD hardware; only the pure function is tested.
+
+**Decisions made:** see DECISIONS.md 2026-10-22 (2).
+
+**Open:** CI for this change not yet seen. Remaining review items are listed in ROADMAP.md.
+
+**Next session start point:** read the CI result of the commit containing these changes (all jobs, 826 test cases), then take the next incomplete item in ROADMAP.md.
+
+---
+
 ### Session 244 — 2026-10-22 — `go nodes` made a cumulative, node-exact budget
 
 **Built:** `src/search/search.h`: `SearchLimits::nodes_base` (nodes already spent by earlier iterations and aspiration attempts). `src/search/search.cpp` and `src/search/quiescence.cpp`: the node-limit test is now `nodes + nodes_base >= max_nodes`, evaluated on every node instead of only every 2048 nodes; `search_iterative_deepening()` and its MultiPV variant start no new depth once the budget is spent and set `nodes_base` per iteration, per aspiration retry and per MultiPV line. `tests/search_tests.cpp`: one new test case (`[search][id][nodes][cumulative]`).
@@ -16,7 +34,7 @@ Newest entry at top.
 
 **Decisions made:** see DECISIONS.md 2026-10-22 (1).
 
-**Open:** CI for this change not yet seen. Node-limited `uci-match` and SPSA runs (`go nodes 200000`) now search less deep per move than before the change; results are comparable only between builds on the same side of this commit. ROADMAP.md optional external-review item still lists runtime POPCNT dispatch and splitting `search.cpp`/`uci.cpp`, each only if measured; the history-pruning follow-up (non-overlapping seeds, maximum depth above 3, longer time controls) remains optional.
+**Open:** CI result for this change was read in Session 245 (all jobs green: 824 of 824 on Linux and Windows, 822 of 822 on macOS, 829 of 829 in the tuning build, no sanitizer findings). Node-limited `uci-match` and SPSA runs (`go nodes 200000`) now search less deep per move than before the change; results are comparable only between builds on the same side of this commit. ROADMAP.md optional external-review item still lists runtime POPCNT dispatch and splitting `search.cpp`/`uci.cpp`, each only if measured; the history-pruning follow-up (non-overlapping seeds, maximum depth above 3, longer time controls) remains optional.
 
 **Next session start point:** read the CI result of the commit containing this change (all jobs, 824 test cases), then take the next incomplete item in ROADMAP.md.
 
