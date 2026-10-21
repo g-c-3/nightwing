@@ -208,6 +208,17 @@ struct SearchLimits {
     bool has_node_limit = false;
     std::uint64_t max_nodes = 0;
 
+    /// Nodes already spent by earlier iterations (and earlier aspiration
+    /// attempts) of the same top-level search. `go nodes` is a budget for
+    /// the whole search, but `negamax()`'s own `nodes` counter restarts for
+    /// every `search_root()` call, so the limit test is
+    /// `nodes + nodes_base >= max_nodes`. 0 (the default) leaves the
+    /// per-call behaviour unchanged. Unlike the deadline, the node limit is
+    /// tested on every node (one comparison), so a limit is overshot by at
+    /// most the nodes of one in-flight call chain rather than by up to
+    /// kTimeCheckNodeInterval nodes (Session 244).
+    std::uint64_t nodes_base = 0;
+
     /// UCI `info seldepth` (ROADMAP.md Priority Fixes, 2026-09-22,
     /// finding 9): an OUTPUT, not a limit, despite living on this
     /// "Limits" struct -- reusing the one pointer-to-shared-state

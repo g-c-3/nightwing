@@ -181,16 +181,20 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
     // `external_stop`, or UCI `go nodes`) -- checked after `nodes` is up
     // to date so both negamax()'s and quiescence()'s own counters
     // contribute to the same shared periodicity.
-    if (limits != nullptr && (nodes & kTimeCheckNodeMask) == 0) {
-        const bool deadline_passed =
-            limits->has_deadline && std::chrono::steady_clock::now() >= limits->deadline;
-        const bool externally_stopped =
-            limits->external_stop != nullptr &&
-            limits->external_stop->load(std::memory_order_relaxed);
-        const bool node_limit_reached = limits->has_node_limit && nodes >= limits->max_nodes;
-        if (deadline_passed || externally_stopped || node_limit_reached) {
-            limits->stopped = true;
-            return 0;
+    if (limits != nullptr) {
+        // Same cumulative, every-node limit test as negamax() (SearchLimits::nodes_base).
+        const bool node_limit_reached =
+            limits->has_node_limit && nodes + limits->nodes_base >= limits->max_nodes;
+        if ((nodes & kTimeCheckNodeMask) == 0 || node_limit_reached) {
+            const bool deadline_passed =
+                limits->has_deadline && std::chrono::steady_clock::now() >= limits->deadline;
+            const bool externally_stopped =
+                limits->external_stop != nullptr &&
+                limits->external_stop->load(std::memory_order_relaxed);
+            if (deadline_passed || externally_stopped || node_limit_reached) {
+                limits->stopped = true;
+                return 0;
+            }
         }
     }
 

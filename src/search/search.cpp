@@ -1805,16 +1805,20 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // `stopped` the same way; everything downstream of `stopped`
     // doesn't care which one fired.
     ++nodes;
-    if (limits != nullptr && (nodes & kTimeCheckNodeMask) == 0) {
-        const bool deadline_passed =
-            limits->has_deadline && std::chrono::steady_clock::now() >= limits->deadline;
-        const bool externally_stopped =
-            limits->external_stop != nullptr &&
-            limits->external_stop->load(std::memory_order_relaxed);
-        const bool node_limit_reached = limits->has_node_limit && nodes >= limits->max_nodes;
-        if (deadline_passed || externally_stopped || node_limit_reached) {
-            limits->stopped = true;
-            return 0;
+    if (limits != nullptr) {
+        // Node limit: tested on every node (cheap), cumulative via nodes_base.
+        const bool node_limit_reached =
+            limits->has_node_limit && nodes + limits->nodes_base >= limits->max_nodes;
+        if ((nodes & kTimeCheckNodeMask) == 0 || node_limit_reached) {
+            const bool deadline_passed =
+                limits->has_deadline && std::chrono::steady_clock::now() >= limits->deadline;
+            const bool externally_stopped =
+                limits->external_stop != nullptr &&
+                limits->external_stop->load(std::memory_order_relaxed);
+            if (deadline_passed || externally_stopped || node_limit_reached) {
+                limits->stopped = true;
+                return 0;
+            }
         }
     }
 
@@ -4078,6 +4082,11 @@ SearchResult search_iterative_deepening_multipv(
             break;
         }
 
+        // `go nodes` is a whole-search budget: start no new depth once spent.
+        if (max_nodes > 0 && total_nodes >= max_nodes) {
+            break;
+        }
+
         tt.new_search();
         std::vector<SearchResult> depth_lines;
         depth_lines.reserve(static_cast<std::size_t>(max_lines));
@@ -4099,6 +4108,7 @@ SearchResult search_iterative_deepening_multipv(
             // treatment of this same parameter.
             limits.has_node_limit = max_nodes > 0;
             limits.max_nodes = max_nodes;
+            limits.nodes_base = total_nodes + depth_nodes; // cumulative budget
 
             SearchContext depth_ctx{tt,
                                      killers,
@@ -4451,6 +4461,11 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             break;
         }
 
+        // `go nodes` is a whole-search budget: start no new depth once spent.
+        if (max_nodes > 0 && total_nodes >= max_nodes) {
+            break;
+        }
+
         tt.new_search();
         SearchResult next;
 
@@ -4486,6 +4501,7 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
         // caller before this parameter existed.
         limits.has_node_limit = max_nodes > 0;
         limits.max_nodes = max_nodes;
+        limits.nodes_base = total_nodes; // cumulative budget (SearchLimits::nodes_base)
 
         // UCI `info seldepth` (search.h's SearchLimits::seldepth /
         // SearchResult::seldepth doc comments): initialized to `depth`
@@ -4559,6 +4575,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                     // immediately rather than attempting another widen.
                     break;
                 }
+                // The next attempt's own node counter restarts at 0.
+                limits.nodes_base += next.nodes;
 
                 if (next.score <= window_alpha && window_alpha > -kInfinity) {
                     // Fail low: the true score is <= window_alpha, exact
