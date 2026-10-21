@@ -549,15 +549,25 @@ constexpr std::array<int, kLMPMaxDepth + 1> kLMPMoveCountLimits = {
 /// potentially earlier than) LMP's own move-count threshold at very
 /// shallow depth, when even an early quiet candidate's history score is
 /// poor enough. kHistoryPruningThresholds is a fixed lookup table
-/// (index 0 unused, same convention as kLMPMoveCountLimits above),
-/// decreasing with depth (more aggressive right at the shallowest
-/// depth, near-disabled by kHistoryPruningMaxDepth's own ceiling) --
-/// same hand-verification-without-a-compiler reasoning as every other
-/// pruning constant in this file, not yet tuned for Nightwing
-/// specifically.
+/// (index 0 unused, same convention as kLMPMoveCountLimits above);
+/// the threshold becomes more negative with depth, so pruning is most
+/// aggressive at depth 1 and weakest at kHistoryPruningMaxDepth.
+///
+/// Measured calibration (Session 243): history scores at this site stay
+/// small in magnitude. Over 553,790 candidate moves in a single-threaded
+/// depth-11 bench, the lowest score was -472 and only about 1.9% were
+/// below -100, so the earlier -1000/-2000/-3000 table never fired (a
+/// search with it was node-for-node identical to one with the gate
+/// off). The table below fires on roughly 2% of candidates at depth 1.
+/// Self-play against the never-firing table, at go movetime 100 over
+/// five independent runs (7342 games), gave about +8 Elo overall; the
+/// four runs made after this variant was chosen gave +6.3 Elo (95%
+/// interval -1.5 to +14.2, 5862 games), so the gain is small and not
+/// conclusively proven. -50/-100/-150 (+1.7) and -200/-400/-600 (-9.6)
+/// were also tried, 1445 and 1451 games each, both inconclusive.
 constexpr int kHistoryPruningMaxDepth = 3;
 constexpr std::array<int, kHistoryPruningMaxDepth + 1> kHistoryPruningThresholds = {
-    0, -1000, -2000, -3000,
+    0, -100, -200, -300,
 };
 
 /// SEE-based (bad-)capture pruning (CPW doesn't have a single canonical
