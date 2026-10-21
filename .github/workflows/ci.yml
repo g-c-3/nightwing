@@ -310,6 +310,56 @@ jobs:
           TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1
         run: ./tests/nightwing_tests
 
+  # ROADMAP.md, "External review, optional low-priority items" (Session 241):
+  # the shipped `nightwing` binary itself, not only the unit-test binary,
+  # run under the sanitizers while driven by a short randomized multi-thread
+  # UCI fuzz (tests/fuzz/uci_fuzz.py): background `go` threads, Lazy SMP
+  # (Threads up to 4), ponder/ponderhit/stop, `ucinewgame` and `position`
+  # sent mid-search, option changes, and a final `quit` raced against a
+  # running `go infinite`. Two legs, since ASan/UBSan and TSan are mutually
+  # exclusive: `asan` is the default Debug build (ASan + UBSan, see
+  # CMakeLists.txt), `tsan` adds -DNIGHTWING_ENABLE_TSAN=ON. A sanitizer
+  # report on stderr, a hang, an unexpected exit, a malformed `bestmove` or
+  # a non-zero exit after `quit` fails the leg; the fuzz seed and the last
+  # commands are printed so a failure can be replayed with `--seed`. Seeds
+  # are fixed per run number rather than random so a failing run is
+  # reproducible from the log alone (thread timing still varies). Linux
+  # only, for the same reasons as `tsan-test` above. Only the `nightwing`
+  # target is built (no tests), to keep the job short.
+  sanitizer-fuzz:
+    runs-on: ubuntu-latest
+    name: Linux Debug fuzz (${{ matrix.name }})
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ASan+UBSan
+            build_dir: build_asan
+            cmake_flags: ""
+          - name: ThreadSanitizer
+            build_dir: build_tsan
+            cmake_flags: -DNIGHTWING_ENABLE_TSAN=ON
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure CMake
+        run: cmake -B ${{ matrix.build_dir }} -DCMAKE_BUILD_TYPE=Debug -DNIGHTWING_BUILD_TESTS=OFF ${{ matrix.cmake_flags }}
+
+      - name: Build nightwing
+        run: cmake --build ${{ matrix.build_dir }} --target nightwing --parallel
+
+      - name: UCI fuzz
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1
+        run: |
+          python3 tests/fuzz/uci_fuzz.py \
+            --engine ${{ matrix.build_dir }}/src/nightwing \
+            --seconds 120 --seed ${{ github.run_number }} --max-threads 4
+
   # ROADMAP.md, "SPSA tuner" item, step (2d) (docs/DECISIONS.md 2026-10-09
   # and 2026-10-09 (3)/(4)): builds and tests the gated tuning configuration
   # (CMake NIGHTWING_SEARCH_TUNING=ON, src/search/tunables.h), which no other
