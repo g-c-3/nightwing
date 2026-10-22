@@ -4,7 +4,7 @@ Newest entry at top.
 
 ---
 
-### Session 246 — 2026-10-22 — Stable insertion sort in move ordering; `mat_psqt` threaded into ProbCut; SEE gated; repetition scan halved; pawn key moved below TT cutoff; qsearch stalemate shortcut
+### Session 246 — 2026-10-22 — Stable insertion sort in move ordering; `mat_psqt` threaded into ProbCut; SEE gated; repetition scan halved; pawn key moved below TT cutoff; qsearch stalemate shortcut; direct `gives_check()`
 
 **Built:** `src/search/ordering.cpp`: `order_moves()` sorts its scored list with a stable insertion sort instead of `std::stable_sort`, and the 218-entry scratch array is no longer value-initialised. `src/search/quiescence.cpp`: `order_captures_first()` received the same two changes.
 
@@ -17,6 +17,8 @@ Same file: the repetition walk in `is_draw_by_rule()` now steps by 2 starting at
 Same file: `board::compute_pawn_hash()` in `negamax()` is now computed after the draw, mate-distance and TT-cutoff early returns instead of at the top, since none of those consult it.
 
 `src/search/quiescence.cpp`: new `king_has_safe_quiet_step()`; when a not-in-check node has no captures, a king step onto an empty unattacked square (attack test with the king removed from occupancy) now proves a legal move exists, so the full `GenType::Quiets` generation runs only when the king has no safe step. `tests/quiescence_tests.cpp`: one test added (boxed-in king with a legal pawn move elsewhere is not stalemate), so the suite has 827 test cases.
+
+Same file: `gives_check()` computes direct and discovered checks from bitboards (the mover is relocated in a copy of the occupancy and of its own piece set, then the enemy king square is tested against rooks/queens, bishops/queens, knights and pawns) instead of make/unmake; castling keeps the make/unmake path. Technique credited to CPW "Checks and Pinned Pieces".
 
 **Bugs fixed:** none.
 
@@ -32,11 +34,13 @@ Same file: `board::compute_pawn_hash()` in `negamax()` is now computed after the
 
 **Stalemate-shortcut measurements:** Release build, zero warnings, all tests pass (826 existing plus the new one); node counts identical at `bench 6` and `bench 9`. Six interleaved depth-9 runs gave median NPS of about 601k (before) and 632k (after), roughly +5%, on a noisy single-core sandbox; an experiment that skipped the quiet fallback entirely bounded the possible gain at about +11%. The gain is indicative, not confirmed by a match.
 
+**Direct-gives_check measurements:** Release build, zero warnings, 827 of 827 tests pass; node counts identical at `bench 6` and `bench 9`. A scratch build computing both methods and aborting on any disagreement completed a depth-10 bench (3132746 nodes) and the full suite without a mismatch. Six interleaved depth-9 runs gave median NPS of about 825k (before) and 830k (after): +0.6%, within noise, so no gain is claimed; the change is kept as exact and behaviour-neutral.
+
 **Decisions made:** none requiring a DECISIONS.md entry; the change is behaviour-preserving (strict `<` comparison keeps the sort stable, so equal scores retain generation order and `tie_break_variant == 0` stays deterministic).
 
 **Open:** remaining review items stay listed in the ROADMAP.md entry dated 2026-10-22.
 
-**Next session start point:** take the remaining `gives_check()` cost in `quiescence.cpp` (make/unmake replaced by a direct check-detection routine; only called for quiets at the first quiescence ply), or the per-`go` allocation item; read the current code first and keep `bench 6` at 62276 nodes. This session's last change showed gains are measurable when work is removed from the most frequent node type, so prefer items on the qsearch/eval hot path. The `eval.cpp` pawn-key duplicate and the `node_static_eval` reuse item remain deferred (see their ROADMAP notes).
+**Next session start point:** take the per-`go` allocation item from the ROADMAP.md 2026-10-22 entry; read the current code first and keep `bench 6` at 62276 nodes. After that, the remaining review items are the deferred `eval.cpp` pawn-key duplicate and `node_static_eval` reuse; once those are resolved or dropped, advance to the next unchecked phase in ROADMAP.md. Gains from further micro-optimisations are unlikely to be demonstrable in the sandbox; a CI-hosted self-play comparison is the way to confirm the accumulated Session 246 changes.
 
 ---
 
