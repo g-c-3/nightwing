@@ -1088,7 +1088,14 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
     const int cur = history_len + ply; // this node's own index in the conceptual combined sequence
     const int lookback = pos.halfmove_clock;
 
-    for (int steps = 1; steps <= lookback; ++steps) {
+    // Only even distances can repeat: every ply (real move or null move)
+    // flips the side to move, which the Zobrist key encodes, so an odd
+    // distance never matches short of a 2^-64 collision. A repetition also
+    // needs at least 4 plies (one side's move cannot be undone by the
+    // other side's reply). Stepping by 2 from 4 halves the scan. Same
+    // approach as Stockfish's Position::is_draw() and CPW "Repetitions"
+    // (credited per ARCHITECTURE.md's attribution policy).
+    for (int steps = 4; steps <= lookback; steps += 2) {
         const int idx = cur - steps;
         if (idx < 0) {
             break; // Walked past all available history -- nothing further to check.
@@ -1898,20 +1905,6 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 
     const int alpha_orig = alpha;
     const Color us = pos.side_to_move;
-    // Correction history's own key (ROADMAP.md's "Correction history"
-    // item; CorrectionHistoryTable's own header comment, search/
-    // ordering.h, has the full derivation) -- computed once here,
-    // unconditionally, function-wide, rather than separately at each of
-    // this function's own 4 consumer sites below (the "improving"
-    // block just below, RFP, razoring, futility) or at this function's
-    // own end-of-node update: `pos` is unchanged between here and every
-    // one of those points (no move has been made yet), so one shared
-    // value is correct everywhere it's used, and board::
-    // compute_pawn_hash() is cheap enough (pawn-bitboard-only, not a
-    // full position scan) that computing it even on paths that end up
-    // not needing it (an in-check node, or one where nothing that
-    // consumes it happens to trigger) costs essentially nothing.
-    const std::uint64_t pawn_key = board::compute_pawn_hash(pos);
     // Prefetches THIS node's own TT bucket, at the very top of the
     // function, before probe() below needs it (ROADMAP.md Phase 8, "TT
     // prefetch verified..." item; docs/DECISIONS.md has the full
@@ -1960,6 +1953,18 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // hit at all, in which case order_moves() simply gives it no special
     // priority (see ordering.h).
     const Move tt_move = probe.hit ? probe.move : Move();
+
+    // Correction history's own key (ROADMAP.md's "Correction history"
+    // item; CorrectionHistoryTable's own header comment, search/
+    // ordering.h, has the full derivation) -- computed once here,
+    // function-wide for everything below, rather than separately at each
+    // consumer site (the "improving" block, RFP, razoring, futility, and
+    // this function's own end-of-node update): `pos` is unchanged between
+    // here and every one of those points (no move has been made yet), so
+    // one shared value is correct everywhere it is used. Placed AFTER the
+    // draw / mate-distance / TT-cutoff early returns (Session 246) since
+    // none of them consult it, so those nodes skip the pawn-bitboard walk.
+    const std::uint64_t pawn_key = board::compute_pawn_hash(pos);
 
     // IIR (see this function's header comment): no TT entry at all for
     // this position, and deep enough that a shallower search here still
@@ -2498,15 +2503,16 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // Static Exchange Evaluation for this move, computed here --
         // BEFORE make_move() below -- since static_exchange_evaluation()
         // (search/see.h) requires `pos` as it stood before the move was
-        // played. Only meaningful for captures (0 for anything else,
-        // never consulted for a non-capture below); computed
-        // unconditionally for every capture rather than only when the
-        // SEE-pruning check below might actually use it (kSeePruningMaxDepth/
-        // i==0 gating) -- same "just call it, it's cheap enough"
-        // convention quiescence.cpp's own bad-capture pruning already
-        // uses for every capture it considers, not a new one introduced
-        // here.
-        const int capture_see = move.is_capture() ? static_exchange_evaluation(pos, move) : 0;
+        // played. Its only consumer is the SEE-pruning check further
+        // down, which runs only for non-first moves (`i > 0`), captures,
+        // `depth <= kSeePruningMaxDepth`, and not in check; the same
+        // guards are applied here so SEE is skipped everywhere else
+        // (Session 246; previously computed for every capture). 0 when
+        // not computed, never consulted in that case.
+        const int capture_see = (i > 0 && move.is_capture() && !us_in_check &&
+                                 depth <= kSeePruningMaxDepth)
+                                    ? static_exchange_evaluation(pos, move)
+                                    : 0;
 
         // Singular extensions (this function's header comment, above
         // kSingularMinDepth, has the full before/after account of this
@@ -2897,8 +2903,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
             // moves; capture history (search/ordering.h's own header
             // comment on CaptureHistoryTable) for captures, INCLUDING
             // capture-promotions (move.is_capture() is already true for
-            // those -- see this function's own captured_piece/
-            // capture_see computation above, and score_move()'s
+            // those -- see this function's own captured_piece
+            // computation above, and score_move()'s
             // matching capture-checked-before-promotion order,
             // search/ordering.cpp). Plain (non-capture) promotions still
             // get neither: MVV-LVA has no equivalent "victim" signal for
