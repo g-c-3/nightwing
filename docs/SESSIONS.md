@@ -16,9 +16,9 @@ Newest entry at top.
 
 **Decisions made:** see DECISIONS.md 2026-10-22 (2).
 
-**Open:** CI for this change not yet seen. Remaining review items are listed in ROADMAP.md.
+**Open:** CI for this change was reported green at the start of Session 246. Remaining review items are listed in ROADMAP.md; none was started.
 
-**Next session start point:** read the CI result of the commit containing these changes (all jobs, 826 test cases), then take the next incomplete item in ROADMAP.md.
+**Next session start point:** take the review's performance items one at a time from the ROADMAP.md entry dated 2026-10-22, starting with the `std::stable_sort` replacement in `order_moves`/`order_captures_first`; measure `bench` NPS over at least five runs before and after, and require the node count to stay 62276 at depth 6. The `node_static_eval` reuse item needs care: `node_static_eval` includes a correction-history term, so it is not interchangeable with the raw `evaluate` result used by RFP, razoring and futility without checking the code.
 
 ---
 
