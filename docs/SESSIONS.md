@@ -4,11 +4,15 @@ Newest entry at top.
 
 ---
 
-### Session 246 — 2026-10-22 — Stable insertion sort in move ordering; `mat_psqt` threaded into ProbCut
+### Session 246 — 2026-10-22 — Stable insertion sort in move ordering; `mat_psqt` threaded into ProbCut; SEE gated; repetition scan halved
 
 **Built:** `src/search/ordering.cpp`: `order_moves()` sorts its scored list with a stable insertion sort instead of `std::stable_sort`, and the 218-entry scratch array is no longer value-initialised. `src/search/quiescence.cpp`: `order_captures_first()` received the same two changes.
 
 `src/search/search.cpp`: the ProbCut probe in `negamax()` now computes a child `mat_psqt` via `eval::material_psqt_delta()` and passes it to the recursive call, as the main move loop does; the `mat_psqt` doc comment was updated to say only singular extension's verification search still rescans.
+
+Same file: the up-front `capture_see` computation in the `negamax()` move loop is now guarded by `i > 0 && move.is_capture() && !us_in_check && depth <= kSeePruningMaxDepth`, matching the only consumer (the SEE-pruning check); a stale comment reference to `capture_see` in the capture-history section was corrected.
+
+Same file: the repetition walk in `is_draw_by_rule()` now steps by 2 starting at 4 plies. Every ply, including a null move, flips the side to move, which the Zobrist key encodes, so odd distances cannot match; a repetition also needs at least 4 plies. Approach credited to Stockfish's `Position::is_draw()` and CPW "Repetitions".
 
 **Bugs fixed:** none.
 
@@ -16,11 +20,15 @@ Newest entry at top.
 
 **ProbCut measurements:** Release build, zero warnings, 826 of 826 tests pass; node counts identical to the pre-change binary at `bench 6` (62276) and `bench 9` (1149257), which confirms the accumulator stays exact; a Debug build ran `bench 7` (302451 nodes) with assertions enabled and no failure. NPS difference was within sandbox noise (single shared core), so no speed gain is claimed.
 
+**SEE-gating measurements:** Release build, zero warnings, 826 of 826 tests pass; node counts identical at `bench 6` (62276) and `bench 9` (1149257). Six interleaved depth-9 runs gave median NPS of about 694k (before) and 673k (after) on a noisy single-core sandbox: no gain is demonstrated, and the change is kept only because it is behaviour-neutral and removes redundant work.
+
+**Repetition-scan measurements:** Release build, zero warnings, 826 of 826 tests pass; node counts identical at `bench 6` and `bench 9`. Six interleaved depth-9 runs gave median NPS of about 645k (before) and 640k (after): no difference, as expected for positions with short reversible stretches. No gain is claimed; the change is behaviour-neutral.
+
 **Decisions made:** none requiring a DECISIONS.md entry; the change is behaviour-preserving (strict `<` comparison keeps the sort stable, so equal scores retain generation order and `tie_break_variant == 0` stays deterministic).
 
 **Open:** remaining review items stay listed in the ROADMAP.md entry dated 2026-10-22.
 
-**Next session start point:** take the next performance item from the ROADMAP.md 2026-10-22 entry, computing SEE only where it is used (`i > 0 && depth <= 6`) in the `negamax()` move loop; keep `bench 6` at 62276 nodes and measure NPS over at least five interleaved runs, preferably on a quieter machine or with `bench 9`. The `node_static_eval` reuse item remains deferred: `node_static_eval` includes a correction-history term and is not interchangeable with the raw `evaluate` result used by RFP, razoring and futility without checking the code.
+**Next session start point:** take the per-node `compute_pawn_hash` cost from the ROADMAP.md 2026-10-22 entry; read the pawn-hash code in `negamax()` and `eval` first, and keep `bench 6` at 62276 nodes. Sandbox NPS noise exceeds the gains seen so far and `perf`/`valgrind` are unavailable there, so prefer a longer match-based check or an operation-count argument over short NPS runs. The `node_static_eval` reuse item remains deferred: `node_static_eval` includes a correction-history term and is not interchangeable with the raw `evaluate` result used by RFP, razoring and futility without checking the code.
 
 ---
 
