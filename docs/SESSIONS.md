@@ -4,7 +4,7 @@ Newest entry at top.
 
 ---
 
-### Session 246 — 2026-10-22 — Stable insertion sort in move ordering; `mat_psqt` threaded into ProbCut; SEE gated; repetition scan halved
+### Session 246 — 2026-10-22 — Stable insertion sort in move ordering; `mat_psqt` threaded into ProbCut; SEE gated; repetition scan halved; pawn key moved below TT cutoff
 
 **Built:** `src/search/ordering.cpp`: `order_moves()` sorts its scored list with a stable insertion sort instead of `std::stable_sort`, and the 218-entry scratch array is no longer value-initialised. `src/search/quiescence.cpp`: `order_captures_first()` received the same two changes.
 
@@ -13,6 +13,8 @@ Newest entry at top.
 Same file: the up-front `capture_see` computation in the `negamax()` move loop is now guarded by `i > 0 && move.is_capture() && !us_in_check && depth <= kSeePruningMaxDepth`, matching the only consumer (the SEE-pruning check); a stale comment reference to `capture_see` in the capture-history section was corrected.
 
 Same file: the repetition walk in `is_draw_by_rule()` now steps by 2 starting at 4 plies. Every ply, including a null move, flips the side to move, which the Zobrist key encodes, so odd distances cannot match; a repetition also needs at least 4 plies. Approach credited to Stockfish's `Position::is_draw()` and CPW "Repetitions".
+
+Same file: `board::compute_pawn_hash()` in `negamax()` is now computed after the draw, mate-distance and TT-cutoff early returns instead of at the top, since none of those consult it.
 
 **Bugs fixed:** none.
 
@@ -24,11 +26,13 @@ Same file: the repetition walk in `is_draw_by_rule()` now steps by 2 starting at
 
 **Repetition-scan measurements:** Release build, zero warnings, 826 of 826 tests pass; node counts identical at `bench 6` and `bench 9`. Six interleaved depth-9 runs gave median NPS of about 645k (before) and 640k (after): no difference, as expected for positions with short reversible stretches. No gain is claimed; the change is behaviour-neutral.
 
+**Pawn-key measurements:** Release build, zero warnings, 826 of 826 tests pass; node counts identical at `bench 6` and `bench 9`. Six interleaved depth-9 runs gave median NPS of about 684k (before) and 650k (after) on a noisy single-core sandbox: no gain is demonstrated and the sign is within noise; the change strictly removes work on cutoff nodes and is kept as behaviour-neutral. The roadmap item stays open (PARTIAL) for the duplicate `eval.cpp` computation.
+
 **Decisions made:** none requiring a DECISIONS.md entry; the change is behaviour-preserving (strict `<` comparison keeps the sort stable, so equal scores retain generation order and `tie_break_variant == 0` stays deterministic).
 
 **Open:** remaining review items stay listed in the ROADMAP.md entry dated 2026-10-22.
 
-**Next session start point:** take the per-node `compute_pawn_hash` cost from the ROADMAP.md 2026-10-22 entry; read the pawn-hash code in `negamax()` and `eval` first, and keep `bench 6` at 62276 nodes. Sandbox NPS noise exceeds the gains seen so far and `perf`/`valgrind` are unavailable there, so prefer a longer match-based check or an operation-count argument over short NPS runs. The `node_static_eval` reuse item remains deferred: `node_static_eval` includes a correction-history term and is not interchangeable with the raw `evaluate` result used by RFP, razoring and futility without checking the code.
+**Next session start point:** take the next remaining item from the ROADMAP.md 2026-10-22 entry (qsearch stalemate-detection and check-test costs, or the per-`go` allocation item); read the current code first and keep `bench 6` at 62276 nodes. The `eval.cpp` pawn-key duplicate (needs an `evaluate()` signature change or incremental pawn hash) and the `node_static_eval` reuse item (correction-history term makes it non-interchangeable with the raw `evaluate` result) remain deferred. Sandbox NPS noise exceeds the gains seen so far and `perf`/`valgrind` are unavailable, so these micro-optimisations are unlikely to be demonstrable without a match-based check; consider asking for a self-play or CI-based measurement before more of them.
 
 ---
 
