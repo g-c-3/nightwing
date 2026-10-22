@@ -4,7 +4,7 @@ Newest entry at top.
 
 ---
 
-### Session 246 — 2026-10-22 — Stable insertion sort in move ordering; `mat_psqt` threaded into ProbCut; SEE gated; repetition scan halved; pawn key moved below TT cutoff; qsearch stalemate shortcut; direct `gives_check()`
+### Session 246 — 2026-10-22 — Stable insertion sort in move ordering; `mat_psqt` threaded into ProbCut; SEE gated; repetition scan halved; pawn key moved below TT cutoff; qsearch stalemate shortcut; direct `gives_check()`; castling-mask table in `make_move`
 
 **Built:** `src/search/ordering.cpp`: `order_moves()` sorts its scored list with a stable insertion sort instead of `std::stable_sort`, and the 218-entry scratch array is no longer value-initialised. `src/search/quiescence.cpp`: `order_captures_first()` received the same two changes.
 
@@ -19,6 +19,8 @@ Same file: `board::compute_pawn_hash()` in `negamax()` is now computed after the
 `src/search/quiescence.cpp`: new `king_has_safe_quiet_step()`; when a not-in-check node has no captures, a king step onto an empty unattacked square (attack test with the king removed from occupancy) now proves a legal move exists, so the full `GenType::Quiets` generation runs only when the king has no safe step. `tests/quiescence_tests.cpp`: one test added (boxed-in king with a legal pawn move elsewhere is not stalemate), so the suite has 827 test cases.
 
 Same file: `gives_check()` computes direct and discovered checks from bitboards (the mover is relocated in a copy of the occupancy and of its own piece set, then the enemy king square is tested against rooks/queens, bishops/queens, knights and pawns) instead of make/unmake; castling keeps the make/unmake path. Technique credited to CPW "Checks and Pinned Pieces".
+
+`src/board/board.cpp`: the per-move loop over the four castling rights in `make_move()` is replaced by a constexpr 64-entry `kCornerKeepMask` table ANDed for `from` and `to`; the king-move revocation and the incremental Zobrist castling-key update are unchanged. Technique credited to CPW "Castling" (per-square masks).
 
 **Bugs fixed:** none.
 
@@ -36,11 +38,13 @@ Same file: `gives_check()` computes direct and discovered checks from bitboards 
 
 **Direct-gives_check measurements:** Release build, zero warnings, 827 of 827 tests pass; node counts identical at `bench 6` and `bench 9`. A scratch build computing both methods and aborting on any disagreement completed a depth-10 bench (3132746 nodes) and the full suite without a mismatch. Six interleaved depth-9 runs gave median NPS of about 825k (before) and 830k (after): +0.6%, within noise, so no gain is claimed; the change is kept as exact and behaviour-neutral.
 
+**Castling-mask measurements:** Release build, zero warnings, 827 of 827 tests pass (perft suites included); node counts identical at `bench 6` and `bench 9`. Six interleaved depth-9 runs gave median NPS of about 710k (before) and 781k (after); the sandbox noise is large, so the size of the gain is unconfirmed. The per-`go` allocation item was assessed and intentionally left unchanged (see ROADMAP.md).
+
 **Decisions made:** none requiring a DECISIONS.md entry; the change is behaviour-preserving (strict `<` comparison keeps the sort stable, so equal scores retain generation order and `tie_break_variant == 0` stays deterministic).
 
 **Open:** remaining review items stay listed in the ROADMAP.md entry dated 2026-10-22.
 
-**Next session start point:** take the per-`go` allocation item from the ROADMAP.md 2026-10-22 entry; read the current code first and keep `bench 6` at 62276 nodes. After that, the remaining review items are the deferred `eval.cpp` pawn-key duplicate and `node_static_eval` reuse; once those are resolved or dropped, advance to the next unchecked phase in ROADMAP.md. Gains from further micro-optimisations are unlikely to be demonstrable in the sandbox; a CI-hosted self-play comparison is the way to confirm the accumulated Session 246 changes.
+**Next session start point:** run a CI-hosted self-play or fixed-node comparison of the accumulated Session 246 changes if available; otherwise take the CI hardening item from the ROADMAP.md 2026-10-22 entry (pin actions by SHA, add a top-level `permissions: contents: read` block to `.github/workflows/ci.yml`; read the current workflow first, and resolve SHAs via `api.github.com`). The per-`go` allocation item needs approval to close, and the `eval.cpp` pawn-key duplicate and `node_static_eval` reuse items stay deferred.
 
 ---
 
