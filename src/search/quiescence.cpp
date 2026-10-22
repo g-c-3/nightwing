@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 
+#include "board/masks.h" // king_attacks() -- king_has_safe_quiet_step()
 #include "board/movegen.h"
 #include "eval/eval.h"
 #include "eval/eval_cache.h"
@@ -89,6 +90,31 @@ constexpr int kDeltaPruningMinPieces = 5;
     const board::Square king_sq =
         board::bitscan_forward(pos.pieces(us, board::PieceType::King));
     return board::is_square_attacked(pos, king_sq, board::opposite(us));
+}
+
+/// Returns true if the side to move (which must NOT be in check) has a
+/// king step onto an empty, unattacked square -- i.e. at least one legal
+/// quiet move exists. Used only to prove "not stalemate" cheaply when no
+/// capture exists, so the full quiet-move generation can be skipped; a
+/// false result proves nothing (other pieces may still have legal moves)
+/// and the caller then falls back to full generation. The attack test
+/// removes the king from the occupancy so a slider's ray through the
+/// king's current square still counts as attacking the square behind it
+/// (same technique movegen's own king-move legality check uses).
+[[nodiscard]] bool king_has_safe_quiet_step(const Position& pos) noexcept {
+    const Color us = pos.side_to_move;
+    const board::Square king_sq =
+        board::bitscan_forward(pos.pieces(us, board::PieceType::King));
+    board::Bitboard occ = pos.occupied();
+    board::clear_bit(occ, king_sq);
+    board::Bitboard steps = board::king_attacks(king_sq) & ~pos.occupied();
+    while (steps != 0) {
+        const board::Square to = board::pop_lsb(steps);
+        if (!board::is_square_attacked(pos, to, board::opposite(us), occ)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /// Returns true if making `move` would leave the opponent (whoever is to
@@ -220,6 +246,7 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
     const bool us_in_check = in_check(pos);
 
     MoveList legal_moves;
+    bool quiet_move_exists = false; // legal quiet move proven without generating it
     if (us_in_check || include_checks) {
         // Full generation needed here: in check, EVERY legal move (not
         // just captures) is a candidate evasion below, not only
@@ -244,11 +271,19 @@ int quiescence_impl(Position& pos, int alpha, int beta, int ply, std::uint64_t& 
         // on every node the way GenType::All would.
         board::generate_legal_moves(pos, legal_moves, board::GenType::Captures);
         if (legal_moves.empty()) {
-            board::generate_legal_moves(pos, legal_moves, board::GenType::Quiets);
+            // Session 246: a safe king step already proves a legal move
+            // exists (not stalemate), so skip generating every quiet move
+            // just to test non-emptiness; fall back to full generation
+            // only when the king has no safe step.
+            if (king_has_safe_quiet_step(pos)) {
+                quiet_move_exists = true;
+            } else {
+                board::generate_legal_moves(pos, legal_moves, board::GenType::Quiets);
+            }
         }
     }
 
-    if (legal_moves.empty()) {
+    if (legal_moves.empty() && !quiet_move_exists) {
         // Genuinely terminal (checkmate/stalemate), not just "no noisy
         // moves left" -- matches negamax()'s own terminal handling
         // exactly, including the same ply-adjusted mate score.
