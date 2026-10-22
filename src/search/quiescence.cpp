@@ -5,7 +5,8 @@
 #include <algorithm>
 #include <chrono>
 
-#include "board/masks.h" // king_attacks() -- king_has_safe_quiet_step()
+#include "board/attacks.h" // rook_attacks()/bishop_attacks() -- gives_check()
+#include "board/masks.h" // king_attacks()/knight_attacks()/pawn_attacks()
 #include "board/movegen.h"
 #include "eval/eval.h"
 #include "eval/eval_cache.h"
@@ -118,20 +119,61 @@ constexpr int kDeltaPruningMinPieces = 5;
 }
 
 /// Returns true if making `move` would leave the opponent (whoever is to
-/// move after it) in check. Implemented by actually making and unmaking
-/// the move rather than a dedicated "does this move give check without
-/// playing it" bitboard detector -- a real, standard optimization some
-/// engines have, but more machinery than this first quiescence-search
-/// pass needs: this is only ever called for non-capture moves, and only
-/// at the very first quiescence ply (see quiescence()'s header comment
-/// on include_checks), so the cost is bounded and paid rarely, not in
-/// quiescence's own hot inner loop.
+/// move after it) in check. Precondition: `move` is a legal NON-capture,
+/// NON-promotion move (the only kind this module ever asks about; the
+/// caller admits captures and promotions unconditionally and never
+/// reaches this function for them). Computed directly from bitboards
+/// rather than by making and unmaking the move (Session 246; this runs
+/// once per quiet move at every first-ply quiescence node): the mover's
+/// own piece is relocated from `from` to `to` in a copy of the occupancy
+/// and of its own piece set, and the enemy king square is then tested
+/// for attack by our rooks/queens, bishops/queens, knights and pawns --
+/// which covers both direct and discovered checks (a vacated `from`
+/// square opens a slider's ray through the new occupancy). A king move
+/// can never give check, so the mover being the king needs no special
+/// case. Castling is the one quiet move that relocates TWO pieces and
+/// is rare, so it keeps the original make/unmake test. Technique: CPW
+/// "Checks and Pinned Pieces" / standard direct+discovered check test.
 [[nodiscard]] bool gives_check(Position& pos, Move move) noexcept {
-    UndoInfo undo;
-    board::make_move(pos, move, undo);
-    const bool result = in_check(pos);
-    board::unmake_move(pos, move, undo);
-    return result;
+    const board::MoveFlag flag = move.flag();
+    if (flag == board::MoveFlag::KingCastle || flag == board::MoveFlag::QueenCastle) {
+        UndoInfo undo;
+        board::make_move(pos, move, undo);
+        const bool result = in_check(pos);
+        board::unmake_move(pos, move, undo);
+        return result;
+    }
+
+    const Color us = pos.side_to_move;
+    const Color them = board::opposite(us);
+    const board::Square from = move.from();
+    const board::Square to = move.to();
+    const board::Square enemy_king = board::bitscan_forward(pos.pieces(them, board::PieceType::King));
+    const board::PieceType moved = board::piece_type_of(pos.piece_at(from));
+
+    const board::Bitboard from_bb = board::square_bb(from);
+    const board::Bitboard to_bb = board::square_bb(to);
+    const board::Bitboard occ = (pos.occupied() & ~from_bb) | to_bb;
+
+    // Our attackers of each kind, with the moved piece relocated.
+    const auto relocated = [&](board::PieceType pt) noexcept {
+        board::Bitboard bb = pos.pieces(us, pt);
+        if (pt == moved) {
+            bb = (bb & ~from_bb) | to_bb;
+        }
+        return bb;
+    };
+    const board::Bitboard queens = relocated(board::PieceType::Queen);
+    if ((board::rook_attacks(enemy_king, occ) & (relocated(board::PieceType::Rook) | queens)) != 0) {
+        return true;
+    }
+    if ((board::bishop_attacks(enemy_king, occ) & (relocated(board::PieceType::Bishop) | queens)) != 0) {
+        return true;
+    }
+    if ((board::knight_attacks(enemy_king) & relocated(board::PieceType::Knight)) != 0) {
+        return true;
+    }
+    return (board::pawn_attacks(them, enemy_king) & relocated(board::PieceType::Pawn)) != 0;
 }
 
 /// Simple capture-only descending-MVV-LVA sort for quiescence's own
