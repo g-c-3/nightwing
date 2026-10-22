@@ -262,7 +262,9 @@ void order_moves(MoveList& moves, const Position& pos, Move tt_move, const Kille
     };
 
     const int count = moves.size();
-    std::array<ScoredMove, board::kMaxMoves> scored{};
+    // Deliberately not value-initialised: only [0, count) is ever read, and
+    // zero-filling all kMaxMoves (218) entries on every call is pure waste.
+    std::array<ScoredMove, board::kMaxMoves> scored;
     for (int i = 0; i < count; ++i) {
         int score = score_move(pos, moves[i], tt_move, killers, ply, history, cont_history,
                                 capture_history, prev_piece, prev_to);
@@ -288,16 +290,23 @@ void order_moves(MoveList& moves, const Position& pos, Move tt_move, const Kille
         scored[static_cast<std::size_t>(i)] = {moves[i], score};
     }
 
-    // Stable so equal-scored moves (most commonly: untried quiets that
-    // all still sit at history score 0, before any jitter) keep their
-    // original move-generation order rather than an arbitrary one when
-    // `tie_break_variant == 0` -- deterministic, reproducible search
-    // behavior for the main thread. A nonzero variant makes genuine
-    // ties rare in the first place (the jitter above almost always
-    // breaks them), so stability matters less there, but costs nothing
-    // to keep either way.
-    std::stable_sort(scored.begin(), scored.begin() + count,
-                      [](const ScoredMove& a, const ScoredMove& b) { return a.score > b.score; });
+    // Stable (strict `<` below never moves an element past an equal one) so
+    // equal-scored moves -- most commonly untried quiets still at history
+    // score 0 -- keep their original move-generation order when
+    // `tie_break_variant == 0`: deterministic, reproducible main-thread
+    // behavior. Insertion sort rather than std::stable_sort: move lists
+    // are short (typically <= ~40) and std::stable_sort allocates a
+    // temporary buffer; this yields the identical ordering with no
+    // allocation (Chess Programming Wiki, "Move Ordering").
+    for (int i = 1; i < count; ++i) {
+        const ScoredMove key = scored[static_cast<std::size_t>(i)];
+        int j = i;
+        while (j > 0 && scored[static_cast<std::size_t>(j - 1)].score < key.score) {
+            scored[static_cast<std::size_t>(j)] = scored[static_cast<std::size_t>(j - 1)];
+            --j;
+        }
+        scored[static_cast<std::size_t>(j)] = key;
+    }
 
     for (int i = 0; i < count; ++i) {
         moves[i] = scored[static_cast<std::size_t>(i)].move;

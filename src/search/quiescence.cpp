@@ -122,13 +122,23 @@ void order_captures_first(MoveList& moves, const Position& pos) noexcept {
         int score;
     };
     const int count = moves.size();
-    std::array<ScoredMove, board::kMaxMoves> scored{};
+    // Not value-initialised: only [0, count) is read (see order_moves()).
+    std::array<ScoredMove, board::kMaxMoves> scored;
     for (int i = 0; i < count; ++i) {
         const Move m = moves[i];
         scored[static_cast<std::size_t>(i)] = {m, m.is_capture() ? mvv_lva_score(pos, m) : -kInfinity};
     }
-    std::stable_sort(scored.begin(), scored.begin() + count,
-                      [](const ScoredMove& a, const ScoredMove& b) { return a.score > b.score; });
+    // Stable insertion sort (same ordering as std::stable_sort, no
+    // temporary-buffer allocation; candidate lists here are short).
+    for (int i = 1; i < count; ++i) {
+        const ScoredMove key = scored[static_cast<std::size_t>(i)];
+        int j = i;
+        while (j > 0 && scored[static_cast<std::size_t>(j - 1)].score < key.score) {
+            scored[static_cast<std::size_t>(j)] = scored[static_cast<std::size_t>(j - 1)];
+            --j;
+        }
+        scored[static_cast<std::size_t>(j)] = key;
+    }
     for (int i = 0; i < count; ++i) {
         moves[i] = scored[static_cast<std::size_t>(i)].move;
     }
