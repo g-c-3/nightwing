@@ -4,19 +4,23 @@ Newest entry at top.
 
 ---
 
-### Session 246 — 2026-10-22 — Stable insertion sort in `order_moves` and `order_captures_first`
+### Session 246 — 2026-10-22 — Stable insertion sort in move ordering; `mat_psqt` threaded into ProbCut
 
 **Built:** `src/search/ordering.cpp`: `order_moves()` sorts its scored list with a stable insertion sort instead of `std::stable_sort`, and the 218-entry scratch array is no longer value-initialised. `src/search/quiescence.cpp`: `order_captures_first()` received the same two changes.
+
+`src/search/search.cpp`: the ProbCut probe in `negamax()` now computes a child `mat_psqt` via `eval::material_psqt_delta()` and passes it to the recursive call, as the main move loop does; the `mat_psqt` doc comment was updated to say only singular extension's verification search still rescans.
 
 **Bugs fixed:** none.
 
 **Measurements:** Release build, zero warnings. 826 of 826 test cases pass (no tests added; ordering behaviour is unchanged by construction and covered by the existing ordering, quiescence and search suites). `bench 6` node count unchanged at 62276. Six interleaved baseline/candidate runs on a single-core shared sandbox gave median NPS of about 651k (baseline) and 669k (candidate), roughly +2.7%, with run-to-run noise larger than that; the speed gain is therefore indicative only and was not confirmed by a match or multi-core measurement.
 
+**ProbCut measurements:** Release build, zero warnings, 826 of 826 tests pass; node counts identical to the pre-change binary at `bench 6` (62276) and `bench 9` (1149257), which confirms the accumulator stays exact; a Debug build ran `bench 7` (302451 nodes) with assertions enabled and no failure. NPS difference was within sandbox noise (single shared core), so no speed gain is claimed.
+
 **Decisions made:** none requiring a DECISIONS.md entry; the change is behaviour-preserving (strict `<` comparison keeps the sort stable, so equal scores retain generation order and `tie_break_variant == 0` stays deterministic).
 
 **Open:** remaining review items stay listed in the ROADMAP.md entry dated 2026-10-22.
 
-**Next session start point:** take the next performance item from the ROADMAP.md 2026-10-22 entry, passing `mat_psqt` into the ProbCut recursive call in `negamax()`; keep `bench 6` at 62276 nodes and measure NPS over at least five interleaved runs. The `node_static_eval` reuse item remains deferred: `node_static_eval` includes a correction-history term and is not interchangeable with the raw `evaluate` result used by RFP, razoring and futility without checking the code.
+**Next session start point:** take the next performance item from the ROADMAP.md 2026-10-22 entry, computing SEE only where it is used (`i > 0 && depth <= 6`) in the `negamax()` move loop; keep `bench 6` at 62276 nodes and measure NPS over at least five interleaved runs, preferably on a quieter machine or with `bench 9`. The `node_static_eval` reuse item remains deferred: `node_static_eval` includes a correction-history term and is not interchangeable with the raw `evaluate` result used by RFP, razoring and futility without checking the code.
 
 ---
 
