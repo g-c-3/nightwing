@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 246 — 2026-10-22 — Stable insertion sort in `order_moves` and `order_captures_first`
+
+**Built:** `src/search/ordering.cpp`: `order_moves()` sorts its scored list with a stable insertion sort instead of `std::stable_sort`, and the 218-entry scratch array is no longer value-initialised. `src/search/quiescence.cpp`: `order_captures_first()` received the same two changes.
+
+**Bugs fixed:** none.
+
+**Measurements:** Release build, zero warnings. 826 of 826 test cases pass (no tests added; ordering behaviour is unchanged by construction and covered by the existing ordering, quiescence and search suites). `bench 6` node count unchanged at 62276. Six interleaved baseline/candidate runs on a single-core shared sandbox gave median NPS of about 651k (baseline) and 669k (candidate), roughly +2.7%, with run-to-run noise larger than that; the speed gain is therefore indicative only and was not confirmed by a match or multi-core measurement.
+
+**Decisions made:** none requiring a DECISIONS.md entry; the change is behaviour-preserving (strict `<` comparison keeps the sort stable, so equal scores retain generation order and `tie_break_variant == 0` stays deterministic).
+
+**Open:** remaining review items stay listed in the ROADMAP.md entry dated 2026-10-22.
+
+**Next session start point:** take the next performance item from the ROADMAP.md 2026-10-22 entry, passing `mat_psqt` into the ProbCut recursive call in `negamax()`; keep `bench 6` at 62276 nodes and measure NPS over at least five interleaved runs. The `node_static_eval` reuse item remains deferred: `node_static_eval` includes a correction-history term and is not interchangeable with the raw `evaluate` result used by RFP, razoring and futility without checking the code.
+
+---
+
 ### Session 245 — 2026-10-22 — External review triage: `searchmoves` with MultiPV fixed, PEXT gated on Zen 1/2
 
 **Built:** `src/search/search.cpp`: `search_iterative_deepening()` caps the MultiPV line count by the number of root moves that match `searchmoves`, not by the unfiltered legal-move count. `src/support/cpu_features.h` and `.cpp`: `cpu_pext_is_slow()` (pure function over raw CPUID values) and a vendor/family check that reports BMI2 as unavailable on AMD family 0x17 and earlier, so the magic-bitboard path is used there. `tests/search_tests.cpp`: one new case (`[search][id][multipv][searchmoves]`). `tests/attacks_tests.cpp`: one new case (`[cpu][pext]`).
