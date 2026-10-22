@@ -305,6 +305,27 @@ TEST_CASE("quiescence: detects stalemate as a draw with include_checks=false too
     REQUIRE(nodes == 1);
 }
 
+TEST_CASE("quiescence: a boxed-in king with a legal pawn move elsewhere is not stalemate "
+          "(king-step shortcut fails, full Quiets fallback must still find the move)",
+          "[quiescence][staged]") {
+    init_all();
+    // Black king h8 has no safe step (white queen g6 covers g8, g7 and
+    // h7), Black is not in check, and no capture exists, so the cheap
+    // king-step proof of "a legal move exists" fails and the node must
+    // fall back to full quiet generation, which finds ...a6 / ...a5.
+    // A wrong "no king step => stalemate" shortcut would return the draw
+    // score here instead of the stand-pat evaluation.
+    Position pos = parse_fen("7k/p7/6Q1/8/8/8/8/4K3 b - - 0 1");
+    std::uint64_t nodes = 0;
+    const int score = quiescence(pos, -1'000'000, 1'000'000, 0, nodes, /*include_checks=*/false);
+
+    const int white_relative = evaluate(pos);
+    const int expected = pos.side_to_move == Color::White ? white_relative : -white_relative;
+    REQUIRE(score == expected);
+    REQUIRE(score != kDrawScore);
+    REQUIRE(nodes == 1);
+}
+
 TEST_CASE("quiescence: delta pruning does not skip a capture that reaches an insufficient-material "
           "draw (Kxh8 winning the last rook of K+R+B vs K)",
           "[quiescence][delta]") {
