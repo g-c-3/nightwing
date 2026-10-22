@@ -1684,10 +1684,11 @@ constexpr std::uint64_t kTimeCheckNodeMask = kTimeCheckNodeInterval - 1;
 /// the main line proper -- null-move's own child call is the one
 /// exception (a null move changes no piece's square, so `mat_psqt`
 /// carries over completely unchanged there, not nullptr) -- ProbCut's
-/// and singular extension's own verification searches still fall back
-/// to a full eval::evaluate() rescan at whatever node they eventually
-/// reach a static eval, a deliberate, documented scope cut for this
-/// item rather than an oversight (those two paths are far colder than
+/// probe now threads it like the main move loop does (Session 246);
+/// only singular extension's own verification search still falls back
+/// to a full eval::evaluate() rescan at whatever node it eventually
+/// reaches a static eval, a deliberate, documented scope cut for this
+/// item rather than an oversight (that path is far colder than
 /// the main PVS move loop below, so wiring them through was judged not
 /// worth the additional diff surface and risk this session -- revisit
 /// if profiling ever shows otherwise). Defaults to nullptr, meaning
@@ -2294,12 +2295,25 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 board::piece_type_of(pos.piece_at(probcut_move.from()));
             UndoInfo probcut_undo;
             board::make_move(pos, probcut_move, probcut_undo);
+            // Same incremental material+PSQT hand-off as the main move
+            // loop below (see `mat_psqt`'s doc comment): ProbCut's probe
+            // is a real make/search/unmake of a legal move, so one
+            // arithmetic step keeps the accumulator exact and spares the
+            // child's eval a fresh 64-square scan.
+            eval::Score probcut_child_mat_psqt_value{};
+            const eval::Score* probcut_child_mat_psqt = nullptr;
+            if (mat_psqt != nullptr) {
+                probcut_child_mat_psqt_value =
+                    *mat_psqt + eval::material_psqt_delta(us, probcut_moved_piece, probcut_move,
+                                                           probcut_undo);
+                probcut_child_mat_psqt = &probcut_child_mat_psqt_value;
+            }
             const int probcut_score =
                 -negamax(pos, depth - kProbCutReduction, -probcut_beta, -probcut_beta + 1, ply + 1,
                          nodes, ctx,
                          probcut_moved_piece, probcut_move.to(), probcut_move.is_capture(),
                          path, static_eval_history,
-                         /*allow_null_move=*/true);
+                         /*allow_null_move=*/true, probcut_child_mat_psqt);
             board::unmake_move(pos, probcut_move, probcut_undo);
             if (limits != nullptr && limits->stopped) {
                 // Truncated subtree (SearchLimits' own doc comment) --
