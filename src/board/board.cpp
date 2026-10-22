@@ -7,6 +7,8 @@
 
 #include "board/board.h"
 
+#include <array>
+
 #include "board/move.h"
 #include "board/zobrist.h"
 
@@ -26,6 +28,23 @@ namespace {
         default: return 0; // unreachable for a valid single flag
     }
 }
+
+/// For every square, the castling rights that stay valid when a piece
+/// leaves or lands on it: all rights, except that each of the four
+/// corner squares clears its own right. make_move() ANDs the entries for
+/// `from` and `to` into the rights in one step instead of looping over
+/// the four rights per move (Session 246); the result is identical to
+/// the loop it replaced. Technique: CPW "Castling" (per-square castling
+/// masks), as used in many engines.
+inline constexpr std::array<std::uint8_t, 64> kCornerKeepMask = [] {
+    std::array<std::uint8_t, 64> mask{};
+    for (auto& m : mask) m = castling::kAll;
+    for (const std::uint8_t right : {castling::kWhiteKingside, castling::kWhiteQueenside,
+                                     castling::kBlackKingside, castling::kBlackQueenside}) {
+        mask[static_cast<std::size_t>(corner_square_for(right))] &= static_cast<std::uint8_t>(~right);
+    }
+    return mask;
+}();
 
 /// Returns the en passant capture square (where the captured pawn
 /// actually sits) for an EnPassant-flagged move by `us` landing on `to`.
@@ -131,13 +150,8 @@ void make_move(Position& pos, const Move& move, UndoInfo& undo) noexcept {
                           ? static_cast<std::uint8_t>(~(castling::kWhiteKingside | castling::kWhiteQueenside))
                           : static_cast<std::uint8_t>(~(castling::kBlackKingside | castling::kBlackQueenside));
     }
-    for (std::uint8_t right :
-         {castling::kWhiteKingside, castling::kWhiteQueenside, castling::kBlackKingside,
-          castling::kBlackQueenside}) {
-        if ((new_rights & right) && (from == corner_square_for(right) || to == corner_square_for(right))) {
-            new_rights &= static_cast<std::uint8_t>(~right);
-        }
-    }
+    new_rights = static_cast<std::uint8_t>(new_rights & kCornerKeepMask[static_cast<std::size_t>(from)] &
+                                           kCornerKeepMask[static_cast<std::size_t>(to)]);
     if (new_rights != pos.castling_rights) {
         const std::uint8_t revoked = pos.castling_rights & static_cast<std::uint8_t>(~new_rights);
         for (std::uint8_t right :
