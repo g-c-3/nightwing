@@ -136,6 +136,15 @@ on:
         required: false
         default: "100 16 6 1 2 8 400 1 0"
 
+# Least privilege by default: every job gets a read-only GITHUB_TOKEN unless
+# it declares its own `permissions:` block. Only the `release` job needs more
+# (`contents: write`, to publish the rolling and versioned releases) and
+# declares that itself. Third-party and first-party actions below are pinned
+# to full commit SHAs (the tag each SHA was resolved from is in the trailing
+# comment) so a moved or compromised tag cannot change what runs.
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     strategy:
@@ -166,8 +175,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Ninja needs cl.exe on PATH explicitly -- the Visual Studio generator
       # locates MSVC automatically via its own toolchain-discovery logic,
       # Ninja has no such mechanism and just invokes whatever compiler it's
@@ -183,7 +191,7 @@ jobs:
       # this change.
       - name: Set up MSVC dev environment (Windows only)
         if: runner.os == 'Windows'
-        uses: egor-tensin/vs-shell@v2
+        uses: egor-tensin/vs-shell@7710434f30f873ff4ab78184b74cc576a10726d6 # v2
         with:
           arch: x64
 
@@ -268,7 +276,7 @@ jobs:
       # with no `Release/` subfolder to account for.
       - name: Upload nightwing binary (Release only)
         if: matrix.build_type == 'Release'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nightwing-binary-${{ matrix.os_name }}
           path: build/src/nightwing${{ runner.os == 'Windows' && '.exe' || '' }}
@@ -296,8 +304,7 @@ jobs:
     name: Linux Debug (ThreadSanitizer)
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Configure CMake
         run: cmake -B build_tsan -DCMAKE_BUILD_TYPE=Debug -DNIGHTWING_ENABLE_TSAN=ON -DNIGHTWING_BUILD_TESTS=ON
 
@@ -342,8 +349,7 @@ jobs:
             cmake_flags: -DNIGHTWING_ENABLE_TSAN=ON
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Configure CMake
         run: cmake -B ${{ matrix.build_dir }} -DCMAKE_BUILD_TYPE=Debug -DNIGHTWING_BUILD_TESTS=OFF ${{ matrix.cmake_flags }}
 
@@ -374,8 +380,7 @@ jobs:
     name: Linux Release (search tuning build)
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Configure CMake
         run: cmake -B build_tuning -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_SEARCH_TUNING=ON -DNIGHTWING_BUILD_TESTS=ON
 
@@ -424,8 +429,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Tests aren't needed for this job — it only runs the three tuner/
       # executables (nightwing_selfplay/nightwing_tune/nightwing_match),
       # none of which are part of the Catch2 test binary. Skipping
@@ -475,7 +479,7 @@ jobs:
             < tuned_weights.txt | tee match_result.txt
 
       - name: Upload pipeline artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tuning-pipeline-results
           path: |
@@ -587,8 +591,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Configure CMake (Release, no tests)
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF
 
@@ -620,7 +623,7 @@ jobs:
           tail -40 tune_stderr.txt
 
       - name: Upload pipeline artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tuning-pipeline-${{ matrix.mode }}-results
           path: |
@@ -654,8 +657,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Configure CMake (Release, PGO generate phase)
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF -DNIGHTWING_PGO_PHASE=generate
 
@@ -709,7 +711,7 @@ jobs:
         run: ./src/nightwing bench
 
       - name: Upload PGO-optimized binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nightwing-pgo-linux
           path: build/src/nightwing
@@ -741,8 +743,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Configure CMake (Release, no tests)
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF
 
@@ -793,7 +794,7 @@ jobs:
             < tuned_weights.txt | tee sprt_result.txt
 
       - name: Upload pipeline artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sprt-pipeline-results
           path: |
@@ -818,8 +819,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Target 3 (search constants) tunes a NIGHTWING_SEARCH_TUNING=ON
       # binary through the UCI runner, so it needs that configuration and
       # the `nightwing` engine target as well; targets 0-2 are unchanged.
@@ -911,7 +911,7 @@ jobs:
 
       - name: Upload SPSA artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: spsa-results
           path: |
@@ -954,18 +954,18 @@ jobs:
 
     steps:
       - name: Checkout runner (the ref this workflow was dispatched on)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: runner
 
       - name: Checkout baseline (engine A)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.ucimatch_baseline_ref }}
           path: baseline
 
       - name: Checkout candidate (engine B)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.ucimatch_candidate_ref }}
           path: candidate
@@ -1115,7 +1115,7 @@ jobs:
 
       - name: Upload match results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: uci-match-results
           path: |
@@ -1148,10 +1148,9 @@ jobs:
     name: WebAssembly build (Emscripten)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Set up Emscripten
-        uses: mymindstorm/setup-emsdk@v14
+        uses: mymindstorm/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
         with:
           version: latest
 
@@ -1369,7 +1368,7 @@ jobs:
           ls -l wasm-assets
 
       - name: Upload wasm artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nightwing-wasm
           path: wasm-assets/
@@ -1420,32 +1419,32 @@ jobs:
       # pulling the whole repo into a job that otherwise never touches
       # source (it only handles downloaded binaries and calls `gh`).
       - name: Checkout CMakeLists.txt (for version number)
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           sparse-checkout: |
             CMakeLists.txt
           sparse-checkout-cone-mode: false
 
       - name: Download Linux binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: nightwing-binary-Linux
           path: linux-binary
 
       - name: Download macOS binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: nightwing-binary-macOS
           path: macos-binary
 
       - name: Download Windows binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: nightwing-binary-Windows
           path: windows-binary
 
       - name: Download wasm files
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: nightwing-wasm
           path: wasm-files
