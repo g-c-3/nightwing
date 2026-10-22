@@ -4,7 +4,7 @@ Newest entry at top.
 
 ---
 
-### Session 246 — 2026-10-22 — Stable insertion sort in move ordering; `mat_psqt` threaded into ProbCut; SEE gated; repetition scan halved; pawn key moved below TT cutoff; qsearch stalemate shortcut; direct `gives_check()`; castling-mask table in `make_move`
+### Session 246 — 2026-10-22 — Stable insertion sort in move ordering; `mat_psqt` threaded into ProbCut; SEE gated; repetition scan halved; pawn key moved below TT cutoff; qsearch stalemate shortcut; direct `gives_check()`; castling-mask table in `make_move`; CI hardening
 
 **Built:** `src/search/ordering.cpp`: `order_moves()` sorts its scored list with a stable insertion sort instead of `std::stable_sort`, and the 218-entry scratch array is no longer value-initialised. `src/search/quiescence.cpp`: `order_captures_first()` received the same two changes.
 
@@ -22,6 +22,8 @@ Same file: `gives_check()` computes direct and discovered checks from bitboards 
 
 `src/board/board.cpp`: the per-move loop over the four castling rights in `make_move()` is replaced by a constexpr 64-entry `kCornerKeepMask` table ANDed for `from` and `to`; the king-move revocation and the incremental Zobrist castling-key update are unchanged. Technique credited to CPW "Castling" (per-square masks).
 
+`.github/workflows/ci.yml`: every `uses:` reference (checkout v7 and v5, upload-artifact v4, download-artifact v4, vs-shell v2, setup-emsdk v14; 28 lines) pinned to the full commit SHA the tag pointed to at the time (resolved with `git ls-remote`, since `api.github.com` returned 403 from the sandbox), with the tag kept as a trailing comment; top-level `permissions: contents: read` added. The workflow was validated as YAML and the permission blocks inspected (top level read, `release` job write); it has not been executed, so the first CI run is the real check.
+
 **Bugs fixed:** none.
 
 **Measurements:** Release build, zero warnings. 826 of 826 test cases pass (no tests added; ordering behaviour is unchanged by construction and covered by the existing ordering, quiescence and search suites). `bench 6` node count unchanged at 62276. Six interleaved baseline/candidate runs on a single-core shared sandbox gave median NPS of about 651k (baseline) and 669k (candidate), roughly +2.7%, with run-to-run noise larger than that; the speed gain is therefore indicative only and was not confirmed by a match or multi-core measurement.
@@ -38,13 +40,15 @@ Same file: `gives_check()` computes direct and discovered checks from bitboards 
 
 **Direct-gives_check measurements:** Release build, zero warnings, 827 of 827 tests pass; node counts identical at `bench 6` and `bench 9`. A scratch build computing both methods and aborting on any disagreement completed a depth-10 bench (3132746 nodes) and the full suite without a mismatch. Six interleaved depth-9 runs gave median NPS of about 825k (before) and 830k (after): +0.6%, within noise, so no gain is claimed; the change is kept as exact and behaviour-neutral.
 
-**Castling-mask measurements:** Release build, zero warnings, 827 of 827 tests pass (perft suites included); node counts identical at `bench 6` and `bench 9`. Six interleaved depth-9 runs gave median NPS of about 710k (before) and 781k (after); the sandbox noise is large, so the size of the gain is unconfirmed. The per-`go` allocation item was assessed and intentionally left unchanged (see ROADMAP.md).
+**Castling-mask measurements:** Release build, zero warnings, 827 of 827 tests pass (perft suites included); node counts identical at `bench 6` and `bench 9`. Six interleaved depth-9 runs gave median NPS of about 710k (before) and 781k (after); the sandbox noise is large, so the size of the gain is unconfirmed. The per-`go` allocation item was measured (0.70 ms per `go` at `Threads=1` over 300 `go nodes 1` searches, an upper bound) and closed as not worth changing (see ROADMAP.md); a `Threads=4` run of the same test gave an implausible 0.05 ms and was not used.
+
+**CI-hardening notes:** SHA pinning means action updates are no longer automatic; the `checkout@v5` references in `wasm-build` and `release` were pinned as they are (not bumped to v7) to keep this change purely about pinning.
 
 **Decisions made:** none requiring a DECISIONS.md entry; the change is behaviour-preserving (strict `<` comparison keeps the sort stable, so equal scores retain generation order and `tie_break_variant == 0` stays deterministic).
 
 **Open:** remaining review items stay listed in the ROADMAP.md entry dated 2026-10-22.
 
-**Next session start point:** run a CI-hosted self-play or fixed-node comparison of the accumulated Session 246 changes if available; otherwise take the CI hardening item from the ROADMAP.md 2026-10-22 entry (pin actions by SHA, add a top-level `permissions: contents: read` block to `.github/workflows/ci.yml`; read the current workflow first, and resolve SHAs via `api.github.com`). The per-`go` allocation item needs approval to close, and the `eval.cpp` pawn-key duplicate and `node_static_eval` reuse items stay deferred.
+**Next session start point:** first confirm the CI run for the Session 246 commit is green (all jobs, in particular `release`, `wasm-build` and the tuning jobs, which the new `permissions` block could affect). Then every remaining item in the ROADMAP.md 2026-10-22 entry is strength-related and unmeasured (2-fold repetition against pre-root history, discarding an interrupted iteration, history gravity, aspiration delta cap, MultiPV ignoring `Threads`, 6-bit TT age aliasing, SEE ignoring promotion value): take one at a time as a candidate commit and request a `uci-match` workflow_dispatch run (`ucimatch_nodes` set, baseline = the previous commit, candidate = the new one) to decide it; the SPRT result, not a node count, decides adoption. A request for a Session 246 CI-hosted comparison of the accumulated speed changes (baseline `145e0c7`, candidate = the Session 246 commit, `ucimatch_movetime_ms` set so speed counts) is also worth running first. The `eval.cpp` pawn-key duplicate and `node_static_eval` reuse items stay deferred.
 
 ---
 
