@@ -31,6 +31,14 @@ namespace nightwing::search {
 /// captures; calling it on a quiet move is a logic error in the caller,
 /// not something this function tries to detect or handle gracefully.
 ///
+/// Promotions are accounted for, assuming promotion to a queen for pawns
+/// that recapture onto their last rank: a promoting `move` gains the
+/// promoted piece's value minus a pawn's, and the piece the opponent then
+/// recaptures is the promoted piece; a pawn recapturing onto its own
+/// promotion rank likewise earns (queen - pawn) and leaves a queen on the
+/// square (Session 247; previously promotions were ignored and the
+/// capturing pawn was always valued as a pawn).
+///
 /// Deliberately ignores whether intermediate hypothetical recaptures in
 /// the simulated sequence would themselves be legal (e.g. a recapture
 /// that would expose the recapturing side's own king to check via a

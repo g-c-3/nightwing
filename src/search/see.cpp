@@ -47,6 +47,14 @@ constexpr std::array<PieceType, 6> kAttackerOrder = {
     PieceType::Rook, PieceType::Queen,  PieceType::King,
 };
 
+/// True when a pawn of `side` standing on `sq` is on its promotion rank, so
+/// a pawn that captures ONTO `sq` promotes there. SEE assumes promotion to a
+/// queen, the only promotion that is ever the best one in an exchange
+/// worth evaluating statically.
+[[nodiscard]] constexpr bool is_promotion_square(Square sq, Color side) noexcept {
+    return board::rank_of(sq) == (side == Color::White ? 7 : 0);
+}
+
 /// Every square from which a piece of `by_color` currently attacks `sq`,
 /// given board occupancy `occ` (NOT necessarily `pos.occupied()` --
 /// static_exchange_evaluation() below mutates a local copy as it
@@ -104,6 +112,14 @@ int static_exchange_evaluation(const Position& pos, board::Move move) noexcept {
     std::array<int, 32> gain{};
     int depth = 0;
     gain[0] = see_piece_value(captured_type);
+    if (move.is_promotion()) {
+        // A promoting capture also turns the capturing pawn into the
+        // promoted piece: the mover gains the difference, and it is that
+        // piece (not a pawn) which the opponent's recapture then wins.
+        const PieceType promoted = move.promotion_piece_type();
+        gain[0] += see_piece_value(promoted) - see_piece_value(PieceType::Pawn);
+        attacker_type = promoted;
+    }
 
     for (;;) {
         const Bitboard attackers = attackers_to(pos, to, occ, side);
@@ -151,12 +167,22 @@ int static_exchange_evaluation(const Position& pos, board::Move move) noexcept {
             }
         }
 
+        // A pawn recapturing onto its promotion rank promotes as it
+        // captures: that capture also earns (queen - pawn), and the piece
+        // left on `to` for the next recapture is a queen, not a pawn.
+        int promotion_bonus = 0;
+        PieceType type_on_square = next_type;
+        if (next_type == PieceType::Pawn && is_promotion_square(to, side)) {
+            promotion_bonus = see_piece_value(PieceType::Queen) - see_piece_value(PieceType::Pawn);
+            type_on_square = PieceType::Queen;
+        }
+
         ++depth;
-        gain[static_cast<std::size_t>(depth)] =
-            see_piece_value(attacker_type) - gain[static_cast<std::size_t>(depth - 1)];
+        gain[static_cast<std::size_t>(depth)] = see_piece_value(attacker_type) + promotion_bonus -
+                                                gain[static_cast<std::size_t>(depth - 1)];
 
         board::clear_bit(occ, next_sq);
-        attacker_type = next_type;
+        attacker_type = type_on_square;
         side = board::opposite(side);
     }
 
