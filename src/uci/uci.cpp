@@ -108,6 +108,7 @@
 #include "search/skill.h"
 #include "search/tt.h"
 #include "search/tunables.h"
+#include "uci/alloc_fallback.h"
 #include "uci/time_budget.h"
 
 namespace nightwing::uci {
@@ -920,24 +921,18 @@ void emit_info(const search::SearchResult& result, std::ostream& out,
 /// Priority Fixes, 2026-09-08, "Persistent, engine-lifetime
 /// transposition table") at startup and to rebuild it fresh whenever
 /// `setoption name Hash value <N>` changes its size -- see run()'s own
-/// use of this function, below.
-void emplace_persistent_tt(std::optional<search::TranspositionTable>& tt,
-                            std::size_t requested_mb) {
-    std::size_t size_mb = requested_mb < 1 ? 1 : requested_mb;
-    while (true) {
-        try {
-            tt.emplace(size_mb);
-            return;
-        } catch (const std::bad_alloc&) {
-            if (size_mb <= 1) {
-                throw; // Nothing smaller left to try -- let it propagate.
-            }
-            size_mb /= 2;
-            if (size_mb < 1) {
-                size_mb = 1;
-            }
-        }
-    }
+/// use of this function, below. Returns false (leaving `tt` empty) if
+/// even a 1 MB table cannot be allocated.
+[[nodiscard]] bool emplace_persistent_tt(std::optional<search::TranspositionTable>& tt,
+                                          std::size_t requested_mb) {
+    // allocate_with_halving() (uci/alloc_fallback.h) owns the retry
+    // policy. Returns false, with `tt` left EMPTY, only when even a 1 MB
+    // table could not be built (std::optional::emplace() destroys the old
+    // table before constructing the new one, so there is nothing to fall
+    // back to); callers must then not dereference `tt` and must stop
+    // using it (run() reports the error and ends the session).
+    return allocate_with_halving(requested_mb,
+                                  [&tt](std::size_t size_mb) { tt.emplace(size_mb); }) != 0;
 }
 
 /// Handles `setoption name <name...> value <value...>`. Recognized
@@ -2035,7 +2030,14 @@ void run(std::istream& in, std::ostream& out) {
     // doesn't touch (same convention `num_threads`/`hash_size_mb`
     // themselves already follow just above).
     std::optional<search::TranspositionTable> persistent_tt;
-    emplace_persistent_tt(persistent_tt, hash_size_mb);
+    if (!emplace_persistent_tt(persistent_tt, hash_size_mb)) {
+        // Not even 1 MB is available: no search can run, and every later
+        // command would dereference an empty table. Report and end the
+        // session instead of crashing.
+        out << "info string error: cannot allocate the transposition table\n";
+        out.flush();
+        return;
+    }
     int move_overhead_ms = kMinMoveOverheadMs;
     g_increment_percent = kEngineIncrementPercent; // `IncrementPercent`: per-session
     // `MultiPV` (ROADMAP.md Phase 8, "Full UCI option set" -- the last
@@ -2283,7 +2285,16 @@ void run(std::istream& in, std::ostream& out) {
                 // under it would be the identical use-after-free hazard.
                 abandon_go(go);
                 abandon_pondering(ponder);
-                emplace_persistent_tt(persistent_tt, hash_size_mb);
+                if (!emplace_persistent_tt(persistent_tt, hash_size_mb)) {
+                    // The old table is already destroyed and not even a 1 MB
+                    // replacement could be built; continuing would
+                    // dereference an empty optional. Report and end the
+                    // session (the post-loop code only touches the already
+                    // abandoned go/ponder state).
+                    out << "info string error: cannot allocate the transposition table\n";
+                    out.flush();
+                    break;
+                }
             }
         } else if (cmd == "go") {
             if (has_token(tokens, "ponder")) {
