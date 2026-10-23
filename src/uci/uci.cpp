@@ -92,6 +92,7 @@
 #include <random>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 #include <string>
 #include <thread>
 #include <unordered_set>
@@ -903,6 +904,44 @@ void emit_info(const search::SearchResult& result, std::ostream& out,
     return (*pv)[1];
 }
 
+/// Reports a search that could not run or complete: an `info string error`
+/// line and a `bestmove` (the first legal move of `root`, or `0000` when
+/// there is none), so the GUI is never left waiting for a reply. Never
+/// throws.
+void report_search_failure(std::ostream& out, std::mutex& out_mutex, const Position& root) noexcept {
+    try {
+        board::MoveList legal;
+        board::generate_legal_moves(root, legal);
+        std::lock_guard<std::mutex> lock(out_mutex);
+        out << "info string error: search failed\n";
+        out << "bestmove " << (legal.empty() ? std::string("0000") : legal[0].to_uci()) << '\n';
+        out.flush();
+    } catch (...) {
+        // Nothing safe is left to do.
+    }
+}
+
+/// Runs `body` (a background search thread's whole job) and turns any
+/// exception it throws into a clean failure report instead of letting it
+/// escape the thread function, which would call std::terminate() and abort
+/// the engine (external review, 2026-10-22; typically std::bad_alloc while
+/// the search allocates its tables). Unless the search was already
+/// discarded (`suppress`), report_search_failure() answers the GUI.
+/// `root` is taken BY VALUE at call time, before `body` runs, because a
+/// search that throws mid-tree leaves its own position copy with moves
+/// still made.
+template <typename Body>
+void run_search_thread_guarded(std::ostream& out, std::mutex& out_mutex,
+                                const std::atomic<bool>& suppress, Position root, Body&& body) {
+    try {
+        body();
+    } catch (...) {
+        if (!suppress.load(std::memory_order_relaxed)) {
+            report_search_failure(out, out_mutex, root);
+        }
+    }
+}
+
 /// Fills `tt` with a TranspositionTable sized to `requested_mb`, with
 /// the same graceful, halve-and-retry std::bad_alloc fallback
 /// search::make_transposition_table() gives every top-level search
@@ -1376,9 +1415,11 @@ void start_go(Position& pos, const std::vector<std::uint64_t>& game_history,
     std::mt19937_64* skill_rng_ptr = &skill_rng;
     std::mutex* out_mutex_ptr = &out_mutex;
 
+    try {
     go.thread = std::thread([&out, out_mutex_ptr, go_pos, go_history, num_threads, hash_size_mb,
                               search_multi_pv, budget, skill_level, contempt_cp, stop_ptr,
                               suppress_ptr, tt_ptr, skill_rng_ptr]() mutable {
+      run_search_thread_guarded(out, *out_mutex_ptr, *suppress_ptr, go_pos, [&]() {
         // `material_weights`/`eval_weights` stay the compiled-in-
         // constants default (nullptr) -- no UCI option exists to
         // override either (search_fixed_depth()'s own doc comment
@@ -1445,7 +1486,13 @@ void start_go(Position& pos, const std::vector<std::uint64_t>& game_history,
         }
         out << '\n';
         out.flush();
+      });
     });
+    } catch (const std::system_error&) {
+        // The OS refused to create the search thread (resource limits):
+        // answer the GUI instead of letting the exception abort the engine.
+        report_search_failure(out, out_mutex, pos);
+    }
 }
 
 /// Handles `stop` while an ordinary (non-ponder) `go` is in flight --
@@ -1730,8 +1777,10 @@ void start_pondering(Position& pos, const std::vector<std::uint64_t>& game_histo
     search::TranspositionTable* tt_ptr = &persistent_tt;
     std::mutex* out_mutex_ptr = &out_mutex;
 
+    try {
     ponder.thread = std::thread([&out, out_mutex_ptr, num_threads, hash_size_mb, ponder_pos,
                                   ponder_history, stop_ptr, suppress_ptr, tt_ptr, budget]() mutable {
+      run_search_thread_guarded(out, *out_mutex_ptr, *suppress_ptr, ponder_pos, [&]() {
         // `budget`'s own `has_node_limit`/`max_nodes`/`searchmoves`
         // (ROADMAP.md Priority Fixes, 2026-09-22, finding 9) ARE now
         // forwarded to this background search (filed 2026-09-24,
@@ -1794,7 +1843,12 @@ void start_pondering(Position& pos, const std::vector<std::uint64_t>& game_histo
         }
         out << '\n';
         out.flush();
+      });
     });
+    } catch (const std::system_error&) {
+        // See start_go(): answer the GUI instead of aborting.
+        report_search_failure(out, out_mutex, pos);
+    }
 }
 
 /// Handles `ponderhit` — "continue as real search on `ponderhit`"
