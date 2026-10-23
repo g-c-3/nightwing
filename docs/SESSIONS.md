@@ -4,9 +4,9 @@ Newest entry at top.
 
 ---
 
-### Session 247 — 2026-10-23 — `uci-match` check of the Session 246 speed changes; zero `movetime`/`nodes` decision
+### Session 247 — 2026-10-23 — `uci-match` check of the Session 246 speed changes; zero `movetime`/`nodes` decision; persistent-TT allocation failure
 
-**Built:** `tests/uci_tests.cpp`: three tests added for `go nodes 0` (with `quit`: exits without a `bestmove`; with `stop`: returns a `bestmove`; with `depth 3`: finishes by itself). The suite has 830 test cases, all passing. No source or workflow files changed; `go movetime 0` was already handled and tested by the 2026-10-18 robustness batch.
+**Built:** `tests/uci_tests.cpp`: three tests added for `go nodes 0` (with `quit`: exits without a `bestmove`; with `stop`: returns a `bestmove`; with `depth 3`: finishes by itself). The suite has 830 test cases, all passing. `go movetime 0` was already handled and tested by the 2026-10-18 robustness batch. New `src/uci/alloc_fallback.h`: header-only `allocate_with_halving()`, the halve-and-retry allocation policy, returning the size that worked or 0 when even 1 MB failed. `src/uci/uci.cpp`: `emplace_persistent_tt()` now uses it and returns a bool; `run()` prints `info string error: cannot allocate the transposition table` and ends the session when the startup allocation fails or when a `Hash` rebuild fails (previously `std::optional::emplace()` had already destroyed the old table and the rethrown `std::bad_alloc` left an empty optional that later commands would dereference). `tests/uci_tests.cpp`: five more tests (`[alloc]`) driving the policy with an injected failing allocator, so the suite has 835 test cases, all passing. Verified end to end with `ulimit -v 8000`: the previous binary aborted with exit code 134, the new one prints the error line and exits with code 0; `bench 6` unchanged at 62276 nodes.
 
 **Bugs fixed:** none.
 
@@ -16,7 +16,7 @@ Newest entry at top.
 
 **Open:** the match could be rerun with a larger game cap on a longer limit, or a fixed-clock variant, if a firmer number is wanted; it is not required for any pending item.
 
-**Next session start point:** take the `emplace_persistent_tt` empty-optional on a failed final 1 MB allocation, then helper-thread construction and main-search exceptions with joinable helpers reaching `std::terminate`, both items of the ROADMAP.md 2026-10-22 entry; read the current code first, reproduce each with a test (an injectable allocation failure or a throwing helper) before changing it, and keep `bench 6` at 62276 nodes. The strength-related items (2-fold repetition against pre-root history, discarding an interrupted iteration, history gravity, aspiration delta cap, MultiPV ignoring `Threads`, 6-bit TT age aliasing, SEE ignoring promotion value) follow, each decided by a `uci-match` run rather than node counts.
+**Next session start point:** take helper-thread construction failures and main-search exceptions with joinable helpers reaching `std::terminate`, the last correctness-adjacent item of the ROADMAP.md 2026-10-22 entry; read the Lazy SMP thread setup in `search.cpp` and the `go`/ponder threads in `uci.cpp` first, reproduce with a test (a throwing helper body, an injectable thread-creation failure) before changing anything, and keep `bench 6` at 62276 nodes. The strength-related items (2-fold repetition against pre-root history, discarding an interrupted iteration, history gravity, aspiration delta cap, MultiPV ignoring `Threads`, 6-bit TT age aliasing, SEE ignoring promotion value) follow, each decided by a `uci-match` run rather than node counts.
 
 ---
 
