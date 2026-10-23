@@ -32,12 +32,18 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <chrono>
+#include <new>
+#include <stdexcept>
+#include <system_error>
 #include <thread>
+#include <utility>
 
 #include "board/attacks.h"
 #include "board/board.h"
 #include "board/fen.h"
+#include "search/thread_group.h"
 #include "board/masks.h"
 #include "board/movegen.h"
 #include "board/zobrist.h"
@@ -196,4 +202,127 @@ TEST_CASE("search_iterative_deepening: helper thread diversification (staggered 
                                                          /*num_threads=*/threads);
         REQUIRE(result.score >= kMateThreshold);
     }
+}
+
+// ---------------------------------------------------------------------------
+// JoiningThreadGroup (search/thread_group.h): helper threads are always
+// stopped and joined, even when thread creation fails or an exception
+// unwinds through the owning scope (external review, 2026-10-22). With a
+// plain std::vector<std::thread> both cases called std::terminate().
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Stand-in for std::thread that can be told to fail on a chosen
+/// construction and that counts joins.
+struct FakeThread {
+    static inline int constructed = 0;
+    static inline int fail_on = -1;      // zero-based construction index that throws
+    static inline bool fail_with_bad_alloc = false;
+    static inline int joined = 0;
+    static void reset() {
+        constructed = 0;
+        fail_on = -1;
+        fail_with_bad_alloc = false;
+        joined = 0;
+    }
+
+    template <typename... Args>
+    explicit FakeThread(Args&&...) {
+        if (constructed++ == fail_on) {
+            if (fail_with_bad_alloc) {
+                throw std::bad_alloc();
+            }
+            throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again));
+        }
+    }
+    FakeThread(FakeThread&& other) noexcept : joinable_(std::exchange(other.joinable_, false)) {}
+    FakeThread(const FakeThread&) = delete;
+    [[nodiscard]] bool joinable() const noexcept { return joinable_; }
+    void join() {
+        ++joined;
+        joinable_ = false;
+    }
+
+  private:
+    bool joinable_ = true;
+};
+
+} // namespace
+
+TEST_CASE("thread group: a failed thread creation is reported and the group keeps the earlier workers",
+          "[lazy_smp][thread_group]") {
+    FakeThread::reset();
+    FakeThread::fail_on = 2;
+    std::atomic<bool> stop{false};
+    {
+        nightwing::search::BasicJoiningThreadGroup<FakeThread> group(stop);
+        REQUIRE(group.try_spawn(0));
+        REQUIRE(group.try_spawn(1));
+        REQUIRE_FALSE(group.try_spawn(2)); // system_error from the OS, not an exception to the caller
+        REQUIRE(group.size() == 2);
+        REQUIRE_FALSE(stop.load());
+    }
+    // Leaving the scope stopped and joined exactly the two that started.
+    REQUIRE(stop.load());
+    REQUIRE(FakeThread::joined == 2);
+}
+
+TEST_CASE("thread group: bad_alloc during creation is also reported as a failed spawn",
+          "[lazy_smp][thread_group]") {
+    FakeThread::reset();
+    FakeThread::fail_on = 0;
+    FakeThread::fail_with_bad_alloc = true;
+    std::atomic<bool> stop{false};
+    nightwing::search::BasicJoiningThreadGroup<FakeThread> group(stop);
+    REQUIRE_FALSE(group.try_spawn(0));
+    REQUIRE(group.size() == 0);
+}
+
+TEST_CASE("thread group: stop_and_join is idempotent", "[lazy_smp][thread_group]") {
+    FakeThread::reset();
+    std::atomic<bool> stop{false};
+    {
+        nightwing::search::BasicJoiningThreadGroup<FakeThread> group(stop);
+        REQUIRE(group.try_spawn(0));
+        REQUIRE(group.try_spawn(1));
+        group.stop_and_join();
+        REQUIRE(FakeThread::joined == 2);
+        group.stop_and_join(); // explicit call, then again from the destructor
+    }
+    REQUIRE(FakeThread::joined == 2);
+}
+
+TEST_CASE("thread group: an exception unwinding through the owner stops and joins real threads",
+          "[lazy_smp][thread_group]") {
+    std::atomic<bool> stop{false};
+    std::atomic<int> running{0};
+    const auto worker = [&stop, &running]() {
+        running.fetch_add(1);
+        while (!stop.load(std::memory_order_relaxed)) {
+            std::this_thread::yield();
+        }
+        running.fetch_sub(1);
+    };
+
+    bool caught = false;
+    try {
+        nightwing::search::JoiningThreadGroup group(stop);
+        REQUIRE(group.try_spawn(worker));
+        REQUIRE(group.try_spawn(worker));
+        REQUIRE(group.try_spawn(worker));
+        // Wait until all three are really running, then fail the "main
+        // search" the way a std::bad_alloc inside it would.
+        while (running.load() < 3) {
+            std::this_thread::yield();
+        }
+        throw std::runtime_error("main search failed");
+    } catch (const std::runtime_error&) {
+        caught = true;
+    }
+    // Reaching this line at all is the point: a joinable std::thread
+    // destroyed during unwinding would have called std::terminate().
+    REQUIRE(caught);
+    REQUIRE(stop.load());
+    REQUIRE(running.load() == 0);
 }
