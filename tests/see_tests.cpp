@@ -107,6 +107,36 @@ TEST_CASE("SEE: a king cannot legally 'recapture' into a square the opponent sti
     REQUIRE(static_exchange_evaluation(pos, rxd5) == 100);
 }
 
+TEST_CASE("SEE: an undefended promoting capture also gains the promotion", "[see][promotion]") {
+    init_all();
+    // White pawn b7 takes the rook on a8 and promotes; nothing can recapture.
+    Position pos = parse_fen("r3k3/1P6/8/8/8/8/8/4K3 w - - 0 1");
+    const Move bxa8(make_square(1, 6), make_square(0, 7), MoveFlag::PromoCaptureQueen);
+    // Rook (500) + pawn becoming a queen (900 - 100) = 1300.
+    REQUIRE(static_exchange_evaluation(pos, bxa8) == 1300);
+}
+
+TEST_CASE("SEE: a recaptured promoting capture loses the new queen, not a pawn", "[see][promotion]") {
+    init_all();
+    // As above, but the h8 rook recaptures on a8 along the empty back rank.
+    Position pos = parse_fen("r6r/1P2k3/8/8/8/8/8/4K3 w - - 0 1");
+    const Move bxa8(make_square(1, 6), make_square(0, 7), MoveFlag::PromoCaptureQueen);
+    // +500 for the rook, +800 for the promotion, -900 for the queen
+    // recaptured: net +400 (the pawn is simply traded for the rook).
+    REQUIRE(static_exchange_evaluation(pos, bxa8) == 400);
+}
+
+TEST_CASE("SEE: a pawn recapturing onto its promotion rank promotes", "[see][promotion]") {
+    init_all();
+    // White rook h1 takes the knight on a1; the black pawn b2 recaptures
+    // and promotes (a1 is Black's promotion rank), and nothing recaptures.
+    Position pos = parse_fen("4k3/8/8/8/8/6K1/1p6/n6R w - - 0 1");
+    const Move rxa1(make_square(7, 0), make_square(0, 0), MoveFlag::Capture);
+    // +320 (knight) -500 (rook) -800 (pawn becomes a queen) = -980.
+    // Ignoring the promotion would have given -180.
+    REQUIRE(static_exchange_evaluation(pos, rxa1) == -980);
+}
+
 TEST_CASE("SEE: leaves the position completely unmodified", "[see]") {
     init_all();
     Position pos = parse_fen("4k3/8/2p5/3p4/8/8/8/3QK3 w - - 0 1");
