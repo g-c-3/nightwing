@@ -1466,6 +1466,34 @@ TEST_CASE("uci: 'go movetime 0' followed by 'stop' returns a bestmove", "[uci][q
     REQUIRE(contains(out, "bestmove "));
 }
 
+TEST_CASE("uci: 'go nodes 0' is treated as no node limit and 'quit' exits instead of hanging",
+          "[uci][quit]") {
+    init_all();
+    // A zero node count is not a budget (parsed > 0 is required), so with
+    // no other limit the search is unbounded, exactly like `go movetime 0`
+    // and Stockfish's convention for zero limits; `quit` must abandon it.
+    const std::string out =
+        run_uci_raw({std::string("position fen ") + kKiwipeteFen, "go nodes 0", "quit"});
+    REQUIRE_FALSE(contains(out, "bestmove"));
+}
+
+TEST_CASE("uci: 'go nodes 0' followed by 'stop' returns a bestmove", "[uci][quit]") {
+    init_all();
+    const std::string out =
+        run_uci_raw({std::string("position fen ") + kKiwipeteFen, "go nodes 0", "stop", "quit"});
+    REQUIRE(contains(out, "bestmove "));
+}
+
+TEST_CASE("uci: 'go nodes 0 depth 3' still honours the depth limit and finishes by itself",
+          "[uci][quit]") {
+    init_all();
+    // The zero node count is ignored, not treated as "search nothing", so
+    // the explicit depth still bounds the search with no `stop` needed.
+    const std::string out =
+        run_uci_raw({std::string("position fen ") + kKiwipeteFen, "go nodes 0 depth 3"});
+    REQUIRE(contains(out, "bestmove "));
+}
+
 TEST_CASE("uci: an explicit 'quit' during a bounded search stops it promptly", "[uci][quit]") {
     init_all();
     const auto start = std::chrono::steady_clock::now();
