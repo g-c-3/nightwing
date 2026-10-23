@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-23 (2) — Search threads fail soft: helpers are best-effort, a failed search still answers
+
+**Context:** An external review reported that helper-thread construction failures, and exceptions thrown on the main search thread while Lazy SMP helpers were joinable, reach `std::terminate`. Reproduced with an address-space limit (`ulimit -v`): the engine aborted with exit code 134 on `std::system_error` (thread creation refused), on `std::bad_alloc` inside helper and search threads, and with "terminate called recursively".
+
+**Decision:** (1) Helper threads are owned by `search::JoiningThreadGroup` (`search/thread_group.h`), which raises the shared stop flag and joins every thread on any exit path, including exception unwinding. (2) A refused helper creation is not an error: the search continues with the helpers already started. (3) A helper's own exceptions are swallowed inside its thread entry point; a helper that fails simply stops contributing nodes. (4) The `go` and `go ponder` search threads run inside `run_search_thread_guarded()`; an exception there, or a refused creation of the thread itself, produces `info string error: search failed` and a `bestmove` consisting of the first legal move (or `0000` if none), unless the search was already discarded. The position used for the fallback is a copy taken before the search starts, since a search that throws mid-tree leaves its own copy with moves made.
+
+**Rationale:** An engine that aborts mid-game forfeits the game and takes the GUI's process with it; a legal, if weak, move or a search with fewer helpers loses far less. Helpers are optional work, so degrading them silently is correct, whereas a failed main search must still answer the GUI. Reporting through `info string` keeps the failure visible in logs.
+
+**Alternatives considered:** letting the exception propagate to a top-level handler that exits (rejected: still forfeits and leaves the GUI without a reply); retrying the search with fewer threads after a failure (rejected: added complexity for a situation that already means the machine is out of memory or threads); a smarter fallback move such as the transposition-table or book move (rejected: the table may be the very thing that failed).
+
+---
+
 ### 2026-10-23 — Zero `movetime` and zero `nodes` mean "no limit"; unbounded searches stay stoppable
 
 **Context:** An external review item reported that `go movetime 0` and `go nodes 0` run unbounded. The 2026-10-18 robustness batch had already fixed the real defect behind `go movetime 0` (a search that `quit` or end of input could not end); the search itself was deliberately left unbounded. `go nodes 0` was ignored by the parser (a node count must be positive) but had no test.
