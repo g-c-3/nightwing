@@ -26,6 +26,7 @@
 #include "search/ordering.h"
 #include "search/quiescence.h"
 #include "search/see.h"
+#include "search/thread_group.h"
 #include "search/tt.h"
 #include "search/tunables.h"
 
@@ -3655,19 +3656,25 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
     // contract, either way.
     const int effective_threads = num_threads < 1 ? 1 : num_threads;
     std::atomic<bool> smp_stop{false};
-    std::vector<std::thread> helpers;
     std::vector<std::uint64_t> helper_nodes;
+    // Declared AFTER everything the helpers reference (`smp_stop`,
+    // `helper_nodes`, `tt`, the weights), so it is destroyed -- stopping and
+    // joining them -- before any of those, including when an exception
+    // unwinds out of this function (search/thread_group.h).
+    JoiningThreadGroup helpers(smp_stop);
     if (effective_threads > 1) {
         const std::size_t n = static_cast<std::size_t>(effective_threads - 1);
-        helpers.reserve(n);
         helper_nodes.assign(n, 0);
         for (std::size_t i = 0; i < n; ++i) {
             Position helper_pos = pos; // synchronous copy on the calling thread -- same
                                         // ordering rationale as search_iterative_deepening()'s
                                         // own identical comment below.
-            helpers.emplace_back(run_lazy_smp_helper, std::move(helper_pos), depth, std::ref(tt),
-                                  game_history, material_weights, eval_weights, std::ref(smp_stop),
-                                  std::ref(helper_nodes[i]), contempt_white_pov, static_cast<int>(i));
+            if (!helpers.try_spawn(run_lazy_smp_helper, std::move(helper_pos), depth, std::ref(tt),
+                                    game_history, material_weights, eval_weights,
+                                    std::ref(smp_stop), std::ref(helper_nodes[i]),
+                                    contempt_white_pov, static_cast<int>(i))) {
+                break; // Thread creation failed: carry on with the helpers started so far.
+            }
         }
     }
 
@@ -3697,11 +3704,8 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
     // search_iterative_deepening()'s own below -- no-op (empty
     // `helpers`) when `effective_threads <= 1`, matching this whole
     // block's absence before this parameter existed.
-    if (!helpers.empty()) {
-        smp_stop.store(true, std::memory_order_relaxed);
-        for (std::thread& helper : helpers) {
-            helper.join();
-        }
+    if (helpers.size() > 0) {
+        helpers.stop_and_join();
         std::uint64_t total_nodes = result.nodes;
         for (std::uint64_t n : helper_nodes) {
             total_nodes += n;
@@ -3758,12 +3762,40 @@ namespace {
 /// their own history tables hadn't yet diverged (early plies
 /// especially, before any thread's own experience-driven move ordering
 /// has had a chance to develop).
+void run_lazy_smp_helper_impl(Position pos, int max_depth, TranspositionTable& tt,
+                               std::span<const std::uint64_t> game_history,
+                               const eval::MaterialWeights* material_weights,
+                               const eval::EvalWeightsOverride* eval_weights,
+                               std::atomic<bool>& stop, std::uint64_t& nodes_out,
+                               int contempt_white_pov, int helper_id);
+
+/// Thread entry point for one Lazy SMP helper: runs the helper's search
+/// loop and swallows any exception it throws. A helper is optional work, so
+/// one that fails (typically std::bad_alloc while allocating its private
+/// tables) simply stops contributing; letting the exception escape the
+/// thread function would call std::terminate() and abort the whole engine
+/// (external review, 2026-10-22). `nodes_out` keeps whatever the helper had
+/// stored (0 until it completes normally).
 void run_lazy_smp_helper(Position pos, int max_depth, TranspositionTable& tt,
                           std::span<const std::uint64_t> game_history,
                           const eval::MaterialWeights* material_weights,
                           const eval::EvalWeightsOverride* eval_weights,
                           std::atomic<bool>& stop, std::uint64_t& nodes_out,
                           int contempt_white_pov, int helper_id) {
+    try {
+        run_lazy_smp_helper_impl(std::move(pos), max_depth, tt, game_history, material_weights,
+                                  eval_weights, stop, nodes_out, contempt_white_pov, helper_id);
+    } catch (...) {
+        // Intentionally empty: see this function's doc comment.
+    }
+}
+
+void run_lazy_smp_helper_impl(Position pos, int max_depth, TranspositionTable& tt,
+                               std::span<const std::uint64_t> game_history,
+                               const eval::MaterialWeights* material_weights,
+                               const eval::EvalWeightsOverride* eval_weights,
+                               std::atomic<bool>& stop, std::uint64_t& nodes_out,
+                               int contempt_white_pov, int helper_id) {
     KillerTable killers;
     // Heap-allocated, not stack locals: HistoryTable and
     // ContinuationHistoryTable together are roughly 176KB
@@ -4441,18 +4473,21 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // of data race this ordering avoids.
     const int effective_threads = num_threads < 1 ? 1 : num_threads;
     std::atomic<bool> smp_stop{false};
-    std::vector<std::thread> helpers;
     std::vector<std::uint64_t> helper_nodes;
+    // See search_fixed_depth()'s identical declaration: destroyed first, so
+    // helpers are always stopped and joined, even on an exception.
+    JoiningThreadGroup helpers(smp_stop);
     if (effective_threads > 1) {
         const std::size_t n = static_cast<std::size_t>(effective_threads - 1);
-        helpers.reserve(n);
         helper_nodes.assign(n, 0);
         for (std::size_t i = 0; i < n; ++i) {
             Position helper_pos = pos; // synchronous copy on the calling thread -- see above
-            helpers.emplace_back(run_lazy_smp_helper, std::move(helper_pos), max_depth,
-                                  std::ref(tt), game_history, material_weights, eval_weights,
-                                  std::ref(smp_stop), std::ref(helper_nodes[i]), contempt_white_pov,
-                                  static_cast<int>(i));
+            if (!helpers.try_spawn(run_lazy_smp_helper, std::move(helper_pos), max_depth,
+                                    std::ref(tt), game_history, material_weights, eval_weights,
+                                    std::ref(smp_stop), std::ref(helper_nodes[i]),
+                                    contempt_white_pov, static_cast<int>(i))) {
+                break; // Thread creation failed: carry on with the helpers started so far.
+            }
         }
     }
 
@@ -4714,11 +4749,8 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
     // node count into the total this call reports. No-op (empty
     // `helpers`) when `effective_threads <= 1`, matching this whole
     // block's absence before this parameter existed.
-    if (!helpers.empty()) {
-        smp_stop.store(true, std::memory_order_relaxed);
-        for (std::thread& helper : helpers) {
-            helper.join();
-        }
+    if (helpers.size() > 0) {
+        helpers.stop_and_join();
         for (std::uint64_t n : helper_nodes) {
             total_nodes += n;
         }
