@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 247 — 2026-10-23 — `uci-match` check of the Session 246 speed changes; zero `movetime`/`nodes` decision
+
+**Built:** `tests/uci_tests.cpp`: three tests added for `go nodes 0` (with `quit`: exits without a `bestmove`; with `stop`: returns a `bestmove`; with `depth 3`: finishes by itself). The suite has 830 test cases, all passing. No source or workflow files changed; `go movetime 0` was already handled and tested by the 2026-10-18 robustness batch.
+
+**Bugs fixed:** none.
+
+**Measurement:** `uci-match` was dispatched on `main` with baseline `145e0c7010fb3b41f450d6732706ec7a0abd5089` (Session 245 state) and candidate `acbc53b8dacccb5e4e62c56ab76c192649739b09` (all Session 246 changes), `ucimatch_movetime_ms` 100, SPRT `-5 5 0.05 0.05`, `ucimatch_clock` `0 0`, other inputs at defaults. The job stopped at the 300-minute limit after 1461 of 4000 games (runner exit code 124, handled cleanly): candidate 600 wins, 327 draws, baseline 534 wins; no illegal moves from either engine. Score 52.3%, about +15.7 Elo with an approximate 95% interval of 0.0 to +31.5 (normal approximation on win/draw/loss counts); LLR 2.452 against bounds of plus and minus 2.944, so the SPRT was inconclusive and leaned toward the +5 Elo hypothesis. The Session 246 changes are behaviour-neutral by construction (identical node counts), so a positive result is attributed to speed at fixed 100 ms moves; the interval includes 0, so no gain is established beyond "no regression, probably a gain".
+
+**Decisions made:** a zero `movetime` or `nodes` means no limit and the resulting search stays stoppable (DECISIONS.md 2026-10-23); no code change was needed.
+
+**Open:** the match could be rerun with a larger game cap on a longer limit, or a fixed-clock variant, if a firmer number is wanted; it is not required for any pending item.
+
+**Next session start point:** take the `emplace_persistent_tt` empty-optional on a failed final 1 MB allocation, then helper-thread construction and main-search exceptions with joinable helpers reaching `std::terminate`, both items of the ROADMAP.md 2026-10-22 entry; read the current code first, reproduce each with a test (an injectable allocation failure or a throwing helper) before changing it, and keep `bench 6` at 62276 nodes. The strength-related items (2-fold repetition against pre-root history, discarding an interrupted iteration, history gravity, aspiration delta cap, MultiPV ignoring `Threads`, 6-bit TT age aliasing, SEE ignoring promotion value) follow, each decided by a `uci-match` run rather than node counts.
+
+---
+
 ### Session 246 — 2026-10-22 — Stable insertion sort in move ordering; `mat_psqt` threaded into ProbCut; SEE gated; repetition scan halved; pawn key moved below TT cutoff; qsearch stalemate shortcut; direct `gives_check()`; castling-mask table in `make_move`; CI hardening
 
 **Built:** `src/search/ordering.cpp`: `order_moves()` sorts its scored list with a stable insertion sort instead of `std::stable_sort`, and the 218-entry scratch array is no longer value-initialised. `src/search/quiescence.cpp`: `order_captures_first()` received the same two changes.
@@ -42,13 +58,15 @@ Same file: `gives_check()` computes direct and discovered checks from bitboards 
 
 **Castling-mask measurements:** Release build, zero warnings, 827 of 827 tests pass (perft suites included); node counts identical at `bench 6` and `bench 9`. Six interleaved depth-9 runs gave median NPS of about 710k (before) and 781k (after); the sandbox noise is large, so the size of the gain is unconfirmed. The per-`go` allocation item was measured (0.70 ms per `go` at `Threads=1` over 300 `go nodes 1` searches, an upper bound) and closed as not worth changing (see ROADMAP.md); a `Threads=4` run of the same test gave an implausible 0.05 ms and was not used.
 
+**CI confirmation (build 1034):** the run containing all Session 246 changes completed green on every job. Logs show: all pinned action SHAs resolved; `GITHUB_TOKEN` is `Contents: read` in ordinary jobs and `Contents: write` only in the release job; 827 of 827 test cases pass on Linux and Windows (Release and Debug), 832 on the search-tuning build, and 825 on macOS, the two absent being the BMI2/PEXT tests that only run on x86; the `bench` regression total is 62276 nodes at depth 6; the ThreadSanitizer test job and both sanitizer fuzz legs (seed 1034, 144 games, 852 searches) passed; the wasm UCI checks passed; the rolling `latest` release and `v1.0.1034` were published. The only annotations were informational runner notices (`ubuntu-latest` migrating to a newer Ubuntu, macOS arm64 capacity).
+
 **CI-hardening notes:** SHA pinning means action updates are no longer automatic; the `checkout@v5` references in `wasm-build` and `release` were pinned as they are (not bumped to v7) to keep this change purely about pinning.
 
 **Decisions made:** none requiring a DECISIONS.md entry; the change is behaviour-preserving (strict `<` comparison keeps the sort stable, so equal scores retain generation order and `tie_break_variant == 0` stays deterministic).
 
 **Open:** remaining review items stay listed in the ROADMAP.md entry dated 2026-10-22.
 
-**Next session start point:** first confirm the CI run for the Session 246 commit is green (all jobs, in particular `release`, `wasm-build` and the tuning jobs, which the new `permissions` block could affect). Then every remaining item in the ROADMAP.md 2026-10-22 entry is strength-related and unmeasured (2-fold repetition against pre-root history, discarding an interrupted iteration, history gravity, aspiration delta cap, MultiPV ignoring `Threads`, 6-bit TT age aliasing, SEE ignoring promotion value): take one at a time as a candidate commit and request a `uci-match` workflow_dispatch run (`ucimatch_nodes` set, baseline = the previous commit, candidate = the new one) to decide it; the SPRT result, not a node count, decides adoption. A request for a Session 246 CI-hosted comparison of the accumulated speed changes (baseline `145e0c7`, candidate = the Session 246 commit, `ucimatch_movetime_ms` set so speed counts) is also worth running first. The `eval.cpp` pawn-key duplicate and `node_static_eval` reuse items stay deferred.
+**Next session start point:** the speed-change comparison needs a CI run before any further work: `workflow_dispatch` on `main` with `pipeline` = `uci-match`, `ucimatch_baseline_ref` = `145e0c7010fb3b41f450d6732706ec7a0abd5089` (the Session 245 state), `ucimatch_candidate_ref` = `main`, `ucimatch_movetime_ms` = 100 (so speed counts), `ucimatch_sprt` = `-5 5 0.05 0.05`, other inputs at their defaults; the result is recorded as the first entry of the next session. After that, every remaining item in the ROADMAP.md 2026-10-22 entry is strength-related and unmeasured (2-fold repetition against pre-root history, discarding an interrupted iteration, history gravity, aspiration delta cap, MultiPV ignoring `Threads`, 6-bit TT age aliasing, SEE ignoring promotion value): take one at a time as a candidate commit and decide it by a `uci-match` run (`ucimatch_nodes` set, baseline = the previous commit), not by node counts. The `eval.cpp` pawn-key duplicate and `node_static_eval` reuse items stay deferred.
 
 ---
 

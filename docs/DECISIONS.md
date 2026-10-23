@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-23 — Zero `movetime` and zero `nodes` mean "no limit"; unbounded searches stay stoppable
+
+**Context:** An external review item reported that `go movetime 0` and `go nodes 0` run unbounded. The 2026-10-18 robustness batch had already fixed the real defect behind `go movetime 0` (a search that `quit` or end of input could not end); the search itself was deliberately left unbounded. `go nodes 0` was ignored by the parser (a node count must be positive) but had no test.
+
+**Decision:** A zero value for `movetime` or `nodes` is not a budget and means "no limit", the convention Stockfish follows. With no other limit the search is unbounded exactly like `go infinite`, and `stop` ends it with a `bestmove` while `quit` and end of input abandon it. Any other limit still applies (`go nodes 0 depth 3` finishes at depth 3 unaided). No source change; three regression tests were added (`go nodes 0` with `quit`, with `stop`, and combined with `depth`).
+
+**Rationale:** An engine that is fully controllable is not at risk from an unbounded request, and the alternatives each cost something: treating zero as "search nothing" returns an arbitrary legal move for an input that most plausibly means "no limit", and treating it as a minimal fixed budget invents a number the protocol does not define. A GUI that wants a bounded search sends a positive limit.
+
+**Alternatives considered:** a minimal-budget search for zero (rejected: invented semantics, and inconsistent with the `go` with no arguments case); rejecting the command with an `info string` and no search (rejected: leaves the GUI waiting for a `bestmove`).
+
+---
+
 ### 2026-10-22 (2) — PEXT disabled on AMD Zen 1/2
 
 **Context:** An external review noted that CPU detection enabled PEXT on any CPU reporting BMI2, including AMD Zen 1/2 (family 0x17), where PEXT is implemented in microcode and is slower than magic bitboards.
