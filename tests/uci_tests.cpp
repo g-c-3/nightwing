@@ -9,8 +9,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
+#include <new>
 #include <regex>
+#include <stdexcept>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -24,6 +27,7 @@
 #include "board/zobrist.h"
 #include "book/book.h"
 #include "search/search.h"
+#include "uci/alloc_fallback.h"
 #include "uci/uci.h"
 
 using namespace nightwing::board;
@@ -1506,4 +1510,54 @@ TEST_CASE("uci: an explicit 'quit' during a bounded search stops it promptly", "
     REQUIRE(elapsed_ms < 4000);
     // A stopped search still reports its move, as for any `stop`.
     REQUIRE(contains(out, "bestmove "));
+}
+
+TEST_CASE("uci: allocate_with_halving keeps the requested size when the first attempt succeeds",
+          "[uci][alloc]") {
+    std::vector<std::size_t> tried;
+    const std::size_t used = nightwing::uci::allocate_with_halving(
+        64, [&](std::size_t mb) { tried.push_back(mb); });
+    REQUIRE(used == 64);
+    REQUIRE(tried == std::vector<std::size_t>{64});
+}
+
+TEST_CASE("uci: allocate_with_halving halves on bad_alloc until an attempt fits", "[uci][alloc]") {
+    std::vector<std::size_t> tried;
+    const std::size_t used = nightwing::uci::allocate_with_halving(64, [&](std::size_t mb) {
+        tried.push_back(mb);
+        if (mb > 8) {
+            throw std::bad_alloc();
+        }
+    });
+    REQUIRE(used == 8);
+    REQUIRE(tried == std::vector<std::size_t>{64, 32, 16, 8});
+}
+
+TEST_CASE("uci: allocate_with_halving raises a zero request to 1 MB", "[uci][alloc]") {
+    std::vector<std::size_t> tried;
+    const std::size_t used = nightwing::uci::allocate_with_halving(
+        0, [&](std::size_t mb) { tried.push_back(mb); });
+    REQUIRE(used == 1);
+    REQUIRE(tried == std::vector<std::size_t>{1});
+}
+
+TEST_CASE("uci: allocate_with_halving reports failure (0) instead of throwing when even 1 MB fails",
+          "[uci][alloc]") {
+    // The review's scenario: the final 1 MB allocation fails. The caller
+    // must be told so (and must not use the empty table) rather than
+    // receiving an exception after the old table is already gone.
+    std::vector<std::size_t> tried;
+    std::size_t used = 12345;
+    REQUIRE_NOTHROW(used = nightwing::uci::allocate_with_halving(4, [&](std::size_t mb) {
+        tried.push_back(mb);
+        throw std::bad_alloc();
+    }));
+    REQUIRE(used == 0);
+    REQUIRE(tried == std::vector<std::size_t>{4, 2, 1});
+}
+
+TEST_CASE("uci: allocate_with_halving does not swallow other exceptions", "[uci][alloc]") {
+    REQUIRE_THROWS_AS(nightwing::uci::allocate_with_halving(
+                          8, [](std::size_t) { throw std::runtime_error("boom"); }),
+                      std::runtime_error);
 }
