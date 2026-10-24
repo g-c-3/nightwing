@@ -3,7 +3,6 @@
 #include "search/ordering.h"
 
 #include <algorithm>
-#include <cstdlib>
 
 #include "eval/psqt.h" // eval::material_value() -- reused for MVV-LVA, see score_move() below
 
@@ -162,36 +161,22 @@ Move KillerTable::get(int ply, int index) const noexcept {
     return killers_[static_cast<std::size_t>(ply)][static_cast<std::size_t>(index)];
 }
 
-namespace {
-
-/// Applies a history bonus (`bonus` > 0) or malus (`bonus` < 0) to `slot`
-/// with "history gravity": the entry is pulled back toward zero in
-/// proportion to how full it already is, so |slot| can approach but never
-/// pass `limit` and a saturated entry still reacts to new evidence instead
-/// of sitting on a hard clamp (Stockfish's `StatsEntry::operator<<`, as
-/// documented in CPW "History Heuristic"; formula
-/// `entry += bonus - entry * |bonus| / limit`). |slot| <= limit and
-/// |bonus| <= limit keep every intermediate product within `int` (at most
-/// about 67M for the 8192 limits used here). The trailing clamp is a
-/// safety net for integer rounding only.
-inline void apply_gravity(int& slot, int bonus, int limit) noexcept {
-    bonus = std::clamp(bonus, -limit, limit);
-    slot += bonus - slot * std::abs(bonus) / limit;
-    slot = std::clamp(slot, -limit, limit);
-}
-
-} // namespace
-
 void HistoryTable::update(Color color, Move move, int depth) noexcept {
     int& slot = table_[static_cast<std::size_t>(color)][static_cast<std::size_t>(move.from())]
                        [static_cast<std::size_t>(move.to())];
-    apply_gravity(slot, depth * depth, kHistoryMax);
+    slot += depth * depth;
+    if (slot > kHistoryMax) {
+        slot = kHistoryMax;
+    }
 }
 
 void HistoryTable::malus(Color color, Move move, int depth) noexcept {
     int& slot = table_[static_cast<std::size_t>(color)][static_cast<std::size_t>(move.from())]
                        [static_cast<std::size_t>(move.to())];
-    apply_gravity(slot, -(depth * depth), kHistoryMax);
+    slot -= depth * depth;
+    if (slot < -kHistoryMax) {
+        slot = -kHistoryMax;
+    }
 }
 
 int HistoryTable::score(Color color, Move move) const noexcept {
@@ -208,7 +193,10 @@ void ContinuationHistoryTable::update(PieceType prev_piece, board::Square prev_t
     }
     int& slot = table_[static_cast<std::size_t>(prev_piece)][static_cast<std::size_t>(prev_to)]
                        [static_cast<std::size_t>(piece)][static_cast<std::size_t>(to)];
-    apply_gravity(slot, depth * depth, kContinuationHistoryMax);
+    slot += depth * depth;
+    if (slot > kContinuationHistoryMax) {
+        slot = kContinuationHistoryMax;
+    }
 }
 
 void ContinuationHistoryTable::malus(PieceType prev_piece, board::Square prev_to, PieceType piece,
@@ -219,7 +207,10 @@ void ContinuationHistoryTable::malus(PieceType prev_piece, board::Square prev_to
     }
     int& slot = table_[static_cast<std::size_t>(prev_piece)][static_cast<std::size_t>(prev_to)]
                        [static_cast<std::size_t>(piece)][static_cast<std::size_t>(to)];
-    apply_gravity(slot, -(depth * depth), kContinuationHistoryMax);
+    slot -= depth * depth;
+    if (slot < -kContinuationHistoryMax) {
+        slot = -kContinuationHistoryMax;
+    }
 }
 
 int ContinuationHistoryTable::score(PieceType prev_piece, board::Square prev_to, PieceType piece,
@@ -233,12 +224,18 @@ int ContinuationHistoryTable::score(PieceType prev_piece, board::Square prev_to,
 
 void CaptureHistoryTable::update(PieceType attacker, PieceType victim, int depth) noexcept {
     int& slot = table_[static_cast<std::size_t>(attacker)][static_cast<std::size_t>(victim)];
-    apply_gravity(slot, depth * depth, kCaptureHistoryMax);
+    slot += depth * depth;
+    if (slot > kCaptureHistoryMax) {
+        slot = kCaptureHistoryMax;
+    }
 }
 
 void CaptureHistoryTable::malus(PieceType attacker, PieceType victim, int depth) noexcept {
     int& slot = table_[static_cast<std::size_t>(attacker)][static_cast<std::size_t>(victim)];
-    apply_gravity(slot, -(depth * depth), kCaptureHistoryMax);
+    slot -= depth * depth;
+    if (slot < -kCaptureHistoryMax) {
+        slot = -kCaptureHistoryMax;
+    }
 }
 
 int CaptureHistoryTable::score(PieceType attacker, PieceType victim) const noexcept {
