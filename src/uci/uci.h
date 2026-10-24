@@ -61,9 +61,8 @@ void run(std::istream& in, std::ostream& out);
 /// as a result.
 ///
 /// `depth` (added Session 241) selects the fixed search depth for every
-/// bench position. Any value <= 0 (the default) means bench::kBenchDepth,
-/// so the bare `bench` command and the CI/PGO/regression uses are
-/// unchanged. A larger value is clamped to kMaxBenchDepth (see uci.cpp).
+/// bench position. Any value <= 0 (the default) means bench::kDefaultBenchDepth (10, Session 249; the regression test
+/// in tests/bench_tests.cpp still uses bench::kBenchDepth = 6). A larger value is clamped to kMaxBenchDepth (see uci.cpp).
 /// Reproducibility is per depth: node totals are only comparable between
 /// runs at the same depth.
 void run_bench(std::ostream& out, int depth = 0);

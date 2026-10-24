@@ -1982,13 +1982,13 @@ void finish_pondering(PonderState& ponder) {
 } // namespace
 
 void run_bench(std::ostream& out, int depth) {
-    // depth <= 0 selects the shared default (bench::kBenchDepth); an
+    // depth <= 0 selects the shared default (bench::kDefaultBenchDepth); an
     // oversized request is clamped so a typo cannot ask for an
     // effectively endless run or exceed the search's ply tables
     // (search::kMaxPly is 128).
     constexpr int kMaxBenchDepth = 40;
     if (depth <= 0) {
-        depth = bench::kBenchDepth;
+        depth = bench::kDefaultBenchDepth;
     } else if (depth > kMaxBenchDepth) {
         depth = kMaxBenchDepth;
     }
