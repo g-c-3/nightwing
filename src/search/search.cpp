@@ -3082,9 +3082,18 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
 /// move, just not one this search actually proved best); a null move;
 /// or the walked position repeating one already seen earlier in THIS
 /// walk (a cycle would otherwise loop forever, and a "PV" that repeats
-/// itself isn't a meaningful line to report either way).
+/// itself isn't a meaningful line to report either way), or repeating
+/// a position from `game_history` (every ancestor position's hash
+/// strictly before the root -- the same sequence is_draw_by_rule()
+/// consults). The repeating move itself is kept as the last PV entry,
+/// matching how a repeat inside the walk already ended it. Without the
+/// game-history check a line that returns to a position from the actual
+/// game was reported past that point as if play continued, although
+/// negamax() scores such a return as a draw and stores no continuation
+/// for it that the search actually relied on (Session 247 external
+/// report, item (a)).
 std::vector<Move> extract_pv(Position pos, const TranspositionTable& tt, Move root_move,
-                              int max_plies) {
+                              int max_plies, std::span<const std::uint64_t> game_history) {
     std::vector<Move> pv;
     if (root_move.is_null() || max_plies <= 0) {
         return pv;
@@ -3111,6 +3120,14 @@ std::vector<Move> extract_pv(Position pos, const TranspositionTable& tt, Move ro
             if (h == pos.zobrist_hash) {
                 repeated = true;
                 break;
+            }
+        }
+        if (!repeated) {
+            for (const std::uint64_t h : game_history) {
+                if (h == pos.zobrist_hash) {
+                    repeated = true;
+                    break;
+                }
             }
         }
         if (repeated) {
@@ -3536,7 +3553,7 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
     // (SearchLimits' own doc comment), so walking the TT for a PV
     // nobody will read is wasted work.
     if (limits == nullptr || !limits->stopped) {
-        result.pv = extract_pv(pos, tt, best_move, depth);
+        result.pv = extract_pv(pos, tt, best_move, depth, ctx.game_history);
     }
     return result;
 }
