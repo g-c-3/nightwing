@@ -1768,3 +1768,43 @@ TEST_CASE("search_iterative_deepening: the PV stops at a move that returns to a 
         }
     }
 }
+
+TEST_CASE("search_iterative_deepening: a root move that finished and beat alpha in an interrupted "
+          "iteration is kept -- Session 251",
+          "[search][id][interrupt]") {
+    init_all();
+    Position pos = parse_fen("r1b2rk1/2q1b1pp/p2ppn2/1p6/3QP3/1BN1B3/PPP3PP/R4RK1 w - - 0 1");
+
+    // A total node budget of 13200 stops the search part-way through an
+    // iteration (deterministic: one thread, fresh table, node limit).
+    const SearchResult limited = search_iterative_deepening(
+        pos, /*max_depth=*/64, /*time_limit_ms=*/0, /*game_history=*/{}, /*on_iteration=*/nullptr,
+        /*material_weights=*/nullptr, /*eval_weights=*/nullptr, /*num_threads=*/1,
+        /*external_stop=*/nullptr, kDefaultTTSizeMB, /*multi_pv=*/1, /*soft_time_limit_ms=*/0,
+        /*contempt_cp=*/0, /*external_tt=*/nullptr, /*max_nodes=*/13200);
+    REQUIRE_FALSE(limited.best_move.is_null());
+    REQUIRE(limited.depth_completed >= 1);
+
+    // The last fully finished iteration's best move, found without any
+    // interruption.
+    Position again = parse_fen("r1b2rk1/2q1b1pp/p2ppn2/1p6/3QP3/1BN1B3/PPP3PP/R4RK1 w - - 0 1");
+    const SearchResult finished = search_fixed_depth(again, limited.depth_completed);
+    REQUIRE_FALSE(finished.best_move.is_null());
+
+    // The interrupted iteration found a different, fully searched move; the
+    // search used to throw it away and return the previous iteration's move
+    // with that iteration's full PV (5 moves here). The single-move PV is
+    // what marks a kept partial result.
+    REQUIRE(limited.best_move != finished.best_move);
+    REQUIRE(limited.pv.size() == 1);
+    REQUIRE(limited.pv[0] == limited.best_move);
+
+    // And the kept move is legal.
+    MoveList legal;
+    generate_legal_moves(pos, legal);
+    bool found = false;
+    for (const Move& m : legal) {
+        found = found || m == limited.best_move;
+    }
+    REQUIRE(found);
+}
