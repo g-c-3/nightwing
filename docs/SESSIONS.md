@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 250 — 2026-10-24 — Opt-in native build option
+
+**Built:** `CMakeLists.txt`: new option `NIGHTWING_NATIVE_BUILD` (default OFF). `src/CMakeLists.txt`: when ON on x86/x86_64 (not Emscripten) it adds `-march=native` (GCC/Clang) or `/arch:AVX2` (MSVC) to `nightwing_lib` as a PUBLIC option so executables and tests are compiled consistently; elsewhere it prints a warning and is ignored. The runtime BMI2 check and the Zen 1/2 PEXT exclusion are untouched, and the default build and release workflow are unchanged.
+
+**Bugs fixed:** none.
+
+**Measurement:** Release builds, zero warnings. `bench 10` gives 3132728 nodes in both configurations. Three interleaved runs: about 1.04M, 1.00M, 0.99M NPS native against 0.82M, 0.82M, 0.80M portable (about +22%; noisy single-core sandbox). 843 of 843 test cases pass in the native build and in the default build. Not yet run in CI; no CI job builds with the option.
+
+**Decisions made:** none requiring a DECISIONS.md entry; the option is build-time only and never used for release binaries.
+
+**Open:** a startup-selected faster attack path for shipped binaries (not built); an optional CI leg building with the option.
+
+**Next session start point:** read the CI results for the Session 248 to 250 pushes. Then take the strength items one at a time, each as its own candidate commit decided by a `uci-match` run (`ucimatch_nodes` set, baseline = previous commit), starting with discarding an interrupted iteration whose earlier best was re-searched (ROADMAP.md 2026-10-22 entry): read `search_iterative_deepening()` first, implement, add a regression test, keep `bench 6` at 62276 unless the change is meant to alter it, and deliver `search.cpp` plus the test file in full.
+
+---
+
 ### Session 249 — 2026-10-24 — Deeper default `bench`
 
 **Built:** `src/bench_positions.h`: new `kDefaultBenchDepth = 10`, with `kBenchDepth` (6) kept for tests. `src/uci/uci.cpp` and `uci.h`: `run_bench()` uses the new default when no depth is given. `src/main.cpp`: header comment updated. `tests/uci_tests.cpp` (three tests) and `tests/tunables_tests.cpp` (four calls) now send `bench 6` or `bench 2` explicitly, so their expectations and run time are unchanged.
