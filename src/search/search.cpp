@@ -3390,6 +3390,9 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
     // `incremental_material_psqt` doc comment).
     const eval::Score root_mat_psqt = eval::compute_material_psqt(pos, material_weights, nullptr);
     Move best_move = moves[0];
+    // True once a root move has fully completed and beaten `alpha` (see
+    // SearchResult::interrupted_best_valid).
+    bool best_from_completed_move = false;
 
     for (int i = 0; i < moves.size(); ++i) {
         const Move move = moves[i];
@@ -3501,6 +3504,7 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
         if (score > alpha) {
             alpha = score;
             best_move = move;
+            best_from_completed_move = true;
         }
         if (alpha >= beta) {
             // Fail-high against the (possibly narrow, aspiration) window
@@ -3547,6 +3551,7 @@ SearchResult search_root(Position& pos, int depth, int aspiration_alpha, int asp
     result.best_move = best_move;
     result.score = alpha;
     result.depth_completed = depth;
+    result.interrupted_best_valid = best_from_completed_move;
     // Skipped when interrupted -- see the guarded TT store just above
     // for the same reasoning: this whole SearchResult is about to be
     // discarded wholesale by search_iterative_deepening() in that case
@@ -4725,6 +4730,25 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
             // better (the same, already-exhausted deadline applies to
             // it too), so stop the outer loop entirely rather than
             // trying depth + 1.
+            //
+            // One exception (Session 251, Stockfish-style use of a
+            // partially searched last iteration): search_root() orders
+            // the previous best move first, so when this iteration got
+            // far enough to FULLY search a different root move and that
+            // move beat the window's alpha, it is a genuine, exact
+            // improvement at the deeper depth, not a truncated score
+            // (search_root() never lets an interrupted move update
+            // best_move/alpha). Throwing that away re-plays the shallower
+            // choice for no reason. Keep it as the answer; `depth_completed`
+            // stays at the last fully finished depth, and the PV is just
+            // the move, since the TT walk is skipped for interrupted calls.
+            if (next.interrupted_best_valid && !next.best_move.is_null() &&
+                next.best_move != result.best_move) {
+                result.best_move = next.best_move;
+                result.score = next.score;
+                result.pv = {next.best_move};
+                result.seldepth = next.seldepth;
+            }
             break;
         }
 
