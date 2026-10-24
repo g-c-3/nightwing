@@ -358,3 +358,20 @@ TEST_CASE("is_lone_minor_side / evaluate(): a side with a single minor and no pa
     REQUIRE_FALSE(is_lone_minor_side(parse_fen("4k3/8/8/8/8/8/P7/4KB2 w - - 0 1"), Color::White));
     REQUIRE_FALSE(is_lone_minor_side(parse_fen("4k3/8/8/8/8/8/8/R3KB2 w - - 0 1"), Color::White));
 }
+
+TEST_CASE("classify_endgame: more than two knights/bishops/rooks/queens is always None, two still "
+          "classify -- the Session 259 early-out changes nothing",
+          "[eval][endgame][earlyout]") {
+    // Two pieces in total: still recognized.
+    CHECK(classify_endgame(parse_fen("4k3/pp3ppp/8/8/8/8/PP3PPP/R3K2r w - - 0 1")) ==
+          EndgameSignature::RookEndgame);
+    CHECK(classify_endgame(parse_fen("4k3/pp3ppp/8/8/8/8/PP3PPP/4KB1n w - - 0 1")) ==
+          EndgameSignature::KnightVsBishop);
+    // The same positions with one more minor/major piece: three pieces, None.
+    CHECK(classify_endgame(parse_fen("4k3/pp3ppp/8/8/8/8/PP3PPP/RN2K2r w - - 0 1")) ==
+          EndgameSignature::None);
+    CHECK(classify_endgame(parse_fen("3rk3/pp3ppp/8/8/8/8/PP3PPP/R3K2r w - - 0 1")) ==
+          EndgameSignature::None);
+    CHECK(classify_endgame(parse_fen("4k3/pp3ppp/8/8/8/8/PP3PPP/3QKB1n w - - 0 1")) ==
+          EndgameSignature::None);
+}
