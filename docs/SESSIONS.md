@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 255 — 2026-10-24 — OpenBench compatibility files reviewed and corrected
+
+**Built:** `Makefile` (repo root) and `docs/openbench/Nightwing.json`. A Makefile and engine config prepared outside the repo were reviewed against the CMake build: the 47-source list matches `nightwing_lib` plus `main.cpp` exactly. The Makefile was revised: LTO only for GCC by default (`LTO=` override), static link and no BMI2 define handling for non-x86, dependency files (`-MMD -MP`) so header edits rebuild, `clean` also removes `.exe`, usage comments. The JSON config was corrected to the real repository (`g-c-3/nightwing`) and base branch (`main`), with `nps` 700000.
+
+**Bugs fixed:** none.
+
+**Measurement:** Linux, g++ 13, Release: zero warnings, `uci` reports `Nightwing 1.0.0`, `bench 6` 62276 and `bench 10` 2331331 nodes, identical to the CMake build; a second `make` does nothing. Not verified: Windows, macOS, clang, `ARCH=` builds, OpenBench's own parsing of the bench output (documented format is `N nodes M nps`; the engine prints `Nodes searched` and `Nodes/second` lines), and a live server. The CCRL/TCEC rating thresholds quoted in the outside notes come from a possibly outdated page and were not verified.
+
+**Decisions made:** none; OpenBench stays optional because the existing `uci-match` workflow already provides SPRT testing without extra hosting.
+
+**Open:** the history-gravity clock run (Session 253 candidate) still needs recording; an independent rating gauntlet; optional `bench` final line and `OwnBook`/`Ponder` defaults.
+
+**Next session start point:** record the gravity clock `uci-match` result (adopt only if both runs are non-negative and at least one passes the SPRT, else revert `ordering.cpp`, `ordering.h` and the two `[gravity]` tests), then continue with the aspiration delta cap as its own candidate.
+
+---
+
 ### Session 254 — 2026-10-24 — AVX2 release binaries, checksums and README
 
 **Built:** `CMakeLists.txt` and `src/CMakeLists.txt`: new option `NIGHTWING_X86_64_V3` (default OFF; `-march=x86-64-v3` on GCC/Clang, `/arch:AVX2` on MSVC, x86/x86_64 only; `NIGHTWING_NATIVE_BUILD` wins if both are ON). `.github/workflows/ci.yml`: new `avx2-build` job (Linux and Windows, Release, full `ctest`, uploads `nightwing-binary-<OS>-avx2`); the `release` job now needs it, downloads both AVX2 binaries, publishes `nightwing-linux-avx2` and `nightwing-windows-avx2.exe`, attaches `README.md`, `LICENSE` and a generated `SHA256SUMS`, and both release notes name what the assets are. `README.md`: Downloads, UCI options and CPU-build sections.
