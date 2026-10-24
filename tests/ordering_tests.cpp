@@ -885,3 +885,35 @@ TEST_CASE("order_moves: a nonzero tie_break_variant can reorder moves that would
     }
     REQUIRE(order_flipped_at_least_once);
 }
+
+TEST_CASE("HistoryTable: gravity makes a nearly full entry gain far less than the raw bonus",
+          "[ordering][history][gravity]") {
+    HistoryTable history;
+    const Move move = Move(make_square(4, 1), make_square(4, 3));
+    // Fill the entry close to its ceiling (8192) with repeated cutoffs.
+    for (int i = 0; i < 400; ++i) {
+        history.update(Color::White, move, /*depth=*/10); // raw bonus 100 each
+    }
+    const int before = history.score(Color::White, move);
+    REQUIRE(before > 6000);
+    REQUIRE(before <= 8192);
+    history.update(Color::White, move, /*depth=*/10);
+    const int gain = history.score(Color::White, move) - before;
+    REQUIRE(gain >= 0);
+    REQUIRE(gain < 50); // a bare additive update would add the full 100
+}
+
+TEST_CASE("HistoryTable: a saturated entry recovers from malus instead of staying pinned",
+          "[ordering][history][gravity]") {
+    HistoryTable history;
+    const Move move = Move(make_square(4, 1), make_square(4, 3));
+    for (int i = 0; i < 2000; ++i) {
+        history.update(Color::White, move, /*depth=*/10);
+    }
+    const int full = history.score(Color::White, move);
+    REQUIRE(full <= 8192);
+    for (int i = 0; i < 20; ++i) {
+        history.malus(Color::White, move, /*depth=*/10);
+    }
+    REQUIRE(history.score(Color::White, move) < full - 500); // 20 rejections clearly pull it down
+}
