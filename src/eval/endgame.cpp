@@ -58,6 +58,24 @@ struct SideCounts {
 } // namespace
 
 EndgameSignature classify_endgame(const Position& pos) noexcept {
+    // Early-out (Session 259): every signature below has at most TWO knights,
+    // bishops, rooks and queens in total (KBNK, KnightVsBishop,
+    // OppositeColoredBishops and RookEndgame have two, KRK and KBPK one, KPK
+    // none), so any position with more is None without counting anything per
+    // side. This function runs several times per evaluation (the four
+    // endgame terms and the zugzwang test each call it), and a callgrind
+    // profile of `bench 7` showed it at about 9% of all instructions, nearly
+    // all of it spent on positions that are nowhere near an endgame. The
+    // result is unchanged for every position.
+    const board::Bitboard non_pawn_pieces =
+        pos.pieces(Color::White, PieceType::Knight) | pos.pieces(Color::White, PieceType::Bishop) |
+        pos.pieces(Color::White, PieceType::Rook) | pos.pieces(Color::White, PieceType::Queen) |
+        pos.pieces(Color::Black, PieceType::Knight) | pos.pieces(Color::Black, PieceType::Bishop) |
+        pos.pieces(Color::Black, PieceType::Rook) | pos.pieces(Color::Black, PieceType::Queen);
+    if (board::popcount(non_pawn_pieces) > 2) {
+        return EndgameSignature::None;
+    }
+
     const SideCounts w = count_side(pos, Color::White);
     const SideCounts b = count_side(pos, Color::Black);
 
