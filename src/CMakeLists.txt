@@ -164,19 +164,26 @@ if(NIGHTWING_ENABLE_BMI2 AND NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten" AND CMA
     # MSVC for exactly this reason.
 endif()
 
-if(NIGHTWING_NATIVE_BUILD)
-    # Opt-in host-CPU build; see the option's comment in the root CMakeLists.txt. Applied PUBLIC so
-    # every executable and test linking nightwing_lib is compiled consistently. x86 only: on other
-    # architectures (and under Emscripten) the option is ignored with a warning.
+if(NIGHTWING_NATIVE_BUILD OR NIGHTWING_X86_64_V3)
+    # Opt-in CPU-specific builds; see the options' comments in the root CMakeLists.txt. Applied
+    # PUBLIC so every executable and test linking nightwing_lib is compiled consistently. x86 only:
+    # on other architectures (and under Emscripten) the options are ignored with a warning.
+    # NIGHTWING_NATIVE_BUILD (host CPU, not portable) wins if both are ON.
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64|i[3-6]86|x86|X86)$")
         if(MSVC)
             target_compile_options(nightwing_lib PUBLIC /arch:AVX2)
-        else()
+        elseif(NIGHTWING_NATIVE_BUILD)
             target_compile_options(nightwing_lib PUBLIC -march=native)
+        else()
+            target_compile_options(nightwing_lib PUBLIC -march=x86-64-v3)
         endif()
-        message(STATUS "NIGHTWING_NATIVE_BUILD: host-CPU build, binary is not portable")
+        if(NIGHTWING_NATIVE_BUILD)
+            message(STATUS "NIGHTWING_NATIVE_BUILD: host-CPU build, binary is not portable")
+        else()
+            message(STATUS "NIGHTWING_X86_64_V3: AVX2 (x86-64-v3) build, needs a Haswell-or-newer CPU")
+        endif()
     else()
-        message(WARNING "NIGHTWING_NATIVE_BUILD ignored: only supported on x86/x86_64 native builds")
+        message(WARNING "NIGHTWING_NATIVE_BUILD/NIGHTWING_X86_64_V3 ignored: only supported on x86/x86_64 native builds")
     endif()
 endif()
 
