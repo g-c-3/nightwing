@@ -44,6 +44,28 @@ lookup tables or a bitbase).
   pondering (`go ponder`/`ponderhit`), a small curated opening book, and a
   `bench` command for fishtest/OpenBench-style regression benchmarking.
 
+## Downloads
+
+Prebuilt binaries are attached to every GitHub Release (the rolling
+`latest` release and the versioned `vMAJOR.MINOR.BUILD` releases):
+
+| File | For |
+|---|---|
+| `nightwing-linux`, `nightwing-windows.exe`, `nightwing-macos` | portable builds, run on any x86-64 (Linux, Windows) or Apple Silicon (macOS) machine |
+| `nightwing-linux-avx2`, `nightwing-windows-avx2.exe` | AVX2 (x86-64-v3) builds, faster; need a Haswell (2013) or newer Intel CPU or an AMD CPU from 2015 on |
+| `SHA256SUMS` | checksums of every file in the release |
+| `nightwing.js`, `nightwing.wasm`, `nightwing.min.js` | WebAssembly build for Node |
+
+If an AVX2 binary exits immediately or prints "illegal instruction", use
+the portable build instead.
+
+## UCI options
+
+`Hash` (MB, default 16), `Threads` (default 1, Lazy SMP), `MultiPV`,
+`Move Overhead` (ms), `IncrementPercent`, `Skill Level` (0-20),
+`Contempt`, `Ponder`, and `OwnBook` (small curated book; turn it off for
+engine testing). Engine name `Nightwing`, author Gokul Chandar.
+
 ## Building
 
 Requirements: CMake 3.20+, and a C++20 compiler (GCC or Clang recommended
@@ -54,6 +76,10 @@ support).
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
+
+Optional x86-64 CPU builds (both default OFF): `-DNIGHTWING_X86_64_V3=ON`
+builds for the AVX2 level used by the `-avx2` release files, and
+`-DNIGHTWING_NATIVE_BUILD=ON` builds for the host CPU only (not portable).
 
 This produces the UCI engine binary at `build/src/nightwing`. It speaks
 the standard UCI protocol and works with any UCI-compatible GUI (Arena,

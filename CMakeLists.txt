@@ -20,6 +20,14 @@ option(NIGHTWING_BUILD_TESTS "Build the Catch2 test suite" ON)
 # the portable build and the release workflow are unchanged. The runtime BMI2 check and the
 # Zen 1/2 PEXT exclusion still apply.
 option(NIGHTWING_NATIVE_BUILD "Build for the host CPU (-march=native). Not portable; never use for release binaries." OFF)
+# Opt-in portable-AVX2 build for published release binaries (Session 254). ON adds -march=x86-64-v3
+# (GCC 11+/Clang 12+; AVX2, BMI1, BMI2, FMA, LZCNT, MOVBE) or /arch:AVX2 (MSVC) on x86/x86_64, so the
+# BMI2 PEXT wrapper can inline and rating-list testers who use AVX2 builds get the fast path. Unlike
+# NIGHTWING_NATIVE_BUILD the target is a fixed CPU level (about 2013 Intel Haswell / 2015 AMD
+# Excavator or newer), so the binary is shareable, but it does not run on older CPUs. Default OFF.
+# The runtime BMI2 check and the Zen 1/2 PEXT exclusion still apply. NIGHTWING_NATIVE_BUILD wins
+# if both are ON.
+option(NIGHTWING_X86_64_V3 "Build for the x86-64-v3 (AVX2) CPU level. For release binaries; needs a Haswell-or-newer CPU." OFF)
 # SPSA search-constant tuning build (ROADMAP.md "SPSA tuner" step (2b); docs/DECISIONS.md
 # 2026-10-09). ON compiles seven search constants as runtime-settable UCI spin options
 # (src/search/tunables.h). Default OFF: the production binary and its `bench` node count
