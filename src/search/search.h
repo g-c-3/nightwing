@@ -273,17 +273,6 @@ struct SearchResult {
     /// reaching `max_depth` or running out of its time budget).
     int depth_completed = 0;
 
-    /// Set by search_root() only: true when `best_move`/`score` come from
-    /// a root move whose search COMPLETED and beat the window's alpha,
-    /// even if the call was later cut short by a deadline or stop request
-    /// (SearchLimits). When false and the call was interrupted, `best_move`
-    /// is just the first-ordered move and means nothing.
-    /// search_iterative_deepening() uses it to keep a genuine improvement
-    /// found by an interrupted iteration (Session 251; Stockfish does the
-    /// same with its partially searched last iteration). Always false in
-    /// results returned to callers outside search.cpp.
-    bool interrupted_best_valid = false;
-
     /// Principal variation: `best_move` first, then each subsequent
     /// position's own best-known continuation, reconstructed by walking
     /// the transposition table (search.cpp's extract_pv()) rather than
