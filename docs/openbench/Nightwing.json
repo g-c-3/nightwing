@@ -1,1 +1,23 @@
+{
+    "private"  : false,
+    "nps"      : 700000,
+    "source"   : "https://github.com/g-c-3/nightwing",
 
+    "build" : {
+        "path"      : "",
+        "compilers" : ["g++", "clang++"],
+        "cpuflags"  : ["AVX2", "BMI2", "POPCNT"],
+        "systems"   : ["Linux", "Windows"]
+    },
+
+    "test_presets" : {
+        "default" : {
+            "base_branch"     : "main",
+            "book_name"       : "UHO_Lichess_4852_v1.epd",
+            "test_bounds"     : "[0.00, 3.00]",
+            "test_confidence" : "[0.10, 0.05]",
+            "win_adj"         : "None",
+            "draw_adj"        : "None"
+        }
+    }
+}
