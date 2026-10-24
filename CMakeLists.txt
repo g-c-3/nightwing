@@ -14,6 +14,12 @@ endif()
 option(NIGHTWING_ENABLE_LTO "Enable link-time optimization in Release builds" ON)
 option(NIGHTWING_ENABLE_BMI2 "Compile with BMI2/POPCNT instructions enabled (fast path). Disable for a portable fallback build." ON)
 option(NIGHTWING_BUILD_TESTS "Build the Catch2 test suite" ON)
+# Opt-in native build (ROADMAP.md external report 2026-10-23, item (b)). ON adds -march=native
+# (GCC/Clang) or /arch:AVX2 (MSVC) on x86/x86_64 so the BMI2 PEXT wrapper can inline. The binary
+# then needs a CPU at least as capable as the build machine and is NOT portable. Default OFF:
+# the portable build and the release workflow are unchanged. The runtime BMI2 check and the
+# Zen 1/2 PEXT exclusion still apply.
+option(NIGHTWING_NATIVE_BUILD "Build for the host CPU (-march=native). Not portable; never use for release binaries." OFF)
 # SPSA search-constant tuning build (ROADMAP.md "SPSA tuner" step (2b); docs/DECISIONS.md
 # 2026-10-09). ON compiles seven search constants as runtime-settable UCI spin options
 # (src/search/tunables.h). Default OFF: the production binary and its `bench` node count
