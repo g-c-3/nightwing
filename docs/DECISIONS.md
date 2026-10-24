@@ -4,6 +4,30 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-24 (5) — History gravity is not adopted
+
+**Context:** The Session 253 candidate replaced the additive, hard-clamped updates of the three history tables with the gravity formula `entry += bonus - entry * |bonus| / limit`. It reduced `bench 10` from 3132728 to 2331331 nodes. It was measured against the Session 252 build in two `uci-match` runs.
+
+**Decision:** Not adopted; reverted. The history tables keep their additive update with a hard clamp.
+
+**Rationale:** At a fixed 20000 nodes per move the result was +0.4 Elo over 4000 games (about -9 to +10), and on a real clock (`10000 100`) it was -6.6 Elo over 576 games (about -31 to +18). Neither run passed the SPRT and the clock run was negative, so the rule fixed beforehand (both runs non-negative and at least one passing) was not met. The node-count reduction at fixed depth did not translate into measurable strength.
+
+**Alternatives considered:** adopting on the neutral fixed-node result (rejected: the clock result leans negative and no gain was shown); a longer clock run (not chosen: hours of runner time for a change that showed no gain at 4000 fixed-node games); applying gravity to only one of the three tables (not tried).
+
+---
+
+### 2026-10-24 (4) — Strength work order and ideas excluded
+
+**Context:** An external list of improvement ideas was reviewed against the existing code. Several of its "well understood" items already exist in the engine; some of its less-proven items conflict with the project's fixed constraints.
+
+**Decision:** Strength work proceeds one candidate commit at a time in the order recorded in ROADMAP.md (cut-node-aware reductions, more correction-history keys, evaluation tuning at scale, double and negative singular extensions with multi-cut, then the smaller and tuning-heavy items). Each candidate is decided by two `uci-match` runs (fixed 20000 nodes and clock `10000 100`) with SPRT bounds `0 5`, and adopted only if both runs are non-negative and at least one passes. Excluded: hash-indexed learned pattern tables, Monte Carlo-style hybrid search, a full proof-number search, and an ensemble of two evaluations.
+
+**Rationale:** A 4000-game match resolves only about +-10 Elo (the history-gravity fixed-node run: +0.4, about -9 to +10), so bounds of -5 and 5 cannot end in a verdict for small changes. Learned hashed pattern tables come too close to the permanent rule against neural networks and to the rule that every evaluation term is a named, tunable constant. A Monte Carlo hybrid and a full proof-number search are large rewrites with unproven gain for this engine. An ensemble of two evaluations costs time per node for little net gain. Cross-game learning is incompatible with rating-list conditions.
+
+**Alternatives considered:** keeping bounds of -5 and 5 (rejected: would rarely conclude); batching several search changes into one candidate (rejected: a single match could not attribute the result, as the interrupted-iteration experiment showed that results can differ sharply between fixed-node and clock play).
+
+---
+
 ### 2026-10-24 (3) — Published AVX2 binaries use a fixed CPU level, not the host CPU
 
 **Context:** The opt-in `NIGHTWING_NATIVE_BUILD` option (`-march=native`) measured about 22% faster, but such a binary only runs on CPUs like the build machine. Rating-list testers use AVX2 builds where available, so shareable fast binaries were wanted.

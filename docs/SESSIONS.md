@@ -4,6 +4,54 @@ Newest entry at top.
 
 ---
 
+### Session 258 — 2026-10-24 — History-gravity candidate rejected and reverted
+
+**Built:** nothing new. `src/search/ordering.cpp`, `src/search/ordering.h` and `tests/ordering_tests.cpp` were restored to their Session 252 state (commit `eae0edb7427ea47042e6931c04a050e7ee9d9cba`), removing `apply_gravity()` and the two `[gravity]` tests. The Session 257 popcount change is unaffected.
+
+**Bugs fixed:** none.
+
+**Measurement:** two `uci-match` runs, baseline `eae0edb7427ea47042e6931c04a050e7ee9d9cba` against candidate `6fe320e183e3fdfb49d1712cbdd2a3b0204d6a69`, SPRT bounds -5 and 5, alpha and beta 0.05. Run 1, `go nodes 20000`, seed 1: 4000 games, 1645 wins, 715 draws, 1640 losses, +0.4 Elo (about -9 to +10 at 95%), LLR 0.175, inconclusive. Run 2, clock `10000 100`, seed 1001: stopped by the 300-minute cap after 576 of 4000 games, 204 wins, 157 draws, 215 losses, -6.6 Elo (about -31 to +18 at 95%), LLR -0.435, inconclusive; no illegal moves or time forfeits in either run. After the revert: Release build, zero warnings, 844 of 844 test cases pass (843 plus the Session 257 popcount test), `bench 6` 62276 and `bench 10` 3132728 nodes.
+
+**Decisions made:** the candidate was rejected; see DECISIONS.md 2026-10-24 (5).
+
+**Open:** the strength plan and speed plan in ROADMAP.md; an independent rating gauntlet.
+
+**Next session start point:** read the CI result for the Session 257 and 258 pushes (844 tests expected), then speed item 2 (`classify_endgame`) as described in the Session 257 entry, and then cut-node-aware reductions from the strength plan with SPRT bounds `0 5`.
+
+---
+
+### Session 257 — 2026-10-24 — Profile of `bench` and inline popcount for portable builds
+
+**Built:** `src/board/bitboard.h`: new `popcount_software()` (SWAR parallel count); `popcount()` uses it on x86 GCC/Clang builds without `__POPCNT__`, `std::popcount` elsewhere (ARM, MSVC, any POPCNT build). `tests/bitboard_tests.cpp`: one test (`[bitboard][popcount]`) comparing it with `std::popcount` on edge cases and 20000 xorshift values. A callgrind profile of `bench 7` (302305 nodes, non-LTO) was taken first: evaluation about 58% of instructions, move generation about 8% to 11%, software popcount about 11% (19M calls to libgcc `__popcountdi2`); the hotspot list and the plan are in ROADMAP.md.
+
+**Bugs fixed:** none.
+
+**Measurement:** Release build, zero warnings, 846 of 846 test cases pass, `bench 6` 62276 unchanged and `bench 10` unchanged at the 2331331 nodes it gave while the Session 253 gravity change was present (3132728 after its revert in Session 258; 844 of 844 tests then). Total instructions for `bench 7` in the portable LTO builds: 2.957G before, 2.875G after (-2.8%). Wall-clock NPS over four interleaved runs (about 555k to 640k, noisy shared sandbox) showed no reliable difference. Not yet run in CI.
+
+**Decisions made:** none requiring a DECISIONS.md entry; the choice between this inline fallback and requiring hardware POPCNT in the portable build is recorded as open in ROADMAP.md.
+
+**Open:** the history-gravity clock-run result still has to be recorded; remaining speed plan items; the strength plan in ROADMAP.md.
+
+**Next session start point:** record the gravity clock-run result if its logs are available; then speed item 2 (`classify_endgame`): read `eval/endgame.cpp` and its callers, find what the classification depends on, avoid recomputing it per evaluation (material-signature cache or an early exit for non-endgame material), keep `bench 6` at 62276 and `bench 10` at 3132728 (gravity was reverted in Session 258), add a test, and measure with callgrind instruction counts (not wall-clock). Then cut-node-aware reductions from the strength plan.
+
+---
+
+### Session 256 — 2026-10-24 — Improvement ideas reviewed against the code; plan recorded
+
+**Built:** nothing in the engine. An external list of improvement ideas was compared with `search.cpp`, `ordering.h` and `tt.cpp`: singular extensions, pawn-keyed correction history, continuation and capture history, ProbCut, the improving flag, internal iterative reduction and stability-based time management already exist; no cut-node flag, double or negative singular extensions, multi-cut, or correction keys beyond the pawn structure were found. A prioritized plan was added to ROADMAP.md and the exclusions to DECISIONS.md.
+
+**Bugs fixed:** none.
+
+**Measurement:** none. The history-gravity (Session 253) fixed-node run measured +0.4 Elo over 4000 games (about -9 to +10 at 95%, SPRT inconclusive); that resolution is the reason the plan uses SPRT bounds of 0 and 5.
+
+**Decisions made:** see DECISIONS.md 2026-10-24 (4).
+
+**Open:** the history-gravity clock-run result still has to be recorded (adopt only if both runs are non-negative and at least one passes, else revert `ordering.cpp`, `ordering.h` and the two `[gravity]` tests); an independent rating gauntlet; the plan items in ROADMAP.md.
+
+**Next session start point:** record the gravity clock-run result if its logs are available, then implement cut-node-aware reductions (plan item 1): read `negamax()` in `search.cpp` first (signature, the late-move reduction block, where the PV and null-window searches are called), add a cut-node flag passed down the search (root and PV nodes not cut nodes, null-window children of a non-cut node expected to cut), reduce more at expected cut nodes and less at expected all nodes, keep `bench 6` changes explainable, add a test, deliver `search.cpp` and the test in full, and decide it with two `uci-match` runs (`ucimatch_sprt` `0 5 0.05 0.05`).
+
+---
+
 ### Session 255 — 2026-10-24 — OpenBench compatibility files reviewed and corrected
 
 **Built:** `Makefile` (repo root) and `docs/openbench/Nightwing.json`. A Makefile and engine config prepared outside the repo were reviewed against the CMake build: the 47-source list matches `nightwing_lib` plus `main.cpp` exactly. The Makefile was revised: LTO only for GCC by default (`LTO=` override), static link and no BMI2 define handling for non-x86, dependency files (`-MMD -MP`) so header edits rebuild, `clean` also removes `.exe`, usage comments. The JSON config was corrected to the real repository (`g-c-3/nightwing`) and base branch (`main`), with `nps` 700000.
