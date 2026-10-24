@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 251 — 2026-10-24 — Keep a finished root move from an interrupted iteration (candidate)
+
+**Built:** `src/search/search.h`: new `SearchResult::interrupted_best_valid`. `src/search/search.cpp`: `search_root()` sets it when a fully searched root move beat alpha; in `search_iterative_deepening()`, an interrupted iteration whose result has the flag set and a best move different from the previous iteration's now replaces `best_move` and `score` (PV reduced to that one move, `depth_completed` left at the last finished depth) instead of being discarded wholesale. Interrupted moves still never update alpha or the best move. Idea as in Stockfish, which also uses the partially searched last iteration. `tests/search_tests.cpp`: one test (`[search][id][interrupt]`) using a 13200-node budget on a middlegame position.
+
+**Bugs fixed:** none; this is a strength change.
+
+**Measurement:** Release build, zero warnings, 844 of 844 test cases pass over four consecutive runs, `bench 6` unchanged at 62276 nodes (fixed depth never interrupts). With the adoption disabled the new test fails on the single-move PV assertion (5 moves against 1). A node-budget sweep (eight positions, budgets 3000 to 58000 in steps of 1700) gave a different best move than the previous binary in 15 of about 280 runs. Not run in CI; no Elo measurement yet.
+
+**Decisions made:** none yet. The change is a CANDIDATE until a `uci-match` run decides it.
+
+**Open:** the `uci-match` decision; MultiPV iterations still discard an interrupted depth wholesale (not changed).
+
+**Next session start point:** run `uci-match` from the Actions tab with `ucimatch_baseline_ref` set to the commit before this push, `ucimatch_candidate_ref` set to this push, `ucimatch_nodes` 20000 and `ucimatch_sprt` on; then repeat with `ucimatch_nodes` 0 and `ucimatch_clock` `10000 100`. Report the results; adopt (record in DECISIONS.md) only on an SPRT pass, otherwise restore `search.cpp` and `search.h` and drop the test. Then continue with the next strength item (history gravity), again as its own candidate commit.
+
+---
+
 ### Session 250 — 2026-10-24 — Opt-in native build option
 
 **Built:** `CMakeLists.txt`: new option `NIGHTWING_NATIVE_BUILD` (default OFF). `src/CMakeLists.txt`: when ON on x86/x86_64 (not Emscripten) it adds `-march=native` (GCC/Clang) or `/arch:AVX2` (MSVC) to `nightwing_lib` as a PUBLIC option so executables and tests are compiled consistently; elsewhere it prints a warning and is ignored. The runtime BMI2 check and the Zen 1/2 PEXT exclusion are untouched, and the default build and release workflow are unchanged.
