@@ -119,3 +119,25 @@ TEST_CASE("to_string renders an 8x8 board with rank 8 on top", "[bitboard]") {
     REQUIRE(top_row == ".......1");
     REQUIRE(bottom_row == "1.......");
 }
+
+TEST_CASE("popcount_software agrees with std::popcount on edge cases and a pseudo-random sweep",
+          "[bitboard][popcount]") {
+    static_assert(popcount_software(0) == 0);
+    static_assert(popcount_software(~0ULL) == 64);
+    static_assert(popcount_software(0x8000000000000001ULL) == 2);
+    for (int i = 0; i < 64; ++i) {
+        const Bitboard single = Bitboard{1} << i;
+        REQUIRE(popcount_software(single) == 1);
+        REQUIRE(popcount_software(~single) == 63);
+        REQUIRE(popcount_software(single - 1) == i);
+    }
+    // xorshift64: a fixed, dependency-free sequence.
+    Bitboard x = 0x9E3779B97F4A7C15ULL;
+    for (int i = 0; i < 20000; ++i) {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        REQUIRE(popcount_software(x) == std::popcount(x));
+        REQUIRE(popcount(x) == std::popcount(x));
+    }
+}
