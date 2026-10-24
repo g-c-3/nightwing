@@ -136,8 +136,10 @@ private:
 class HistoryTable {
 public:
     /// Adds a depth-weighted bonus for `move` (by `color`) having
-    /// caused a beta cutoff at `depth`. Clamped at kHistoryMax so no
-    /// single move's score can grow unbounded across a long search.
+    /// caused a beta cutoff at `depth`. Applied with history gravity
+    /// (Session 253): `score += bonus - score * |bonus| / kHistoryMax`, so a
+    /// score approaches kHistoryMax smoothly, never passes it, and a nearly
+    /// full entry gains little instead of sitting on a hard clamp.
     void update(board::Color color, board::Move move, int depth) noexcept;
 
     /// Subtracts a depth-weighted penalty for `move` (by `color`)
@@ -146,7 +148,9 @@ public:
     /// `-kHistoryMax` (the mirror image of `update()`'s own ceiling) so
     /// a move that's repeatedly rejected can't drive its score to an
     /// unbounded negative that would then take an equally unbounded
-    /// number of future cutoffs to recover from.
+    /// number of future cutoffs to recover from. Same gravity formula as
+    /// update(), with a negative bonus. The same change applies to
+    /// ContinuationHistoryTable and CaptureHistoryTable (ordering.cpp).
     void malus(board::Color color, board::Move move, int depth) noexcept;
 
     /// Returns the current history score for `move` by `color` (0 if
