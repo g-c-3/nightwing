@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 259 — 2026-10-24 — `classify_endgame` early-out
+
+**Built:** `src/eval/endgame.cpp`: `classify_endgame()` first ORs the eight knight, bishop, rook and queen bitboards and returns `None` immediately when more than two such pieces exist (no signature can match then: KBNK, KnightVsBishop, OppositeColoredBishops and RookEndgame have two, KRK and KBPK one, KPK none); results are unchanged for every position. `tests/endgame_tests.cpp`: one boundary test (`[eval][endgame][earlyout]`): two pieces still classify, one more makes `None`.
+
+**Bugs fixed:** none.
+
+**Measurement:** Release build, zero warnings, 845 of 845 test cases pass, `bench 6` 62276 and `bench 10` 3132728 nodes unchanged. Total instructions for `bench 7` (callgrind, portable LTO build): 2,876,002,629 before, 2,800,619,729 after (-2.6%). Wall-clock was not used (sandbox noise). Not yet run in CI.
+
+**Decisions made:** none.
+
+**Open:** remaining speed plan items in ROADMAP.md (threats, king safety, mobility, computing the endgame signature once per evaluation); the strength plan; an independent rating gauntlet.
+
+**Next session start point:** read the CI result for the Session 257 to 259 pushes (845 tests expected); then either speed item 3 (`threats_value` and `add_overloaded_penalty`: read `eval/threats.cpp`, profile again with a non-LTO build for function-level numbers, keep `bench 6` at 62276 and `bench 10` at 3132728, measure with callgrind instruction counts) or, if speed work has reached diminishing returns, start cut-node-aware reductions from the strength plan (SPRT bounds `0 5`).
+
+---
+
 ### Session 258 — 2026-10-24 — History-gravity candidate rejected and reverted
 
 **Built:** nothing new. `src/search/ordering.cpp`, `src/search/ordering.h` and `tests/ordering_tests.cpp` were restored to their Session 252 state (commit `eae0edb7427ea47042e6931c04a050e7ee9d9cba`), removing `apply_gravity()` and the two `[gravity]` tests. The Session 257 popcount change is unaffected.
