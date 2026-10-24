@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 252 — 2026-10-24 — Interrupted-iteration candidate measured and reverted
+
+**Built:** nothing new. `src/search/search.cpp`, `src/search/search.h` and `tests/search_tests.cpp` were restored to their Session 250 state (commit `7f684bc29f5bc2da34e031cbc1c7ca08289b3be2`), which removes `SearchResult::interrupted_best_valid`, the partial-iteration adoption and the `[interrupt]` test. The Session 248 PV-repetition fix and its test remain.
+
+**Bugs fixed:** none.
+
+**Measurement:** two `uci-match` runs, baseline `7f684bc29f5bc2da34e031cbc1c7ca08289b3be2` against candidate `d26296e383ffe3ee8627880903285c01a48cc1b3`, SPRT bounds -5 and 5, alpha and beta 0.05, 8 opening plies. Run 1, `go nodes 20000`, seed 1: 1358 games, 598 wins, 247 draws, 513 losses, +21.8 Elo (about +5 to +39 at 95%), H1 accepted. Run 2, clock `10000 100`, seed 1001: stopped by the 300-minute cap after 570 of 4000 games, 192 wins, 148 draws, 230 losses, -23.2 Elo (about -48 to +1 at 95%), LLR -1.49, inconclusive; no illegal moves or time forfeits in either run. After the revert: Release build, zero warnings, 843 of 843 test cases pass, `bench 6` at 62276 nodes.
+
+**Decisions made:** the Session 251 change was rejected; see DECISIONS.md 2026-10-24.
+
+**Open:** a narrower variant (keep a partial result only for hard node or stop limits, not for time-management stops) was not built or measured; the next strength item (history gravity) is untouched.
+
+**Next session start point:** read the CI result for the Session 252 push (843 tests expected); then implement history gravity (ROADMAP.md 2026-10-22 open list) as its own candidate commit, read `search.cpp` history update code first, keep `bench 6` at 62276 unless the change is meant to alter it, and deliver `search.cpp` plus a test in full. Decide it with two `uci-match` runs, `ucimatch_nodes` 20000 and clock `10000 100`, and adopt only if both are non-negative and at least one passes.
+
+---
+
 ### Session 251 — 2026-10-24 — Keep a finished root move from an interrupted iteration (candidate)
 
 **Built:** `src/search/search.h`: new `SearchResult::interrupted_best_valid`. `src/search/search.cpp`: `search_root()` sets it when a fully searched root move beat alpha; in `search_iterative_deepening()`, an interrupted iteration whose result has the flag set and a best move different from the previous iteration's now replaces `best_move` and `score` (PV reduced to that one move, `depth_completed` left at the last finished depth) instead of being discarded wholesale. Interrupted moves still never update alpha or the best move. Idea as in Stockfish, which also uses the partially searched last iteration. `tests/search_tests.cpp`: one test (`[search][id][interrupt]`) using a 13200-node budget on a middlegame position.

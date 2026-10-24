@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-24 (2) — An interrupted iteration's finished root move is not kept
+
+**Context:** `search_iterative_deepening()` discards an iteration cut short by a deadline, node limit or stop request and returns the previous iteration's result. A candidate (Session 251) kept the best move and score of such an iteration when a different root move had been fully searched and had beaten alpha, as Stockfish does with its partially searched last iteration. It was measured against the Session 250 build in two `uci-match` runs.
+
+**Decision:** The candidate is not adopted and was reverted. Interrupted iterations are discarded wholesale, as before.
+
+**Rationale:** Under a node limit the candidate gained +21.8 Elo over 1358 games (SPRT accepted H1), but on a real clock (`10000 100`) it measured -23.2 Elo over 570 games (LLR -1.49, inconclusive, stopped by the time cap, 95% range about -48 to +1). The two settings disagree by about 45 Elo, and the clock setting is the closer to real play. A node limit cuts an iteration off abruptly, which favors keeping partial work, while time management mostly ends iterations cleanly, so the node-limit gain is not evidence of a gain in play. The adoption rule fixed beforehand (an SPRT pass in both settings) was not met.
+
+**Alternatives considered:** adopting on the node-limit result alone (rejected: the clock result leans negative); a further clock run with a different seed (not chosen: the cost is hours of runner time for a change of uncertain value); restricting the behavior to hard node and stop limits, excluding time-management stops (not built; remains open in ROADMAP.md).
+
+---
+
 ### 2026-10-23 (2) — Search threads fail soft: helpers are best-effort, a failed search still answers
 
 **Context:** An external review reported that helper-thread construction failures, and exceptions thrown on the main search thread while Lazy SMP helpers were joinable, reach `std::terminate`. Reproduced with an address-space limit (`ulimit -v`): the engine aborted with exit code 134 on `std::system_error` (thread creation refused), on `std::bad_alloc` inside helper and search threads, and with "terminate called recursively".
