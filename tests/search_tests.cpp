@@ -19,6 +19,7 @@
 #include "board/zobrist.h"
 #include "eval/endgame.h"
 #include "search/search.h"
+#include "search/tt.h"
 
 using namespace nightwing::board;
 using namespace nightwing::search;
@@ -1722,5 +1723,48 @@ TEST_CASE("search_iterative_deepening: multi_pv larger than the searchmoves list
     REQUIRE(r.multipv_lines.size() == 2);
     for (const SearchResult& line : r.multipv_lines) {
         REQUIRE_FALSE(line.best_move.is_null());
+    }
+}
+
+TEST_CASE("search_iterative_deepening: the PV stops at a move that returns to a position from "
+          "game_history -- external report, Session 247 item (a)",
+          "[search][id][pv][repetition]") {
+    init_all();
+    // Queen ending where both sides can shuffle. A first search at the
+    // start position stores an Exact root entry (with a best move) in the
+    // shared persistent TT, exactly as a previous UCI `go` would. After that
+    // move, the second search's best line returns to the start position,
+    // which is now in game_history. extract_pv() used to keep walking from
+    // that position's stored TT move as if the game continued.
+    Position pos = parse_fen("6k1/8/8/8/8/8/5Q2/q5K1 w - - 0 1");
+    TranspositionTable tt(16);
+    const std::uint64_t start_hash = pos.zobrist_hash;
+
+    const SearchResult first = search_iterative_deepening(
+        pos, /*max_depth=*/8, /*time_limit_ms=*/0, /*game_history=*/{}, /*on_iteration=*/nullptr,
+        /*material_weights=*/nullptr, /*eval_weights=*/nullptr, /*num_threads=*/1,
+        /*external_stop=*/nullptr, /*hash_size_mb=*/kDefaultTTSizeMB, /*multi_pv=*/1,
+        /*soft_time_limit_ms=*/0, /*contempt_cp=*/0, /*external_tt=*/&tt);
+    REQUIRE_FALSE(first.best_move.is_null());
+
+    UndoInfo undo;
+    make_move(pos, first.best_move, undo);
+    const std::vector<std::uint64_t> history = {start_hash};
+
+    const SearchResult second = search_iterative_deepening(
+        pos, /*max_depth=*/8, /*time_limit_ms=*/0, history, /*on_iteration=*/nullptr,
+        /*material_weights=*/nullptr, /*eval_weights=*/nullptr, /*num_threads=*/1,
+        /*external_stop=*/nullptr, /*hash_size_mb=*/kDefaultTTSizeMB, /*multi_pv=*/1,
+        /*soft_time_limit_ms=*/0, /*contempt_cp=*/0, /*external_tt=*/&tt);
+    REQUIRE_FALSE(second.pv.empty());
+
+    // Replay the PV: only the final position may equal a game_history entry.
+    Position walk = pos;
+    for (std::size_t i = 0; i < second.pv.size(); ++i) {
+        UndoInfo u;
+        make_move(walk, second.pv[i], u);
+        if (walk.zobrist_hash == start_hash) {
+            REQUIRE(i + 1 == second.pv.size());
+        }
     }
 }
