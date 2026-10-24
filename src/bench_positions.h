@@ -48,6 +48,14 @@ struct BenchPosition {
 /// platform/build-type combination).
 inline constexpr int kBenchDepth = 6;
 
+/// Depth used by the UCI/CLI `bench` command when no depth is given
+/// (Session 249, external report 2026-10-23 item (f)). Depth 6 is only
+/// about 62k nodes, too short for a stable speed comparison; depth 10 is
+/// about 3.1M nodes (a few seconds in a Release build). Tests keep using
+/// kBenchDepth (via an explicit `bench 6`) so the Debug/sanitizer suites
+/// stay fast. Node totals are only comparable at the same depth.
+inline constexpr int kDefaultBenchDepth = 10;
+
 // See this file's own header comment for why these four specifically.
 inline constexpr std::array<BenchPosition, 4> kBenchPositions = {{
     {"startpos", "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"},

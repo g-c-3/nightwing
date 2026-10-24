@@ -21,7 +21,7 @@
 // what bench measures — run_bench() calls search_fixed_depth()
 // directly, never touching book::book_move() at all). An optional second
 // argument sets the fixed depth (`./nightwing bench 8`); the default is
-// unchanged.
+// bench::kDefaultBenchDepth (10; 3132728 nodes, Session 249).
 
 #include <cstring>
 #include <iostream>
