@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 260 — 2026-10-25 — Cut-node-aware reductions (candidate)
+
+**Built:** `src/search/search.cpp`: new `negamax()` parameter `cut_node` (default false) carried through every recursive call: root and the first child of a PV node false; null-window probes of later root moves and reduced late-move searches true; the first child of a null-window node, full-depth null-window re-searches and ProbCut children `!cut_node`; the null-move child false; the singular-extension search inherits the flag; full-window re-searches false. Late-move reduction adds the new constant `kCutNodeLmrIncrease` (1) ply for eligible quiet moves at cut nodes. Idea as in Stockfish (`cutNode`, extra reduction at cut nodes) and CPW "Node Types". No new test: the existing search tests exercise the changed paths.
+
+**Bugs fixed:** none; this is a strength change.
+
+**Measurement:** Release build, zero warnings, 845 of 845 test cases pass. `bench 6` changed from 62276 to 61431 nodes and `bench 10` from 3132728 to 2867269 (-8.5%); no test or workflow pins those totals (`src/main.cpp` has a historical comment naming 3132728). Not run in CI; no Elo measurement yet.
+
+**Decisions made:** none yet; the change is a CANDIDATE until `uci-match` decides it.
+
+**Open:** the `uci-match` decision; the rest of the strength and speed plans in ROADMAP.md.
+
+**Next session start point:** run `uci-match` twice with `ucimatch_baseline_ref` `f7797fc0f03398b7a9ddd725493b5d8639bb5021` and `ucimatch_candidate_ref` set to the full SHA of the Session 260 push (or `main` if nothing else is pushed meanwhile): run 1 `ucimatch_nodes` 20000, `ucimatch_clock` `0 0`, seed 1; run 2 `ucimatch_nodes` 0, `ucimatch_clock` `10000 100`, seed 1001; both with `ucimatch_sprt` `0 5 0.05 0.05`, `ucimatch_max_games` 4000, `ucimatch_time_limit_min` 300. Adopt (record in DECISIONS.md and update the historical bench comment in `src/main.cpp`) only if both runs are non-negative and at least one passes the SPRT; otherwise restore `search.cpp` from `f7797fc0` and record the rejection. Then plan item 2 (more correction-history keys).
+
+---
+
 ### Session 259 — 2026-10-24 — `classify_endgame` early-out
 
 **Built:** `src/eval/endgame.cpp`: `classify_endgame()` first ORs the eight knight, bishop, rook and queen bitboards and returns `None` immediately when more than two such pieces exist (no signature can match then: KBNK, KnightVsBishop, OppositeColoredBishops and RookEndgame have two, KRK and KBPK one, KPK none); results are unchanged for every position. `tests/endgame_tests.cpp`: one boundary test (`[eval][endgame][earlyout]`): two pieces still classify, one more makes `None`.
