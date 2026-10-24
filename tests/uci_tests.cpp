@@ -1122,7 +1122,7 @@ TEST_CASE("uci: 'bench' command prints per-position lines and a final 'Nodes sea
           "line",
           "[uci][bench]") {
     init_all();
-    const std::string out = run_uci({"bench", "quit"});
+    const std::string out = run_uci({"bench 6", "quit"});
     REQUIRE(contains(out, "startpos: depth 6 nodes "));
     REQUIRE(contains(out, "kiwipete: depth 6 nodes "));
     REQUIRE(contains(out, "quiet_middlegame: depth 6 nodes "));
@@ -1137,7 +1137,7 @@ TEST_CASE("uci: 'bench' command's reported total node count matches an independe
           "potentially-stale expected value",
           "[uci][bench]") {
     init_all();
-    const std::string out = run_uci({"bench", "quit"});
+    const std::string out = run_uci({"bench 6", "quit"});
 
     // Independently reproduce what run_bench() itself should have
     // computed, using the SAME shared header both consume
@@ -1178,7 +1178,7 @@ TEST_CASE("uci: 'bench' followed by an ordinary 'go' still works normally -- ben
           "[uci][bench]") {
     init_all();
     const std::string out =
-        run_uci({"bench", "position startpos moves g1h3", "go depth 2", "quit"});
+        run_uci({"bench 2", "position startpos moves g1h3", "go depth 2", "quit"});
     REQUIRE(contains(out, "Nodes searched  : "));
     REQUIRE(contains(out, "bestmove "));
     REQUIRE_FALSE(contains(out, "bestmove 0000"));

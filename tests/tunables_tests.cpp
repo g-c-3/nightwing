@@ -107,20 +107,20 @@ TEST_CASE("tunables: defaults reproduce bench; changing search constants changes
           "[tunables][bench]") {
     init_all();
     search::reset_search_tunables();
-    const std::uint64_t base = bench_nodes(run_uci({"bench", "quit"}));
+    const std::uint64_t base = bench_nodes(run_uci({"bench 6", "quit"}));
     REQUIRE(base > 0);
 
     // Same defaults again: deterministic single-thread bench, identical total.
-    REQUIRE(bench_nodes(run_uci({"bench", "quit"})) == base);
+    REQUIRE(bench_nodes(run_uci({"bench 6", "quit"})) == base);
 
     // A much smaller ProbCut margin and a larger null-move reduction both
     // change pruning, so the node total must differ from the default.
     REQUIRE(search::set_search_tunable("ProbCutMargin", 20));
     REQUIRE(search::set_search_tunable("NullMoveReduction", 5));
-    REQUIRE(bench_nodes(run_uci({"bench", "quit"})) != base);
+    REQUIRE(bench_nodes(run_uci({"bench 6", "quit"})) != base);
 
     search::reset_search_tunables();
-    REQUIRE(bench_nodes(run_uci({"bench", "quit"})) == base);
+    REQUIRE(bench_nodes(run_uci({"bench 6", "quit"})) == base);
 }
 
 #else
