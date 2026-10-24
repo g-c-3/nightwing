@@ -164,6 +164,22 @@ if(NIGHTWING_ENABLE_BMI2 AND NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten" AND CMA
     # MSVC for exactly this reason.
 endif()
 
+if(NIGHTWING_NATIVE_BUILD)
+    # Opt-in host-CPU build; see the option's comment in the root CMakeLists.txt. Applied PUBLIC so
+    # every executable and test linking nightwing_lib is compiled consistently. x86 only: on other
+    # architectures (and under Emscripten) the option is ignored with a warning.
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64|i[3-6]86|x86|X86)$")
+        if(MSVC)
+            target_compile_options(nightwing_lib PUBLIC /arch:AVX2)
+        else()
+            target_compile_options(nightwing_lib PUBLIC -march=native)
+        endif()
+        message(STATUS "NIGHTWING_NATIVE_BUILD: host-CPU build, binary is not portable")
+    else()
+        message(WARNING "NIGHTWING_NATIVE_BUILD ignored: only supported on x86/x86_64 native builds")
+    endif()
+endif()
+
 add_executable(nightwing main.cpp)
 target_link_libraries(nightwing PRIVATE nightwing_lib)
 
