@@ -282,6 +282,52 @@ jobs:
           path: build/src/nightwing${{ runner.os == 'Windows' && '.exe' || '' }}
           if-no-files-found: error
 
+  # Session 254 (ROADMAP.md, rating-list/tournament preparation): AVX2 release
+  # binaries. CCRL testing uses AVX2 builds where available, and a build at a
+  # fixed CPU level (-march=x86-64-v3 / MSVC /arch:AVX2, option
+  # NIGHTWING_X86_64_V3, default OFF everywhere else) lets the BMI2 PEXT
+  # wrapper inline (measured about +22% NPS with -march=native, Session 250).
+  # The portable binaries built by `build-and-test` stay the default
+  # downloads; these are extra assets. Linux and Windows only (macOS runners
+  # are Apple Silicon, and the option is x86-only). The full test suite runs
+  # on the exact binaries that get published, and `release` waits for this
+  # job, so a miscompiled AVX2 build can never be published.
+  avx2-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            os_name: Linux
+          - os: windows-latest
+            os_name: Windows
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.os_name }} AVX2 (x86-64-v3)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up MSVC dev environment (Windows only)
+        if: runner.os == 'Windows'
+        uses: egor-tensin/vs-shell@7710434f30f873ff4ab78184b74cc576a10726d6 # v2
+        with:
+          arch: x64
+      - name: Install Ninja (Windows only)
+        if: runner.os == 'Windows'
+        run: pip install ninja
+      - name: Configure CMake
+        run: cmake -B build ${{ runner.os == 'Windows' && '-G Ninja' || '' }} -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=ON -DNIGHTWING_X86_64_V3=ON
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure --build-config Release
+      - name: Upload AVX2 nightwing binary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nightwing-binary-${{ matrix.os_name }}-avx2
+          path: build/src/nightwing${{ runner.os == 'Windows' && '.exe' || '' }}
+          if-no-files-found: error
+
   # ROADMAP.md Priority Fixes (2026-09-22), "ThreadSanitizer coverage":
   # Lazy SMP, the lock-free TT and the background `go`/ponder threads were
   # only ever exercised under ASan/UBSan, which cannot detect data races.
@@ -1394,7 +1440,7 @@ jobs:
     # release assets, and ROADMAP.md requires the wasm build to be
     # verified before it is trusted as one. A failing wasm build
     # therefore blocks publishing (the native binaries included).
-    needs: [build-and-test, wasm-build]
+    needs: [build-and-test, wasm-build, avx2-build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     name: Publish rolling "latest" release
@@ -1423,6 +1469,8 @@ jobs:
         with:
           sparse-checkout: |
             CMakeLists.txt
+            README.md
+            LICENSE
           sparse-checkout-cone-mode: false
 
       - name: Download Linux binary
@@ -1443,6 +1491,18 @@ jobs:
           name: nightwing-binary-Windows
           path: windows-binary
 
+      - name: Download Linux AVX2 binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: nightwing-binary-Linux-avx2
+          path: linux-avx2-binary
+
+      - name: Download Windows AVX2 binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: nightwing-binary-Windows-avx2
+          path: windows-avx2-binary
+
       - name: Download wasm files
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -1461,10 +1521,19 @@ jobs:
           cp macos-binary/nightwing release-assets/nightwing-macos
           cp windows-binary/nightwing.exe release-assets/nightwing-windows.exe
           chmod +x release-assets/nightwing-linux release-assets/nightwing-macos
+          # AVX2 (x86-64-v3) builds for Haswell-or-newer x86-64 CPUs (Session 254).
+          cp linux-avx2-binary/nightwing release-assets/nightwing-linux-avx2
+          cp windows-avx2-binary/nightwing.exe release-assets/nightwing-windows-avx2.exe
+          chmod +x release-assets/nightwing-linux-avx2
+          # README and licence travel with the binaries (engine testers and
+          # tournament organizers get the UCI options and originality note).
+          cp README.md LICENSE release-assets/
           # wasm assets keep their build names: nightwing.js loads
           # nightwing.wasm by that exact filename, so the pair must
           # stay together; nightwing.min.js is the standalone bundle.
           cp wasm-files/nightwing.js wasm-files/nightwing.wasm wasm-files/nightwing.min.js release-assets/
+          # SHA-256 checksums of every asset (not of the checksum file itself).
+          (cd release-assets && sha256sum * > SHA256SUMS)
           ls -l release-assets
 
       # `gh release`, not a third-party publishing action: it's
@@ -1489,7 +1558,7 @@ jobs:
         run: |
           gh release create latest release-assets/* \
             --title "Nightwing (rolling latest)" \
-            --notes "Automatically published from commit ${{ github.sha }} on $(date -u +'%Y-%m-%d %H:%M UTC'). This is a rolling release: it always reflects the latest green build on main, not a fixed version." \
+            --notes "Automatically published from commit ${{ github.sha }} on $(date -u +'%Y-%m-%d %H:%M UTC'). This is a rolling release: it always reflects the latest green build on main, not a fixed version. Assets: nightwing-linux, nightwing-macos and nightwing-windows.exe are portable builds; nightwing-linux-avx2 and nightwing-windows-avx2.exe are AVX2 (x86-64-v3) builds for Haswell-or-newer x86-64 CPUs and are faster there. Verify downloads against SHA256SUMS." \
             --target "${{ github.sha }}"
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1528,7 +1597,7 @@ jobs:
         run: |
           gh release create "${{ steps.version.outputs.tag }}" release-assets/* \
             --title "Nightwing ${{ steps.version.outputs.tag }}" \
-            --notes "Commit ${{ github.sha }}, built $(date -u +'%Y-%m-%d %H:%M UTC'). This is an immutable, uniquely-tagged release; see the 'latest' release for the rolling always-current build instead." \
+            --notes "Commit ${{ github.sha }}, built $(date -u +'%Y-%m-%d %H:%M UTC'). This is an immutable, uniquely-tagged release; see the 'latest' release for the rolling always-current build instead. Assets: nightwing-linux, nightwing-macos and nightwing-windows.exe are portable builds; nightwing-linux-avx2 and nightwing-windows-avx2.exe are AVX2 (x86-64-v3) builds for Haswell-or-newer x86-64 CPUs and are faster there. Verify downloads against SHA256SUMS." \
             --target "${{ github.sha }}"
         env:
           GH_TOKEN: ${{ github.token }}
