@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 254 — 2026-10-24 — AVX2 release binaries, checksums and README
+
+**Built:** `CMakeLists.txt` and `src/CMakeLists.txt`: new option `NIGHTWING_X86_64_V3` (default OFF; `-march=x86-64-v3` on GCC/Clang, `/arch:AVX2` on MSVC, x86/x86_64 only; `NIGHTWING_NATIVE_BUILD` wins if both are ON). `.github/workflows/ci.yml`: new `avx2-build` job (Linux and Windows, Release, full `ctest`, uploads `nightwing-binary-<OS>-avx2`); the `release` job now needs it, downloads both AVX2 binaries, publishes `nightwing-linux-avx2` and `nightwing-windows-avx2.exe`, attaches `README.md`, `LICENSE` and a generated `SHA256SUMS`, and both release notes name what the assets are. `README.md`: Downloads, UCI options and CPU-build sections.
+
+**Bugs fixed:** none.
+
+**Measurement:** Linux, GCC 13, Release, zero warnings: the AVX2 build gives the same 2331331 nodes at `bench 10` as the portable build, 845 of 845 test cases pass, about 690k to 730k NPS against about 655k portable in a noisy sandbox. The Windows MSVC `/arch:AVX2` build and the release-job changes were not run locally (YAML parses). Not yet confirmed by CI.
+
+**Decisions made:** see DECISIONS.md 2026-10-24 (3).
+
+**Open:** the `uci-match` decision on the history-gravity candidate (Session 253) is still pending; the first CI run must show `avx2-build` green on both OSes and the release containing six files plus `SHA256SUMS`.
+
+**Next session start point:** read the CI result for the Session 254 push: both `avx2-build` legs green (if the Windows leg fails to compile or its tests fail, drop that leg from the matrix and from the release job rather than loosening gating), and the new release's assets. Then record the gravity `uci-match` results, and continue with the aspiration delta cap as its own candidate.
+
+---
+
 ### Session 253 — 2026-10-24 — History gravity (candidate)
 
 **Built:** `src/search/ordering.cpp`: new `apply_gravity()` helper (`entry += bonus - entry * |bonus| / limit`, bonus clamped to the limit, final clamp kept as a rounding safety net); `HistoryTable`, `ContinuationHistoryTable` and `CaptureHistoryTable` `update()` and `malus()` use it with their own limits (all 8192). `src/search/ordering.h`: doc comments for `HistoryTable::update()` and `malus()` updated. `tests/ordering_tests.cpp`: two tests (`[ordering][history][gravity]`): a nearly full entry gains well under the raw bonus, and a saturated entry falls clearly after 20 maluses. Formula as in Stockfish's `StatsEntry` and CPW "History Heuristic".

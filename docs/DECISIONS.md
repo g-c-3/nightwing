@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-24 (3) — Published AVX2 binaries use a fixed CPU level, not the host CPU
+
+**Context:** The opt-in `NIGHTWING_NATIVE_BUILD` option (`-march=native`) measured about 22% faster, but such a binary only runs on CPUs like the build machine. Rating-list testers use AVX2 builds where available, so shareable fast binaries were wanted.
+
+**Decision:** A second option, `NIGHTWING_X86_64_V3` (`-march=x86-64-v3`, MSVC `/arch:AVX2`), builds for a fixed AVX2 level. The portable binaries remain the default release assets; Linux and Windows AVX2 binaries are added beside them, built and tested by a dedicated `avx2-build` job that the release job waits for. Every release carries a `SHA256SUMS` file, the README and the licence.
+
+**Rationale:** A fixed level gives a binary that runs on any Haswell-or-newer x86-64 CPU. Testing the exact published binaries means a miscompiled AVX2 build cannot reach a release. The runtime BMI2 check and the Zen 1/2 PEXT exclusion are unchanged.
+
+**Alternatives considered:** shipping `-march=native` builds (rejected: not portable); one binary choosing code paths at startup (not built: larger change, and the portable build already has the runtime PEXT check); replacing the portable binaries with AVX2 ones (rejected: older CPUs would crash).
+
+---
+
 ### 2026-10-24 (2) — An interrupted iteration's finished root move is not kept
 
 **Context:** `search_iterative_deepening()` discards an iteration cut short by a deadline, node limit or stop request and returns the previous iteration's result. A candidate (Session 251) kept the best move and score of such an iteration when a different root move had been fully searched and had beaten alpha, as Stockfish does with its partially searched last iteration. It was measured against the Session 250 build in two `uci-match` runs.
