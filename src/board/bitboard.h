@@ -85,14 +85,33 @@ constexpr void toggle_bit(Bitboard& bb, Square sq) noexcept {
     bb ^= square_bb(sq);
 }
 
+/// Software population count (the classic SWAR "parallel bit count", CPW
+/// "Population Count"): about a dozen ALU operations, no table and no call.
+/// Always correct on every target; popcount() below picks it only where the
+/// alternative would be slower (see there).
+[[nodiscard]] constexpr int popcount_software(Bitboard bb) noexcept {
+    bb = bb - ((bb >> 1) & 0x5555555555555555ULL);
+    bb = (bb & 0x3333333333333333ULL) + ((bb >> 2) & 0x3333333333333333ULL);
+    bb = (bb + (bb >> 4)) & 0x0F0F0F0F0F0F0F0FULL;
+    return static_cast<int>((bb * 0x0101010101010101ULL) >> 56);
+}
+
 /// Returns the number of set bits in `bb`. Backed by the POPCNT instruction
-/// where available (std::popcount lowers to it on supporting targets; on
-/// targets without hardware POPCNT it falls back to a portable software
-/// count, so this is always correct, just not always maximally fast — see
-/// support/cpu_features.h for the runtime capability check used by hot
-/// paths that need to choose a strategy rather than just get a correct count).
+/// where the build enables it (std::popcount lowers to it then). A portable
+/// x86 build deliberately does not assume POPCNT (src/CMakeLists.txt), and
+/// there GCC/Clang would turn std::popcount into a call to libgcc's
+/// `__popcountdi2` (about 21 instructions per call; 11% of all instructions
+/// in a callgrind profile of `bench 7`, Session 257), so those builds use the
+/// inline popcount_software() instead (about 40% fewer instructions, no
+/// call). Other targets (ARM, MSVC, any build with POPCNT) keep
+/// std::popcount. The result is identical on every path.
 [[nodiscard]] constexpr int popcount(Bitboard bb) noexcept {
+#if (defined(__x86_64__) || defined(__i386__)) && !defined(__POPCNT__) && \
+    (defined(__GNUC__) || defined(__clang__))
+    return popcount_software(bb);
+#else
     return std::popcount(bb);
+#endif
 }
 
 /// Returns the index (0..63) of the least significant set bit of `bb`.
