@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 253 — 2026-10-24 — History gravity (candidate)
+
+**Built:** `src/search/ordering.cpp`: new `apply_gravity()` helper (`entry += bonus - entry * |bonus| / limit`, bonus clamped to the limit, final clamp kept as a rounding safety net); `HistoryTable`, `ContinuationHistoryTable` and `CaptureHistoryTable` `update()` and `malus()` use it with their own limits (all 8192). `src/search/ordering.h`: doc comments for `HistoryTable::update()` and `malus()` updated. `tests/ordering_tests.cpp`: two tests (`[ordering][history][gravity]`): a nearly full entry gains well under the raw bonus, and a saturated entry falls clearly after 20 maluses. Formula as in Stockfish's `StatsEntry` and CPW "History Heuristic".
+
+**Bugs fixed:** none; this is a strength change.
+
+**Measurement:** Release build, zero warnings, 845 of 845 test cases pass; the existing exact-value history tests pass unchanged (small values are unaffected by the integer division). `bench 6` is unchanged at 62276 nodes; `bench 10` changed from 3132728 to 2331331 nodes. Not run in CI; no Elo measurement yet.
+
+**Decisions made:** none yet; the change is a CANDIDATE until `uci-match` decides it.
+
+**Open:** the `uci-match` decision. Baseline commit: `eae0edb7427ea47042e6931c04a050e7ee9d9cba` (Session 252 revert); candidate: the commit of this push.
+
+**Next session start point:** run `uci-match` twice from the Actions tab with `ucimatch_baseline_ref` `eae0edb7427ea47042e6931c04a050e7ee9d9cba` and `ucimatch_candidate_ref` set to the full SHA of the Session 253 push: run 1 with `ucimatch_nodes` 20000, seed 1; run 2 with `ucimatch_nodes` 0 and `ucimatch_clock` `10000 100`, seed 1001; SPRT `-5 5 0.05 0.05`. Adopt (record in DECISIONS.md) only if both runs are non-negative and at least one passes; otherwise restore `ordering.cpp`, `ordering.h` and `ordering_tests.cpp` from `eae0edb7` and record the rejection. Then continue with the next strength item (aspiration delta cap), again as its own candidate.
+
+---
+
 ### Session 252 — 2026-10-24 — Interrupted-iteration candidate measured and reverted
 
 **Built:** nothing new. `src/search/search.cpp`, `src/search/search.h` and `tests/search_tests.cpp` were restored to their Session 250 state (commit `7f684bc29f5bc2da34e031cbc1c7ca08289b3be2`), which removes `SearchResult::interrupted_best_valid`, the partial-iteration adoption and the `[interrupt]` test. The Session 248 PV-repetition fix and its test remain.
