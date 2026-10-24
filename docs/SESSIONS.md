@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 249 — 2026-10-24 — Deeper default `bench`
+
+**Built:** `src/bench_positions.h`: new `kDefaultBenchDepth = 10`, with `kBenchDepth` (6) kept for tests. `src/uci/uci.cpp` and `uci.h`: `run_bench()` uses the new default when no depth is given. `src/main.cpp`: header comment updated. `tests/uci_tests.cpp` (three tests) and `tests/tunables_tests.cpp` (four calls) now send `bench 6` or `bench 2` explicitly, so their expectations and run time are unchanged.
+
+**Bugs fixed:** none.
+
+**Measurement:** Release build, zero warnings, 843 of 843 test cases pass in about 28 s. Bare `bench`: 3132728 nodes at depth 10 in about 4.3 s on a single-core sandbox (about 725k NPS); `bench 6` unchanged at 62276 nodes. The `ci.yml` PGO training step runs the bare `bench`, so it now trains on the deeper workload; no workflow file was changed. Not yet confirmed by CI.
+
+**Decisions made:** none requiring a DECISIONS.md entry; the test depth was kept at 6 so Debug, ASan and ThreadSanitizer legs do not slow down.
+
+**Open:** none new.
+
+**Next session start point:** read the CI result for the Session 248 and 249 pushes (check the PGO job's run time with the deeper bench); then add an opt-in native/v3 build option (ROADMAP.md external report item (b)): a CMake option (default OFF) that builds with `-march=native` or an AVX2 level so `pext_u64()` can inline, portable default and release workflow unchanged, with the runtime BMI2 check and Zen 1/2 exclusion kept; deliver `CMakeLists.txt` and `src/CMakeLists.txt` in full as touched. Then the remaining strength items one at a time, each decided by a `uci-match` run.
+
+---
+
 ### Session 248 — 2026-10-24 — PV no longer continues past a repetition of a game position
 
 **Built:** `src/search/search.cpp`: `extract_pv()` gained a `game_history` span parameter and ends the walk at the first move whose resulting position matches an entry of the game history, in addition to the existing in-walk repeat check; the repeating move stays as the last PV entry. `search_root()` passes `ctx.game_history`. Doc comment updated. `tests/search_tests.cpp`: one test (`[search][id][pv][repetition]`) searching a queen ending twice with a shared persistent transposition table (the second search with the first position in `game_history`, as a second UCI `go` would) and requiring that only the last PV position may equal a game-history position; `#include "search/tt.h"` added.
