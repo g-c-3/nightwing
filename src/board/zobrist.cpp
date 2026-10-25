@@ -20,6 +20,7 @@
 //     actually available; the simplified version is what's implemented
 //     here, matching common practice.
 
+#include <initializer_list>
 #include "board/zobrist.h"
 
 #include <array>
@@ -130,6 +131,36 @@ std::uint64_t compute_pawn_hash(const Position& pos) noexcept {
     }
 
     return hash;
+}
+
+namespace {
+
+/// XORs the piece_square_key() of every piece of both colors whose type is
+/// one of `types`. Shared by compute_minor_hash()/compute_non_pawn_hash().
+std::uint64_t hash_of_types(const Position& pos, std::initializer_list<PieceType> types) noexcept {
+    std::uint64_t hash = 0;
+    for (const Color c : {Color::White, Color::Black}) {
+        for (const PieceType t : types) {
+            Bitboard bb = pos.pieces(c, t);
+            while (bb != 0) {
+                const Square sq = pop_lsb(bb);
+                hash ^= g_piece_square_keys[static_cast<std::size_t>(make_piece(c, t))]
+                                           [static_cast<std::size_t>(sq)];
+            }
+        }
+    }
+    return hash;
+}
+
+} // namespace
+
+std::uint64_t compute_minor_hash(const Position& pos) noexcept {
+    return hash_of_types(pos, {PieceType::Knight, PieceType::Bishop});
+}
+
+std::uint64_t compute_non_pawn_hash(const Position& pos) noexcept {
+    return hash_of_types(pos, {PieceType::Knight, PieceType::Bishop, PieceType::Rook,
+                               PieceType::Queen, PieceType::King});
 }
 
 } // namespace nightwing::board
