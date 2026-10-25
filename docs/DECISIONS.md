@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-25 (3) — Linux CI runners pinned to `ubuntu-26.04`; artifact and emsdk actions moved to Node 24 versions
+
+**Context:** CI annotations reported that three pinned actions target Node 20 (deprecated, forced onto Node 24) and that the `ubuntu-latest` label migrates to Ubuntu 26.
+
+**Decision:** the three actions were bumped to the newest releases whose `action.yml` declares `node24`, pinned by commit SHA as before. Every Linux job now names `ubuntu-26.04`, the image the floating label is migrating to.
+
+**Rationale:** the Node bump removes a deprecation that would otherwise become a failure. The floating label would change the compiler, sanitizer runtimes and Emscripten host silently on the migration date, mixing a toolchain change into whatever commit happened to be running; an explicit label makes the move to 26 a visible change in this commit, with a fallback to `ubuntu-24.04` per job if one fails for an environment reason.
+
+**Alternatives considered:** leaving `ubuntu-latest` (rejected: unannounced toolchain change); staying on `ubuntu-24.04` (first choice, reversed on request); a non-gating 26.04 leg beside 24.04 gating jobs (offered, not chosen). Risk accepted: the sanitizer, wasm and compiler behaviour on 26.04 was not tested before the push.
+
+---
+
 ### 2026-10-25 (2) — Correction history combines three keyed tables by averaging; keys are computed per node, not stored in `Position`
 
 **Context:** Strength plan item 2 asked for more correction-history keys beside the pawn key. The existing table keeps one moving average per color and pawn-placement slot.

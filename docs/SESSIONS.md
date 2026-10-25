@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+### Session 263 — 2026-10-25 — CI Node 24 and Ubuntu 26 migration
+
+**Built:** `.github/workflows/ci.yml` only. `actions/upload-artifact` (9 uses) moved to v7.0.2, `actions/download-artifact` (6 uses) to v8.0.2 and `mymindstorm/setup-emsdk` to v16, all pinned by SHA resolved with `git ls-remote`; the `action.yml` of each new SHA was read and declares `node24`, while the old SHAs declared `node20`. `actions/checkout` (v5 and v7) already used Node 24. All 14 `ubuntu-latest` labels became `ubuntu-26.04` (first written as `ubuntu-24.04`, then moved to 26.04 on request; the label exists in the runner-images README). The YAML parses; the inputs in use (`name`, `path`, `if-no-files-found`, `version`) exist in the new versions.
+
+**Bugs fixed:** none.
+
+**Decisions made:** the Linux runner is pinned explicitly to Ubuntu 26.04; see DECISIONS.md 2026-10-25 (3).
+
+**Open:** the first CI run of the new workflow is the confirmation (no local run of GitHub Actions is possible); whether any Linux job (sanitizers, wasm) fails on 26.04 for an environment reason.
+
+**Next session start point:** read the CI result for the Session 263 push (849 tests expected, all Windows legs green, no Node 20 warnings), then dispatch the two `uci-match` runs for the Session 262 candidate.
+
+---
+
 ### Session 262 — 2026-10-25 — Multi-key correction history (candidate)
 
 **Built:** strength plan item 2 as a candidate commit. `src/board/zobrist.h`/`.cpp` gained `compute_minor_hash()` (knight and bishop placement) and `compute_non_pawn_hash()` (knight, bishop, rook, queen and king placement), computed on demand like `compute_pawn_hash()`. `src/search/ordering.h`/`.cpp`: `CorrectionHistoryTable` gained a minor-piece table and a non-pawn table beside the pawn table, a `Keys` struct, and `update()`/`correction()` overloads taking `Keys`; the correction is the integer average of the three tables' values and the update rule is unchanged. The pawn-key-only overloads were kept, so the existing tests are unchanged. `src/search/search.cpp`: `negamax()` computes one `corr_keys` per node in place of `pawn_key` and uses it at the four static-eval sites and the end-of-node update. Four tests added (`ordering_tests.cpp` `[multikey]` x3, `zobrist_tests.cpp` `[correction_keys]` x1).
