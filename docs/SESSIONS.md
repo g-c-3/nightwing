@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 262 — 2026-10-25 — Multi-key correction history (candidate)
+
+**Built:** strength plan item 2 as a candidate commit. `src/board/zobrist.h`/`.cpp` gained `compute_minor_hash()` (knight and bishop placement) and `compute_non_pawn_hash()` (knight, bishop, rook, queen and king placement), computed on demand like `compute_pawn_hash()`. `src/search/ordering.h`/`.cpp`: `CorrectionHistoryTable` gained a minor-piece table and a non-pawn table beside the pawn table, a `Keys` struct, and `update()`/`correction()` overloads taking `Keys`; the correction is the integer average of the three tables' values and the update rule is unchanged. The pawn-key-only overloads were kept, so the existing tests are unchanged. `src/search/search.cpp`: `negamax()` computes one `corr_keys` per node in place of `pawn_key` and uses it at the four static-eval sites and the end-of-node update. Four tests added (`ordering_tests.cpp` `[multikey]` x3, `zobrist_tests.cpp` `[correction_keys]` x1).
+
+**Bugs fixed:** none.
+
+**Verification:** Release build, zero warnings; 849 of 849 test cases pass; `bench 6` 58709 nodes (was 62276) and `bench 10` 2914126 nodes (was 3132728), a change expected for a search change. NOT verified: the CI result for the Session 261 push could not be read (the GitHub API query returned nothing); the strength effect, which needs two `uci-match` runs; per-node cost of the two extra hash computations (bench NPS was not compared on a quiet machine).
+
+**Decisions made:** averaging, not summing, the three tables; see DECISIONS.md 2026-10-25 (2).
+
+**Open:** the two `uci-match` runs for this candidate; a previous-move key; strength plan items 3 to 6 and speed plan items 3 to 8 in ROADMAP.md.
+
+**Next session start point:** commit the seven files of Session 262, read the CI result (849 tests expected), then dispatch two `uci-match` runs of this commit against baseline `f7797fc0f03398b7a9ddd725493b5d8639bb5021` (`ucimatch_sprt` `0 5 0.05 0.05`, nodes 20000 seed 1 and clock `10000 100` seed 1001) and apply the adopt rule from DECISIONS.md 2026-10-24 (4); on rejection, revert to the baseline files and start strength plan item 4 (double and negative singular extensions and multi-cut).
+
+---
+
 ### Session 261 — 2026-10-25 — Cut-node-aware reductions rejected and reverted
 
 **Built:** nothing new. `src/search/search.cpp` was restored to the baseline commit `f7797fc0f03398b7a9ddd725493b5d8639bb5021`, removing the `cut_node` parameter and `kCutNodeLmrIncrease`. ROADMAP.md gained speed plan items 5 to 8 from the external speed notes: cache hit-rate measurement, staged move generation check, PGO measurement, and lazy evaluation (a search change, decided by `uci-match`).

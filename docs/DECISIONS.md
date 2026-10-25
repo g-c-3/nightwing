@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-25 (2) — Correction history combines three keyed tables by averaging; keys are computed per node, not stored in `Position`
+
+**Context:** Strength plan item 2 asked for more correction-history keys beside the pawn key. The existing table keeps one moving average per color and pawn-placement slot.
+
+**Decision:** Two tables were added, keyed by minor-piece placement and by non-pawn piece placement, updated with the unchanged clamped moving-average rule at the same error. The correction added to static eval is the integer average of the three tables' values. The keys come from on-demand functions (`compute_minor_hash()`, `compute_non_pawn_hash()`) beside `compute_pawn_hash()`; nothing was added to `Position`. The change is a candidate: adoption waits for two `uci-match` runs under the rule of 2026-10-24 (4).
+
+**Rationale:** Averaging keeps the correction inside the same plus or minus 256 bound and at a magnitude comparable to the single-table version, so the existing search margins stay meaningful; summing three tables would triple the effective nudge and change the scale that RFP, razoring and futility were tuned against. A node whose pawn structure matches a recorded slot but whose pieces do not still gets a partial nudge. `Position` is at its documented cache-line budget (DECISIONS.md 2026-09-16 (2)), so incremental keys were not added; the per-node cost is a walk over at most the minor or non-pawn pieces, similar to the existing pawn walk.
+
+**Alternatives considered:** summing the tables, or weighting them (rejected for the first candidate: untuned weights add a variable that the match cannot attribute); a previous-move key (not built, left open in ROADMAP.md); changing the update rule at the same time (rejected: one change per candidate, per 2026-10-24 (4)); replacing the pawn-key overloads (rejected: the existing tests stay valid and nothing else needs the change).
+
+---
+
 ### 2026-10-25 — Cut-node-aware late-move reductions are not adopted
 
 **Context:** The Session 260 candidate added a `cut_node` flag to `negamax()` and one extra late-move reduction ply for eligible quiet moves at expected cut nodes (Stockfish's `cutNode` idea). It reduced `bench 10` from 3132728 to 2867269 nodes. It was measured against the Session 259 build in three `uci-match` runs.
