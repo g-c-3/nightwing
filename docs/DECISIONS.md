@@ -12,6 +12,8 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 **Rationale:** Averaging keeps the correction inside the same plus or minus 256 bound and at a magnitude comparable to the single-table version, so the existing search margins stay meaningful; summing three tables would triple the effective nudge and change the scale that RFP, razoring and futility were tuned against. A node whose pawn structure matches a recorded slot but whose pieces do not still gets a partial nudge. `Position` is at its documented cache-line budget (DECISIONS.md 2026-09-16 (2)), so incremental keys were not added; the per-node cost is a walk over at most the minor or non-pawn pieces, similar to the existing pawn walk.
 
+**Stack note:** the three tables make the class about 786 KB, so it must never be a stack local; the Session 262 push overflowed the 1 MB Windows stack in `search_fixed_depth()` until that site was moved to the heap. The extra tables also add about 524 KB of zero-filling per `go`.
+
 **Alternatives considered:** summing the tables, or weighting them (rejected for the first candidate: untuned weights add a variable that the match cannot attribute); a previous-move key (not built, left open in ROADMAP.md); changing the update rule at the same time (rejected: one change per candidate, per 2026-10-24 (4)); replacing the pawn-key overloads (rejected: the existing tests stay valid and nothing else needs the change).
 
 ---
