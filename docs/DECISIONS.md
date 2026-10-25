@@ -4,6 +4,22 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-26 — Double, negative and multi-cut singular handling added as one candidate
+
+**Context:** Strength plan item 4 listed double and negative singular extensions and multi-cut as absent. The existing singular block only granted a single-ply extension.
+
+**Decision:** All three were added in one candidate to `search.cpp`. Double extension needs the verification score below `singular_beta - 16` and ply below 48. Multi-cut returns `singular_beta` when the verification is non-singular and `singular_beta >= beta`. A -1 extension applies when the verification is non-singular and the TT score is at or above `beta`, but only when no check or passed-pawn extension applies to the same move.
+
+**Rationale:** These are the standard companions of singular extensions in Stockfish-classic and are described on CPW. Multi-cut saves nodes where two moves already fail high; the negative extension reduces effort on TT moves that fail high without being uniquely best; the double extension spends depth where the TT move is clearly the only good move. The ply cap bounds extension chains. The margin 16 is an untuned starting value, as are other margins in this file.
+
+**Not established:** strength. Bundling the three means a rejection does not say which part hurt; the adoption rule of 2026-10-24 (4) decides the bundle.
+
+**Alternatives considered:**
+- Three separate candidates: slower (each needs two 4000-game runs); deferred to a rejection of the bundle.
+- Summing extensions with check extensions: rejected, matching the file's existing rule that a move is never extended twice for different reasons (the double extension is a larger single value, not an addition).
+
+---
+
 ### 2026-10-25 (4) — Multi-key correction history rejected
 
 **Context:** The Session 262 candidate (DECISIONS.md 2026-10-25 (2)) was measured by the fixed-node `uci-match` run.

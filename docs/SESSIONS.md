@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 265 — 2026-10-26 — Double/negative singular extensions and multi-cut (candidate)
+
+**Built:** strength plan item 4 as a candidate commit, `src/search/search.cpp` only. In the singular-extension block of `negamax()`: a verification score below `singular_beta - kSingularDoubleMargin` (16) at ply below `kSingularDoubleMaxPly` (48) gives a 2-ply extension; a non-singular verification with `singular_beta >= beta` returns `singular_beta` (multi-cut); a non-singular verification with the TT score at or above `beta` gives a -1 extension. The extension combiner takes the positive maximum of the check, singular and passed-pawn extensions and falls back to the (possibly negative) singular value only when that maximum is zero. Three constants and doc comments added beside the existing singular constants. Concepts follow CPW "Singular Extensions" and the Stockfish-classic scheme.
+
+**Verified:** Release build and `ctest` in the sandbox: 845 of 845 pass. `bench 6` stays 62276 (depth 6 is below `kSingularMinDepth`); `bench 10` moves 3132728 -> 3103403. No test was added; no strength measurement has been run.
+
+**Bugs fixed:** none.
+
+**Decisions made:** see DECISIONS.md 2026-10-26.
+
+**Open:** the two `uci-match` runs for this candidate; margin and ply-cap tuning; a dedicated regression test for the three new branches; the Session 264 restored files and CI result were not re-checked this session.
+
+**Next session start point:** commit `src/search/search.cpp`, then dispatch the fixed-node (20000 nodes, seed 1, `0 5 0.05 0.05`) and clock (`10000 100`) `uci-match` runs with the previous `search.cpp` as baseline; adopt only if both are non-negative and at least one passes, otherwise revert `search.cpp` and consider testing the three parts separately.
+
+---
+
 ### Session 264 — 2026-10-25 — Multi-key correction history rejected and reverted
 
 **Built:** nothing new. The seven Session 262 files (`src/search/search.cpp`, `src/search/ordering.h`, `src/search/ordering.cpp`, `src/board/zobrist.h`, `src/board/zobrist.cpp`, `tests/ordering_tests.cpp`, `tests/zobrist_tests.cpp`) were restored to their `f7797fc0f03398b7a9ddd725493b5d8639bb5021` versions, fetched from GitHub; their diffs against the candidate contained only the Session 262 changes. `ci.yml` was not touched.
