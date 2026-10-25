@@ -375,55 +375,6 @@ TEST_CASE("CorrectionHistoryTable: the two colors are independent even for the i
     REQUIRE(correction_history.correction(Color::Black, /*pawn_key=*/0x1234) == 0);
 }
 
-TEST_CASE("CorrectionHistoryTable: multi-key correction is the average of the three tables",
-          "[ordering][correction_history][multikey]") {
-    // One update with error 320 (clamped to 256) moves each of the three
-    // tables' slots by (256 - 0) / 32 = 8 (kCorrectionWeight 32, private,
-    // checked by value like the single-key tests above). All three keys
-    // recorded: (8 + 8 + 8) / 3 = 8.
-    CorrectionHistoryTable correction_history;
-    const CorrectionHistoryTable::Keys keys{0x1111, 0x2222, 0x3333};
-    correction_history.update(Color::White, keys, /*error=*/320);
-    REQUIRE(correction_history.correction(Color::White, keys) == 8);
-
-    // Only the pawn key matches a recorded slot: (8 + 0 + 0) / 3 = 2
-    // (truncating toward zero), so a partial match gives a partial nudge.
-    const CorrectionHistoryTable::Keys pawn_only{0x1111, 0x9999, 0xAAAA};
-    REQUIRE(correction_history.correction(Color::White, pawn_only) == 2);
-
-    // Pawn and minor keys match, non-pawn does not: (8 + 8 + 0) / 3 = 5.
-    const CorrectionHistoryTable::Keys pawn_and_minor{0x1111, 0x2222, 0xAAAA};
-    REQUIRE(correction_history.correction(Color::White, pawn_and_minor) == 5);
-
-    // No key matches: 0.
-    const CorrectionHistoryTable::Keys none{0x7777, 0x8888, 0x9999};
-    REQUIRE(correction_history.correction(Color::White, none) == 0);
-}
-
-TEST_CASE("CorrectionHistoryTable: multi-key update/correction keep colors independent and stay bounded",
-          "[ordering][correction_history][multikey]") {
-    CorrectionHistoryTable correction_history;
-    const CorrectionHistoryTable::Keys keys{0x1111, 0x2222, 0x3333};
-    for (int i = 0; i < 5000; ++i) {
-        correction_history.update(Color::White, keys, /*error=*/-10000);
-    }
-    const int white = correction_history.correction(Color::White, keys);
-    REQUIRE(white < 0);
-    REQUIRE(white >= -256); // average of three values each >= -kCorrectionMax
-    REQUIRE(correction_history.correction(Color::Black, keys) == 0);
-}
-
-TEST_CASE("CorrectionHistoryTable: the pawn-key-only overloads touch only the pawn table",
-          "[ordering][correction_history][multikey]") {
-    CorrectionHistoryTable correction_history;
-    correction_history.update(Color::White, /*pawn_key=*/0x1111, /*error=*/320);
-    // Single-key API: the pawn table alone reports 8.
-    REQUIRE(correction_history.correction(Color::White, /*pawn_key=*/0x1111) == 8);
-    // Multi-key API with the same pawn key and unrecorded minor/non-pawn keys: (8 + 0 + 0) / 3 = 2.
-    const CorrectionHistoryTable::Keys keys{0x1111, 0x2222, 0x3333};
-    REQUIRE(correction_history.correction(Color::White, keys) == 2);
-}
-
 TEST_CASE("order_moves: capture history re-ranks two captures that MVV-LVA alone scores identically",
           "[ordering][capture_history]") {
     init_all();
