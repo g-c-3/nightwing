@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 261 — 2026-10-25 — Cut-node-aware reductions rejected and reverted
+
+**Built:** nothing new. `src/search/search.cpp` was restored to the baseline commit `f7797fc0f03398b7a9ddd725493b5d8639bb5021`, removing the `cut_node` parameter and `kCutNodeLmrIncrease`. ROADMAP.md gained speed plan items 5 to 8 from the external speed notes: cache hit-rate measurement, staged move generation check, PGO measurement, and lazy evaluation (a search change, decided by `uci-match`).
+
+**Bugs fixed:** none.
+
+**Measurement:** three `uci-match` runs, baseline `f7797fc0f03398b7a9ddd725493b5d8639bb5021` against candidate `c2912e21a5322ad0018ccea505c5099cb0f6f6f8` (main with the cut-node change), SPRT bounds 0 and 5, alpha and beta 0.05, 8 opening plies. Run 1, `go nodes 20000`, seed 1: 4000 games, 1616 wins, 746 draws, 1638 losses, -1.9 Elo. Run 2, `go nodes 20000`, seed 10001: 4000 games, 1650 wins, 679 draws, 1671 losses, -1.8 Elo. Combined nodes runs: 8000 games, -1.9 Elo (about -8.8 to +5.0 at 95%). Run 3, clock `10000 100`, seed 1001: stopped by the 300-minute cap after 577 of 4000 games, 231 wins, 136 draws, 210 losses, +12.7 Elo (about -12 to +38), inconclusive; no illegal moves or time forfeits in any run. After the revert: Release build, zero warnings, 845 of 845 test cases pass, `bench 6` 62276 and `bench 10` 3132728 nodes.
+
+**Decisions made:** the candidate was rejected; see DECISIONS.md 2026-10-25.
+
+**Open:** strength plan items 2 to 6 and speed plan items 3 to 8 in ROADMAP.md; an independent rating gauntlet.
+
+**Next session start point:** read the CI result for the Session 261 push (845 tests expected), then plan item 2 (more correction-history keys: read the correction history code in `ordering.h`/`search.cpp` first, add minor-piece and non-pawn-material keys beside the pawn key, keep the update rule, add a test, deliver the touched files in full) as its own candidate, decided by two `uci-match` runs (`ucimatch_sprt` `0 5 0.05 0.05`, nodes 20000 seed 1 and clock `10000 100` seed 1001) with the adopt rule from DECISIONS.md 2026-10-24 (4).
+
+---
+
 ### Session 260 — 2026-10-25 — Cut-node-aware reductions (candidate)
 
 **Built:** `src/search/search.cpp`: new `negamax()` parameter `cut_node` (default false) carried through every recursive call: root and the first child of a PV node false; null-window probes of later root moves and reduced late-move searches true; the first child of a null-window node, full-depth null-window re-searches and ProbCut children `!cut_node`; the null-move child false; the singular-extension search inherits the flag; full-window re-searches false. Late-move reduction adds the new constant `kCutNodeLmrIncrease` (1) ply for eligible quiet moves at cut nodes. Idea as in Stockfish (`cutNode`, extra reduction at cut nodes) and CPW "Node Types". No new test: the existing search tests exercise the changed paths.

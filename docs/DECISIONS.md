@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-25 — Cut-node-aware late-move reductions are not adopted
+
+**Context:** The Session 260 candidate added a `cut_node` flag to `negamax()` and one extra late-move reduction ply for eligible quiet moves at expected cut nodes (Stockfish's `cutNode` idea). It reduced `bench 10` from 3132728 to 2867269 nodes. It was measured against the Session 259 build in three `uci-match` runs.
+
+**Decision:** Not adopted; reverted. Late-move reduction keeps its previous formula, with no node-type dependence.
+
+**Rationale:** At a fixed 20000 nodes per move the candidate scored -1.9 Elo (seed 1) and -1.8 Elo (seed 10001) over 4000 games each (combined 8000 games: about -8.8 to +5.0), and on a real clock (`10000 100`) +12.7 Elo over 577 games (about -12 to +38, stopped by the time cap). No run passed the SPRT with bounds 0 and 5, and both fixed-node runs were negative, so the rule fixed beforehand (both settings non-negative and at least one passing) was not met. The clock result is encouraging but far too small a sample to outweigh two negative 4000-game runs.
+
+**Alternatives considered:** adopting on the clock result alone (rejected: 577 games, range includes zero and negative values); a longer clock run (not chosen: hours of runner time and the fixed-node runs showed no gain); other increments or conditions (a depth threshold, or no extra reduction when the node is improving) are untested and remain possible follow-ups.
+
+---
+
 ### 2026-10-24 (5) — History gravity is not adopted
 
 **Context:** The Session 253 candidate replaced the additive, hard-clamped updates of the three history tables with the gravity formula `entry += bonus - entry * |bonus| / limit`. It reduced `bench 10` from 3132728 to 2331331 nodes. It was measured against the Session 252 build in two `uci-match` runs.
