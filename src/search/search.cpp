@@ -3638,7 +3638,12 @@ SearchResult search_fixed_depth(Position& pos, int depth, std::span<const std::u
     // history" item; CorrectionHistoryTable's own header comment,
     // search/ordering.h, has the full rationale) -- same lifetime
     // scoping as capture_history/history/cont_history just above.
-    CorrectionHistoryTable correction_history;
+    // Heap-allocated, not a stack local: with the Session 262 minor-piece and
+    // non-pawn tables this class is about 786 KB, which overflowed the 1 MB
+    // default Windows stack in every CI search test (the other three sites
+    // below already use make_unique for the same reason as history/cont_history).
+    const auto correction_history_owner = std::make_unique<CorrectionHistoryTable>();
+    CorrectionHistoryTable& correction_history = *correction_history_owner;
     // Fresh, zero-initialized per-ply hash record for this one call (see
     // negamax()'s header comment and is_draw_by_rule()) -- a fixed-size
     // stack array, not heap-allocated (ARCHITECTURE.md "Memory & Cache"),
