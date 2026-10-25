@@ -242,28 +242,10 @@ int CaptureHistoryTable::score(PieceType attacker, PieceType victim) const noexc
     return table_[static_cast<std::size_t>(attacker)][static_cast<std::size_t>(victim)];
 }
 
-void CorrectionHistoryTable::update_slot(int& slot, int error) noexcept {
-    const int clamped_error = std::clamp(error, -kCorrectionMax, kCorrectionMax);
-    slot += (clamped_error - slot) / kCorrectionWeight;
-}
-
 void CorrectionHistoryTable::update(Color us, std::uint64_t pawn_key, int error) noexcept {
-    update_slot(table_[static_cast<std::size_t>(us)][pawn_key & (kCorrectionTableSize - 1)], error);
-}
-
-void CorrectionHistoryTable::update(Color us, const Keys& keys, int error) noexcept {
-    const auto c = static_cast<std::size_t>(us);
-    update_slot(table_[c][keys.pawn & (kCorrectionTableSize - 1)], error);
-    update_slot(minor_table_[c][keys.minor & (kCorrectionTableSize - 1)], error);
-    update_slot(non_pawn_table_[c][keys.non_pawn & (kCorrectionTableSize - 1)], error);
-}
-
-int CorrectionHistoryTable::correction(Color us, const Keys& keys) const noexcept {
-    const auto c = static_cast<std::size_t>(us);
-    const int sum = table_[c][keys.pawn & (kCorrectionTableSize - 1)] +
-                    minor_table_[c][keys.minor & (kCorrectionTableSize - 1)] +
-                    non_pawn_table_[c][keys.non_pawn & (kCorrectionTableSize - 1)];
-    return sum / 3;
+    const int clamped_error = std::clamp(error, -kCorrectionMax, kCorrectionMax);
+    int& slot = table_[static_cast<std::size_t>(us)][pawn_key & (kCorrectionTableSize - 1)];
+    slot += (clamped_error - slot) / kCorrectionWeight;
 }
 
 int CorrectionHistoryTable::correction(Color us, std::uint64_t pawn_key) const noexcept {
