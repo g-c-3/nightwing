@@ -151,10 +151,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-26.04
             os_name: Linux
             build_type: Release
-          - os: ubuntu-latest
+          - os: ubuntu-26.04
             os_name: Linux
             build_type: Debug
           - os: macos-latest
@@ -276,7 +276,7 @@ jobs:
       # with no `Release/` subfolder to account for.
       - name: Upload nightwing binary (Release only)
         if: matrix.build_type == 'Release'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nightwing-binary-${{ matrix.os_name }}
           path: build/src/nightwing${{ runner.os == 'Windows' && '.exe' || '' }}
@@ -297,7 +297,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-26.04
             os_name: Linux
           - os: windows-latest
             os_name: Windows
@@ -322,7 +322,7 @@ jobs:
         working-directory: build
         run: ctest --output-on-failure --build-config Release
       - name: Upload AVX2 nightwing binary
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nightwing-binary-${{ matrix.os_name }}-avx2
           path: build/src/nightwing${{ runner.os == 'Windows' && '.exe' || '' }}
@@ -346,7 +346,7 @@ jobs:
   # support on macOS runners is unreliable and MSVC has none.
   # halt_on_error=1 so a detected race fails the job rather than only logging.
   tsan-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     name: Linux Debug (ThreadSanitizer)
     steps:
       - name: Checkout
@@ -380,7 +380,7 @@ jobs:
   # only, for the same reasons as `tsan-test` above. Only the `nightwing`
   # target is built (no tests), to keep the job short.
   sanitizer-fuzz:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     name: Linux Debug fuzz (${{ matrix.name }})
     timeout-minutes: 30
     strategy:
@@ -422,7 +422,7 @@ jobs:
   # tuning binary is a development tool, is never uploaded as an artifact
   # here and never feeds the `release` job.
   tuning-build-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     name: Linux Release (search tuning build)
     steps:
       - name: Checkout
@@ -470,7 +470,7 @@ jobs:
   # additional signal.
   tuning-pipeline:
     if: github.event_name == 'workflow_dispatch' && inputs.pipeline == 'tuning'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     name: Tuning pipeline (selfplay -> tune -> match)
 
     steps:
@@ -525,7 +525,7 @@ jobs:
             < tuned_weights.txt | tee match_result.txt
 
       - name: Upload pipeline artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tuning-pipeline-results
           path: |
@@ -606,7 +606,7 @@ jobs:
   # is a distinct, not-yet-scoped future item, out of reach of this one.
   tuning-pipeline-term:
     if: github.event_name == 'workflow_dispatch' && inputs.pipeline == 'tuning'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # `name:` is the string GitHub's own run-summary UI shows per matrix
     # leg (the "Matrix: tuning-pipeline-term" list on the Actions run
     # page) -- `matrix.label` (a small, explicit include-list below,
@@ -669,7 +669,7 @@ jobs:
           tail -40 tune_stderr.txt
 
       - name: Upload pipeline artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tuning-pipeline-${{ matrix.mode }}-results
           path: |
@@ -698,7 +698,7 @@ jobs:
   # build failure — the kind of mistake that's easy to ship unnoticed).
   pgo-build:
     if: github.event_name == 'workflow_dispatch' && inputs.pipeline == 'pgo'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     name: PGO build pipeline (generate -> train -> use -> verify)
 
     steps:
@@ -757,7 +757,7 @@ jobs:
         run: ./src/nightwing bench
 
       - name: Upload PGO-optimized binary
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nightwing-pgo-linux
           path: build/src/nightwing
@@ -784,7 +784,7 @@ jobs:
   # candidate to test, not a requirement of the SPRT process itself.
   sprt-test:
     if: github.event_name == 'workflow_dispatch' && inputs.pipeline == 'sprt'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     name: SPRT pipeline (selfplay -> tune -> sprt)
 
     steps:
@@ -840,7 +840,7 @@ jobs:
             < tuned_weights.txt | tee sprt_result.txt
 
       - name: Upload pipeline artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sprt-pipeline-results
           path: |
@@ -859,7 +859,7 @@ jobs:
   # before being committed.
   spsa-tune:
     if: github.event_name == 'workflow_dispatch' && inputs.pipeline == 'spsa'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     name: SPSA tuning (eval weights or search constants)
     timeout-minutes: 330
 
@@ -957,7 +957,7 @@ jobs:
 
       - name: Upload SPSA artifacts
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: spsa-results
           path: |
@@ -979,7 +979,7 @@ jobs:
   # the script text, so a free-text input cannot inject shell commands.
   uci-match-test:
     if: github.event_name == 'workflow_dispatch' && inputs.pipeline == 'uci-match'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     name: UCI match (baseline vs. candidate, SPRT)
     timeout-minutes: 355
 
@@ -1161,7 +1161,7 @@ jobs:
 
       - name: Upload match results
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: uci-match-results
           path: |
@@ -1192,11 +1192,11 @@ jobs:
   # that toolchain-integration item needed and didn't have.
   wasm-build:
     name: WebAssembly build (Emscripten)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Set up Emscripten
-        uses: mymindstorm/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
+        uses: mymindstorm/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
         with:
           version: latest
 
@@ -1414,7 +1414,7 @@ jobs:
           ls -l wasm-assets
 
       - name: Upload wasm artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nightwing-wasm
           path: wasm-assets/
@@ -1442,7 +1442,7 @@ jobs:
     # therefore blocks publishing (the native binaries included).
     needs: [build-and-test, wasm-build, avx2-build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     name: Publish rolling "latest" release
     permissions:
       contents: write
@@ -1474,37 +1474,37 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Download Linux binary
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: nightwing-binary-Linux
           path: linux-binary
 
       - name: Download macOS binary
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: nightwing-binary-macOS
           path: macos-binary
 
       - name: Download Windows binary
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: nightwing-binary-Windows
           path: windows-binary
 
       - name: Download Linux AVX2 binary
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: nightwing-binary-Linux-avx2
           path: linux-avx2-binary
 
       - name: Download Windows AVX2 binary
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: nightwing-binary-Windows-avx2
           path: windows-avx2-binary
 
       - name: Download wasm files
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: nightwing-wasm
           path: wasm-files
