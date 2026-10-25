@@ -4,15 +4,27 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
-### 2026-10-25 (3) — Linux CI runners pinned to `ubuntu-26.04`; artifact and emsdk actions moved to Node 24 versions
+### 2026-10-25 (4) — Multi-key correction history rejected
+
+**Context:** The Session 262 candidate (DECISIONS.md 2026-10-25 (2)) was measured by the fixed-node `uci-match` run.
+
+**Decision:** The candidate is rejected and removed. The rule of 2026-10-24 (4) requires both runs non-negative; the fixed-node run scored 1567 W / 739 D / 1694 L over 4000 games, about -11.0 Elo with an interval of about -20.8 to -1.3, and the clock run was not completed.
+
+**Rationale:** An interval that excludes zero on the negative side is a stronger signal than the plus or minus 10 Elo noise of earlier inconclusive runs. A plausible cause, not tested: averaging the three tables dilutes the pawn table's correction, so a node whose pawn key matched but whose piece keys did not received a third of the nudge the baseline gave, while the extra tables added noise. The per-node cost of two more hash walks may also have cost depth at 20000 nodes only through search quality, not time, so the cost is not the explanation at a fixed node count.
+
+**Alternatives considered:** keeping the hash functions for later use (rejected: unused code); retrying with summed or weighted tables, or with a single added key (not done; recorded in ROADMAP.md as untried).
+
+---
+
+### 2026-10-25 (3) — Linux CI runners pinned to `ubuntu-24.04`; artifact and emsdk actions moved to Node 24 versions
 
 **Context:** CI annotations reported that three pinned actions target Node 20 (deprecated, forced onto Node 24) and that the `ubuntu-latest` label migrates to Ubuntu 26.
 
-**Decision:** the three actions were bumped to the newest releases whose `action.yml` declares `node24`, pinned by commit SHA as before. Every Linux job now names `ubuntu-26.04`, the image the floating label is migrating to.
+**Decision:** the three actions were bumped to the newest releases whose `action.yml` declares `node24`, pinned by commit SHA as before. Every Linux job now names `ubuntu-24.04`.
 
-**Rationale:** the Node bump removes a deprecation that would otherwise become a failure. The floating label would change the compiler, sanitizer runtimes and Emscripten host silently on the migration date, mixing a toolchain change into whatever commit happened to be running; an explicit label makes the move to 26 a visible change in this commit, with a fallback to `ubuntu-24.04` per job if one fails for an environment reason.
+**Rationale:** the Node bump removes a deprecation that would otherwise become a failure. The floating label would change the compiler, sanitizer runtimes and Emscripten host silently on the migration date, mixing a toolchain change into whatever commit happened to be running; pinning keeps results comparable with earlier runs, and a move to 26 can be a deliberate change with its own CI result.
 
-**Alternatives considered:** leaving `ubuntu-latest` (rejected: unannounced toolchain change); staying on `ubuntu-24.04` (first choice, reversed on request); a non-gating 26.04 leg beside 24.04 gating jobs (offered, not chosen). Risk accepted: the sanitizer, wasm and compiler behaviour on 26.04 was not tested before the push.
+**Alternatives considered:** leaving `ubuntu-latest` (rejected: unannounced toolchain change); moving to `ubuntu-26.04` now (rejected: untested with the sanitizer and wasm jobs); a non-gating 26 leg (deferred, listed in ROADMAP.md).
 
 ---
 

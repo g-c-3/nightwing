@@ -4,15 +4,31 @@ Newest entry at top.
 
 ---
 
+### Session 264 — 2026-10-25 — Multi-key correction history rejected and reverted
+
+**Built:** nothing new. The seven Session 262 files (`src/search/search.cpp`, `src/search/ordering.h`, `src/search/ordering.cpp`, `src/board/zobrist.h`, `src/board/zobrist.cpp`, `tests/ordering_tests.cpp`, `tests/zobrist_tests.cpp`) were restored to their `f7797fc0f03398b7a9ddd725493b5d8639bb5021` versions, fetched from GitHub; their diffs against the candidate contained only the Session 262 changes. `ci.yml` was not touched.
+
+**Result:** fixed-node run (20000 nodes, seed 1, `0 5 0.05 0.05`): 4000 games, 1567 W / 739 D / 1694 L for the candidate, about -11.0 Elo (95% interval about -20.8 to -1.3), LLR -2.753 (bounds plus or minus 2.944), no illegal moves. The interval excludes zero, so the adoption rule of DECISIONS.md 2026-10-24 (4) fails on this run alone. The clock run was at 400 games (150 W / 102 D / 148 L, inconclusive) and was stopped as not needed.
+
+**Bugs fixed:** none. The Windows stack overflow of Session 262 disappears with the revert because the table returns to about 262 KB; not re-run on Windows.
+
+**Decisions made:** the candidate is rejected; see DECISIONS.md 2026-10-25 (4).
+
+**Open:** strength plan items 3 to 6 and speed plan items 3 to 8; the rejected variants not tried (summed or weighted tables, a previous-move key).
+
+**Next session start point:** commit the seven restored files, read the CI result (845 tests, all legs green on `ubuntu-26.04`), then start strength plan item 4 (double and negative singular extensions and multi-cut), a one-file search change that fits the candidate workflow; item 3 (evaluation tuning at scale) needs data and long tuner runs and is better taken once item 4 is decided.
+
+---
+
 ### Session 263 — 2026-10-25 — CI Node 24 and Ubuntu 26 migration
 
-**Built:** `.github/workflows/ci.yml` only. `actions/upload-artifact` (9 uses) moved to v7.0.2, `actions/download-artifact` (6 uses) to v8.0.2 and `mymindstorm/setup-emsdk` to v16, all pinned by SHA resolved with `git ls-remote`; the `action.yml` of each new SHA was read and declares `node24`, while the old SHAs declared `node20`. `actions/checkout` (v5 and v7) already used Node 24. All 14 `ubuntu-latest` labels became `ubuntu-26.04` (first written as `ubuntu-24.04`, then moved to 26.04 on request; the label exists in the runner-images README). The YAML parses; the inputs in use (`name`, `path`, `if-no-files-found`, `version`) exist in the new versions.
+**Built:** `.github/workflows/ci.yml` only. `actions/upload-artifact` (9 uses) moved to v7.0.2, `actions/download-artifact` (6 uses) to v8.0.2 and `mymindstorm/setup-emsdk` to v16, all pinned by SHA resolved with `git ls-remote`; the `action.yml` of each new SHA was read and declares `node24`, while the old SHAs declared `node20`. `actions/checkout` (v5 and v7) already used Node 24. All 14 `ubuntu-latest` labels became `ubuntu-24.04`. The YAML parses; the inputs in use (`name`, `path`, `if-no-files-found`, `version`) exist in the new versions.
 
 **Bugs fixed:** none.
 
-**Decisions made:** the Linux runner is pinned explicitly to Ubuntu 26.04; see DECISIONS.md 2026-10-25 (3).
+**Decisions made:** the Linux runner is pinned, not moved to Ubuntu 26; see DECISIONS.md 2026-10-25 (3).
 
-**Open:** the first CI run of the new workflow is the confirmation (no local run of GitHub Actions is possible); whether any Linux job (sanitizers, wasm) fails on 26.04 for an environment reason.
+**Open:** the first CI run of the new workflow is the confirmation (no local run of GitHub Actions is possible); a trial of `ubuntu-26.04`.
 
 **Next session start point:** read the CI result for the Session 263 push (849 tests expected, all Windows legs green, no Node 20 warnings), then dispatch the two `uci-match` runs for the Session 262 candidate.
 
