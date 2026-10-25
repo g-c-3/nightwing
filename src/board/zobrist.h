@@ -78,24 +78,5 @@ void init_zobrist_keys();
 /// Precondition: init_zobrist_keys() has been called.
 [[nodiscard]] std::uint64_t compute_pawn_hash(const Position& pos) noexcept;
 
-/// Computes a hash of KNIGHT AND BISHOP PLACEMENT ONLY (both colors, no
-/// pawns, rooks, queens, kings, side to move, castling or en passant),
-/// the "minor-piece key" of search/ordering.h's CorrectionHistoryTable.
-/// Same on-demand O(piece count) approach and identical piece_square_key()
-/// terms as compute_pawn_hash() above, for the same reason (Position has
-/// no spare cache-line budget for incrementally maintained extra keys).
-/// Idea credited to Stockfish's correction history, which keeps separate
-/// minor-piece and non-pawn keys beside the pawn key; this is an
-/// independent, simpler computation. Precondition: init_zobrist_keys()
-/// has been called.
-[[nodiscard]] std::uint64_t compute_minor_hash(const Position& pos) noexcept;
-
-/// Computes a hash of NON-PAWN PIECE PLACEMENT ONLY (knights, bishops,
-/// rooks, queens and kings of both colors; no pawns, side to move,
-/// castling or en passant), the "non-pawn key" of search/ordering.h's
-/// CorrectionHistoryTable. Same conventions as compute_minor_hash()
-/// above. Precondition: init_zobrist_keys() has been called.
-[[nodiscard]] std::uint64_t compute_non_pawn_hash(const Position& pos) noexcept;
-
 } // namespace nightwing::board
 
