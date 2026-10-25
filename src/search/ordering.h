@@ -378,6 +378,30 @@ public:
     /// evaluation.
     [[nodiscard]] int correction(board::Color us, std::uint64_t pawn_key) const noexcept;
 
+    /// The three placement keys search.cpp computes once per node
+    /// (board::compute_pawn_hash/compute_minor_hash/compute_non_pawn_hash).
+    struct Keys {
+        std::uint64_t pawn = 0;     ///< pawn placement only
+        std::uint64_t minor = 0;    ///< knight and bishop placement only
+        std::uint64_t non_pawn = 0; ///< knight, bishop, rook, queen, king placement only
+    };
+
+    /// Multi-key update (strength plan item 2, Session 262): applies the
+    /// SAME clamped moving-average step as update(us, pawn_key, error) to
+    /// each of the three tables (pawn, minor-piece, non-pawn) at its own
+    /// key's slot. Idea credited to Stockfish's correction history, which
+    /// keeps several keyed tables and combines them; the update rule here
+    /// is this file's own, unchanged from the single-table version.
+    void update(board::Color us, const Keys& keys, int error) noexcept;
+
+    /// Multi-key correction: the integer average (truncating toward zero)
+    /// of the three tables' stored values for these keys. Each stored
+    /// value is within +/-kCorrectionMax, so the average is too, and a
+    /// node whose keys were never recorded in any table still gets 0.
+    /// Averaging (not summing) keeps the overall magnitude comparable to
+    /// the single-table version; the weighting is untuned.
+    [[nodiscard]] int correction(board::Color us, const Keys& keys) const noexcept;
+
 private:
     /// Power-of-2 so `& (kCorrectionTableSize - 1)` is a valid, cheap
     /// mask -- see search/tt.h's identical sizing convention. Fixed at
@@ -400,7 +424,16 @@ private:
     /// other not-yet-SPRT-validated constant in this file.
     static constexpr int kCorrectionWeight = 32;
 
-    std::array<std::array<int, kCorrectionTableSize>, board::kNumColors> table_{};
+    /// One keyed table per color; the pawn table is the original one, the
+    /// minor and non-pawn tables are the Session 262 additions.
+    using Table = std::array<std::array<int, kCorrectionTableSize>, board::kNumColors>;
+
+    /// Moving-average step shared by every table (the original rule).
+    static void update_slot(int& slot, int error) noexcept;
+
+    Table table_{};
+    Table minor_table_{};
+    Table non_pawn_table_{};
 };
 
 /// MVV-LVA (Most Valuable Victim, Least Valuable Attacker): favors

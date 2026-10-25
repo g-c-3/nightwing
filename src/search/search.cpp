@@ -1965,7 +1965,12 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     // one shared value is correct everywhere it is used. Placed AFTER the
     // draw / mate-distance / TT-cutoff early returns (Session 246) since
     // none of them consult it, so those nodes skip the pawn-bitboard walk.
-    const std::uint64_t pawn_key = board::compute_pawn_hash(pos);
+    // Correction-history keys (strength plan item 2, Session 262): pawn,
+    // minor-piece and non-pawn placement, each computed once per node here
+    // for the same reason pawn_key alone was (no move has been made yet).
+    const CorrectionHistoryTable::Keys corr_keys{board::compute_pawn_hash(pos),
+                                                 board::compute_minor_hash(pos),
+                                                 board::compute_non_pawn_hash(pos)};
 
     // IIR (see this function's header comment): no TT entry at all for
     // this position, and deep enough that a shallower search here still
@@ -2005,7 +2010,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                           ew_psqt, ew_mobility, ew_space, ew_threats, ew_king_safety, ew_pawns,
                           mat_psqt);
         node_static_eval = (us == Color::White ? white_relative : -white_relative) +
-                            correction_history.correction(us, pawn_key);
+                            correction_history.correction(us, corr_keys);
         if (ply < kMaxPly) {
             static_eval_history[static_cast<std::size_t>(ply)] = node_static_eval;
         }
@@ -2043,7 +2048,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // the redundant eval::evaluate() cost), so it needs its own
         // correction term rather than inheriting node_static_eval's.
         const int rfp_static_eval = (us == Color::White ? white_relative : -white_relative) +
-                                     correction_history.correction(us, pawn_key);
+                                     correction_history.correction(us, corr_keys);
         if (rfp_static_eval - kReverseFutilityMargins[static_cast<std::size_t>(depth)] >= beta) {
             return rfp_static_eval;
         }
@@ -2178,7 +2183,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // "Correction history" item) -- same independent-computation
         // rationale as RFP's own site above.
         const int razor_static_eval = (us == Color::White ? white_relative : -white_relative) +
-                                       correction_history.correction(us, pawn_key);
+                                       correction_history.correction(us, corr_keys);
         if (razor_static_eval + kRazorMargins[static_cast<std::size_t>(depth)] <= alpha) {
             const int razor_score = quiescence(pos, alpha, beta, ply, nodes,
                                                 /*include_checks=*/true, &pawn_tt, &eval_cache,
@@ -2364,7 +2369,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // "Correction history" item) -- same independent-computation
         // rationale as RFP's/razoring's own sites above.
         static_eval = (us == Color::White ? white_relative : -white_relative) +
-                      correction_history.correction(us, pawn_key);
+                      correction_history.correction(us, corr_keys);
     }
     // "Improving" adjustment (ROADMAP.md's "improving flag" item;
     // kImprovingFutilityMarginDelta's own doc comment above): a smaller
@@ -3047,7 +3052,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     if ((limits == nullptr || !limits->stopped) && bound_type == Bound::Exact &&
         node_static_eval != kNoStaticEval && best < kMateThreshold && best > -kMateThreshold &&
         exclude_move.is_null()) {
-        correction_history.update(us, pawn_key, best - node_static_eval);
+        correction_history.update(us, corr_keys, best - node_static_eval);
     }
 
     return best;
