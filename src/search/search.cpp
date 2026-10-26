@@ -262,6 +262,15 @@ const int& kAspirationInitialDelta = g_search_tunables.aspiration_initial_delta;
 constexpr int kAspirationInitialDelta = 25;
 #endif
 
+/// Aspiration delta cap (CPW "Aspiration Windows": after repeated
+/// fail-highs/fail-lows the window is opened fully rather than grown
+/// without limit). Once the doubling delta exceeds this many centipawns,
+/// the failing side of the window jumps straight to +-infinity. Without
+/// the cap a score that jumps to a mate value needs about ten doublings,
+/// each a wasted root re-search, before beta reaches the mate score.
+/// Untuned starting value (Session 266).
+constexpr int kAspirationMaxDelta = 400;
+
 /// Best-move-stability threshold for the soft time-management early
 /// stop (ROADMAP.md Phase 8, "Time management" -- search.h's own
 /// `soft_time_limit_ms` parameter doc comment on
@@ -4675,14 +4684,14 @@ SearchResult search_iterative_deepening(Position& pos, int max_depth, int time_l
                     // Widen downward and retry.
                     delta *= 2;
                     window_alpha = result.score - delta;
-                    if (window_alpha < -kInfinity) {
+                    if (delta > kAspirationMaxDelta || window_alpha < -kInfinity) {
                         window_alpha = -kInfinity;
                     }
                 } else if (next.score >= window_beta && window_beta < kInfinity) {
                     // Fail high: symmetric case, widen upward and retry.
                     delta *= 2;
                     window_beta = result.score + delta;
-                    if (window_beta > kInfinity) {
+                    if (delta > kAspirationMaxDelta || window_beta > kInfinity) {
                         window_beta = kInfinity;
                     }
                 } else {
