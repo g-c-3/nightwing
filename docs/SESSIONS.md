@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 266 — 2026-10-26 — TT replacement review closed; aspiration delta cap (candidate)
+
+**Built:** (a) A move-preserving same-key store was added to `TranspositionTable::store()` with two tests, found to change no node counts, and discarded. The cause is that `negamax()` assigns `best_move` at every node (any score above the initial minus infinity), so fail-low nodes already store a real move; the idea comes from engines that store no move on fail-low. No file kept. (b) Strength plan item 5, aspiration delta cap, as a candidate in `src/search/search.cpp` only: new constant `kAspirationMaxDelta` (400, untuned) and, in the iterative-deepening retry loop, the failing side of the window jumps to +-infinity once the doubling delta exceeds it (previously the delta doubled without limit, so a jump to a mate score needed about ten wasted re-searches). Concept per CPW "Aspiration Windows".
+
+**Verified:** Release build and `ctest` in the sandbox: 845 of 845 pass; `bench 6` 62276 and `bench 10` 3132728 unchanged (the bench path uses a full window, so the retry loop is not exercised). No test covers the new branch; no strength measurement has been run.
+
+**Bugs fixed:** none.
+
+**Decisions made:** see DECISIONS.md 2026-10-26 (3) and (4).
+
+**Open:** the two `uci-match` runs for the cap; a regression test for the retry loop; victim choice among older generations and exact-bound preference in the TT remain untested; adaptive time use on unstable searches not started.
+
+**Next session start point:** commit `src/search/search.cpp` and the docs, then run fixed-node (20000 nodes, seed 1, `0 5 0.05 0.05`) and clock (`10000 100`, seed 10001) `uci-match` runs with baseline `cd37b5ca3db6747aa430f13b67606e3c72a3ee45` (or the commit holding the Session 265 revert) and candidate `main`; adopt only if both runs are non-negative and at least one passes, otherwise revert `search.cpp`.
+
+---
+
 ### Session 265 — 2026-10-26 — Double/negative singular extensions and multi-cut rejected and reverted
 
 **Built:** strength plan item 4 as a candidate, `src/search/search.cpp` only: a 2-ply double extension when the verification score is below `singular_beta - 16` (below ply 48), multi-cut returning `singular_beta` when non-singular with `singular_beta >= beta`, and a -1 extension when non-singular with the TT score at or above `beta` (applied only when no check or passed-pawn extension applies). Concepts follow CPW "Singular Extensions" and the Stockfish-classic scheme. Local verification: 845 of 845 `ctest` pass (Release); `bench 6` unchanged at 62276; `bench 10` 3132728 -> 3103403.

@@ -4,6 +4,35 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-26 (4) — Aspiration delta cap added as a candidate
+
+**Context:** The aspiration retry loop in `search_iterative_deepening()` doubled `delta` without limit on every fail-high or fail-low. A score jump into mate territory therefore cost roughly ten root re-searches before the window reached the mate score.
+
+**Decision:** A cap `kAspirationMaxDelta` of 400 centipawns was added. When the doubled delta exceeds it, the failing side of the window is set to +-infinity, which is an exact result by construction. The value is untuned. It is decided by the standard two `uci-match` runs and the adoption rule of 2026-10-24 (4).
+
+**Rationale:** Opening the window fully after several failures is the standard bound on re-search cost (CPW "Aspiration Windows"). The change cannot alter the final score of an iteration, only the number of failed attempts before it.
+
+**Not established:** strength. Typical positions rarely reach a fourth retry, so the effect may be below what 4000 games resolve.
+
+**Alternatives considered:**
+- Slower delta growth (about x1.33 per retry, as in Stockfish-classic): untested, would change the common case rather than only the tail.
+- Widening to the full window only when the failing score is a mate score: narrower, would not help non-mate swings.
+
+---
+
+### 2026-10-26 (3) — Transposition-table replacement review closed without change
+
+**Context:** Strength plan item 5 called for a review of the TT replacement policy.
+
+**Decision:** No change. A same-key store that keeps the stored move when the new store has none was built and measured as a no-op: the search stores a best move at every node, fail-lows included, so the null-move case does not occur. Node counts were identical on `bench 6` and `bench 10`, and the change was discarded.
+
+**Rationale:** The remaining differences from Stockfish-classic (victim choice among several older generations, exact-bound preference in the same-key depth guard) are small, and the existing test that age outranks depth records the age-first rule as intended. With 4000 games resolving about +-10 Elo, a change of that size is unlikely to pass the SPRT.
+
+**Alternatives considered:**
+- Evicting the oldest generation first, then the shallowest: untested, possible later.
+
+---
+
 ### 2026-10-26 (2) — Double, negative and multi-cut singular handling rejected
 
 **Context:** The candidate of 2026-10-26 (1) was measured by `uci-match` against baseline `cd37b5ca3db6747aa430f13b67606e3c72a3ee45`.
