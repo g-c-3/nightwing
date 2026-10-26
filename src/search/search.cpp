@@ -786,22 +786,6 @@ constexpr int kSingularMarginPerPly = 2;
 #endif
 constexpr int kSingularDepthDivisor = 2;
 constexpr int kSingularExtensionPly = 1;
-/// Double, negative and multi-cut follow-ups to the singular verification
-/// search (Session 265; CPW "Singular Extensions" and the Stockfish-classic
-/// scheme it describes -- double extension when the verification score is
-/// far below singular_beta, negative extension when the TT score already
-/// fails high, multi-cut when even the alternatives beat beta). Untuned
-/// starting values, decided by uci-match like every other change here.
-/// `kSingularDoubleMargin` (16): verification score below
-/// `singular_beta - 16` gives two plies instead of one.
-/// `kSingularDoubleMaxPly` (48): double extensions are only granted below
-/// this ply, so a chain of them cannot run away from the root depth.
-/// `kSingularNegativeExtension` (-1): applied to the TT move when the
-/// verification search found alternatives (not singular) and the TT score
-/// is already >= beta.
-constexpr int kSingularDoubleMargin = 16;
-constexpr int kSingularDoubleMaxPly = 48;
-constexpr int kSingularNegativeExtension = -1;
 
 /// Recapture handling (ROADMAP.md's own item, Priority Fixes
 /// (2026-09-08) section; CPW "Recapture Extensions" describes the
@@ -2577,27 +2561,6 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
                 // No alternative move reached even singular_beta -- the
                 // TT move is judged the only genuinely good option here.
                 singular_extension = kSingularExtensionPly;
-                // Double extension: the alternatives fall well short, not
-                // just barely short. Ply-capped (see kSingularDoubleMaxPly).
-                if (singular_score < singular_beta - kSingularDoubleMargin &&
-                    ply < kSingularDoubleMaxPly) {
-                    singular_extension = 2 * kSingularExtensionPly;
-                }
-            } else if (limits == nullptr || !limits->stopped) {
-                // The verification search found at least one alternative
-                // reaching singular_beta, so the TT move is not singular.
-                if (singular_beta >= beta) {
-                    // Multi-cut: an alternative to the TT move already
-                    // reaches beta (singular_beta >= beta and the
-                    // fail-soft verification score >= singular_beta), so
-                    // at least two moves fail high -- cut the node.
-                    return singular_beta;
-                }
-                if (probe.score >= beta) {
-                    // Negative extension: the TT score already fails high
-                    // but the move is not singular -- search it shallower.
-                    singular_extension = kSingularNegativeExtension;
-                }
             }
         }
 
@@ -2712,10 +2675,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         // these 3 (the recapture-handling doc comment, above, has
         // the full reasoning) -- it's applied instead, below, as an
         // exemption from SEE-based capture pruning.
-        // A negative singular extension only applies when nothing else
-        // extends this move; a check or passed-pawn extension wins.
-        const int positive_extension = std::max({check_extension, singular_extension, passed_pawn_extension});
-        const int extension = positive_extension > 0 ? positive_extension : singular_extension;
+        const int extension = std::max({check_extension, singular_extension, passed_pawn_extension});
 
         int score;
         if (i == 0) {
