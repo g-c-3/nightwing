@@ -4,7 +4,23 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
-### 2026-10-26 — Double, negative and multi-cut singular handling added as one candidate
+### 2026-10-26 (2) — Double, negative and multi-cut singular handling rejected
+
+**Context:** The candidate of 2026-10-26 (1) was measured by `uci-match` against baseline `cd37b5ca3db6747aa430f13b67606e3c72a3ee45`.
+
+**Decision:** The candidate is rejected and removed; `src/search/search.cpp` is restored to the baseline version. The rule of 2026-10-24 (4) requires both runs non-negative with at least one passing. The fixed-node run scored 1662 W / 675 D / 1663 L over 4000 games (about -0.1 Elo, LLR -0.516, inconclusive) and the clock run scored 199 W / 154 D / 223 L over 576 games (about -14.5 Elo, LLR -0.554, inconclusive; stopped by the 300-minute cap).
+
+**Rationale:** No evidence of a gain at either time control, and the added code carries three extra branches and three constants. The fixed-node result excludes a large effect in either direction only to roughly +/-9 Elo; the clock sample is too small to conclude.
+
+**Not established:** whether any of the three parts helps or hurts alone, and whether other margins would change the result.
+
+**Alternatives considered:**
+- Rerunning the clock match with a longer limit: not chosen; the fixed-node result was already flat.
+- Splitting into three candidates: possible later retry, one part at a time, fixed-node first.
+
+---
+
+### 2026-10-26 (1) — Double, negative and multi-cut singular handling added as one candidate
 
 **Context:** Strength plan item 4 listed double and negative singular extensions and multi-cut as absent. The existing singular block only granted a single-ply extension.
 

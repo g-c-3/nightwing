@@ -4,19 +4,21 @@ Newest entry at top.
 
 ---
 
-### Session 265 — 2026-10-26 — Double/negative singular extensions and multi-cut (candidate)
+### Session 265 — 2026-10-26 — Double/negative singular extensions and multi-cut rejected and reverted
 
-**Built:** strength plan item 4 as a candidate commit, `src/search/search.cpp` only. In the singular-extension block of `negamax()`: a verification score below `singular_beta - kSingularDoubleMargin` (16) at ply below `kSingularDoubleMaxPly` (48) gives a 2-ply extension; a non-singular verification with `singular_beta >= beta` returns `singular_beta` (multi-cut); a non-singular verification with the TT score at or above `beta` gives a -1 extension. The extension combiner takes the positive maximum of the check, singular and passed-pawn extensions and falls back to the (possibly negative) singular value only when that maximum is zero. Three constants and doc comments added beside the existing singular constants. Concepts follow CPW "Singular Extensions" and the Stockfish-classic scheme.
+**Built:** strength plan item 4 as a candidate, `src/search/search.cpp` only: a 2-ply double extension when the verification score is below `singular_beta - 16` (below ply 48), multi-cut returning `singular_beta` when non-singular with `singular_beta >= beta`, and a -1 extension when non-singular with the TT score at or above `beta` (applied only when no check or passed-pawn extension applies). Concepts follow CPW "Singular Extensions" and the Stockfish-classic scheme. Local verification: 845 of 845 `ctest` pass (Release); `bench 6` unchanged at 62276; `bench 10` 3132728 -> 3103403.
 
-**Verified:** Release build and `ctest` in the sandbox: 845 of 845 pass. `bench 6` stays 62276 (depth 6 is below `kSingularMinDepth`); `bench 10` moves 3132728 -> 3103403. No test was added; no strength measurement has been run.
+**Measured:** baseline `cd37b5ca3db6747aa430f13b67606e3c72a3ee45`, candidate `main`. Fixed-node `go nodes 20000`, 4000 games: 1662 W / 675 D / 1663 L, about -0.1 Elo, LLR -0.516, inconclusive. Clock `10000 100`, seed 10001: stopped by the 300-minute cap after 576 games, 199 W / 154 D / 223 L, about -14.5 Elo, LLR -0.554, inconclusive. No illegal moves or time forfeits in either run.
+
+**Outcome:** the adoption rule of 2026-10-24 (4) was not met. The candidate was rejected and `src/search/search.cpp` was restored to the baseline commit's version.
 
 **Bugs fixed:** none.
 
-**Decisions made:** see DECISIONS.md 2026-10-26.
+**Decisions made:** see DECISIONS.md 2026-10-26 (1) and (2).
 
-**Open:** the two `uci-match` runs for this candidate; margin and ply-cap tuning; a dedicated regression test for the three new branches; the Session 264 restored files and CI result were not re-checked this session.
+**Open:** the three parts are untested separately; margins were untuned. Remaining strength-plan items continue from item 5 of the list in ROADMAP.md. The Session 264 restored files and their CI result were not re-checked.
 
-**Next session start point:** commit `src/search/search.cpp`, then dispatch the fixed-node (20000 nodes, seed 1, `0 5 0.05 0.05`) and clock (`10000 100`) `uci-match` runs with the previous `search.cpp` as baseline; adopt only if both are non-negative and at least one passes, otherwise revert `search.cpp` and consider testing the three parts separately.
+**Next session start point:** commit the restored `src/search/search.cpp` and the four docs files, confirm the CI run is green, then begin the next incomplete item of the strength plan in ROADMAP.md (item 5), as a single candidate with a fixed-node and a clock `uci-match` run.
 
 ---
 
