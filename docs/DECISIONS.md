@@ -4,6 +4,34 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-26 (6) — Strength candidates are developed on branches
+
+**Context:** The rejections of Sessions 262, 264, 265 and 266 each required restoring `search.cpp` on `main` with revert files, because candidates were committed straight to `main`.
+
+**Decision:** Every strength candidate (any search or eval change decided by a `uci-match` run) is committed to its own branch `candidate/<short-name>`. Infrastructure, bug-fix and docs-only changes still go to `main`. The baseline is given as a full 40-character SHA; the candidate commit's full SHA is used as `ucimatch_candidate_ref` and recorded in ROADMAP.md, SESSIONS.md and DECISIONS.md. No commits are added to a candidate branch once a match has started. An adopted candidate is merged into `main` by pull request, with its docs entries. A rejected candidate is not merged; its branch is deleted and a docs-only commit to `main` records the result.
+
+**Rationale:** The CI workflow runs on every branch and publishes releases only from `main`, and `ucimatch_baseline_ref` and `ucimatch_candidate_ref` accept branches and SHAs. `main` therefore always holds adopted code, and a rejection needs no revert commit.
+
+**Alternatives considered:**
+- Continuing to commit to `main` and reverting on rejection: rejected; it adds a revert round to each rejection and leaves `main` temporarily holding unproven code.
+
+---
+
+### 2026-10-26 (5) — Aspiration delta cap rejected
+
+**Context:** The candidate of 2026-10-26 (4) was measured by `uci-match` against baseline `cd37b5ca3db6747aa430f13b67606e3c72a3ee45`.
+
+**Decision:** The candidate is rejected and removed; `src/search/search.cpp` is restored to the baseline version. The rule of 2026-10-24 (4) requires both runs non-negative with at least one passing. The fixed-node run scored 1594 W / 713 D / 1693 L over 4000 games (about -8.6 Elo, LLR -2.239, inconclusive) and the clock run scored 219 W / 156 D / 202 L over 577 games (about +10.2 Elo, LLR 0.274, inconclusive; stopped by the 300-minute cap).
+
+**Rationale:** The fixed-node estimate is negative, so the rule is not met. Both intervals include zero, so the data neither shows a loss nor a gain; the cap only affects searches that fail several consecutive aspiration windows, a case too rare to resolve in 4000 games.
+
+**Not established:** whether a different cap value, or a cap applied only to mate scores, would help.
+
+**Alternatives considered:**
+- Rerunning the clock match at a shorter time control to reach more games: not chosen, since the fixed-node result already fails the rule.
+
+---
+
 ### 2026-10-26 (4) — Aspiration delta cap added as a candidate
 
 **Context:** The aspiration retry loop in `search_iterative_deepening()` doubled `delta` without limit on every fail-high or fail-low. A score jump into mate territory therefore cost roughly ten root re-searches before the window reached the mate score.

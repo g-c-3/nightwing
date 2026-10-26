@@ -4,19 +4,21 @@ Newest entry at top.
 
 ---
 
-### Session 266 — 2026-10-26 — TT replacement review closed; aspiration delta cap (candidate)
+### Session 266 — 2026-10-26 — TT replacement review closed; aspiration delta cap rejected and reverted
 
-**Built:** (a) A move-preserving same-key store was added to `TranspositionTable::store()` with two tests, found to change no node counts, and discarded. The cause is that `negamax()` assigns `best_move` at every node (any score above the initial minus infinity), so fail-low nodes already store a real move; the idea comes from engines that store no move on fail-low. No file kept. (b) Strength plan item 5, aspiration delta cap, as a candidate in `src/search/search.cpp` only: new constant `kAspirationMaxDelta` (400, untuned) and, in the iterative-deepening retry loop, the failing side of the window jumps to +-infinity once the doubling delta exceeds it (previously the delta doubled without limit, so a jump to a mate score needed about ten wasted re-searches). Concept per CPW "Aspiration Windows".
+**Built:** (a) A move-preserving same-key store was added to `TranspositionTable::store()` with two tests, found to change no node counts, and discarded. The cause is that `negamax()` assigns `best_move` at every node (any score above the initial minus infinity), so fail-low nodes already store a real move; the idea comes from engines that store no move on fail-low. No file kept. (b) Strength plan item 5, aspiration delta cap, as a candidate in `src/search/search.cpp` only: constant `kAspirationMaxDelta` (400, untuned) and, in the iterative-deepening retry loop, the failing side of the window jumps to +-infinity once the doubling delta exceeds it. Concept per CPW "Aspiration Windows". Local verification: 845 of 845 `ctest` pass; `bench 6` 62276 and `bench 10` 3132728 unchanged (the bench path is full-window, so the retry loop is not exercised).
 
-**Verified:** Release build and `ctest` in the sandbox: 845 of 845 pass; `bench 6` 62276 and `bench 10` 3132728 unchanged (the bench path uses a full window, so the retry loop is not exercised). No test covers the new branch; no strength measurement has been run.
+**Measured:** baseline `cd37b5ca3db6747aa430f13b67606e3c72a3ee45`, candidate `main`. Fixed-node `go nodes 20000`, seed 1, 4000 of 4000 games: 1594 W / 713 D / 1693 L, about -8.6 Elo (interval about -18.4 to +1.2), LLR -2.239 against bounds of about +-2.944, inconclusive. Clock `10000 100`, seed 10001: stopped by the 300-minute cap after 577 of 4000 games, 219 W / 156 D / 202 L, about +10.2 Elo (interval about -14.0 to +34.6), LLR 0.274, inconclusive. No illegal moves or time forfeits in either run.
+
+**Outcome:** the adoption rule of 2026-10-24 (4) was not met (the fixed-node run is negative and neither run passed). The candidate was rejected and `src/search/search.cpp` was restored to the baseline version.
 
 **Bugs fixed:** none.
 
-**Decisions made:** see DECISIONS.md 2026-10-26 (3) and (4).
+**Decisions made:** see DECISIONS.md 2026-10-26 (3), (4), (5) and (6). The candidate-branch workflow of (6) takes effect from the next candidate.
 
-**Open:** the two `uci-match` runs for the cap; a regression test for the retry loop; victim choice among older generations and exact-bound preference in the TT remain untested; adaptive time use on unstable searches not started.
+**Open:** victim choice among older TT generations and exact-bound preference remain untested; adaptive time use on unstable searches (item 5c) not started. The clock run cannot finish 4000 games within the 300-minute cap at `10000 100`; a shorter time control was suggested but not decided.
 
-**Next session start point:** commit `src/search/search.cpp` and the docs, then run fixed-node (20000 nodes, seed 1, `0 5 0.05 0.05`) and clock (`10000 100`, seed 10001) `uci-match` runs with baseline `cd37b5ca3db6747aa430f13b67606e3c72a3ee45` (or the commit holding the Session 265 revert) and candidate `main`; adopt only if both runs are non-negative and at least one passes, otherwise revert `search.cpp`.
+**Next session start point:** commit the restored `src/search/search.cpp` and the four docs files to `main`, confirm the CI run is green, then start strength plan item 5(c), adaptive time use on unstable searches, as one candidate on branch `candidate/adaptive-time` with the baseline given as a full 40-character SHA.
 
 ---
 
