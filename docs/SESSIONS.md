@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 273 — 2026-10-27 — Thread-scaling measurement recorded
+
+**Built:** the `thread-scaling` CI pipeline of Session 272 was dispatched on `main` commit `33716cac260a0d12d52ae214a9acb860b1582256` and its log analysed. Runner: `ubuntu-26.04`, AMD EPYC 7763, 4 vCPUs (2 physical cores, 2 threads each). Four positions to `go depth 15`, hash 128 MB. Total time-to-depth: 1 thread 32.94 s; 2 threads 22.93 s (1.44x); 4 threads 19.00 s (1.73x). Per position at 1 / 2 / 4 threads: startpos 6.90 / 3.58 / 3.87 s, kiwipete 15.68 / 13.65 / 7.08 s, middlegame 5.31 / 3.14 / 4.92 s, rook endgame 5.04 / 2.56 / 3.13 s. The node and nodes-per-second columns fall at more than one thread (total nodes 33327863, 22499321, 11835133) because they come from the last per-iteration `info` line, which very likely excludes helper-thread nodes folded in only at the end of the search in `search.cpp`; only the time-to-depth figures are reliable. The script's summary header and a closing note were reworded to say this (`tests/scripts/thread_scaling.py`, no engine change).
+
+**Interpretation:** scaling is modest and uneven; kiwipete gains only 1.15x at 2 threads while the start position and the middlegame position are slower at 4 threads than at 2, consistent with 4 threads sharing 2 physical cores through SMT. A single run, no noise estimate, depth rather than strength as the metric, and 8 threads were not covered.
+
+**Bugs fixed:** none in the engine. The script's misleading throughput column was relabelled.
+
+**Decisions made:** none.
+
+**Open:** speed items 7 and 8; whether to work on Lazy SMP efficiency (not started; strength would have to be measured by games on a multi-core runner); whether the final `info`/`bestmove` output reports total nodes at several threads (the code sums helper nodes at the end, the printed value was not checked).
+
+**Next session start point:** after the CI run on `main` is green, start speed plan item 7: build the PGO pipeline's output and the plain Release build in the sandbox and compare `bench 10` user time over at least nine alternating runs.
+
+---
+
 ### Session 272 — 2026-10-26 — Speed plan item 4: LTO confirmed, thread-scaling CI pipeline added
 
 **Built:** (a) Release builds already enable link-time optimization (`NIGHTWING_ENABLE_LTO` ON, `-O3`), so all sandbox profiles and timings of Sessions 268 to 271 were LTO builds and no separate LTO re-profile was needed. (b) The sandbox has one CPU core (`nproc` = 1), so thread scaling cannot be measured there. A new script `tests/scripts/thread_scaling.py` and a new manually dispatched CI pipeline option `thread-scaling` (job `thread-scaling` in `.github/workflows/ci.yml`, `ubuntu-26.04`, 120-minute limit) were added: four fixed positions (start position, Kiwipete, a quiet middlegame, a rook endgame) are searched with `go depth 15` at 1, 2 and 4 threads and the job log shows per-position time, depth, nodes and nodes per second, plus time-to-depth speedup and nodes-per-second ratios against one thread (CPW "Parallel Search" convention). It reports and does not fail on numbers.
