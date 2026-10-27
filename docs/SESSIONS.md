@@ -4,6 +4,20 @@ Newest entry at top.
 
 ---
 
+### Session 275 — 2026-10-27 — Speed plan item 7 closed: PGO artifact kept
+
+**Built:** nothing in the engine. The `pgo` CI pipeline was dispatched on `main` commit `e33f294279959b04aca384bc843d1b1066f787f3` (GCC 15.2.0, `ubuntu-26.04`) and its log analysed. The new comparison step timed `bench 10` alternately on a plain Release build and the PGO build, nine runs each, user CPU time: plain min 2.26 s and median 2.28 s; PGO min 2.13 s and median 2.15 s; median ratio PGO/plain 0.942 (about 5.8% faster); both builds reported 3132728 nodes. The whole pipeline job ran in about three minutes. The sandbox result of Session 274 (CI-recipe PGO about 19% slower) came from GCC 13.3 and does not describe the released artifact.
+
+**Bugs fixed:** none.
+
+**Decisions made:** see DECISIONS.md 2026-10-27 (the PGO release artifact and its training recipe are kept unchanged).
+
+**Open:** the gain is from a single CI run and is modest against typical runner noise of about 3%; no callgrind comparison (valgrind unavailable); speed item 8 (lazy evaluation) remains.
+
+**Next session start point:** start speed plan item 8 (lazy evaluation) as a strength candidate on branch `candidate/lazy-eval`: first measure on `bench` how often the cheap part of `evaluate()` is far outside the alpha-beta window, add a margin cut-off for that case only, show that node counts or evaluation counts move, then give the baseline SHA and branch for the two `uci-match` runs.
+
+---
+
 ### Session 274 — 2026-10-27 — Speed plan item 7: PGO measured in the sandbox, CI comparison added
 
 **Built:** a PGO pipeline was reproduced in the sandbox with the CMake `NIGHTWING_PGO_PHASE` generate and use phases, and timed against the plain Release build (LTO on, same source) by user CPU time on `bench 10` over nine alternating runs; every build reported 3132728 nodes. Results: PGO trained with the CI recipe (`bench` plus two `go depth 8` searches) median 4.00 s against 3.36 s plain, about 19% slower; PGO trained on a richer workload (`bench 10`, `bench 8`, three deeper `go depth` searches) median 3.28 s against 3.36 s, about 2.4% faster, within noise and favoured by training on the measured workload. Limits: one CPU core, sandbox GCC 13.3 against CI's 15.2, no valgrind (so no callgrind comparison), single session of timings. Because those limits prevent a decision about the released artifact, `tests/scripts/ab_bench.py` (new) and two steps in the `pgo-build` job of `.github/workflows/ci.yml` were added: a plain Release build from the same commit into `build-plain`, then an alternating-run timing of plain against PGO `bench 10` printed in the job log (the step fails only if node counts differ).

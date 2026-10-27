@@ -4,6 +4,22 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-27 — PGO release artifact kept with its current training recipe
+
+**Context:** Speed plan item 7 asked whether the profile-guided build of the `pgo-build` CI job is worth keeping as a release artifact. A sandbox comparison (GCC 13.3) showed the artifact trained with the CI recipe about 19% slower than the plain Release build, which could not be transferred to the real compiler.
+
+**Decision:** The PGO artifact and its training recipe (`bench` plus two `go depth 8` searches) are kept unchanged. The CI comparison on GCC 15.2.0 (`bench 10`, nine alternating runs, user CPU time) gave a median ratio of 0.942 for PGO against plain, with identical node counts; the `pgo-build` job keeps the comparison steps so the figure is reproduced whenever the pipeline is dispatched.
+
+**Rationale:** About 5.8% faster at identical behaviour, measured on the compiler that builds the artifact. The sandbox figure used a different compiler major version and is not representative.
+
+**Not established:** the gain from a repeat run (one CI run), a callgrind-level breakdown, or whether a richer training workload would do better on GCC 15.2.
+
+**Alternatives considered:**
+- Dropping the artifact: not chosen, since it is measurably faster.
+- Retraining on a richer workload: deferred; a gain would need its own CI measurement and the current recipe already helps.
+
+---
+
 ### 2026-10-26 (8) — Score-drop time extension rejected
 
 **Context:** The candidate of 2026-10-26 (7), commit `8ebb21b3f2367c3607cd7b474dc64a40fd659b4b` on branch `candidate/adaptive-time`, was measured by `uci-match` against baseline `5e772588d1e9326ea2ab549b4e883f54bad709ab`.
