@@ -25,6 +25,7 @@ on:
           - sprt
           - uci-match
           - spsa
+          - thread-scaling
         default: tuning
       selfplay_games:
         description: "nightwing_selfplay: number of self-play games to generate training data from"
@@ -1601,3 +1602,28 @@ jobs:
             --target "${{ github.sha }}"
         env:
           GH_TOKEN: ${{ github.token }}
+
+  # Lazy SMP thread-scaling report (ROADMAP.md speed plan item 4, Session 272).
+  # The development sandbox has a single CPU core, so scaling at 2 and 4
+  # threads can only be measured on a multi-core runner. Dispatch with
+  # pipeline = thread-scaling; it searches four fixed positions to a fixed
+  # depth at 1, 2 and 4 threads (tests/scripts/thread_scaling.py) and prints
+  # time-to-depth speedups in the job log. A report, not a pass/fail test.
+  thread-scaling:
+    name: Thread scaling (time-to-depth at 1, 2 and 4 threads)
+    runs-on: ubuntu-26.04
+    if: github.event_name == 'workflow_dispatch' && inputs.pipeline == 'thread-scaling'
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Configure CMake (Release)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF
+      - name: Build engine
+        run: cmake --build build --config Release --parallel --target nightwing
+      - name: Report runner CPU
+        run: |
+          nproc
+          lscpu | head -20
+      - name: Measure thread scaling
+        run: python3 tests/scripts/thread_scaling.py build/src/nightwing --threads 1,2,4 --depth 15 --hash 128 --timeout 900
