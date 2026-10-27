@@ -131,12 +131,16 @@ def main():
     base_t = counts[0]
     base_time, base_nodes = totals[base_t]
     print("\nSummary (relative to %d thread%s):" % (base_t, "" if base_t == 1 else "s"))
-    print("  %-8s %12s %14s %14s" % ("threads", "time-to-depth", "speedup", "nodes/s ratio"))
+    print("  %-8s %12s %14s %14s" % ("threads", "time-to-depth", "speedup", "main-thr n/s"))
     for t in counts:
         tm, nd = totals[t]
         speed = base_time / tm if tm else 0
         nps_ratio = (nd / tm) / (base_nodes / base_time) if tm and base_time and base_nodes else 0
         print("  %-8d %11.2fs %13.2fx %13.2fx" % (t, tm, speed, nps_ratio))
+    print("\nNote: only the time-to-depth speedup is a reliable scaling figure. The node and")
+    print("nodes-per-second columns come from the engine's last per-iteration `info` line,")
+    print("which can exclude helper-thread nodes (they are folded in after the search),")
+    print("so they are not total throughput at more than one thread.")
     return 0
 
 
