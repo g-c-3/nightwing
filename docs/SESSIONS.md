@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 274 — 2026-10-27 — Speed plan item 7: PGO measured in the sandbox, CI comparison added
+
+**Built:** a PGO pipeline was reproduced in the sandbox with the CMake `NIGHTWING_PGO_PHASE` generate and use phases, and timed against the plain Release build (LTO on, same source) by user CPU time on `bench 10` over nine alternating runs; every build reported 3132728 nodes. Results: PGO trained with the CI recipe (`bench` plus two `go depth 8` searches) median 4.00 s against 3.36 s plain, about 19% slower; PGO trained on a richer workload (`bench 10`, `bench 8`, three deeper `go depth` searches) median 3.28 s against 3.36 s, about 2.4% faster, within noise and favoured by training on the measured workload. Limits: one CPU core, sandbox GCC 13.3 against CI's 15.2, no valgrind (so no callgrind comparison), single session of timings. Because those limits prevent a decision about the released artifact, `tests/scripts/ab_bench.py` (new) and two steps in the `pgo-build` job of `.github/workflows/ci.yml` were added: a plain Release build from the same commit into `build-plain`, then an alternating-run timing of plain against PGO `bench 10` printed in the job log (the step fails only if node counts differ).
+
+**Verified:** the workflow file parses as YAML (14 jobs, the new steps in order before the artifact upload); the script ran against sandbox builds (3 runs at depth 8, ratio 0.966, exit 0). Not verified: the CI job has not run; the engine source is unchanged, so `bench 6` (62276) and `bench 10` (3132728) are unaffected.
+
+**Bugs fixed:** none.
+
+**Decisions made:** none yet; keeping, retraining or dropping the PGO artifact is pending the CI ratio.
+
+**Open:** the CI measurement; if PGO proves harmful or neutral on the real compiler, either drop the PGO release artifact or change the training recipe (a richer, search-heavy workload that does not simply repeat the timed benchmark) and re-measure; speed item 8 (lazy evaluation) remains and is a search change decided by `uci-match` on its own branch.
+
+**Next session start point:** after the CI run on `main` is green, dispatch the `pgo` pipeline (Use workflow from `main`), upload the log, read the `median ratio B/A` line of the comparison step, and decide keep, retrain or drop for the PGO artifact; then start speed item 8 as a strength candidate on branch `candidate/lazy-eval`.
+
+---
+
 ### Session 273 — 2026-10-27 — Thread-scaling measurement recorded
 
 **Built:** the `thread-scaling` CI pipeline of Session 272 was dispatched on `main` commit `33716cac260a0d12d52ae214a9acb860b1582256` and its log analysed. Runner: `ubuntu-26.04`, AMD EPYC 7763, 4 vCPUs (2 physical cores, 2 threads each). Four positions to `go depth 15`, hash 128 MB. Total time-to-depth: 1 thread 32.94 s; 2 threads 22.93 s (1.44x); 4 threads 19.00 s (1.73x). Per position at 1 / 2 / 4 threads: startpos 6.90 / 3.58 / 3.87 s, kiwipete 15.68 / 13.65 / 7.08 s, middlegame 5.31 / 3.14 / 4.92 s, rook endgame 5.04 / 2.56 / 3.13 s. The node and nodes-per-second columns fall at more than one thread (total nodes 33327863, 22499321, 11835133) because they come from the last per-iteration `info` line, which very likely excludes helper-thread nodes folded in only at the end of the search in `search.cpp`; only the time-to-depth figures are reliable. The script's summary header and a closing note were reworded to say this (`tests/scripts/thread_scaling.py`, no engine change).
