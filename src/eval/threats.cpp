@@ -254,6 +254,20 @@ struct ScopedPiece {
 /// more means that piece is overloaded.
 void add_overloaded_penalty(const Position& pos, Color c, Bitboard enemy_attacks,
                              const ThreatsWeights* weights, Score& side_score) noexcept {
+    // Early-out (Session 268, speed plan item 3): a piece is overloaded only
+    // when it is the sole defender of TWO OR MORE own pieces that are
+    // themselves enemy-attacked, so fewer than two enemy-attacked own
+    // knights/bishops/rooks/queens means no penalty is possible. This skips
+    // collect_scoped_pieces()'s per-piece attack lookups (a third pass of
+    // magic-bitboard lookups per side per evaluation) in the common case,
+    // and returns exactly what the full computation below would: the result
+    // is unchanged by construction (bench node counts must not move).
+    const Bitboard scoped = pos.pieces(c, PieceType::Knight) | pos.pieces(c, PieceType::Bishop) |
+                            pos.pieces(c, PieceType::Rook) | pos.pieces(c, PieceType::Queen);
+    if (board::popcount(scoped & enemy_attacks) < 2) {
+        return;
+    }
+
     std::array<ScopedPiece, kMaxOverloadScopedPieces> pieces{};
     const int count = collect_scoped_pieces(pos, c, pieces);
 
