@@ -4,6 +4,40 @@ Newest entry at top.
 
 ---
 
+### Session 268 — 2026-10-26 — Overloaded-piece early-out (speed plan item 3a)
+
+**Built:** `add_overloaded_penalty()` in `src/eval/threats.cpp` now returns immediately when fewer than two own knights, bishops, rooks and queens are attacked by the enemy, because a piece can only be overloaded as the sole defender of two or more attacked pieces. This skips the per-piece attack lookups of `collect_scoped_pieces()` in the common case. The result is unchanged by construction. Pure speed change, committed to `main` (not a strength candidate).
+
+**Measured:** early-out taken on 3218436 of 4338514 calls (74.2%) over `bench 10`. `bench 6` 62276 and `bench 10` 3132728 unchanged; 845 of 845 `ctest` pass. User time on `bench 10`, nine alternating runs of baseline and change from separate builds: median 4.29 s to 3.93 s (about 8% lower), minimum 4.12 s to 3.76 s; sandbox timing is noisy. Not checked: instruction counts (valgrind unavailable), other platforms, sanitizers, CI-only jobs.
+
+**Bugs fixed:** none. A sandbox mistake was corrected during measurement: build directories copied between source trees still compiled the original tree's sources, which made a first comparison meaningless; both builds were redone with fresh configures.
+
+**Decisions made:** none.
+
+**Open:** no dedicated test for the new early-out (existing overloaded-piece tests cover both sides of the rule); remaining speed item 3 work: `threats_value` main loop and `attacks_by_side`, king safety, mobility, endgame signature computed once per evaluation.
+
+**Next session start point:** after the CI run on `main` is green, continue speed plan item 3 with the endgame signature: compute it once per evaluation and pass it to the four endgame terms and `fortress_value()`, keeping `bench 6` at 62276 and `bench 10` at 3132728 nodes.
+
+---
+
+### Session 267 — 2026-10-26 — Adaptive time use after a score drop rejected
+
+**Built:** strength plan item 5(c) as a candidate on branch `candidate/adaptive-time` (commit `8ebb21b3f2367c3607cd7b474dc64a40fd659b4b`): `should_start_next_iteration()` gained a defaulted `score_dropped` parameter and a score fall of at least 30 cp between the last two completed iterations (non-mate) allowed 3/2 of the soft budget, overriding the stable-move stop and the unstable limit, still bounded by the hard-cap prediction. Four unit tests were added to `tests/iteration_control_tests.cpp`. Concept per CPW "Time Management" and the falling-evaluation scaling in Stockfish-classic. Verified in the sandbox: 849 of 849 `ctest` pass; `bench 6` 62276 and `bench 10` 3132728 unchanged (no soft budget under `bench`).
+
+**Measured:** baseline `5e772588d1e9326ea2ab549b4e883f54bad709ab` (engine code identical to `cd37b5ca3db6747aa430f13b67606e3c72a3ee45`). Fixed-node `go nodes 20000`, seed 1, 4000 of 4000 games: 1643 W / 718 D / 1639 L; about +0.3 Elo (interval about -9.4 to +10.1), LLR -0.435. Clock `10000 100`, four runs each stopped by the 300-minute cap at 574 to 579 games: seed 10001 +46.1 Elo (LLR 1.482), seed 5001 +7.3 (0.150), seed 15001 +13.2 (0.338), seed 20001 -5.4 (-0.251). Pooled 2308 games, 912 W / 585 D / 811 L: about +15.2 Elo (interval about +3.0 to +27.5), pooled LLR 1.631 against bounds of about +-2.944. The three later runs alone: about +5.0 Elo. No illegal moves or time forfeits in any run.
+
+**Outcome:** no run passed the SPRT, so the adoption rule of 2026-10-24 (4) was not met. Three options were presented (more clock runs, one-off adoption, rejection) and rejection was chosen. The branch is not merged and is to be deleted; this docs-only commit to `main` records the result. No revert files are needed.
+
+**Bugs fixed:** none.
+
+**Decisions made:** see DECISIONS.md 2026-10-26 (7) and (8).
+
+**Open:** whether the change has a small real gain (the pooled estimate is likely inflated by the first run); a graded extension proportional to the drop was not tried; the clock `uci-match` run cannot finish 4000 games within the 300-minute cap at `10000 100`, so the SPRT upper bound is unreachable for effects near +5 Elo; a shorter time control was suggested but not decided.
+
+**Next session start point:** confirm the branch `candidate/adaptive-time` is deleted and the CI run on `main` is green, then start the next incomplete item in document order, speed plan item 3 (`threats_value` and its overloaded-piece penalty), as a pure-speed change to `main` that must keep `bench` node counts unchanged.
+
+---
+
 ### Session 266 — 2026-10-26 — TT replacement review closed; aspiration delta cap rejected and reverted
 
 **Built:** (a) A move-preserving same-key store was added to `TranspositionTable::store()` with two tests, found to change no node counts, and discarded. The cause is that `negamax()` assigns `best_move` at every node (any score above the initial minus infinity), so fail-low nodes already store a real move; the idea comes from engines that store no move on fail-low. No file kept. (b) Strength plan item 5, aspiration delta cap, as a candidate in `src/search/search.cpp` only: constant `kAspirationMaxDelta` (400, untuned) and, in the iterative-deepening retry loop, the failing side of the window jumps to +-infinity once the doubling delta exceeds it. Concept per CPW "Aspiration Windows". Local verification: 845 of 845 `ctest` pass; `bench 6` 62276 and `bench 10` 3132728 unchanged (the bench path is full-window, so the retry loop is not exercised).

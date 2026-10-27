@@ -4,6 +4,38 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-26 (8) — Score-drop time extension rejected
+
+**Context:** The candidate of 2026-10-26 (7), commit `8ebb21b3f2367c3607cd7b474dc64a40fd659b4b` on branch `candidate/adaptive-time`, was measured by `uci-match` against baseline `5e772588d1e9326ea2ab549b4e883f54bad709ab`.
+
+**Decision:** The candidate is rejected and not merged; its branch is deleted and this docs-only commit records the result. The rule of 2026-10-24 (4) requires at least one run to pass the SPRT. The fixed-node run (4000 games, 1643 W / 718 D / 1639 L, about +0.3 Elo, LLR -0.435) cannot exercise the change. The four clock runs at `10000 100` each stopped at the 300-minute cap (574 to 579 games) with LLR between -0.251 and 1.482. Pooled, 2308 games gave 912 W / 585 D / 811 L, about +15.2 Elo and LLR 1.631 against bounds of about +-2.944, short of acceptance. Three options (further clock runs, a one-off adoption, rejection) were presented and rejection was chosen.
+
+**Rationale:** The pooled figure is likely inflated, because the first run (+46.1 Elo) prompted the extra runs and the three later runs alone pooled to about +5.0 Elo with an interval spanning zero. At an effect near +5 Elo the SPRT bounds of 2026-10-24 (4) would need tens of thousands of clock games, which the 300-minute job cap does not allow.
+
+**Not established:** whether the change has a small real gain; whether other constants or a graded extension would clear the bar.
+
+**Alternatives considered:**
+- More clock runs with fresh seeds: not chosen; roughly 2000 more games only suffice if the true gain is near +15 Elo.
+- One-off adoption despite the rule: not chosen; the evidence did not justify an exception.
+
+---
+
+### 2026-10-26 (7) — Score-drop time extension added as a candidate
+
+**Context:** The soft/hard time rule of Session 224 spent at most the whole soft budget on an unstable search and 3/5 of it on a stable one, and ignored the score trend. A position whose score is falling is the one most likely to gain from more time.
+
+**Decision:** A score fall of at least 30 centipawns between the last two completed iterations (non-mate scores only) lets the search continue until 3/2 of the soft budget, overriding the stable-move early stop. The hard-cap overrun prediction still applies. The values are untuned. The change lives on branch `candidate/adaptive-time` and is decided by the clock `uci-match` run and the adoption rule of 2026-10-24 (4); the fixed-node run is a no-regression check only.
+
+**Rationale:** Spending extra time when the evaluation is dropping is the usual form of adaptive time management (CPW "Time Management"; falling-evaluation scaling in Stockfish-classic). The extension is bounded: 1.5x soft is below the 3x hard cap and cannot pass it.
+
+**Not established:** strength; the fixed-node run cannot show an effect because it has no soft budget.
+
+**Alternatives considered:**
+- Also extending when the best move changed in the last iteration: already covered by the unstable limit.
+- A graded extension proportional to the size of the drop: deferred until a flat extension is measured.
+
+---
+
 ### 2026-10-26 (6) — Strength candidates are developed on branches
 
 **Context:** The rejections of Sessions 262, 264, 265 and 266 each required restoring `search.cpp` on `main` with revert files, because candidates were committed straight to `main`.
