@@ -4,6 +4,64 @@ Newest entry at top.
 
 ---
 
+### Session 272 — 2026-10-26 — Speed plan item 4: LTO confirmed, thread-scaling CI pipeline added
+
+**Built:** (a) Release builds already enable link-time optimization (`NIGHTWING_ENABLE_LTO` ON, `-O3`), so all sandbox profiles and timings of Sessions 268 to 271 were LTO builds and no separate LTO re-profile was needed. (b) The sandbox has one CPU core (`nproc` = 1), so thread scaling cannot be measured there. A new script `tests/scripts/thread_scaling.py` and a new manually dispatched CI pipeline option `thread-scaling` (job `thread-scaling` in `.github/workflows/ci.yml`, `ubuntu-26.04`, 120-minute limit) were added: four fixed positions (start position, Kiwipete, a quiet middlegame, a rook endgame) are searched with `go depth 15` at 1, 2 and 4 threads and the job log shows per-position time, depth, nodes and nodes per second, plus time-to-depth speedup and nodes-per-second ratios against one thread (CPW "Parallel Search" convention). It reports and does not fail on numbers.
+
+**Verified:** the workflow file parses as YAML with 14 jobs, the new `if` condition and the new dispatch option present; the script ran against the local build at depth 9 with 1 and 2 threads and parsed all output. Not verified: the job has not run on GitHub; scaling numbers do not exist yet; engine source is unchanged, so `bench 6` (62276) and `bench 10` (3132728) are unaffected.
+
+**Bugs fixed:** none.
+
+**Decisions made:** none.
+
+**Open:** dispatch `thread-scaling` and record the result in ROADMAP.md item 4(b); 8 threads are not covered (standard runners have 4 vCPUs); whether the `info nodes` count includes helper threads is unverified (it read lower at 2 threads than at 1 in the one-core check); speed items 7 and 8 remain.
+
+**Next session start point:** after the CI run on `main` is green, dispatch the `thread-scaling` pipeline (Use workflow from `main`), upload the log, and record the speedups; then start speed plan item 7 (a PGO build measured against the plain Release build by timing `bench 10`, since valgrind is unavailable).
+
+---
+
+### Session 271 — 2026-10-26 — Speed plan item 5: table hit rates measured, no change
+
+**Built:** nothing kept. Throwaway counters in `PawnHashTable::probe()` and `EvalCache::probe()` measured, over `bench 10` (3132728 nodes, identical to the committed build): pawn hash 512 KB (32768 entries) 92.4% hits (1847138 of 2000000 probes); eval cache 2048 KB (131072 entries) 70.0% hits (1573967 of 2250000). A 4x larger eval cache (8192 KB) gave 70.2% (1580166 of 2250000), so its misses are first-visit positions and not capacity misses. Sizes and keys were left unchanged.
+
+**Bugs fixed:** none.
+
+**Decisions made:** none.
+
+**Open:** hit rates over self-play games were not measured, only `bench`; speed items 4, 7 and 8 remain (valgrind is unavailable in the sandbox, which limits item 7 to timing-based comparison).
+
+**Next session start point:** start speed plan item 4. The sandbox reports one CPU core (`nproc` = 1), so thread scaling at 2, 4 and 8 threads cannot be measured there; it needs a CI job on a multi-core runner or measurements on other hardware. The LTO re-profile part can be done in the sandbox. No engine change is expected unless a scaling problem appears.
+
+---
+
+### Session 270 — 2026-10-26 — Speed plan item 6 checked: staged generation already present
+
+**Built:** nothing kept. Approval was given to close the endgame-signature sub-part of speed item 3 as measured negligible (about 0.3% of profile samples). Speed item 6 (staged move generation) was checked in `negamax()` (`src/search/search.cpp`): captures are generated first and quiets are generated and ordered only on demand through `ensure_quiets()`, so the item's condition was already met and nothing was added. The cost of the ordering sort in `order_moves()` (`src/search/ordering.cpp`) was bounded with an experiment build that disables the insertion sort: that changes the search tree (40312419 nodes at `bench 10` against 3132728), but nodes per second rose only from about 770000 to about 803000 (+4% to +5%), so a lazy selection sort could gain at most about that much, which is within sandbox timing noise, and would require restructuring the move loops. Not pursued.
+
+**Bugs fixed:** none.
+
+**Decisions made:** none.
+
+**Open:** king safety, mobility and the rest of `threats_value` have no separate profile (valgrind unavailable in the sandbox, gprof attribution coarse); speed items 4, 5, 7 and 8 remain.
+
+**Next session start point:** start speed plan item 5: measure the eval-cache and pawn-hash hit rates over `bench` and a few self-play games (both tables exist, rates unknown), and change table sizes or keys only where the rate is low, keeping `bench 6` at 62276 and `bench 10` at 3132728 nodes.
+
+---
+
+### Session 269 — 2026-10-26 — Speed plan item 3 follow-up: profile, no further change
+
+**Built:** nothing kept. A gprof flat profile of `bench 10` (sandbox, Release with `-pg`) ranked the remaining costs: `evaluate` self time about 33.8% (inlined terms), `order_moves` about 17.7%, `attacks_by_side` about 4.1%, `add_overloaded_penalty` about 3.5%, `classify_endgame` about 0.3%. The endgame-signature-once idea therefore has almost nothing to gain and was not built. A set-wise pawn-attack computation in `attacks_by_side` (two shifts, two file masks) was built and checked identical to the per-pawn loop on every evaluated position of `bench 10` (a trapping build), with identical node counts (`bench 6` 62276, `bench 10` 3132728) and 845 of 845 tests passing, but timed the same as the previous state (median user time ratio 1.002, eleven alternating runs from separate builds), so it was discarded under the rule that a change altering nothing measurable is not shipped. `src/eval/threats.cpp` stays as committed in Session 268.
+
+**Bugs fixed:** none.
+
+**Decisions made:** none.
+
+**Open:** whether to close the endgame-signature sub-part of speed item 3 as measured negligible (awaits approval); gprof attribution is coarse because of inlining and valgrind was unavailable, so king safety and mobility have no separate profile; `order_moves` at about 17.7% is the largest non-evaluation cost and relates to speed plan item 6 (staged move generation).
+
+**Next session start point:** obtain approval to close the endgame-signature sub-part, then continue speed plan item 6 (staged move generation: check whether `negamax()` already generates lazily and what `order_moves` costs), keeping `bench 6` at 62276 and `bench 10` at 3132728 nodes.
+
+---
+
 ### Session 268 — 2026-10-26 — Overloaded-piece early-out (speed plan item 3a)
 
 **Built:** `add_overloaded_penalty()` in `src/eval/threats.cpp` now returns immediately when fewer than two own knights, bishops, rooks and queens are attacked by the enemy, because a piece can only be overloaded as the sole defender of two or more attacked pieces. This skips the per-piece attack lookups of `collect_scoped_pieces()` in the common case. The result is unchanged by construction. Pure speed change, committed to `main` (not a strength candidate).
