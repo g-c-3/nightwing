@@ -757,6 +757,19 @@ jobs:
         working-directory: build
         run: ./src/nightwing bench
 
+      # Speed comparison against a plain Release build (ROADMAP.md speed plan
+      # item 7, Session 274): the plain engine is built from the same commit
+      # into build-plain, then `bench 10` is timed alternately on both. The
+      # script fails only if the two node counts differ; the speed ratio is a
+      # report in the job log, read when deciding whether to keep this artifact.
+      - name: Build plain Release engine for comparison
+        run: |
+          cmake -B build-plain -DCMAKE_BUILD_TYPE=Release -DNIGHTWING_BUILD_TESTS=OFF
+          cmake --build build-plain --config Release --parallel --target nightwing
+
+      - name: Compare plain and PGO speed (alternating bench 10 runs)
+        run: python3 tests/scripts/ab_bench.py build-plain/src/nightwing build/src/nightwing --runs 9 --depth 10
+
       - name: Upload PGO-optimized binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
