@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 276 — 2026-10-27 — Lazy-evaluation margin 300 rejected
+
+**Built:** speed plan item 8 was found already partly implemented: `evaluate()` has a White-perspective lazy window and `kLazyEvalMargin` 650, used only by `quiescence()`'s stand-pat evaluation. A throwaway build (not kept) disabled the early return and recorded, for each of the 1.8M lazy-eligible evaluations of `bench 10`, whether a cutoff at a given margin would have been wrong (full score on the other side of the bound). Margin 650: 14.1% cutoffs, 0 wrong; 400: 21.5%, 1 wrong; 300: 29.2%, 48 wrong of 525933 (0.01%); 250: 34.9%, 0.05% wrong; 200: 42.7%, 0.24%; 150: 52.4%, 0.88%. The gap between full and cheap scores was below 300 cp for all but about 4% of positions and never reached 650. The candidate lowered `kLazyEvalMargin` from 650 to 300 in `src/eval/eval.cpp` on branch `candidate/lazy-margin` (concept per CPW "Lazy Evaluation"). Sandbox: 845 of 845 tests passed; `bench 6` 62276 -> 61456 and `bench 10` 3132728 -> 2865168 nodes (-8.5%); `bench 10` user time median 3.84 s -> 3.41 s over nine alternating runs.
+
+**Measured:** baseline `7d8946dabe19b3c999365136ff07a138bf3499ff`, candidate `312da4cc6d55aceb55a05b1fcec16e390f226cf9`. Fixed-node `go nodes 20000`, seed 1, 4000 of 4000 games: 1611 W / 740 D / 1649 L, about -3.3 Elo (interval about -13.0 to +6.4), LLR -1.179, inconclusive. Clock `10000 100`, seed 10001: stopped by the 300-minute cap after 581 of 4000 games, 246 W / 132 D / 203 L, about +25.8 Elo (interval about +1.0 to +50.8), LLR 0.748, inconclusive. No illegal moves or time forfeits in either run.
+
+**Outcome:** the adoption rule of 2026-10-24 (4) was not met: the fixed-node estimate is negative and neither run passed the SPRT. The candidate was rejected, its branch is not merged and is to be deleted; this docs-only commit to `main` records the result. No revert files are needed.
+
+**Bugs fixed:** none.
+
+**Decisions made:** see DECISIONS.md 2026-10-27 (2) and (3).
+
+**Open:** wiring the lazy window into `negamax()`'s static evaluations is untried; margins between 250 and 650 were not compared by games; the early clock lead (+25.8 on 581 games) was not confirmed by further runs.
+
+**Next session start point:** confirm the branch `candidate/lazy-margin` is deleted and CI on `main` is green, then start strength plan item 3 (evaluation tuning at scale with the existing SPSA/Texel pipelines): list which evaluation constants the `tuning` and `spsa` pipelines already cover, pick one group of terms, and prepare it as a candidate on its own branch.
+
+---
+
 ### Session 275 — 2026-10-27 — Speed plan item 7 closed: PGO artifact kept
 
 **Built:** nothing in the engine. The `pgo` CI pipeline was dispatched on `main` commit `e33f294279959b04aca384bc843d1b1066f787f3` (GCC 15.2.0, `ubuntu-26.04`) and its log analysed. The new comparison step timed `bench 10` alternately on a plain Release build and the PGO build, nine runs each, user CPU time: plain min 2.26 s and median 2.28 s; PGO min 2.13 s and median 2.15 s; median ratio PGO/plain 0.942 (about 5.8% faster); both builds reported 3132728 nodes. The whole pipeline job ran in about three minutes. The sandbox result of Session 274 (CI-recipe PGO about 19% slower) came from GCC 13.3 and does not describe the released artifact.

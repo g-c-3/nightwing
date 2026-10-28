@@ -4,6 +4,38 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-27 (3) — Lazy-evaluation margin 300 rejected
+
+**Context:** The candidate of 2026-10-27 (2), commit `312da4cc6d55aceb55a05b1fcec16e390f226cf9` on branch `candidate/lazy-margin`, was measured by `uci-match` against baseline `7d8946dabe19b3c999365136ff07a138bf3499ff`.
+
+**Decision:** The candidate is rejected and not merged; its branch is deleted and this docs-only commit records the result. The rule of 2026-10-24 (4) requires both runs non-negative with at least one passing the SPRT. The fixed-node run scored 1611 W / 740 D / 1649 L over 4000 games (about -3.3 Elo, LLR -1.179, inconclusive) and the clock run scored 246 W / 132 D / 203 L over 581 games (about +25.8 Elo, LLR 0.748, inconclusive; stopped by the 300-minute cap).
+
+**Rationale:** The fixed-node estimate is negative, so the rule is not met. Its interval (about -13.0 to +6.4) includes zero, so per-node strength is neither shown lost nor gained. The clock run's early lead has the same shape as the early lead of the rejected time-extension candidate of 2026-10-26 (8), which shrank on repetition, and was not repeated.
+
+**Not established:** whether margin 300 or another value gains strength on the clock, and whether lazy evaluation in `negamax()`'s static evaluations would.
+
+**Alternatives considered:**
+- More clock runs with fresh seeds: not chosen, since the fixed-node estimate already fails the rule.
+- Margin 400 (one wrong cutoff in 387780 on the measurement): untested, possible later.
+
+---
+
+### 2026-10-27 (2) — Lazy-evaluation margin lowered to 300 as a candidate
+
+**Context:** Speed plan item 8 proposed lazy evaluation. It already existed, in `quiescence()`'s stand-pat evaluation only, with a deliberately generous untuned margin of 650 centipawns that cut off only 14.1% of eligible evaluations.
+
+**Decision:** A candidate lowers `kLazyEvalMargin` to 300 on branch `candidate/lazy-margin`. The choice rests on a measurement over `bench 10` with the early return disabled: at 300, 29.2% of eligible evaluations would be cut off and 0.01% of those cutoffs (48 of 525933) would disagree with the full score about which side of the window the score lies on; at 250 the wrong rate is 0.05% and at 200 it is 0.24%. The candidate is decided by the fixed-node and clock `uci-match` runs and the adoption rule of 2026-10-24 (4).
+
+**Rationale:** The material+PSQT score differs from the full score by less than 300 cp in all but about 4% of positions and never by 650 cp or more, so the old margin skipped little work. A smaller margin saves more evaluation time at a measured, small error rate. `bench 10` nodes fall 8.5% (3132728 to 2865168) and user time about 11% in the sandbox, but node reductions from approximate scores are not strength: only the matches decide.
+
+**Not established:** strength, the best margin between 250 and 400, and the effect of also using lazy evaluation in `negamax()`.
+
+**Alternatives considered:**
+- Margin 250 or lower: more savings, but wrong-cutoff rates grow (0.05% at 250, 0.24% at 200); deferred until 300 is measured.
+- Wiring the lazy window into `negamax()`'s static evaluations: a different code path, a separate candidate.
+
+---
+
 ### 2026-10-27 — PGO release artifact kept with its current training recipe
 
 **Context:** Speed plan item 7 asked whether the profile-guided build of the `pgo-build` CI job is worth keeping as a release artifact. A sandbox comparison (GCC 13.3) showed the artifact trained with the CI recipe about 19% slower than the plain Release build, which could not be transferred to the real compiler.
