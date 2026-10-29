@@ -4,6 +4,25 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-29 (2) — Mate-in-one probe, TT exact-bound preference and LMR do-deeper candidates rejected
+
+**Context:** After the Texel-fit candidates were rejected, strength plan item 6 (a narrow mate-search helper) was started and two further one-idea candidates in unrelated code were prepared in parallel: the exact-bound preference left untested in the Session 266 transposition-table review, and the do-deeper verification after late-move-reduction probes, which the search lacked.
+
+**Decision:** Three candidates were run against baseline `8e2735ed882db5f74b6824e897d3ca0cd353d2de`: `candidate/mate-in-one-probe` (commit `2a0b52aec1d3e2c6ec96968afe51f057c0d01159`), `candidate/tt-exact-preference` (`072f28051860c480a453bfe6b547b8265db7b63d`) and `candidate/lmr-do-deeper` (`9acef537a862c7a5a6f1957abbc3ac5916c666b6`). All three were rejected. Mate probe: +3.3 Elo fixed-node (4000 games, LLR 0.164, inconclusive) and -8.5 on the clock (573 games, LLR -0.367, inconclusive); the negative clock run failed the non-negative condition of 2026-10-24 (4). LMR do-deeper: -8.9 fixed-node (4000 games, LLR -2.300, inconclusive) and +9.1 on the clock (574 games, LLR 0.216, inconclusive); the negative fixed-node run failed the same condition. TT exact preference: +3.8 fixed-node (4000 games, LLR 0.269, inconclusive) and +4.9 on the clock (572 games, LLR 0.075, inconclusive); both runs were non-negative, but neither passed the SPRT, so the second condition of the rule was not met. The rule left this case open and it was resolved as a rejection, because the point estimates were small, the intervals (about -6 to +14 fixed-node and -20 to +30 on the clock) were wide, and reaching an SPRT verdict would have needed far more games than the job caps allow for a change of about zero expected effect. Branches were deleted; `main` was unchanged and no revert files were produced.
+
+**Process decisions:** As on 2026-10-29, the candidate branches carried code and test files only, with docs deferred to one docs-only commit to `main`, so the commit SHAs stayed fixed while six matches ran concurrently. Every candidate commit was checked against the baseline by diff before its match started; this caught `candidate/tt-exact-preference` having been created from the mate-probe branch (its first commit, `04d3d697cb227ab6ea3802e3b9106d3039aa3230`, contained `2a0b52a`), and the branch was recreated from `main`. Each candidate was shown to change behaviour before delivery: the mate probe and do-deeper moved `bench 6` and `bench 10` node counts and carry node-count tests, and the TT change carries a replacement test that fails on the baseline code. The `bench` reductions of the mate probe (-11.5% at `bench 10`) and do-deeper (-7.1%) did not translate into games won, so a node reduction on bench is not treated as evidence of strength.
+
+**Rationale:** The mate probe was gated to nodes whose opponent king has at most one flight square, to keep the move scan off most nodes; the idea follows mate-in-one detection in CPW (Chess Programming Wiki, "Mate Search"). The exact-bound preference follows Stockfish-classic's acceptance of exact stores, in the narrower form that never displaces an exact entry. The do-deeper margin (51 + 2 per verification ply) follows Stockfish-classic's doDeeperSearch and was left untuned so the idea, not the constants, was tested.
+
+**Not established:** whether a wider mate-search helper (a larger flight-square gate, deeper nodes, mate threats) gains strength; whether do-deeper with tuned or shallower-only margins gains strength, given the fixed-node run was negative at -8.9 (interval -18.6 to +0.9); whether the exact-bound preference has any effect on strength at all; and whether victim choice among several older generations in the TT matters.
+
+**Alternatives considered:**
+- Rerunning the TT candidate with another seed or a longer clock cap: not chosen, since the expected gain is about zero and the compute needed to reach a verdict is large.
+- Adopting the TT candidate as neutral: not allowed by the adoption rule of 2026-10-24 (4), which needs at least one SPRT pass.
+- Starting the mate probe at every depth, without the flight-square gate: not chosen, since the full move scan at every node would cost nodes per second for a rare benefit.
+
+---
+
 ### 2026-10-29 — Texel-fit candidates for king safety and mobility rejected
 
 **Context:** After the pawn-structure candidate of 2026-10-28 was rejected, the king-safety, threats and mobility groups were fitted on the same depth-6 corpus (21717 positions, K 548.97). King safety reduced the loss from 0.083002 to 0.082197 and mobility to 0.082141; threats left it unchanged (0.083001).
