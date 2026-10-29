@@ -4,6 +4,38 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-29 — Texel-fit candidates for king safety and mobility rejected
+
+**Context:** After the pawn-structure candidate of 2026-10-28 was rejected, the king-safety, threats and mobility groups were fitted on the same depth-6 corpus (21717 positions, K 548.97). King safety reduced the loss from 0.083002 to 0.082197 and mobility to 0.082141; threats left it unchanged (0.083001).
+
+**Decision:** Three one-idea candidates were run against baseline `558aec0f3d6306c2341a261863224cd13f240c72`: `candidate/king-attack-unit-mg` (commit `85962fabd58e45bb3f776bff9e263e9b623b5fcd`), `candidate/mobility-minors-half` (`f5ee6fc9335538d2f5088a8b6ca5a1a34559abbe`) and `candidate/mobility-minors-full` (`282b2591ceb57cc5c933495f073f1ad6a76316ae`). All three were rejected: king safety was -8.0 Elo fixed-node (LLR -2.107, inconclusive) and +14.5 on the clock (576 games, LLR 0.372, inconclusive); the mobility half-step was -8.9 (LLR -2.315, inconclusive) and -34.2 (570 games, LLR -1.129, inconclusive); the mobility full fit was -21.8 (SPRT AcceptH0 at 2458 games) and -28.1 (569 games, LLR -0.862, inconclusive). Each had at least one negative run and none passed the SPRT, so the adoption rule of 2026-10-24 (4) was not met. Branches were deleted; `main` was unchanged. No candidate was made from the threats group, which showed no loss movement.
+
+**Process decisions:** The candidate branches were committed with code files only; their docs entries were deferred to one docs-only commit to `main`, a deviation from the standing practice of placing candidate docs on the candidate branch, chosen so the candidate commit SHAs stayed fixed and the six matches could run concurrently. The fitted rook (13.4) and queen (14.1) midgame mobility values were excluded from the mobility candidates because an all-pieces variant failed the `eval_tests` centralized-king taper regression: queen mobility outweighed the king term, which the mobility comments warn against. In `tests/tune_tests.cpp` an L2 fixture was pinned to the old knight default (4, 4) in both mobility candidates, and one PSQT fixture's learning rate was raised from 100 to 300 in the half-step candidate only, since the lone-knight loss did not move at 100 with the new knight value.
+
+**Rationale:** The fitted midgame attack-unit value was the one sign-consistent king-safety move; the other king-safety deviations (shield, semi-open file, `attack_unit_eg`) flipped sign against the defaults and were treated as fit artefacts, as `connected_mg` was on 2026-10-28. Two mobility strengths were run to show whether the size of the change mattered; the larger change did worse.
+
+**Not established:** whether any Texel-fit change from this corpus can gain strength; whether the fitted loss on depth-6 self-play positions predicts game strength for this engine (four candidates across pawns, king safety and mobility, each cutting the loss by 1 to 2%, were all rejected); and whether a larger corpus, deeper labels or SPSA with game results as the signal would behave differently.
+
+**Alternatives considered:**
+- Adopting the full fitted mobility set: not chosen, since the all-pieces variant broke a taper regression and queen mobility of 14 per square contradicts the documented design note.
+- Continuing with further Texel group fits (material, PSQT, space): paused, pending a better predictor of game strength.
+
+### 2026-10-28 — Endgame weak-pawn penalties lowered as a candidate, rejected
+
+**Context:** Strength plan item 3 required a tuned group to be tested by games. A Texel fit of the pawn-structure group on a fresh depth-6 corpus (21717 positions, K 548.97) reduced the loss by 2.0%.
+
+**Decision:** One candidate, `candidate/pawns-eg-weak-penalties` (commit `8b0601f00d3613310ce8af36f17c4237d8753c55`), lowered `kIsolatedPawnPenalty` endgame from -20 to -12 and `kBackwardPawnPenalty` endgame from -12 to -6, midgame values unchanged, against baseline `558aec0f3d6306c2341a261863224cd13f240c72`.
+
+**Outcome:** Rejected. Fixed-node (`go nodes 20000`, seed 1): 4000 of 4000 games, 1701 W / 713 D / 1586 L, +10.0 Elo (95% interval 0.2 to 19.8, computed), LLR 1.511, inconclusive. Clock (`10000 100`, seed 10001): stopped at the job time cap with 578 of 4000 games, 237 / 134 / 207, +18.0 Elo (-6.7 to +43.0, computed), LLR 0.486, inconclusive. Both runs were non-negative but neither passed the SPRT, so the rule of 2026-10-24 (4) was not met. The evidence leaned positive but did not reach the SPRT upper bound; the candidate was not merged, the branch was deleted, and the values on `main` are unchanged.
+
+**Rationale:** The fitted passed-pawn, connected-passed, outside-passed and doubled values reproduced the current defaults, which supports the fit's calibration. The endgame isolated and backward values keep the sign and rough scale of the defaults. The fitted `connected_mg` of -30.7 (default +5) repeats an earlier unexplained sign flip, and the fitted midgame isolated and backward values turned positive; both were judged more likely fit artefacts than real signals and were excluded.
+
+**Not established:** whether the excluded terms or the two included values gain strength in play.
+
+**Alternatives considered:**
+- Adopting the full fitted pawn set: not chosen, since a bundled rejection could not show which part hurt.
+- Testing only `connected_mg`: not chosen, since a strongly negative connected-pawn bonus is implausible.
+
 ### 2026-10-27 (3) — Lazy-evaluation margin 300 rejected
 
 **Context:** The candidate of 2026-10-27 (2), commit `312da4cc6d55aceb55a05b1fcec16e390f226cf9` on branch `candidate/lazy-margin`, was measured by `uci-match` against baseline `7d8946dabe19b3c999365136ff07a138bf3499ff`.

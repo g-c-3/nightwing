@@ -4,6 +4,38 @@ Newest entry at top.
 
 ---
 
+### Session 278 — 2026-10-29 — King-safety and mobility Texel candidates rejected
+
+**Built:** the king-safety, threats and mobility groups were fitted on the Session 277 corpus (`nightwing_tune --<group> 100 "" "" fit`, K 548.97). King safety reduced the loss from 0.083002 to 0.082197; mobility from 0.083002 to 0.082141; threats left it unchanged (0.083001), so no threats candidate was made. Three one-idea candidates were built and committed to their own branches, with code files only (no docs on the branches): `candidate/king-attack-unit-mg` (commit `85962fabd58e45bb3f776bff9e263e9b623b5fcd`; `kAttackUnitPenalty` `{-6, -1}` to `{-15, -1}` in `src/eval/king_safety.h`), `candidate/mobility-minors-half` (commit `f5ee6fc9335538d2f5088a8b6ca5a1a34559abbe`; knight and bishop mobility midgame halfway to the fit, knight 4 to 11 and bishop 5 to 6, in `src/eval/mobility.h`) and `candidate/mobility-minors-full` (commit `282b2591ceb57cc5c933495f073f1ad6a76316ae`; knight 18 and bishop 8). The fitted rook (13.4) and queen (14.1) midgame mobility values were excluded after an all-pieces variant failed an `eval_tests` regression (the centralized-king versus back-rank-king taper check) because queen mobility outweighed the king term. Test edits: `tests/tune_tests.cpp` pins one L2 fixture's starting knight weight to the old default (4, 4) in both mobility candidates; the half-step candidate also raises one PSQT loss-reduction fixture's learning rate from 100 to 300, since the lone-knight loss did not move at 100 with the new knight value. Sandbox (Release, baseline `558aec0f3d6306c2341a261863224cd13f240c72`: 845 of 845 tests, `bench 6` 62276, `bench 10` 3132728): king 845 of 845, 66082 and 2001096 nodes; half 845 of 845, 58242 and 2098942; full 845 of 845, 50533 and 2194754; no warnings.
+
+**Measured:** six `uci-match` runs against baseline `558aec0f3d6306c2341a261863224cd13f240c72` (SPRT bounds [-2.944, 2.944]; no illegal moves; no time forfeits in clock runs; 95% intervals computed from the W/D/L counts, the log giving only a rough point estimate). King: fixed-node (`go nodes 20000`, seed 1) 4000 of 4000 games, 1605 W / 698 D / 1697 L, -8.0 Elo (-17.8 to +1.8), LLR -2.107, inconclusive; clock (`10000 100`, seed 10001) stopped at the time cap with 576 games, 234 / 132 / 210, +14.5 Elo (-10.4 to +39.5), LLR 0.372, inconclusive. Half: fixed-node 4000 of 4000, 1588 / 721 / 1691, -8.9 Elo (-18.7 to +0.8), LLR -2.315, inconclusive; clock 570 games at the cap, 193 / 128 / 249, -34.2 Elo (-59.7 to -9.2), LLR -1.129, inconclusive. Full: fixed-node 2458 of 4000 games, 948 / 408 / 1102, -21.8 Elo (-34.4 to -9.3), LLR -2.976, AcceptH0; clock 569 games at the cap, 212 / 99 / 258, -28.1 Elo (-54.4 to -2.2), LLR -0.862, inconclusive. No run passed the SPRT as an improvement and each candidate had at least one negative run, so the adoption rule of 2026-10-24 (4) was not met by any candidate.
+
+**Bugs fixed:** none.
+
+**Decisions made:** all three candidates were rejected and their branches deleted; see DECISIONS.md 2026-10-29.
+
+**Open:** CI on `main` and on the candidate commits was not checked from the sandbox; the large `bench 10` reductions (up to about 36%) from small constant changes were not investigated; the half-step PSQT fixture change was not confirmed against baseline; the fitted sign flips (king-safety shield, semi-open file and `attack_unit_eg`; pawn `connected_mg`) and the rook and queen mobility fits were left untested; the threats group, material, PSQT and space were not examined as candidates.
+
+**Next session start point:** Texel group fits are paused; proposed next step is strength plan item 6, beginning with the mate-search helper as a one-idea candidate on its own branch (`candidate/<short-name>`) with a regression test.
+
+---
+
+### Session 277 — 2026-10-28 — Pawn-structure Texel fit and endgame weak-pawn candidate rejected
+
+**Built:** strength plan item 3 was started. Coverage of the tuning pipelines was listed: the Texel fit covers material, PSQT, mobility, space, threats, king safety and pawns; SPSA covers mobility, material and seven search constants; tempo, bishop pair, rook file bonuses, rook on 7th, knight outposts, king tropism, trapped-piece penalties and the pair-imbalance terms are exposed to no tuner. The pawn-structure group was chosen. A depth-6 self-play corpus (`nightwing_selfplay 300 11 6 8 200`) gave 21717 quiet positions; K was fitted at 548.97 (loss 0.083002, against 0.084509 at 400); `nightwing_tune --pawns 100` reduced the loss from 0.083002 to 0.081311. The fitted passed, connected-passed, outside-passed and doubled values matched the current defaults closely; the movement was in the weak-pawn terms (isolated mg 2.95 / eg -12.19, backward mg 1.37 / eg -5.80, island mg 5.29 / eg -5.54, connected mg -30.66 / eg -25.60 against defaults -10/-20, -8/-12, -4/-6, 5/8). The candidate lowered only the endgame isolated penalty (-20 to -12) and backward penalty (-12 to -6) in `src/eval/pawns.h` on branch `candidate/pawns-eg-weak-penalties` (commit `8b0601f00d3613310ce8af36f17c4237d8753c55`). Sandbox (Release, 845 of 845 tests, no warnings): `bench 6` 62276 -> 64713 and `bench 10` 3132728 -> 2202470 nodes. Baseline reproduced at `558aec0f3d6306c2341a261863224cd13f240c72` with `bench 6` 62276 and `bench 10` 3132728.
+
+**Measured:** two `uci-match` runs against baseline `558aec0f3d6306c2341a261863224cd13f240c72` (SPRT bounds [-2.944, 2.944]; no illegal moves; no time forfeits). Fixed-node (`go nodes 20000`, seed 1): 4000 of 4000 games, 1701 W / 713 D / 1586 L, +10.0 Elo (95% interval 0.2 to 19.8, computed), LLR 1.511, inconclusive. Clock (`10000 100`, seed 10001): stopped at the job time cap with 578 of 4000 games, 237 / 134 / 207, +18.0 Elo (-6.7 to +43.0, computed), LLR 0.486, inconclusive. Neither run passed the SPRT, so the adoption rule of 2026-10-24 (4) was not met and the candidate was rejected.
+
+**Bugs fixed:** none.
+
+**Decisions made:** the candidate was rejected and its branch deleted; see DECISIONS.md 2026-10-28.
+
+**Open:** CI on `main` not checked from the sandbox; the large `bench 10` drop (-30%) from a two-constant change was not investigated and may reflect search sensitivity on the bench positions; the fitted `connected_mg` sign flip, the midgame isolated/backward values and the island terms were left untested; no regression test was added, since existing tests reference the constants by name.
+
+**Next session start point:** continue strength plan item 3 with the next one-idea candidate from a different eval group.
+
+---
+
 ### Session 276 — 2026-10-27 — Lazy-evaluation margin 300 rejected
 
 **Built:** speed plan item 8 was found already partly implemented: `evaluate()` has a White-perspective lazy window and `kLazyEvalMargin` 650, used only by `quiescence()`'s stand-pat evaluation. A throwaway build (not kept) disabled the early return and recorded, for each of the 1.8M lazy-eligible evaluations of `bench 10`, whether a cutoff at a given margin would have been wrong (full score on the other side of the bound). Margin 650: 14.1% cutoffs, 0 wrong; 400: 21.5%, 1 wrong; 300: 29.2%, 48 wrong of 525933 (0.01%); 250: 34.9%, 0.05% wrong; 200: 42.7%, 0.24%; 150: 52.4%, 0.88%. The gap between full and cheap scores was below 300 cp for all but about 4% of positions and never reached 650. The candidate lowered `kLazyEvalMargin` from 650 to 300 in `src/eval/eval.cpp` on branch `candidate/lazy-margin` (concept per CPW "Lazy Evaluation"). Sandbox: 845 of 845 tests passed; `bench 6` 62276 -> 61456 and `bench 10` 3132728 -> 2865168 nodes (-8.5%); `bench 10` user time median 3.84 s -> 3.41 s over nine alternating runs.
