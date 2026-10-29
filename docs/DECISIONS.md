@@ -4,6 +4,25 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-30 — Bishop-outpost and TT older-generation victim candidates rejected
+
+**Context:** After the rejections recorded in 2026-10-29 (2), strength plan item 6 (plan-aware evaluation terms) and the last untested transposition-table difference from Stockfish-classic (victim choice among several older generations, DECISIONS.md 2026-10-26 (3)) were each attempted as a one-idea candidate. A knight-outpost term was found to exist already, so the evaluation candidate became the bishop extension the knight-outpost header had left as a separate future item.
+
+**Decision:** Two candidates were run against baseline `cf3fb0baed2da0498400fe40b15a195dc10d6a4c`: `candidate/bishop-outpost` (commit `f895ecf47cdb1c3694efeec82a9dbb610915f094`) and `candidate/tt-older-gen-victim` (`3cb548a7680b7a5d4e563e8bf99f221f3fc7e913`). Both were rejected. Bishop outpost: -4.7 Elo fixed-node (4000 games, LLR -1.442, inconclusive) and -6.1 on the clock (574 games, LLR -0.265, inconclusive); both runs were negative, so the non-negative condition of 2026-10-24 (4) failed. TT older-generation victim: +0.8 fixed-node (4000 games, LLR -0.348, inconclusive) and +7.9 on the clock (571 games, LLR 0.188, inconclusive); both runs were non-negative but neither passed the SPRT, so the second condition was not met. This is the same open case as `candidate/tt-exact-preference` in 2026-10-29 (2) and was resolved the same way, as a rejection: the point estimates were small, the intervals (about -9 to +11 fixed-node and -17 to +33 on the clock) were wide, and the change had no measurable effect at bench size. Branches were deleted; `main` was unchanged and no revert files were produced.
+
+**Process decisions:** As on 2026-10-29 (2), candidate branches carried code and test files only, docs being deferred to one docs-only commit to `main`. Each candidate commit was checked against the baseline by diff and against the delivered files before its match started. A candidate whose branch cannot be reached by bench (the TT victim choice) was accepted for matching only because a targeted test exercises the new branch and fails on the baseline source, and because a hash-pressured search (`Hash 1`, depth 14) showed it changes node counts.
+
+**Rationale:** The bishop bonus was set at half the knight's `{18, 10}` because a bishop reaches the targets of an outpost square from a distance and is less tied to the square; the idea follows CPW (Chess Programming Wiki, "Outposts") and Stockfish-classic, where bishop outposts are valued below knight outposts. The victim ranking `depth - 8 * generations_old` follows Stockfish-classic's age-weighted replacement value.
+
+**Not established:** whether a bishop-outpost bonus of another size, or one restricted to bishops that face an enemy minor piece, gains strength; and whether the age-weighted victim choice has any effect at the match hash size. With this result, every difference between the transposition-table replacement policy and Stockfish-classic listed in DECISIONS.md 2026-10-26 (3) has been tried and none adopted.
+
+**Alternatives considered:**
+- Rerunning the TT candidate with another seed or a longer clock cap: not chosen, since the expected gain is about zero and the compute needed for a verdict is large.
+- Adopting the TT candidate as neutral: not allowed by the adoption rule of 2026-10-24 (4), which needs at least one SPRT pass.
+- A bishop bonus equal to the knight's: not tried; the half-value choice was made before any match.
+
+---
+
 ### 2026-10-29 (2) — Mate-in-one probe, TT exact-bound preference and LMR do-deeper candidates rejected
 
 **Context:** After the Texel-fit candidates were rejected, strength plan item 6 (a narrow mate-search helper) was started and two further one-idea candidates in unrelated code were prepared in parallel: the exact-bound preference left untested in the Session 266 transposition-table review, and the do-deeper verification after late-move-reduction probes, which the search lacked.
