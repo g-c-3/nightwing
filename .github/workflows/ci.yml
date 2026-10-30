@@ -1136,10 +1136,27 @@ jobs:
           for kv in $OPTIONS_B; do
             OPT_ARGS+=(--opt-b "$kv")
           done
+          # Games run in parallel, one colour pair per worker, each worker
+          # with its own engine processes (docs/DECISIONS.md 2026-10-30 (3)).
+          # Fixed-depth and fixed-node play does not depend on CPU speed,
+          # so every vCPU gets a worker. A real clock or a movetime does:
+          # those get half the vCPUs (hosted runners expose hyperthreads,
+          # so that is about one worker per physical core) to keep engine
+          # speed near what a lone game would see.
+          NPROC="$(nproc)"
+          CONCURRENCY="$NPROC"
+          if [ "$CLOCK_BASE" -gt 0 ] || [ "$MOVETIME_MS" -gt 0 ]; then
+            CONCURRENCY=$(( NPROC / 2 ))
+          fi
+          if [ "$CONCURRENCY" -lt 1 ]; then
+            CONCURRENCY=1
+          fi
+          echo "match concurrency: $CONCURRENCY (nproc $NPROC)"
           timeout --signal=TERM "${TIME_LIMIT_MIN}m" \
             ./runner/build/src/nightwing_uci_match \
             "$PWD/baseline/build/src/nightwing" "$PWD/candidate/build/src/nightwing" \
             --games "$MAX_GAMES" "${CONTROL[@]}" "${OPT_ARGS[@]}" \
+            --concurrency "$CONCURRENCY" \
             --opening-plies "$OPENING_PLIES" --max-plies "$MAX_PLIES" --seed "$SEED" \
             --sprt "$ELO0" "$ELO1" "$ALPHA" "$BETA" \
             > match_result.txt 2> >(tee match_progress.log >&2)
