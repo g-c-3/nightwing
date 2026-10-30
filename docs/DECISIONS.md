@@ -4,6 +4,25 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-30 (2) — Pawn-break candidate rejected
+
+**Context:** Strength plan item 6 (plan-aware evaluation terms) was continued after the bishop-outpost rejection in 2026-10-30. No pawn-break term existed, so a supported-lever pawn-break bonus was built as a one-idea candidate.
+
+**Decision:** `candidate/pawn-breaks` (commit `0602f2020202f578393f36b0e105dcaac3c05689`) was run against baseline `9804658c49a71ff84df1ba37f200a1b9e3b18185`: +0.6 Elo fixed-node (4000 games, LLR -0.385, inconclusive) and +7.8 on the clock (577 games, LLR 0.195, inconclusive). Both runs were non-negative but neither passed the SPRT, so the second condition of 2026-10-24 (4) was not met. As with `candidate/tt-exact-preference` (2026-10-29 (2)) and `candidate/tt-older-gen-victim` (2026-10-30), the rule left the case open and it was resolved as a rejection: the point estimates were small, the intervals (about -9 to +10 fixed-node and -16 to +32 on the clock) were wide, and a verdict would need far more games than the caps allow. The branch is to be deleted; `main` was unchanged by the candidate and no revert files were produced.
+
+**Process decisions:** The baseline for a candidate is `main` HEAD as read from the repository at the time the candidate commit is checked; a docs-only commit to `main` during a session moves that SHA without changing the code, and the match inputs follow the new SHA. The candidate commit was verified byte-for-byte against the delivered files and for ancestry before the matches. Three consecutive non-negative but non-passing results (this and the two before) show that the adoption rule, with the present run sizes, cannot admit a change worth a few Elo; this is recorded as an observation about the test method, not a change to the rule.
+
+**Rationale:** Pawn levers are a standard CPW (Chess Programming Wiki, "Pawn Levers") plan-aware concept; the supported-push definition keeps the term from rewarding pushes that simply lose a pawn, and the bonus `{6, 2}` is mostly middlegame because a break pays off while pieces remain to use the opened lines.
+
+**Not established:** whether a looser pawn-break definition (unsupported pushes, double pushes, a wider rank window) or another bonus size gains strength; the nodes-per-second cost of the term; and whether the effect is positive but below what 4000 fixed-node games and about 570 clock games can detect.
+
+**Alternatives considered:**
+- Adopting the candidate as neutral: not allowed by the adoption rule of 2026-10-24 (4), which needs at least one SPRT pass.
+- Rerunning with another seed or a longer cap: not chosen in this session; the question of run sizes is deferred to the next session start point in SESSIONS.md.
+- Caching the term in the pawn table to avoid per-evaluation cost: not done, since no strength gain was shown to justify the optimisation.
+
+---
+
 ### 2026-10-30 — Bishop-outpost and TT older-generation victim candidates rejected
 
 **Context:** After the rejections recorded in 2026-10-29 (2), strength plan item 6 (plan-aware evaluation terms) and the last untested transposition-table difference from Stockfish-classic (victim choice among several older generations, DECISIONS.md 2026-10-26 (3)) were each attempted as a one-idea candidate. A knight-outpost term was found to exist already, so the evaluation candidate became the bishop extension the knight-outpost header had left as a separate future item.
