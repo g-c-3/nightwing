@@ -4,6 +4,32 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-30 (4) — Parallel UCI match runner
+
+**Context:** Eleven candidates across Sessions 279 to 282 ended without an adoption. The `uci-match` runner played one game at a time on a 4-vCPU hosted runner, so a 4000-game fixed-node run (interval about plus or minus 10 Elo) and a clock run capped at about 575 games could not resolve changes of a few Elo; resolving about 3 Elo needs about 44000 games, and raising `ucimatch_max_games` alone changes nothing because the clock run is stopped by the time cap.
+
+**Decision:** `run_uci_match_parallel()` plays the match with N games in flight. Each worker owns its own engine processes and plays whole colour pairs, so seeds and colours per game are those of a serial run. Finished pairs are merged in pair order and the SPRT is evaluated on that ordered prefix, so for deterministic engines the tally and the verdict equal a serial run's; pairs finishing beyond a verdict are discarded rather than counted, which keeps the reported LLR consistent with the reported tally. A process-launch mutex prevents one worker's `fork` from inheriting another worker's freshly created pipe ends. `--concurrency` defaults to 1, which keeps the serial path unchanged. The workflow derives the worker count from `nproc`: every vCPU for fixed-depth and fixed-node runs, whose results do not depend on CPU speed, and half the vCPUs for clock and movetime runs, which do (hosted runners expose hyperthreads, so half is about one worker per physical core).
+
+**Alternatives considered:** a new workflow input for the worker count (rejected: the workflow is at GitHub's 25-input limit); results merged in completion order (rejected: the verdict would depend on timing); counting pairs finished past a verdict (rejected: the summary would no longer match its own LLR); all vCPUs for clock runs (rejected: engines would compete for cores and change both strength and time forfeits).
+
+**Verification and limits:** 850 of 850 tests in the sandbox, five parallel tests clean under ThreadSanitizer, byte-identical command-line summaries for serial and 4 workers over 40 games, and the same SPRT stop point over 200 games. Not verified: throughput on a hosted runner (the sandbox has one core), clock-run behaviour with two workers, the Windows and macOS builds, and the Windows launch lock.
+
+**Process decisions:** The runner commit was first assumed to be `main` HEAD without a check; it was on branch `g-c-3-patch-1`, so six matches ran on the serial runner (the runner is the commit the workflow is dispatched from). The commit was merged into `main` by pull request and both branches were deleted. A branch is confirmed to be on `main` by reading `main` HEAD from the repository before matches are dispatched.
+
+---
+
+### 2026-10-30 (3) — Rook-by-own-pawn-count candidate rejected
+
+**Context:** Strength plan item 6 (dynamic piece values) was continued after the pawn-break rejection (2026-10-30 (2)). `material_imbalance` already scales the bishop-pair and knight-pair terms by the total pawn count; Kaufman's rule that rooks gain value as the side's own pawns leave the board was untried, and was built as a one-idea candidate.
+
+**Decision:** `candidate/rook-pawn-scaling` (commit `20cc8c0168601efe1384ac601444166a4f6747b0`, constant `{3, 5}` per rook per own pawn missing from eight) was run against `8f89193e18c4416784680ba60da45f016c790516` (engine code identical to `129f457859a940fff4f1843576fec75b49d1edb0`): fixed-node +1.7 Elo (4000 games, LLR -0.170, inconclusive) and clock +21.1 (576 games, LLR 0.622, inconclusive); a second clock run against `129f457859a940fff4f1843576fec75b49d1edb0` gave +21.3 (571 games, LLR 0.597) but is not independent of the first. Both valid runs were non-negative and neither passed the SPRT, so the second condition of 2026-10-24 (4) was not met and the candidate was rejected; the branch was deleted and `main` was unchanged by the candidate. The clock point estimate of about +21 Elo was recorded as the largest clock lead of any recent candidate, with an interval of about -3 to +45 that includes zero; two options were put forward (reject now, or hold the branch for a rerun under the parallel runner) and rejection was chosen.
+
+**Process decisions:** A run dispatched with `go movetime 20000` instead of nodes (6 games in 300 minutes) was discarded as invalid. Two control runs of engine-identical commits gave +0.3 Elo (fixed-node) and +1.8 (clock), which gives a measure of the null spread at these run sizes. The six runs used the serial runner (2026-10-30 (4)), so the run sizes were those of earlier candidates.
+
+**Alternatives considered:** holding the branch and repeating both runs with the parallel runner at a larger game count (not chosen); adopting on the clock lead alone (not allowed by the adoption rule).
+
+---
+
 ### 2026-10-30 (2) — Pawn-break candidate rejected
 
 **Context:** Strength plan item 6 (plan-aware evaluation terms) was continued after the bishop-outpost rejection in 2026-10-30. No pawn-break term existed, so a supported-lever pawn-break bonus was built as a one-idea candidate.
