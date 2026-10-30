@@ -29,6 +29,12 @@
 //                        stop early once the SPRT (sprt.h) accepts H0 or
 //                        H1 for B-minus-A; checked after every 2 games
 //   --keep-own-book      do not send `OwnBook false` to the engines
+//   --concurrency N      play N colour pairs at once, each worker with its
+//                        own engine processes (default 1 = the serial loop).
+//                        Results and the SPRT verdict follow pair order, so
+//                        they match a serial run for deterministic engines.
+//                        Use at most the physical core count; clock mode
+//                        wants fewer workers than fixed-node play
 //
 // Stop request: SIGTERM or SIGINT (for example `timeout` at a workflow's
 // wall-clock limit) sets a flag that is polled before each game. The game
@@ -75,7 +81,7 @@ void print_usage() {
                  "[--movetime MS] [--nodes N] [--base-time MS] [--increment MS]\n"
                  "         [--opening-plies N] [--max-plies N] [--seed S] [--opt-a Name=Value]... "
                  "[--opt-b Name=Value]...\n"
-                 "         [--sprt E0 E1 [ALPHA BETA]] [--keep-own-book]\n"
+                 "         [--sprt E0 E1 [ALPHA BETA]] [--keep-own-book] [--concurrency N]\n"
                  "Engine A is the baseline, engine B the candidate.\n");
 }
 
@@ -113,6 +119,7 @@ int main(int argc, char** argv) {
     std::uint64_t base_seed = 1;
     bool use_sprt = false;
     SprtConfig sprt_config;
+    int concurrency = 1;
 
     for (int i = 3; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -179,6 +186,14 @@ int main(int argc, char** argv) {
                 sprt_config.alpha = std::atof(argv[++i]);
                 sprt_config.beta = std::atof(argv[++i]);
             }
+        } else if (arg == "--concurrency") {
+            const char* v = next("--concurrency");
+            if (v == nullptr) return 2;
+            concurrency = std::atoi(v);
+            if (concurrency < 1) {
+                std::fprintf(stderr, "--concurrency must be at least 1\n");
+                return 2;
+            }
         } else if (arg == "--keep-own-book") {
             config.disable_own_book = false;
         } else {
@@ -190,23 +205,17 @@ int main(int argc, char** argv) {
 
     std::fprintf(stderr,
                  "Nightwing UCI match: A=%s (baseline) vs B=%s (candidate); max_games=%d %s "
-                 "opening_plies=%d max_plies=%d seed=%llu%s\n",
+                 "opening_plies=%d max_plies=%d seed=%llu%s concurrency=%d\n",
                  spec_a.command.c_str(), spec_b.command.c_str(), max_games,
                  uci_go_command(config).c_str(),
                  config.random_opening_plies, config.max_plies,
                  static_cast<unsigned long long>(base_seed),
-                 use_sprt ? " (SPRT enabled)" : "");
+                 use_sprt ? " (SPRT enabled)" : "", concurrency);
 
     // Installed before the engines start so a stop request during start-up is
     // also honoured at the first game boundary.
     std::signal(SIGTERM, handle_stop_signal);
     std::signal(SIGINT, handle_stop_signal);
-
-    UciMatchSession session(spec_a, spec_b, config);
-    if (!session.start()) {
-        std::fprintf(stderr, "failed to start engines: %s\n", session.result().error.c_str());
-        return 3;
-    }
 
     UciMatchRunOptions options;
     options.max_games = max_games;
@@ -216,14 +225,32 @@ int main(int argc, char** argv) {
     options.stop_flag = &g_stop_requested;
     options.progress = [](const std::string& line) { std::fprintf(stderr, "%s\n", line.c_str()); };
 
-    const nightwing::tuner::UciMatchRunOutcome outcome =
-        nightwing::tuner::run_uci_match_loop(session, options);
+    nightwing::tuner::UciMatchResult result;
+    nightwing::tuner::UciMatchRunOutcome outcome;
 
-    const nightwing::tuner::UciMatchResult& result = session.result();
+    if (concurrency > 1) {
+        nightwing::tuner::UciParallelOutcome parallel = nightwing::tuner::run_uci_match_parallel(
+            spec_a, spec_b, config, options, concurrency);
+        result = parallel.result;
+        outcome = parallel.run;
+        if (result.aborted && result.tally.games_played == 0 && !outcome.stopped_by_request) {
+            std::fprintf(stderr, "failed to start engines or play: %s\n", result.error.c_str());
+            return 3;
+        }
+    } else {
+        UciMatchSession session(spec_a, spec_b, config);
+        if (!session.start()) {
+            std::fprintf(stderr, "failed to start engines: %s\n", session.result().error.c_str());
+            return 3;
+        }
+        outcome = nightwing::tuner::run_uci_match_loop(session, options);
+        result = session.result();
+        session.stop();
+    }
+
     const std::string summary =
         nightwing::tuner::format_uci_match_summary(config, result, options, outcome);
     std::fputs(summary.c_str(), stdout);
     std::fflush(stdout);
-    session.stop();
     return (result.aborted && !outcome.stopped_by_request) ? 3 : 0;
 }

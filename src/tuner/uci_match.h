@@ -264,6 +264,36 @@ struct UciMatchRunOutcome {
 /// no data.
 UciMatchRunOutcome run_uci_match_loop(UciMatchSession& session, const UciMatchRunOptions& options);
 
+/// Result of run_uci_match_parallel(): the merged counts plus how the run ended.
+struct UciParallelOutcome {
+    /// Counts merged from every worker, engine A's perspective.
+    UciMatchResult result;
+
+    /// SPRT state and stop flag, as for run_uci_match_loop().
+    UciMatchRunOutcome run;
+};
+
+/// Plays the same match as run_uci_match_loop() with `concurrency` games in
+/// flight at once. Each worker thread owns its own engine pair (its own
+/// processes, started with `spec_a`/`spec_b`) and plays whole colour pairs
+/// (games 2k and 2k + 1), so every game keeps the seed `options.base_seed +
+/// game` and the colours it has in a serial run. Finished pairs are merged
+/// strictly in pair order and the SPRT is evaluated on that ordered prefix, so
+/// for deterministic engines the tally and the SPRT verdict equal a serial
+/// run's; pairs that finish beyond a verdict are discarded. `stop_flag` is
+/// polled before each pair; pairs already running finish and are merged when
+/// they extend the ordered prefix. `concurrency` below 1 is treated as 1.
+///
+/// Choose `concurrency` no larger than the physical cores available:
+/// in clock mode every busy engine competes for CPU, and an overloaded
+/// machine changes the games' strength and the time forfeits, so clock runs
+/// want fewer workers than fixed-node runs (docs/DECISIONS.md).
+[[nodiscard]] UciParallelOutcome run_uci_match_parallel(const UciEngineSpec& spec_a,
+                                                        const UciEngineSpec& spec_b,
+                                                        const UciMatchConfig& config,
+                                                        const UciMatchRunOptions& options,
+                                                        int concurrency);
+
 /// Formats the end-of-run summary printed by `nightwing_uci_match`: the
 /// tally, illegal moves, `time_forfeits` (clock mode only), the rough Elo,
 /// the SPRT line when `use_sprt`, a `STOPPED` line when

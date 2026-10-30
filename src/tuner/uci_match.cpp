@@ -19,7 +19,10 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
+#include <map>
+#include <mutex>
 #include <sstream>
+#include <thread>
 
 #include "board/board.h"
 #include "board/move.h"
@@ -52,6 +55,16 @@ using Clock = std::chrono::steady_clock;
 /// Result of one time-limited line read.
 enum class ReadStatus { Line, Timeout, Closed };
 
+/// Serializes child-process creation across threads. Parallel matches
+/// (run_uci_match_parallel) launch engines from several threads; without
+/// this, a fork() in one thread could run between another thread's pipe()
+/// and its FD_CLOEXEC step and hand that thread's pipe ends to an unrelated
+/// engine (Windows: handle inheritance has the same hazard).
+[[nodiscard]] std::mutex& launch_mutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
 /// Milliseconds left until `deadline`, never negative.
 [[nodiscard]] int remaining_ms(Clock::time_point deadline) {
     const auto left =
@@ -77,6 +90,7 @@ public:
     /// on failure.
     bool launch(const std::string& command, const std::vector<std::string>& args,
                 std::string& error) {
+        const std::lock_guard<std::mutex> launch_lock(launch_mutex());
         SECURITY_ATTRIBUTES sa{};
         sa.nLength = sizeof(sa);
         sa.bInheritHandle = TRUE;
@@ -255,6 +269,7 @@ public:
     /// as a closed pipe during the handshake.
     bool launch(const std::string& command, const std::vector<std::string>& args,
                 std::string& error) {
+        const std::lock_guard<std::mutex> launch_lock(launch_mutex());
         // A write to a dead child's stdin must return EPIPE, not kill
         // this process.
         std::signal(SIGPIPE, SIG_IGN);
@@ -927,6 +942,164 @@ UciMatchRunOutcome run_uci_match_loop(UciMatchSession& session, const UciMatchRu
         }
     }
     return outcome;
+}
+
+namespace {
+
+/// Counts accumulated by `after` beyond `before` (both cumulative results of
+/// one UciMatchSession), i.e. what the games played in between added.
+[[nodiscard]] UciMatchResult result_delta(const UciMatchResult& after,
+                                          const UciMatchResult& before) {
+    UciMatchResult d;
+    d.tally.wins_a = after.tally.wins_a - before.tally.wins_a;
+    d.tally.wins_b = after.tally.wins_b - before.tally.wins_b;
+    d.tally.draws = after.tally.draws - before.tally.draws;
+    d.tally.games_played = after.tally.games_played - before.tally.games_played;
+    d.illegal_moves_a = after.illegal_moves_a - before.illegal_moves_a;
+    d.illegal_moves_b = after.illegal_moves_b - before.illegal_moves_b;
+    d.time_forfeits_a = after.time_forfeits_a - before.time_forfeits_a;
+    d.time_forfeits_b = after.time_forfeits_b - before.time_forfeits_b;
+    return d;
+}
+
+/// Adds `delta` (one colour pair's counts) to `total`.
+void add_result(UciMatchResult& total, const UciMatchResult& delta) {
+    total.tally.wins_a += delta.tally.wins_a;
+    total.tally.wins_b += delta.tally.wins_b;
+    total.tally.draws += delta.tally.draws;
+    total.tally.games_played += delta.tally.games_played;
+    total.illegal_moves_a += delta.illegal_moves_a;
+    total.illegal_moves_b += delta.illegal_moves_b;
+    total.time_forfeits_a += delta.time_forfeits_a;
+    total.time_forfeits_b += delta.time_forfeits_b;
+}
+
+} // namespace
+
+UciParallelOutcome run_uci_match_parallel(const UciEngineSpec& spec_a, const UciEngineSpec& spec_b,
+                                          const UciMatchConfig& config,
+                                          const UciMatchRunOptions& options, int concurrency) {
+    UciParallelOutcome out;
+    const int workers = std::max(1, concurrency);
+    const int total_pairs = (std::max(0, options.max_games) + 1) / 2;
+
+    std::mutex mutex; // guards everything below it
+    std::map<int, UciMatchResult> finished; // pair index -> that pair's counts
+    int next_pair = 0;  // next pair index to hand out
+    int next_apply = 0; // next pair index to merge into out.result (pair order)
+    bool decided = false;
+    bool failed = false;
+    std::string error;
+
+    auto stop_requested = [&]() {
+        return options.stop_flag != nullptr && *options.stop_flag != 0;
+    };
+    auto report = [&](const std::string& line) {
+        if (options.progress) {
+            options.progress(line);
+        }
+    };
+
+    auto worker = [&]() {
+        UciMatchSession session(spec_a, spec_b, config);
+        if (!session.start()) {
+            const std::lock_guard<std::mutex> lock(mutex);
+            if (!failed && !stop_requested()) {
+                failed = true;
+                error = session.result().error;
+            }
+            return;
+        }
+        while (true) {
+            int pair = 0;
+            {
+                const std::lock_guard<std::mutex> lock(mutex);
+                if (decided || failed) {
+                    return;
+                }
+                if (next_pair >= total_pairs) {
+                    return;
+                }
+                if (stop_requested()) {
+                    out.run.stopped_by_request = true;
+                    return;
+                }
+                pair = next_pair++;
+            }
+
+            const UciMatchResult before = session.result();
+            bool ok = true;
+            for (int game = 2 * pair; game < std::min(2 * pair + 2, options.max_games); ++game) {
+                if (!session.play_game(game, options.base_seed + static_cast<std::uint64_t>(game))) {
+                    ok = false;
+                    break;
+                }
+            }
+
+            const std::lock_guard<std::mutex> lock(mutex);
+            if (!ok) {
+                // Same rule as run_uci_match_loop(): an abort that coincides
+                // with a stop request is the stop, not an engine failure.
+                if (stop_requested()) {
+                    out.run.stopped_by_request = true;
+                } else if (!failed) {
+                    failed = true;
+                    error = session.result().error;
+                }
+                return;
+            }
+            finished[pair] = result_delta(session.result(), before);
+
+            // Merge strictly in pair order, so the tally and the SPRT see the
+            // same prefix of games a serial run would have seen, whatever the
+            // order the workers finish in. Pairs finished beyond a decided
+            // verdict are discarded.
+            while (!decided) {
+                const auto it = finished.find(next_apply);
+                if (it == finished.end()) {
+                    break;
+                }
+                add_result(out.result, it->second);
+                finished.erase(it);
+                ++next_apply;
+                const auto& t = out.result.tally;
+                report("game " + std::to_string(t.games_played) + " done: B wins=" +
+                       std::to_string(t.wins_b) + " draws=" + std::to_string(t.draws) +
+                       " A wins=" + std::to_string(t.wins_a));
+                if (options.use_sprt && t.games_played % 2 == 0) {
+                    out.run.sprt_state = compute_sprt(t.wins_b, t.draws, t.wins_a, options.sprt);
+                    char buffer[160];
+                    std::snprintf(buffer, sizeof buffer,
+                                  "  llr=%.3f bounds=[%.3f, %.3f] status=%s",
+                                  out.run.sprt_state.llr, out.run.sprt_state.lower_bound,
+                                  out.run.sprt_state.upper_bound,
+                                  sprt_status_text(out.run.sprt_state.status));
+                    report(buffer);
+                    if (out.run.sprt_state.status != SprtStatus::Continue) {
+                        decided = true;
+                    }
+                }
+            }
+        }
+    };
+
+    std::vector<std::thread> threads;
+    threads.reserve(static_cast<std::size_t>(workers));
+    for (int i = 0; i < workers; ++i) {
+        threads.emplace_back(worker);
+    }
+    for (std::thread& t : threads) {
+        t.join();
+    }
+
+    if (failed) {
+        out.result.aborted = true;
+        out.result.error = error;
+    }
+    if (stop_requested() && !decided && next_apply < total_pairs) {
+        out.run.stopped_by_request = true;
+    }
+    return out;
 }
 
 std::string format_uci_match_summary(const UciMatchConfig& config, const UciMatchResult& result,
