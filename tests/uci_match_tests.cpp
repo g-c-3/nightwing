@@ -366,3 +366,92 @@ TEST_CASE("run_uci_match_loop: without a stop request all games are played and n
     CHECK(session.result().tally.games_played == 2);
     session.stop();
 }
+
+TEST_CASE("run_uci_match_parallel: three workers give the same tally as the serial loop",
+          "[tuner][uci_match][parallel]") {
+    init_all();
+    UciMatchConfig config = fast_config(0);
+    config.depth = 3;
+
+    UciMatchRunOptions options;
+    options.max_games = 8;
+    options.base_seed = 7;
+
+    UciMatchSession session(real_engine("A"), real_engine("B"), config);
+    REQUIRE(session.start());
+    (void)run_uci_match_loop(session, options);
+    const UciMatchResult serial = session.result();
+    session.stop();
+
+    const UciParallelOutcome parallel =
+        run_uci_match_parallel(real_engine("A"), real_engine("B"), config, options, 3);
+
+    CHECK_FALSE(parallel.result.aborted);
+    CHECK_FALSE(parallel.run.stopped_by_request);
+    CHECK(parallel.result.tally.games_played == 8);
+    CHECK(parallel.result.tally.wins_a == serial.tally.wins_a);
+    CHECK(parallel.result.tally.wins_b == serial.tally.wins_b);
+    CHECK(parallel.result.tally.draws == serial.tally.draws);
+}
+
+TEST_CASE("run_uci_match_parallel: an odd game count plays the last single game once",
+          "[tuner][uci_match][parallel]") {
+    init_all();
+    UciMatchRunOptions options;
+    options.max_games = 5;
+
+    const UciParallelOutcome parallel =
+        run_uci_match_parallel(real_engine("A"), real_engine("B"), fast_config(0), options, 4);
+
+    CHECK_FALSE(parallel.result.aborted);
+    CHECK(parallel.result.tally.games_played == 5);
+}
+
+TEST_CASE("run_uci_match_parallel: illegal moves are counted per engine across workers",
+          "[tuner][uci_match][parallel]") {
+    init_all();
+    UciMatchRunOptions options;
+    options.max_games = 6;
+
+    const UciParallelOutcome parallel =
+        run_uci_match_parallel(real_engine("A"), fake_engine("illegal"), fast_config(0), options, 3);
+
+    CHECK_FALSE(parallel.result.aborted);
+    CHECK(parallel.result.tally.games_played == 6);
+    CHECK(parallel.result.tally.wins_a == 6);
+    CHECK(parallel.result.illegal_moves_b == 6);
+    CHECK(parallel.result.illegal_moves_a == 0);
+}
+
+TEST_CASE("run_uci_match_parallel: a missing engine aborts with an error and no games",
+          "[tuner][uci_match][parallel]") {
+    init_all();
+    UciEngineSpec missing;
+    missing.name = "missing";
+    missing.command = "/nonexistent/engine";
+    UciMatchRunOptions options;
+    options.max_games = 4;
+
+    const UciParallelOutcome parallel =
+        run_uci_match_parallel(missing, real_engine("B"), fast_config(0), options, 2);
+
+    CHECK(parallel.result.aborted);
+    CHECK_FALSE(parallel.result.error.empty());
+    CHECK(parallel.result.tally.games_played == 0);
+}
+
+TEST_CASE("run_uci_match_parallel: a stop flag set before the start plays nothing and is flagged",
+          "[tuner][uci_match][parallel]") {
+    init_all();
+    volatile std::sig_atomic_t stop = 1;
+    UciMatchRunOptions options;
+    options.max_games = 6;
+    options.stop_flag = &stop;
+
+    const UciParallelOutcome parallel =
+        run_uci_match_parallel(real_engine("A"), real_engine("B"), fast_config(0), options, 2);
+
+    CHECK(parallel.run.stopped_by_request);
+    CHECK(parallel.result.tally.games_played == 0);
+    CHECK_FALSE(parallel.result.aborted);
+}
