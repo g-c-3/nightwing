@@ -4,13 +4,23 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-31 (4) — Tuner L2-bound test fixture replaced
+
+**Context:** The test `tune_mobility: kRecommendedTermL2Lambda bounds a term's final magnitude under a strong one-sided training signal without flipping its direction` used a lone-knight endgame position. The training signal reached `knight_mg` only through the near-zero midgame taper weight, so the regularized run ended at 4.137 against the required `> 4.0` and fell to about zero (1.7e-44) when the evaluation level shifted by a knight pawn-count term of -3 or +10 per pawn, while ending at 4.12 for -10: its outcome was effectively chaotic in the evaluation level.
+
+**Decision:** The fixture is a middlegame position with White two knights up, `r2q1rk1/ppp2ppp/8/8/8/2N2N2/PPP2PPP/R2Q1RK1 w - - 0 1`, with the three original assertions unchanged (regularized and unregularized runs both above the starting weight, regularized below unregularized). Measured with the evaluation shifted by -10, -3, 0 and +10 per pawn: unregularized 104 to 112, regularized 17.9 to 21.7, starting weight 4. A candidate position set was probed first (a lone knight, White two knights up at the start position, one knight up, and two middlegame set-ups), and the two middlegame positions with a moderate advantage were the ones whose outcomes moved smoothly with the evaluation level.
+
+**Alternatives considered:** relaxing the first assertion to "above zero" (used on the rejected knight branch; rejected as the final fix because a result of 1.7e-44 would pass while testing nothing); changing an evaluation constant to keep the old fixture passing (rejected, a test margin should not set an evaluation constant).
+
+---
+
 ### 2026-10-31 (3) — Run sizes after the parallel runner
 
 **Context:** The first matches on the parallel runner (2026-10-30 (4)) ran on a hosted 4-vCPU runner with four workers for fixed-node play.
 
 **Decision:** Fixed-node runs use `ucimatch_max_games` 14000 (up from 4000), the `go nodes 20000` setting, seed 1 and SPRT bounds `0 5 0.05 0.05` being unchanged; the SPRT normally stops a run earlier (3486 and 8344 games in the first two runs). A clock run is dispatched only after a fixed-node run is non-negative, because the adoption rule of 2026-10-24 (4) requires both runs to be non-negative. Observed throughput on the hosted runner with four workers: about 63 to 103 games per minute, against about 28 for the serial runner.
 
-**Alternatives considered:** keeping 4000 games for comparability with earlier candidates (not chosen, the earlier runs being too small to resolve a few Elo); lowering the node count to speed games (not chosen, it weakens play per game). The two-worker clock mode and the macOS test count of 848 against 850 remain unverified.
+**Alternatives considered:** keeping 4000 games for comparability with earlier candidates (not chosen, the earlier runs being too small to resolve a few Elo); lowering the node count to speed games (not chosen, it weakens play per game). The two-worker clock mode remains unverified. The macOS Release job runs 848 tests against 850 on Windows because two tests are x86-only and the macOS runner is not x86.
 
 ---
 
@@ -28,7 +38,7 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 **Context:** The rook counterpart of Kaufman's pawn-count rule was rejected (2026-10-30 (3)); the knight half was untried.
 
-**Decision:** `candidate/knight-pawn-scaling` (commit `df3663205f08b61868e23c8d148fa665906b4489`, `{-3, -3}` per knight per own pawn missing from eight) against baseline `8bce7880c56547f6b5727166496855875573ffec` at `go nodes 20000`, seed 1: 3486 of 14000 games, 1360 W / 623 D / 1503 L, -14.3 Elo (-24.7 to -3.8), LLR -2.951, SPRT AcceptH0, a significantly negative result. The candidate was rejected and its branch is to be deleted; `main` was unchanged. The candidate had required relaxing one assertion of the tuner test `kRecommendedTermL2Lambda bounds a term's final magnitude`, which sits within 4% of its threshold on `main` and is recorded as an open fragility in SESSIONS.md.
+**Decision:** `candidate/knight-pawn-scaling` (commit `df3663205f08b61868e23c8d148fa665906b4489`, `{-3, -3}` per knight per own pawn missing from eight) against baseline `8bce7880c56547f6b5727166496855875573ffec` at `go nodes 20000`, seed 1: 3486 of 14000 games, 1360 W / 623 D / 1503 L, -14.3 Elo (-24.7 to -3.8), LLR -2.951, SPRT AcceptH0, a significantly negative result. The candidate was rejected and its branch is to be deleted; `main` was unchanged. The candidate had required relaxing one assertion of the tuner test `kRecommendedTermL2Lambda bounds a term's final magnitude`, which sat within 4% of its threshold on `main`; that fragility was fixed on `main` by 2026-10-31 (4).
 
 **Alternatives considered:** a constant of `{-1, -1}` passed that test unchanged but was not chosen, since a test margin should not set an evaluation constant.
 
