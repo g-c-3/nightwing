@@ -4,6 +4,36 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-10-31 (3) — Run sizes after the parallel runner
+
+**Context:** The first matches on the parallel runner (2026-10-30 (4)) ran on a hosted 4-vCPU runner with four workers for fixed-node play.
+
+**Decision:** Fixed-node runs use `ucimatch_max_games` 14000 (up from 4000), the `go nodes 20000` setting, seed 1 and SPRT bounds `0 5 0.05 0.05` being unchanged; the SPRT normally stops a run earlier (3486 and 8344 games in the first two runs). A clock run is dispatched only after a fixed-node run is non-negative, because the adoption rule of 2026-10-24 (4) requires both runs to be non-negative. Observed throughput on the hosted runner with four workers: about 63 to 103 games per minute, against about 28 for the serial runner.
+
+**Alternatives considered:** keeping 4000 games for comparability with earlier candidates (not chosen, the earlier runs being too small to resolve a few Elo); lowering the node count to speed games (not chosen, it weakens play per game). The two-worker clock mode and the macOS test count of 848 against 850 remain unverified.
+
+---
+
+### 2026-10-31 (2) — Rook-behind-passed-pawn candidate rejected
+
+**Context:** Strength plan item 6; `rook_endgame.h` applies Tarrasch's rule only inside pure rook endgames, and the own-rook half of the rule was untried in other positions.
+
+**Decision:** `candidate/rook-behind-passer` (commit `adebaea2f97f204af87b435e16d566c0615d1bb2`, `{3, 10}` per own passed pawn with an own rook behind it) against baseline `8bce7880c56547f6b5727166496855875573ffec` at `go nodes 20000`, seed 1: 8344 of 14000 games, 3372 W / 1492 D / 3480 L, -4.5 Elo (-11.3 to +2.3), LLR -2.945, SPRT AcceptH0. The fixed-node run was negative, so the adoption rule was not met and the candidate was rejected; no clock run was made; the branch is to be deleted and `main` was unchanged.
+
+**Alternatives considered:** the enemy-rook half of the rule and a path-blocking refinement are separate untried ideas.
+
+---
+
+### 2026-10-31 (1) — Knight-by-own-pawn-count candidate rejected
+
+**Context:** The rook counterpart of Kaufman's pawn-count rule was rejected (2026-10-30 (3)); the knight half was untried.
+
+**Decision:** `candidate/knight-pawn-scaling` (commit `df3663205f08b61868e23c8d148fa665906b4489`, `{-3, -3}` per knight per own pawn missing from eight) against baseline `8bce7880c56547f6b5727166496855875573ffec` at `go nodes 20000`, seed 1: 3486 of 14000 games, 1360 W / 623 D / 1503 L, -14.3 Elo (-24.7 to -3.8), LLR -2.951, SPRT AcceptH0, a significantly negative result. The candidate was rejected and its branch is to be deleted; `main` was unchanged. The candidate had required relaxing one assertion of the tuner test `kRecommendedTermL2Lambda bounds a term's final magnitude`, which sits within 4% of its threshold on `main` and is recorded as an open fragility in SESSIONS.md.
+
+**Alternatives considered:** a constant of `{-1, -1}` passed that test unchanged but was not chosen, since a test margin should not set an evaluation constant.
+
+---
+
 ### 2026-10-30 (4) — Parallel UCI match runner
 
 **Context:** Eleven candidates across Sessions 279 to 282 ended without an adoption. The `uci-match` runner played one game at a time on a 4-vCPU hosted runner, so a 4000-game fixed-node run (interval about plus or minus 10 Elo) and a clock run capped at about 575 games could not resolve changes of a few Elo; resolving about 3 Elo needs about 44000 games, and raising `ucimatch_max_games` alone changes nothing because the clock run is stopped by the time cap.
