@@ -1589,7 +1589,17 @@ TEST_CASE("tune_mobility: kRecommendedTermL2Lambda bounds a term's final magnitu
           "strong one-sided training signal without flipping its direction",
           "[tuner][tune][l2]") {
     init_all();
-    const std::string fen = "4k3/8/8/8/8/8/8/1N2K3 w - - 0 1";
+    // A middlegame fixture: White is two knights up (Black has none), so
+    // the one-sided "White wins" signal reaches knight_mg at nearly full
+    // taper weight. The earlier lone-knight endgame fixture
+    // ("4k3/8/8/8/8/8/8/1N2K3 w") fed knight_mg only through the
+    // near-zero midgame taper weight, which left the regularized run's
+    // resting point a few percent from the starting weight (4.137 against
+    // 4.0) and made it jump to about zero under any small change of the
+    // evaluation's absolute level (measured with a knight pawn-count term
+    // of -10..+10 per pawn, Session 283). Here the regularized run ends
+    // near 20 across that whole range, against the starting weight of 4.
+    const std::string fen = "r2q1rk1/ppp2ppp/8/8/8/2N2N2/PPP2PPP/R2Q1RK1 w - - 0 1";
     std::vector<SelfPlayPosition> positions;
     for (int i = 0; i < 8; ++i) {
         positions.push_back(SelfPlayPosition{fen, 1.0});
