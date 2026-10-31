@@ -44,7 +44,7 @@ namespace nightwing::eval {
 /// alternative; a real Texel/SPSA-style pass over search margins
 /// (rather than just eval weights) would need to sweep this too, same
 /// caveat as every sibling margin.
-constexpr int kLazyEvalMargin = 650;
+constexpr int kLazyEvalMargin = 300;
 
 /// Computes the current game phase in [0, kMaxPhase] from remaining
 /// non-pawn material on the board — the standard CPW "Tapered Eval"
