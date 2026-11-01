@@ -4,6 +4,36 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-11-02 (3) — Sharded clock runs used for the first time; pooled verdicts apply the adoption rule unchanged
+
+**Context:** Five candidates were each run with `ucimatch_clock` `10000 100 3` (three shards, 1334 games each, seeds 10001, 110001, 210001, no early stop), per DECISIONS.md 2026-11-01 (5). Each shard was stopped by the job cap after 1124 to 1152 games, so a run pooled 3394 to 3444 games. No shard had an illegal move or a time forfeit, and every combine job found 3 of 3 shard result files.
+
+**Decision:** The combine job's single look at the pooled tally is the clock run's SPRT result for the adoption rule of 2026-10-24 (4). No pooled run reached either bound except the PSQT candidate (AcceptH0, LLR -4.589); the other four ended inconclusive (LLR +0.616, -1.763, -2.222 and -0.413). Three shards give about 3430 games per clock run inside the job cap, which is the practical size of a clock run at the current throughput.
+
+**Alternatives considered:** none beyond those listed in 2026-11-01 (5).
+
+---
+
+### 2026-11-02 (2) — Material, passed-pawn, island, doubled-pawn and PSQT candidates rejected
+
+**Context:** Candidates from the 5000-game fits, each against baseline `baa22cb85b5eec13897a43e10ed81dc21b96adf0`. Material (`5f6c564db860b08c1deb1270d50846936c2f7cc0`): fixed-node 14000 of 14000 games +1.7 Elo, LLR -0.541, inconclusive; clock +5.8 Elo over 3444 games, LLR 0.616, inconclusive. Passed-pawn fit (`30d48bb4faa57796a77bb46076a1700ef65c5425`): fixed-node AcceptH0 at 8332 games, -4.5 Elo, LLR -2.965; clock -6.9 Elo, LLR -1.763. Doubled-pawn fit (`d27ca47298fa8f95d15032b7b5a472b9fdc94d63`): fixed-node AcceptH0 at 2826 games, -18.5 Elo; clock -9.3 Elo, LLR -2.222. Island fit (`3eaaf1e7a93cacbfc424cfe1c6e08ef8feeab897`): fixed-node AcceptH0 at 11374 games, -2.7 Elo, LLR -2.951; clock +0.3 Elo, LLR -0.413. PSQT fit (`e9938d675156132faf53c061dfecf7f6058cbc88`): fixed-node AcceptH0 at 4112 games, -12.3 Elo; clock AcceptH0 at 3394 games, -25.0 Elo, LLR -4.589.
+
+**Decision:** All five rejected under the adoption rule of 2026-10-24 (4); no exception. Material, the only candidate non-negative in both runs, passed the SPRT in neither, so the rule is not met. The branches are deleted and nothing is merged; `main` is unchanged. The PSQT result shows that a held-out Texel loss improvement (1.38% on 20% of the positions) did not predict strength, repeating the earlier finding for the 300-game corpus; the evaluation-loss objective on depth-6 self-play labels is therefore not treated as a predictor of game strength, and a candidate is built from a fit only when the fit also keeps its parameters on their starting sides of zero (2026-11-02 (1)).
+
+**Alternatives considered:** retesting material, the near-miss (not requested); splitting the PSQT candidate by piece (recorded as open in SESSIONS.md Session 285).
+
+---
+
+### 2026-11-02 (1) — Tuning pipeline run on a 5000-game corpus; sign-flipping fits are not built into candidates
+
+**Context:** The `tuning` pipeline at its defaults produced a 355116-position corpus. Final losses from 0.084928: PSQT 0.083195, mobility 0.083990, pawns 0.084077, king safety 0.084385, material 0.084767, space 0.084856, threats 0.084927. The mobility, pawn and king-safety fits moved terms to the opposite sign of their defaults (negative mobility eg weights, connected-pawn penalties in place of bonuses, shield eg -19.8); the earlier mobility fits (ROADMAP.md strength plan item 3) that lowered loss in the same way lost games. The tuner has a sign-preserving mode (`NIGHTWING_TUNE_KEEP_SIGN`, `src/tuner/tune_main.cpp`) that the workflow does not set. The PSQT fit was reproduced in the sandbox from the uploaded corpus (about 6 minutes for 200 iterations), with a held-out check (fit on the first 80% of positions, loss on the last 20%: 0.083036 to 0.081893).
+
+**Decision:** A candidate is built only from a fit whose terms keep their starting signs, and only for terms no earlier candidate changed (the pawn candidates were limited to passed-pawn ranks 2 to 6, the island penalty and the doubled-pawn penalty). The sign-preserving mode is to be set in the term legs of the `tuning` pipeline before further group fits. The corpus is regenerated only when a different label source (not depth-6 self-play) is available.
+
+**Alternatives considered:** fitting every group unconstrained and testing all (rejected on the evidence of the earlier mobility fits and this run's sign flips); regenerating the corpus at depth 8 (about four times slower, not tried).
+
+---
+
 ### 2026-11-01 (5) — Clock matches may be split into parallel shards
 
 **Context:** DECISIONS.md 2026-11-01 (4) recorded that one clock job plays only about 1150 of 4000 games inside the 300-minute job cap, so no clock verdict at the adopted bounds was reachable. Four reruns of lazy margin 400 at bounds `0 10` showed it directly: none passed, and their pooled tally (4618 games, +9.3 Elo) only gave LLR 2.171 against the bound 2.944.
