@@ -62,6 +62,7 @@ add_executable(nightwing_tests
     thread_regression_tests.cpp
     persistent_tt_tests.cpp
     uci_match_tests.cpp
+    uci_match_combine_tests.cpp
     spsa_search_tests.cpp
     time_budget_tests.cpp
     iteration_control_tests.cpp
