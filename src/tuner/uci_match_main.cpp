@@ -36,6 +36,14 @@
 //                        Use at most the physical core count; clock mode
 //                        wants fewer workers than fixed-node play
 //
+// Combine mode (no engines are started):
+//   nightwing_uci_match --combine E0 E1 ALPHA BETA <summary_file>...
+//   pools the printed summaries of several finished runs (the shards of a
+//   sharded clock run, each on its own seed and played without an early
+//   stop) and prints one combined summary with the SPRT evaluated once on
+//   the pooled tally (combine_uci_match_summaries(), uci_match.h).
+//   Exit status 0 = printed, 2 = bad usage or an unreadable/invalid file.
+//
 // Stop request: SIGTERM or SIGINT (for example `timeout` at a workflow's
 // wall-clock limit) sets a flag that is polled before each game. The game
 // in progress finishes, no further game starts, and the normal summary --
@@ -51,7 +59,10 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <sstream>
 #include <string>
+#include <vector>
 
 #include "board/attacks.h"
 #include "board/board.h"
@@ -82,6 +93,7 @@ void print_usage() {
                  "         [--opening-plies N] [--max-plies N] [--seed S] [--opt-a Name=Value]... "
                  "[--opt-b Name=Value]...\n"
                  "         [--sprt E0 E1 [ALPHA BETA]] [--keep-own-book] [--concurrency N]\n"
+                 "       nightwing_uci_match --combine E0 E1 ALPHA BETA <summary_file>...\n"
                  "Engine A is the baseline, engine B the candidate.\n");
 }
 
@@ -95,9 +107,51 @@ bool parse_option(const std::string& text, UciEngineSpec& spec) {
     return true;
 }
 
+/// `--combine E0 E1 ALPHA BETA file...`: pools finished run summaries and
+/// prints the combined summary. Returns the process exit status.
+int run_combine(int argc, char** argv) {
+    if (argc < 7) {
+        print_usage();
+        return 2;
+    }
+    SprtConfig sprt_config;
+    sprt_config.elo0 = std::atof(argv[2]);
+    sprt_config.elo1 = std::atof(argv[3]);
+    sprt_config.alpha = std::atof(argv[4]);
+    sprt_config.beta = std::atof(argv[5]);
+    if (!(sprt_config.elo0 < sprt_config.elo1) || !(sprt_config.alpha > 0.0) ||
+        !(sprt_config.alpha < 1.0) || !(sprt_config.beta > 0.0) || !(sprt_config.beta < 1.0)) {
+        std::fprintf(stderr, "--combine needs elo0 < elo1 and alpha, beta in (0, 1)\n");
+        return 2;
+    }
+    std::vector<std::string> summaries;
+    for (int i = 6; i < argc; ++i) {
+        std::ifstream in(argv[i]);
+        if (!in) {
+            std::fprintf(stderr, "cannot read summary file '%s'\n", argv[i]);
+            return 2;
+        }
+        std::ostringstream text;
+        text << in.rdbuf();
+        summaries.push_back(text.str());
+    }
+    std::string error;
+    const std::string out =
+        nightwing::tuner::combine_uci_match_summaries(summaries, sprt_config, error);
+    if (out.empty()) {
+        std::fprintf(stderr, "cannot combine: %s\n", error.c_str());
+        return 2;
+    }
+    std::fputs(out.c_str(), stdout);
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc >= 2 && std::string(argv[1]) == "--combine") {
+        return run_combine(argc, argv);
+    }
     if (argc < 3) {
         print_usage();
         return 2;

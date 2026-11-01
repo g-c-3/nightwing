@@ -888,6 +888,93 @@ UciMatchResult play_uci_match(const UciEngineSpec& spec_a, const UciEngineSpec& 
     return result;
 }
 
+std::string combine_uci_match_summaries(const std::vector<std::string>& summaries,
+                                        const SprtConfig& sprt, std::string& error) {
+    error.clear();
+    MatchResult tally;
+    int illegal_a = 0;
+    int illegal_b = 0;
+    int forfeits_a = 0;
+    int forfeits_b = 0;
+    bool any_forfeit_line = false;
+    int runs = 0;
+
+    for (std::size_t i = 0; i < summaries.size(); ++i) {
+        bool found_tally = false;
+        std::size_t pos = 0;
+        const std::string& text = summaries[i];
+        while (pos < text.size()) {
+            std::size_t end = text.find('\n', pos);
+            if (end == std::string::npos) {
+                end = text.size();
+            }
+            const std::string line = text.substr(pos, end - pos);
+            pos = end + 1;
+            int games = 0;
+            int wins_b = 0;
+            int draws = 0;
+            int wins_a = 0;
+            int a = 0;
+            int b = 0;
+            if (!found_tally &&
+                std::sscanf(line.c_str(), "games=%d candidate_wins=%d draws=%d baseline_wins=%d",
+                            &games, &wins_b, &draws, &wins_a) == 4) {
+                tally.wins_b += wins_b;
+                tally.draws += draws;
+                tally.wins_a += wins_a;
+                tally.games_played += wins_b + draws + wins_a;
+                found_tally = true;
+            } else if (std::sscanf(line.c_str(), "illegal_moves: baseline=%d candidate=%d", &a,
+                                   &b) == 2) {
+                illegal_a += a;
+                illegal_b += b;
+            } else if (std::sscanf(line.c_str(), "time_forfeits: baseline=%d candidate=%d", &a,
+                                   &b) == 2) {
+                forfeits_a += a;
+                forfeits_b += b;
+                any_forfeit_line = true;
+            }
+        }
+        if (!found_tally) {
+            error = "run " + std::to_string(i + 1) + " of " + std::to_string(summaries.size()) +
+                    " has no 'games=' tally line";
+            return {};
+        }
+        ++runs;
+    }
+    if (runs == 0) {
+        error = "no run summaries given";
+        return {};
+    }
+
+    std::string out;
+    char buffer[256];
+    std::snprintf(buffer, sizeof buffer, "combined: %d runs\n", runs);
+    out += buffer;
+    std::snprintf(buffer, sizeof buffer, "games=%d candidate_wins=%d draws=%d baseline_wins=%d\n",
+                  tally.games_played, tally.wins_b, tally.draws, tally.wins_a);
+    out += buffer;
+    std::snprintf(buffer, sizeof buffer, "illegal_moves: baseline=%d candidate=%d\n", illegal_a,
+                  illegal_b);
+    out += buffer;
+    if (any_forfeit_line) {
+        std::snprintf(buffer, sizeof buffer, "time_forfeits: baseline=%d candidate=%d\n",
+                      forfeits_a, forfeits_b);
+        out += buffer;
+    }
+    std::snprintf(buffer, sizeof buffer,
+                  "candidate_elo_vs_baseline=%.1f (rough; see match.h on sample size)\n",
+                  -tally.elo_diff());
+    out += buffer;
+    const SprtState state = compute_sprt(tally.wins_b, tally.draws, tally.wins_a, sprt);
+    std::snprintf(buffer, sizeof buffer, "sprt: llr=%.3f bounds=[%.3f, %.3f] status=%s\n",
+                  state.llr, state.lower_bound, state.upper_bound, sprt_status_text(state.status));
+    out += buffer;
+    out += "COMBINED: the SPRT was evaluated once on the pooled tally of independent runs "
+           "(no early stop); Continue means inconclusive\n";
+    return out;
+}
+
 const char* sprt_status_text(SprtStatus status) noexcept {
     switch (status) {
         case SprtStatus::AcceptH0:

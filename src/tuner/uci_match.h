@@ -304,6 +304,24 @@ struct UciParallelOutcome {
                                                    const UciMatchRunOptions& options,
                                                    const UciMatchRunOutcome& outcome);
 
+/// Pools the end-of-run summaries of several finished runs of one match (for
+/// example the shards of a sharded clock run, each played on its own seed
+/// with no early stop) and evaluates the SPRT once on the pooled tally.
+///
+/// Each element of `summaries` is the text `nightwing_uci_match` printed:
+/// the lines `games=N candidate_wins=N draws=N baseline_wins=N`,
+/// `illegal_moves: baseline=N candidate=N` and, in clock mode,
+/// `time_forfeits: baseline=N candidate=N` are read; every other line is
+/// ignored. The returned text has the same layout as one run's summary plus
+/// a `combined: N runs` line and a `sprt:` line from `compute_sprt()` under
+/// `sprt`, with a `COMBINED:` note that the verdict is a single look at the
+/// pooled tally, not a sequential stop. Returns an empty string and sets
+/// `error` when a summary has no tally line. A single look at a pooled fixed
+/// sample is not an early-stopping test, so it is no more likely to accept
+/// than the sequential SPRT with the same bounds. Exposed for tests.
+[[nodiscard]] std::string combine_uci_match_summaries(const std::vector<std::string>& summaries,
+                                                      const SprtConfig& sprt, std::string& error);
+
 /// Human-readable name of an SPRT status, as printed in progress and
 /// summary lines.
 [[nodiscard]] const char* sprt_status_text(SprtStatus status) noexcept;
