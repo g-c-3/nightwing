@@ -4,6 +4,46 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-11-01 (4) — Clock runs are bounded by the job time cap
+
+**Context:** Every clock run (`10000 100`, two workers on a hosted 4-vCPU runner) of the lazy-margin candidates stopped at the 300-minute job time cap with exit code 124 after 1146 to 1160 of 4000 games, about 3.8 games per minute, with no illegal moves and no time forfeits. Fixed-node runs with four workers played about 63 to 127 games per minute and finished 14000 games in 110 to 220 minutes.
+
+**Decision:** A clock run is treated as bounded to about 1150 games per job. A verdict at SPRT bounds `0 5 0.05 0.05` is not reachable inside one job for effects of a few Elo, and the early lead of a clock run is not evidence on its own: the margin 400 clock lead fell from +28.4 (1152 games) to +3.0 to +12.9 on four independent reruns, and the margin 300 lead had fallen the same way after Session 276 (+25.8 at 581 games). Sizing the clock mode so that one run can play at least 3000 games (split across chained jobs, or combine seeds in one SPRT) is the next infrastructure task, ahead of further strength candidates.
+
+**Alternatives considered:** widening the bounds to `0 10` for clock runs (used once for margin 400, not adopted as the standing setting, because a pass then supports only a gain above +5 Elo, and none of the four runs reached a verdict even so); a larger runner (not available on the hosted tier in use); lowering the clock to `5000 50` (not tried, it changes the playing conditions the adoption rule was set for).
+
+---
+
+### 2026-11-01 (3) — Lazy-evaluation margin 400 rejected; no exception to the adoption rule; no retest
+
+**Context:** Candidate `candidate/lazy-margin-400` (commit `587a088d14c37eafa4efc90b3bb446333b8b23cc`, `kLazyEvalMargin` 650 to 400, baseline `bd77a119d72c20cdabdac888e939d01e218bdc29`). Fixed-node run: 14000 of 14000 games, +1.8 Elo, LLR -0.501, inconclusive (non-negative). Clock run at bounds `0 5`: +28.4 Elo after 1152 games, LLR 1.687, stopped at the job cap, inconclusive. Four clock reruns at bounds `0 10 0.05 0.05` on seeds 20001, 30001, 40001 and 50001: +12.9, +10.3, +3.0 and +10.8 Elo with LLR 1.004, 0.671, -0.256 and 0.732, all stopped at the cap, inconclusive; pooled after the fact +9.3 Elo (+0.6 to +17.9) over 4618 games.
+
+**Decision:** Rejected. The adoption rule of 2026-10-24 (4) requires both runs to be non-negative and at least one to pass the SPRT; no run passed, so the rule is not met. No exception is made: a pooled result assembled after the fact is not an SPRT, and an exception granted after seeing the results would weaken a rule set in advance. No retest is planned. The probable true gain is small and positive (about +5 to +10 Elo, from the reruns) and is recorded here as a near-miss, not as a result. The branch is deleted and the change is not merged.
+
+**Alternatives considered:** adoption as an explicit exception on the grounds that the change is one constant and nearly free in cost (not chosen); a retest once clock runs can play enough games (declined; the clock-run size limit is recorded in 2026-11-01 (4)).
+
+---
+
+### 2026-11-01 (2) — Lazy-evaluation margins 300 and 500 rejected
+
+**Context:** Candidates `candidate/lazy-margin-300` (commit `e0474087194bae683a48b0782b0b6fa7faf35c2e`) and `candidate/lazy-margin-500` (commit `98e0a3b906fddf6ea1271170bf17e729bd24aaaa`), each one constant against baseline `bd77a119d72c20cdabdac888e939d01e218bdc29` (margin 650). Margin 300 repeated the constant of Session 276 (commit `312da4c`, rejected, DECISIONS.md 2026-10-27 (3)); the repetition was not noticed before dispatch. Margin 300: fixed-node 14000 of 14000 games, 5741 W / 2493 D / 5766 L, -0.6 Elo (-5.8 to +4.6), LLR -2.201, inconclusive; clock 1154 of 4000 games, +13.0 Elo, LLR 0.677, stopped at the job cap. Margin 500: fixed-node stopped by the SPRT at 7172 games, 2896 / 1263 / 3013, -5.7 Elo (-13.0 to +1.6), LLR -2.946, AcceptH0; clock 1146 of 4000 games, +7.0 Elo, LLR 0.280, stopped at the cap.
+
+**Decision:** Both rejected under the adoption rule of 2026-10-24 (4): margin 300 has a negative fixed-node estimate and no SPRT pass, margin 500 failed the SPRT in the negative direction. The branches are deleted and not merged. With margin 400 (2026-11-01 (3)), margins 300, 400 and 500 have now all been compared by games; margins below 300 were not tried, the measured wrong-cutoff rate growing from 0.01% at 300 to 0.05% at 250 and 0.88% at 150 (Session 276).
+
+**Alternatives considered:** none beyond the margin values themselves; the node counts on the fixed bench set did not order the margins (bench 10: 300 gave 2865168, 400 gave 3073196, 500 gave 2728927, 650 gave 3132728), a small score change redirecting the search into a different tree.
+
+---
+
+### 2026-11-01 (1) — Closedness-of-minors candidate rejected; candidate was tested from `main`
+
+**Context:** A term scaling knight and bishop values by the number of mutually blocked pawn pairs (`kKnightPerBlockedPair` `{3, 2}`, `kBishopPerBlockedPair` `{-3, -2}`, untuned hand estimates; CPW "Knight" and "Bishop") was built to the candidate-branch procedure but committed directly to `main` (commit `f01257c7cddb545c7657563a1a56e54101c987ae`), and the match was run with the candidate ref given as the branch name `main` against baseline `645cf2c7115983b08e449f78b9b5d9637fd9f895`. The log resolved `main` to `f01257c7cddb545c7657563a1a56e54101c987ae`, whose six files were byte-identical to the delivered files. Fixed-node: stopped by the SPRT at 3124 of 4000 games, 1225 W / 525 D / 1374 L, -16.6 Elo (-27.7 to -5.5), LLR -2.974, AcceptH0, no illegal moves. The clock run was terminated by hand at 208 games (+3.3 Elo, LLR 0.010) with no result block.
+
+**Decision:** Rejected under the adoption rule of 2026-10-24 (4); the fixed-node run is a clear negative. `main` was restored by replacing three files with the baseline versions and deleting three files (commit `bd77a119d72c20cdabdac888e939d01e218bdc29`), verified byte-identical to `645cf2c7115983b08e449f78b9b5d9637fd9f895`. The deviation from the candidate-branch rule (one branch per candidate, never straight to `main`) is recorded, its cost being a revert instead of a branch deletion; a candidate ref is to be a full 40-character SHA, not a branch name. The term is a single scaling term and does not count as one of the "several evaluation sets chosen by pawn structure" of strength plan item 6, which remain untried.
+
+**Alternatives considered:** reversing `main` before running the match (not needed: a match takes commit SHAs, so the pre-candidate commit served as the baseline and the candidate commit as the candidate).
+
+---
+
 ### 2026-10-31 (4) — Tuner L2-bound test fixture replaced
 
 **Context:** The test `tune_mobility: kRecommendedTermL2Lambda bounds a term's final magnitude under a strong one-sided training signal without flipping its direction` used a lone-knight endgame position. The training signal reached `knight_mg` only through the near-zero midgame taper weight, so the regularized run ended at 4.137 against the required `> 4.0` and fell to about zero (1.7e-44) when the evaluation level shifted by a knight pawn-count term of -3 or +10 per pawn, while ending at 4.12 for -10: its outcome was effectively chaotic in the evaluation level.
