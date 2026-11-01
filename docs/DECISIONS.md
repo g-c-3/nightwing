@@ -4,11 +4,21 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-11-01 (5) — Clock matches may be split into parallel shards
+
+**Context:** DECISIONS.md 2026-11-01 (4) recorded that one clock job plays only about 1150 of 4000 games inside the 300-minute job cap, so no clock verdict at the adopted bounds was reachable. Four reruns of lazy margin 400 at bounds `0 10` showed it directly: none passed, and their pooled tally (4618 games, +9.3 Elo) only gave LLR 2.171 against the bound 2.944.
+
+**Decision:** `ucimatch_clock` takes an optional third integer, the shard count from 1 to 8 (default 1, unchanged behaviour; the input is extended because the workflow is at the 25 `workflow_dispatch` input limit). With more than one shard, a `uci-match-plan` job builds the matrix, each `uci-match-test` shard plays `ceil(ucimatch_max_games / shards)` games rounded up to even on its own seed (`ucimatch_seed` + 100000 times the shard index) with no early stop and uploads `uci-match-results-<shard>`, and a `uci-match-combine` job pools the tallies (`nightwing_uci_match --combine`, `combine_uci_match_summaries()`) and evaluates the SPRT once on the pooled tally. Each shard is still stopped by `ucimatch_time_limit_min`, so three shards give about 3450 clock games. The pooled verdict is a single look at the final tally and not a sequential stop, so it is no more likely to accept than the sequential SPRT with the same bounds, and the adoption rule of 2026-10-24 (4) applies to it unchanged, a pooled verdict standing as the run's SPRT result. Verification run 41261650104 (two shards, 40 games, engine against itself) pooled correctly: 13 / 7 / 20, LLR -0.274, Continue, no illegal moves or forfeits. The artifact of a match job is now named `uci-match-results-<shard>` (formerly `uci-match-results`), and the job name carries the shard index.
+
+**Alternatives considered:** four workers on the clock mode (about twice the games per job, but hyperthread contention would slow both engines and change the playing conditions the adoption rule was set for); a shorter clock such as `5000 50` (changes the conditions); resuming one SPRT across chained jobs (needs carried state and a further workflow input, which the 25-input limit does not allow); a post-hoc pooling of unplanned reruns (rejected for rule purposes, as in 2026-11-01 (3), because the pooling was decided after the results were seen; sharding fixes the shard count and the seeds before any game is played).
+
+---
+
 ### 2026-11-01 (4) — Clock runs are bounded by the job time cap
 
 **Context:** Every clock run (`10000 100`, two workers on a hosted 4-vCPU runner) of the lazy-margin candidates stopped at the 300-minute job time cap with exit code 124 after 1146 to 1160 of 4000 games, about 3.8 games per minute, with no illegal moves and no time forfeits. Fixed-node runs with four workers played about 63 to 127 games per minute and finished 14000 games in 110 to 220 minutes.
 
-**Decision:** A clock run is treated as bounded to about 1150 games per job. A verdict at SPRT bounds `0 5 0.05 0.05` is not reachable inside one job for effects of a few Elo, and the early lead of a clock run is not evidence on its own: the margin 400 clock lead fell from +28.4 (1152 games) to +3.0 to +12.9 on four independent reruns, and the margin 300 lead had fallen the same way after Session 276 (+25.8 at 581 games). Sizing the clock mode so that one run can play at least 3000 games (split across chained jobs, or combine seeds in one SPRT) is the next infrastructure task, ahead of further strength candidates.
+**Decision:** A clock run is treated as bounded to about 1150 games per job. A verdict at SPRT bounds `0 5 0.05 0.05` is not reachable inside one job for effects of a few Elo, and the early lead of a clock run is not evidence on its own: the margin 400 clock lead fell from +28.4 (1152 games) to +3.0 to +12.9 on four independent reruns, and the margin 300 lead had fallen the same way after Session 276 (+25.8 at 581 games). The remedy is sharding the run across parallel jobs (2026-11-01 (5)).
 
 **Alternatives considered:** widening the bounds to `0 10` for clock runs (used once for margin 400, not adopted as the standing setting, because a pass then supports only a gain above +5 Elo, and none of the four runs reached a verdict even so); a larger runner (not available on the hosted tier in use); lowering the clock to `5000 50` (not tried, it changes the playing conditions the adoption rule was set for).
 
