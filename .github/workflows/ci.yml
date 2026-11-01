@@ -650,8 +650,15 @@ jobs:
       # `--${{ matrix.mode }}` must be its own separate argument, before
       # `tune_iterations` (tune_main.cpp's own CLI-mode-must-be-argv[1]
       # convention, tuner/tune_main.cpp's own header comment).
+      # NIGHTWING_TUNE_KEEP_SIGN (tune_main.cpp, Session 209) keeps every
+      # parameter on its starting value's side of zero, so a fit cannot flip
+      # a term's sign (Session 285: the unconstrained mobility, king-safety
+      # and pawn fits did, and were not built into candidates). Honored by
+      # the five single-term modes; the PSQT leg ignores it and logs that.
       - name: Run self-play -> tune (${{ matrix.mode }}) pipeline
         working-directory: build
+        env:
+          NIGHTWING_TUNE_KEEP_SIGN: "1"
         run: |
           set -euo pipefail
           echo "== nightwing_selfplay: ${{ inputs.selfplay_games }} games =="
