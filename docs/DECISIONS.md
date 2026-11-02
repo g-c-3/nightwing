@@ -4,6 +4,38 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-11-03 (3) — The `tuning` workflow's term legs run the tuner in sign-preserving mode
+
+**Context:** The unconstrained mobility, pawn and king-safety fits of Session 285 moved terms to the opposite sign of their defaults and were not built into candidates (2026-11-02 (1)). The tuner already had a sign-preserving mode (`NIGHTWING_TUNE_KEEP_SIGN`, `src/tuner/tune_main.cpp`, honored by the five single-term modes; the PSQT and material modes ignore it and log that), but the workflow did not set it.
+
+**Decision:** The step "Run self-play -> tune" of the `tuning-pipeline-term` job in `.github/workflows/ci.yml` sets `NIGHTWING_TUNE_KEEP_SIGN: "1"` for every term leg (committed to `main`, an infrastructure change, not a strength candidate). Every parameter then stays on its starting value's side of zero; a parameter that starts at exactly 0 stays unconstrained, and a parameter pressed against the boundary ends at 0. The PSQT leg ignores the setting.
+
+**Result of the first run (same 355116-position corpus, starting loss 0.084928):** mobility 0.084423 (-0.595%), pawns 0.084340 (-0.692%), king safety 0.084784 (-0.170%), space 0.084856 (-0.085%), threats 0.084927 (-0.001%); the PSQT leg's loss was not captured by its log. The mobility fit drove all four endgame weights to the zero boundary (middlegame 5.44, 7.58, 11.16 and 6.55 for knight, bishop, rook and queen from 4, 5, 2 and 1) and the pawn fit moved the isolated and backward penalties and the connected bonus (to 0) most. The 0.5% loss reduction threshold of Session 285 was met by mobility and pawns only; see (1) and (2).
+
+**Alternatives considered:** leaving the setting to be passed by hand on each dispatch (rejected: a forgotten setting reproduces the sign-flipping fits); a workflow input for it (rejected: the dispatch form is already near its input limit and the unconstrained mode has no current use).
+
+---
+
+### 2026-11-03 (2) — Mobility candidate (sign-preserving fit) rejected
+
+**Context:** Candidate `candidate/mobility-texel-keepsign`, commit `8d626289aac960918ab4b9f0f596356c0fc181a5`, against baseline `07ece0dbec8b89e7c7817c92bea6550d4a4bcc36`. The change rounded the sign-preserving mobility fit into `src/eval/mobility.h`: knight {5,0}, bishop {8,0}, rook {11,0}, queen {7,0} (from {4,4}, {5,5}, {2,4}, {1,2}), with two test updates (`mobility_tests.cpp`, `tune_tests.cpp`); 855 of 855 tests; `bench 6` 62276 to 67359, `bench 10` 3132728 to 3198461. Fixed-node run (`go nodes 20000`, seed 1, bounds `0 5 0.05 0.05`): 2722 of 14000 games, 1083 W / 401 D / 1238 L, about -19.8 Elo (95% interval about -31.9 to -7.8), LLR -2.958 against bounds of plus or minus 2.944, AcceptH0, no illegal moves. Clock run (`10000 100 3`, seeds 10001, 110001, 210001, SPRT bounds `-5 5 0.05 0.05`): 3480 pooled games (1160, 1166 and 1154 per shard, each stopped by the job cap), 1280 W / 757 D / 1443 L, about -16.3 Elo (about -26.5 to -6.1), LLR -6.012, AcceptH0, no illegal moves, no time forfeits.
+
+**Decision:** Rejected under the adoption rule of 2026-10-24 (4): both runs are negative and both reached AcceptH0. The branch is deleted; no revert is needed because nothing was merged. A lower Texel loss (0.084928 to 0.084423) again did not predict strength; the fit set every endgame weight to zero and multiplied the rook middlegame weight by about five, which a single linear weight per attacked square cannot represent as a real curve.
+
+**Alternatives considered:** a halfway step toward the fit (not tried); a per-count mobility table indexed by the number of reachable squares, which is a different parameterization and is recorded as untried in the ROADMAP.
+
+---
+
+### 2026-11-03 (1) — Pawn-weakness candidate (isolated and backward penalties) adopted
+
+**Context:** Candidate `candidate/pawn-weakness-texel-keepsign`, commit `22681ec98147dc32498f8e651e0f39c7d03f823e`, against baseline `07ece0dbec8b89e7c7817c92bea6550d4a4bcc36`. The change set `kIsolatedPawnPenalty` from {-10,-20} to {0,-13} and `kBackwardPawnPenalty` from {-8,-12} to {-3,-3} in `src/eval/pawns.h` (rounded from the sign-preserving pawn fit, loss 0.084928 to 0.084340, of which only these two terms were taken so that the candidate stays one idea and avoids the passed-pawn, island and doubled-pawn terms rejected in 2026-11-02 (2); the connected-pawn bonus, fitted to 0, was left at its default); 855 of 855 tests with no test edits; `bench 6` 62276 to 61223, `bench 10` 3132728 to 2698145. Fixed-node run (`go nodes 20000`, seed 1, bounds `0 5 0.05 0.05`): stopped by the SPRT at 5380 of 14000 games, 2316 W / 955 D / 2109 L, about +13.4 Elo (95% interval about +5.0 to +21.8), LLR 2.950 against bounds of plus or minus 2.944, AcceptH1, no illegal moves. Clock run (`10000 100 3`, seeds 10001, 110001, 210001): 3412 pooled games (1138, 1136 and 1138 per shard, each stopped by the job cap), 1382 W / 835 D / 1195 L, about +19.1 Elo (about +8.9 to +29.2), LLR 7.154, AcceptH1, no illegal moves, no time forfeits; the clock run was dispatched with the workflow's default SPRT bounds `-5 5 0.05 0.05`, not the `0 5` of the strength plan, which the rule does not require for the clock run to be non-negative.
+
+**Decision:** Adopted under the rule of 2026-10-24 (4): both runs are non-negative and the fixed-node run passes the SPRT at the specified bounds. The adopted file (`src/eval/pawns.h`, byte-identical to the candidate commit) is committed to `main` directly, in one commit together with the docs entries (ROADMAP, SESSIONS, DECISIONS, including the record of the rejected mobility candidate), instead of by pull request; the branch is then deleted unmerged. That commit is the baseline for later candidates.
+
+**Alternatives considered:** the full pawn fit (rejected as a bundle of five terms, three of them already rejected); the isolated and backward terms separately (not done; a later split can say which of the two carries the gain).
+
+---
+
 ### 2026-11-02 (3) — Sharded clock runs used for the first time; pooled verdicts apply the adoption rule unchanged
 
 **Context:** Five candidates were each run with `ucimatch_clock` `10000 100 3` (three shards, 1334 games each, seeds 10001, 110001, 210001, no early stop), per DECISIONS.md 2026-11-01 (5). Each shard was stopped by the job cap after 1124 to 1152 games, so a run pooled 3394 to 3444 games. No shard had an illegal move or a time forfeit, and every combine job found 3 of 3 shard result files.
