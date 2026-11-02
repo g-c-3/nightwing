@@ -56,7 +56,7 @@ inline constexpr std::array<Score, 8> kPassedPawnBonus = {{
 /// anywhere -- a structural weakness regardless of game phase, but
 /// slightly more exploitable in the endgame once there are fewer pieces
 /// around to shield or blockade it, hence the larger `eg` magnitude.
-inline constexpr Score kIsolatedPawnPenalty = {-10, -20};
+inline constexpr Score kIsolatedPawnPenalty = {0, -13};
 
 /// CPW "Doubled Pawn": applied once per pawn that shares its file with
 /// at least one other friendly pawn -- so two pawns on a file both incur
@@ -70,7 +70,7 @@ inline constexpr Score kDoubledPawnPenalty = {-10, -20};
 /// CPW "Backward Pawn": see pawn_structure_value()'s doc comment below
 /// for the exact two-part test. A real, if narrower, weakness than
 /// isolation -- smaller magnitude accordingly.
-inline constexpr Score kBackwardPawnPenalty = {-8, -12};
+inline constexpr Score kBackwardPawnPenalty = {-3, -3};
 
 /// CPW "Connected Pawns": a pawn defended by, or standing directly
 /// beside (phalanx), another friendly pawn. A small per-pawn bonus
