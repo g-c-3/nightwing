@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 287 — 2026-11-03 — Per-count mobility table assessed offline; no candidate built
+
+**Built:** nothing was committed. Baseline: `main` `108dcbd41d1877d9dd43ce0d9a80117999b8f53e` (the adopted `pawns.h` and the Session 286 docs; both candidate branches confirmed deleted). In the sandbox only, an extractor (not shipped) computed for each position of the 355116-position corpus the white-relative `evaluate()` score with the mobility weights set to zero, the game phase, the result and signed histograms of reachable-square counts per piece type (own-occupied squares excluded, as in `mobility_value()`), and least-squares/L-BFGS fits of a per-count table (66 count slots, each with a middlegame and an endgame value) were compared with linear fits on a 80/20 split (284092 and 71024 positions).
+
+**Measured:** held-out loss: no mobility 0.083113, current linear weights 0.082907, unconstrained linear 0.082261, free per-count table 0.079253 (with piece-value-like offsets, queen about +1546 middlegame and -842 endgame), per-piece offsets alone 0.080083, table plus offsets 0.079289, table with offsets removed and curves recentred 0.082395 (-0.86% against no mobility, -0.62% against the current weights); the curves are nearly linear under the smoothness penalty used (second-difference weight 1e-3 and 1e-4 gave similar results).
+
+**Bugs fixed:** none.
+
+**Decisions made:** no per-count table candidate is built on this evidence; see DECISIONS.md 2026-11-03 (4).
+
+**Open:** a table fitted with weaker smoothing (to see a trapped-piece region at low counts) was not run; another reachable-square definition (excluding squares attacked by enemy pawns) was not assessed; the extractor and fit scripts live only in the sandbox; the pawn-weakness gain is still not split between the isolated and backward penalties; the connected-pawn bonus (fitted to 0 in Session 286) and the king-safety fit (-0.170% loss, below the 0.5% bar) remain untested as candidates; the CI build and tests on `main` `108dcbd41d1877d9dd43ce0d9a80117999b8f53e` were not confirmed in this session.
+
+**Next session start point:** read `main` HEAD from the repository, confirm its build and test jobs are green, then repeat the offline assessment of Session 287 for a reachable-square definition that excludes squares attacked by enemy pawns (same corpus, same 80/20 split, offsets removed): build a candidate only if the held-out loss falls at least 1% below the current linear weights' 0.082907 and the curves keep the signs of their defaults.
+
+---
+
 ### Session 286 — 2026-11-03 — Sign-preserving tuning legs; pawn-weakness candidate adopted, mobility candidate rejected
 
 **Built:** the `tuning` workflow's term legs now set `NIGHTWING_TUNE_KEEP_SIGN: "1"` (`.github/workflows/ci.yml`, `main`, baseline `07ece0dbec8b89e7c7817c92bea6550d4a4bcc36` includes it); the pipeline was dispatched at its defaults on the same 355116-position corpus (starting loss 0.084928). Fits: mobility 0.084423 (-0.595%), pawns 0.084340 (-0.692%), king safety 0.084784 (-0.170%), space 0.084856 (-0.085%), threats 0.084927 (-0.001%); the PSQT leg's loss was not in its log; the tuner was rebuilt in the sandbox on the uploaded corpus to obtain the starting loss. Two one-idea candidates were built from `main` `07ece0dbec8b89e7c7817c92bea6550d4a4bcc36` on their own branches: (1) `candidate/mobility-texel-keepsign` (commit `8d626289aac960918ab4b9f0f596356c0fc181a5`): `kKnightMobilityBonus` {5,0}, `kBishopMobilityBonus` {8,0}, `kRookMobilityBonus` {11,0}, `kQueenMobilityBonus` {7,0} in `src/eval/mobility.h`, with `mobility_tests.cpp` (centre-versus-corner knight endgame check now `>=`) and `tune_tests.cpp` (the sign-keeping fixture starts from explicit pre-candidate weights {4,4,5,5,2,4,1,2}); 855 of 855; `bench 6` 67359, `bench 10` 3198461. (2) `candidate/pawn-weakness-texel-keepsign` (commit `22681ec98147dc32498f8e651e0f39c7d03f823e`): `kIsolatedPawnPenalty` {0,-13} and `kBackwardPawnPenalty` {-3,-3} in `src/eval/pawns.h`; 855 of 855; `bench 6` 61223, `bench 10` 2698145. Baseline: 855 of 855, `bench 6` 62276, `bench 10` 3132728. Not checked in the sandbox: other platforms, sanitizers, CI-only jobs, nodes per second.

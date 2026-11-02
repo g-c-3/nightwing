@@ -4,6 +4,16 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-11-03 (4) — A per-count mobility table is not built as a candidate on the current evidence
+
+**Context:** After the rejection of the linear mobility fit (2026-11-03 (2)), a table of bonuses indexed by the number of reachable squares (knight 0 to 8, bishop 0 to 13, rook 0 to 14, queen 0 to 27, each with a middlegame and an endgame value; the reachable-square definition of `mobility_value()` unchanged) was assessed offline, in the sandbox only, on the stored 355116-position corpus with `main` `108dcbd41d1877d9dd43ce0d9a80117999b8f53e` as the evaluation: fits on the first 80% of positions (284092) and held-out loss on the last 20% (71024). Held-out loss: no mobility 0.083113, current linear 0.082907, unconstrained linear fit 0.082261, free per-count table 0.079253. The free table's curves carried large piece-value-like offsets (queen about +1546 middlegame and -842 endgame), so the gain was mostly a re-fit of material; refitting per-piece offsets alone gave 0.080083, and the table shape on top of those offsets gave 0.079289 (a further -0.99%). With the offsets removed (each curve recentred at its occupancy-weighted mean count: knight 4.62, bishop 4.92, rook 5.31, queen 10.3) the table gave 0.082395, -0.86% against no mobility and -0.62% against the current linear weights. Under a second-difference smoothness penalty the curves are nearly linear (rook middlegame about +15 per square, queen endgame falling about 6 per square).
+
+**Decision:** No candidate is built from this table. The apparent loss gain is mostly material-like offsets (a material fit was already tested, DECISIONS 2026-11-02 (2)), and the shape-only gain is small and close to the linear fits whose sign-flipped or boundary-pinned forms were rejected (2026-11-03 (2)). A table is revisited only if a fit with weaker smoothing shows a clear low-count (trapped-piece) region, or if another reachable-square definition shows a larger held-out gain than 0.62%.
+
+**Alternatives considered:** building the table anyway and letting the `uci-match` runs decide (rejected for now: twenty-four candidates have ended without an adoption outside the one just adopted, and the offline evidence does not separate the table from the linear fits); shipping the free table with its offsets (rejected: it would be an untested material change bundled into a mobility candidate).
+
+---
+
 ### 2026-11-03 (3) — The `tuning` workflow's term legs run the tuner in sign-preserving mode
 
 **Context:** The unconstrained mobility, pawn and king-safety fits of Session 285 moved terms to the opposite sign of their defaults and were not built into candidates (2026-11-02 (1)). The tuner already had a sign-preserving mode (`NIGHTWING_TUNE_KEEP_SIGN`, `src/tuner/tune_main.cpp`, honored by the five single-term modes; the PSQT and material modes ignore it and log that), but the workflow did not set it.
