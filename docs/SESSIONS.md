@@ -4,6 +4,54 @@ Newest entry at top.
 
 ---
 
+### Session 290 — 2026-11-03 — SPSA piece-bonus leg scoped; no code written
+
+**Built:** nothing was committed. Baseline: `main` `715251ee18c8943e66bb5c43ce20582afa3aa8a2`. The code paths for the piece-bonus SPSA leg were read: `piece_bonus_value()` takes no weight override; `EvalWeightsOverride` carries six weight groups; `eval::evaluate()` takes them as separate trailing pointers; `search.cpp` unpacks them once and passes them at four `evaluate()` sites (and `quiescence.cpp` at two); the tuner holds a `ParameterRef` table per group; `nightwing_spsa` targets 0 to 3 exist. The change touches about fourteen files, two of them very large (`search.cpp`, 4780 lines; `tune.h`, 1325 lines), each to be delivered whole.
+
+**Measured:** nothing new.
+
+**Bugs fixed:** none.
+
+**Decisions made:** plan and acceptance criteria for the leg; see DECISIONS.md 2026-11-03 (7).
+
+**Open:** the plumbing and tests are not written; the earlier open items from Session 289 stand; CI status of `main` `715251ee18c8943e66bb5c43ce20582afa3aa8a2` was not confirmed.
+
+**Next session start point:** implement DECISIONS.md 2026-11-03 (7) steps (1) to (6) in one session from a clean sandbox build of `main` HEAD: read `src/eval/piece_bonuses.h/.cpp`, `src/eval/eval.h/.cpp`, the `ew_pawns` sites in `src/search/search.cpp` and `src/search/quiescence.cpp`, `src/tuner/tune.h/.cpp`, `src/tuner/spsa_eval.h/.cpp` and `src/tuner/spsa_main.cpp`, apply the change by editing local copies, run the full `ctest` suite and `bench 6` / `bench 10` (61223 and 2698145 must not change), and deliver every touched file whole.
+
+---
+
+### Session 289 — 2026-11-03 — Piece-bonus terms assessed offline; no candidate built
+
+**Built:** nothing was committed. Baseline: `main` `715251ee18c8943e66bb5c43ce20582afa3aa8a2`. In the sandbox only, an extractor (not shipped) computed per position of the 34288-position substitute corpus the white-relative `evaluate()` score, the phase and the signed counts of bishop pairs, rooks on open files, rooks on semi-open files and rooks on the 7th rank (the definitions of `piece_bonus_value()`); a fit script compared refitted weights with the defaults by 5-fold cross-validation.
+
+**Measured:** mean held-out loss: without the terms 0.098387, default weights 0.098954, unconstrained fit 0.097201 (four terms with negative or implausible signs), sign-preserving fit 0.097980 (-0.98%, three terms pinned at 0, semi-open {44,85}); single-term refits -0.27% (pair), -0.35% (open), -0.37% (semi-open), -0.07% (7th). A first run of the sign-preserving fit returned the defaults unchanged because the optimizer stopped at its first iteration; it was rerun with rescaled parameters and tight tolerances.
+
+**Bugs fixed:** none.
+
+**Decisions made:** no candidate is built; see DECISIONS.md 2026-11-03 (6).
+
+**Open:** the assessment used the substitute corpus, not the stored 355116-position corpus; the extractor and fit scripts live only in the sandbox; CI status of `main` `715251ee18c8943e66bb5c43ce20582afa3aa8a2` was not confirmed; the pawn-weakness gain is still not split between the isolated and backward penalties; the connected-pawn bonus and the king-safety fit (-0.170% loss) remain untested as candidates; tempo, king tropism, trapped-piece terms, knight outposts and SPSA with game results as the signal remain untried.
+
+**Next session start point:** read `main` HEAD from the repository and confirm its build and test jobs are green, then add SPSA with game results as the signal to the `tuning` workflow plan (ROADMAP.md strength plan item 3): design a one-idea SPSA leg over the piece-bonus constants (`kBishopPairBonus`, `kRookOpenFileBonus`, `kRookSemiOpenFileBonus`, `kRookOnSeventhBonus`) using fixed-node self-play games as the objective, since the Texel fits on self-play positions do not separate these terms from material.
+
+---
+
+### Session 288 — 2026-11-03 — Enemy-pawn-attack-excluding mobility definition assessed offline; no candidate built
+
+**Built:** nothing was committed. Baseline: `main` `715251ee18c8943e66bb5c43ce20582afa3aa8a2` (Release build in the sandbox: 855 of 855 tests passing, `bench 6` 61223 nodes, `bench 10` 2698145 nodes; CI status was not confirmed because the GitHub API was rate-limited). The stored 355116-position corpus was not available, so a substitute corpus of 500 depth-6 self-play games (34288 positions) was generated with `nightwing_selfplay`. In the sandbox only, an extractor (not shipped) computed per position the white-relative evaluation with mobility zeroed, the phase, the result and the reachable-square counts under the current definition and under a definition excluding squares attacked by enemy pawns; a fit script compared linear and per-count table fits on an 80/20 split.
+
+**Measured:** held-out loss: no mobility 0.099507, current linear weights 0.099574, linear fit 0.096754 (current definition) and 0.097191 (new definition); tables with offsets removed 0.097855 and 0.095359 (current) against 0.097692 and 0.095523 (new) at smoothing 1e-3 and 1e-4. The new definition is not better than the current one; the gain over the current weights appears under both definitions.
+
+**Bugs fixed:** none.
+
+**Decisions made:** no candidate is built; see DECISIONS.md 2026-11-03 (5).
+
+**Open:** the substitute corpus is smaller and different from the stored one, so the Session 287 bar (1% below 0.082907) was not evaluated and a repeat on the stored corpus was not run; the extractor and fit scripts live only in the sandbox; CI status of `main` `715251ee18c8943e66bb5c43ce20582afa3aa8a2` was not confirmed; the pawn-weakness gain is still not split between the isolated and backward penalties; the connected-pawn bonus and the king-safety fit (-0.170% loss, below the 0.5% bar) remain untested as candidates; terms no tuner reaches (tempo, bishop pair, rook file and 7th bonuses, king tropism, trapped pieces) and SPSA with game results as the signal remain untried.
+
+**Next session start point:** read `main` HEAD from the repository, confirm its build and test jobs are green, then begin ROADMAP.md strength plan item 3 with the next untried term group: assess the bishop pair, rook file and rook-on-7th bonuses offline in the sandbox (the fit script from this session can be extended), and build a one-idea candidate only if the held-out loss falls at least 0.5% against the current evaluation with term signs kept.
+
+---
+
 ### Session 287 — 2026-11-03 — Per-count mobility table assessed offline; no candidate built
 
 **Built:** nothing was committed. Baseline: `main` `108dcbd41d1877d9dd43ce0d9a80117999b8f53e` (the adopted `pawns.h` and the Session 286 docs; both candidate branches confirmed deleted). In the sandbox only, an extractor (not shipped) computed for each position of the 355116-position corpus the white-relative `evaluate()` score with the mobility weights set to zero, the game phase, the result and signed histograms of reachable-square counts per piece type (own-occupied squares excluded, as in `mobility_value()`), and least-squares/L-BFGS fits of a per-count table (66 count slots, each with a middlegame and an endgame value) were compared with linear fits on a 80/20 split (284092 and 71024 positions).
