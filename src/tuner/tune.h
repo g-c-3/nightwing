@@ -109,6 +109,7 @@
 #include "eval/king_safety.h"
 #include "eval/mobility.h"
 #include "eval/pawns.h"
+#include "eval/piece_bonuses.h"
 #include "eval/psqt.h"
 #include "eval/space.h"
 #include "eval/threats.h"
@@ -669,6 +670,29 @@ inline constexpr std::array<PawnsParameterRef, 59> kPawnsParameters = {{
 
     {"island_mg", &eval::PawnsWeights::island_mg},
     {"island_eg", &eval::PawnsWeights::island_eg},
+}};
+
+/// `ParameterRef<eval::PieceBonusWeights>` -- the piece-bonus counterpart
+/// to the per-term ParameterRef aliases above, introduced with the SPSA
+/// piece-bonus leg (DECISIONS.md 2026-11-03 (7)).
+using PieceBonusParameterRef = ParameterRef<eval::PieceBonusWeights>;
+
+/// Every PieceBonusWeights field, in declaration order: bishop pair, rook
+/// on an open file, rook on a semi-open file, rook on the 7th rank, each
+/// as an mg/eg pair (8 entries). All are `anchored = false`: the bonuses
+/// are additive features, so they share none of material's multiplicative
+/// flat-scaling degeneracy. Not used by the Texel tuner (the Texel route
+/// cannot separate these terms from material, DECISIONS.md 2026-11-03
+/// (6)); it exists for SPSA with game results as the signal.
+inline constexpr std::array<PieceBonusParameterRef, 8> kPieceBonusParameters = {{
+    {"bishop_pair_mg", &eval::PieceBonusWeights::bishop_pair_mg},
+    {"bishop_pair_eg", &eval::PieceBonusWeights::bishop_pair_eg},
+    {"rook_open_file_mg", &eval::PieceBonusWeights::rook_open_file_mg},
+    {"rook_open_file_eg", &eval::PieceBonusWeights::rook_open_file_eg},
+    {"rook_semi_open_file_mg", &eval::PieceBonusWeights::rook_semi_open_file_mg},
+    {"rook_semi_open_file_eg", &eval::PieceBonusWeights::rook_semi_open_file_eg},
+    {"rook_on_seventh_mg", &eval::PieceBonusWeights::rook_on_seventh_mg},
+    {"rook_on_seventh_eg", &eval::PieceBonusWeights::rook_on_seventh_eg},
 }};
 
 /// Tunable knobs for the tuning run itself (distinct from

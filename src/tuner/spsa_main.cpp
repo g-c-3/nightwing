@@ -28,6 +28,12 @@
 // because the endgame values received almost no signal under target 1.
 // For targets 1 and 2, `c` is in material units (a value around 20 is sensible; the
 // mobility default of 2 is far too small) and bounds are [0, 2000].
+// target 4 tunes the eight piece-bonus constants (bishop pair, rook on an
+// open/semi-open file, rook on the 7th rank; eval/piece_bonuses.h) through
+// the in-process match, like target 0; `c` is in centipawns (default 2) and
+// bounds are [0, 80]. A tuned vector is never committed directly: it is
+// built as a candidate/ branch and decided by the uci-match adoption rule
+// (DECISIONS.md 2026-11-03 (7)).
 // target 3 tunes SEARCH constants (spsa_search.h): seven integer options of a
 // tuning binary (CMake NIGHTWING_SEARCH_TUNING=ON), given as `engine_path`
 // (required for target 3). Games are played node-limited through the two-
@@ -157,6 +163,47 @@ void print_progress(const nightwing::tuner::SpsaResult& result) {
 
 } // namespace
 
+/// Runs SPSA over the piece-bonus constants (target 4) and prints the
+/// tuned vector; optionally validates it against the compiled-in defaults.
+static int run_piece_bonus_target(const nightwing::tuner::SpsaConfig& spsa, const MatchConfig& match,
+                                  std::uint64_t seed, double c, int validation_games,
+                                  double start_scale) {
+    using namespace nightwing;
+    tuner::SpsaPieceBonusConfig pb;
+    pb.spsa = spsa;
+    pb.match = match;
+    pb.start_scale = start_scale;
+    if (c >= 0.0) {
+        pb.c = c;
+    }
+    std::fprintf(stderr,
+                 "Nightwing SPSA (piece-bonuses): iterations=%d games/iter=%d depth=%d seed=%llu c=%.2f "
+                 "r0=%.2f validation_games=%d start_scale=%.2f\n",
+                 spsa.iterations, match.num_games, match.search_depth, static_cast<unsigned long long>(seed),
+                 pb.c, spsa.r0, validation_games, start_scale);
+
+    MatchConfig vm = match;
+    vm.num_games = validation_games;
+    if (validation_games > 0 && start_scale != 1.0) {
+        print_start_validation(start_scale,
+                               tuner::play_piece_bonus_match(tuner::scaled_piece_bonus_weights(start_scale),
+                                                             eval::default_piece_bonus_weights(),
+                                                             seed + 2000003ULL, vm));
+    }
+    const tuner::SpsaResult result = tuner::run_spsa_piece_bonus(pb);
+    print_progress(result);
+    const eval::PieceBonusWeights tuned = tuner::apply_spsa_theta(
+        tuner::kPieceBonusParameters, tuner::scaled_piece_bonus_weights(start_scale), result.theta);
+    for (const auto& ref : tuner::kPieceBonusParameters) {
+        std::printf("%s=%.1f\n", ref.name, ref.get(tuned));
+    }
+    if (validation_games > 0 && !result.stopped_early) {
+        print_validation(tuner::play_piece_bonus_match(tuned, eval::default_piece_bonus_weights(),
+                                                       seed + 1000003ULL, vm));
+    }
+    return 0;
+}
+
 int main(int argc, char** argv) {
     using namespace nightwing;
     board::init_masks();
@@ -190,10 +237,10 @@ int main(int argc, char** argv) {
     if (argc > 12) spsa.time_limit_seconds = std::atof(argv[12]);
     spsa.seed = seed;
 
-    if (target < 0 || target > 3) {
+    if (target < 0 || target > 4) {
         std::fprintf(stderr,
                      "Unknown target %d (0 = mobility, 1 = material, 2 = material mg/eg tied, "
-                     "3 = search constants)\n",
+                     "3 = search constants, 4 = piece bonuses)\n",
                      target);
         return 1;
     }
@@ -201,6 +248,10 @@ int main(int argc, char** argv) {
         return run_search_target(engine_path, spsa.iterations, match.num_games, nodes, seed,
                                  c >= 0.0 ? c : 1.0, spsa.r0, validation_games, start_scale,
                                  spsa.time_limit_seconds);
+    }
+
+    if (target == 4) {
+        return run_piece_bonus_target(spsa, match, seed, c, validation_games, start_scale);
     }
 
     tuner::SpsaMobilityConfig mob;

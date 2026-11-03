@@ -29,6 +29,7 @@
 #include <cstdint>
 
 #include "eval/mobility.h"
+#include "eval/piece_bonuses.h"
 #include "tuner/match.h"
 #include "tuner/spsa.h"
 
@@ -127,5 +128,33 @@ struct SpsaMaterialConfig {
 /// endgame value of each piece to the same number. Pawn is untouched.
 [[nodiscard]] eval::MaterialWeights apply_tied_material_theta(eval::MaterialWeights base,
                                                               const std::vector<double>& theta);
+
+/// Configuration of the SPSA run over the piece-bonus constants
+/// (bishop pair, rook on open/semi-open file, rook on the 7th; 8
+/// parameters, DECISIONS.md 2026-11-03 (7)). Defaults: perturbation `c` of
+/// 2 centipawns and bounds [0, 80], the compiled-in values being 6 to 40.
+struct SpsaPieceBonusConfig {
+    SpsaConfig spsa;
+    MatchConfig match;
+    double c = 2.0;
+    double min_value = 0.0;
+    double max_value = 80.0;
+    double start_scale = 1.0;
+};
+
+/// Plays a match between two piece-bonus weight vectors in one process
+/// (each side searched with its own `EvalWeightsOverride::piece_bonuses`,
+/// material left at the defaults) and returns the result from `a`'s side.
+[[nodiscard]] MatchResult play_piece_bonus_match(const eval::PieceBonusWeights& a,
+                                                 const eval::PieceBonusWeights& b,
+                                                 std::uint64_t base_seed, const MatchConfig& match);
+
+/// The compiled-in piece-bonus weights with every field multiplied by
+/// `scale` (a deliberately wrong start for recovery checks).
+[[nodiscard]] eval::PieceBonusWeights scaled_piece_bonus_weights(double scale);
+
+/// Runs SPSA over kPieceBonusParameters, scoring each plus/minus pair by
+/// an in-process match; returns the optimizer result.
+[[nodiscard]] SpsaResult run_spsa_piece_bonus(const SpsaPieceBonusConfig& config);
 
 } // namespace nightwing::tuner

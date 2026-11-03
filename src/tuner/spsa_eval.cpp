@@ -106,4 +106,42 @@ SpsaResult run_spsa_material(const SpsaMaterialConfig& config) {
     return run_spsa(params, config.spsa, match_fn);
 }
 
+MatchResult play_piece_bonus_match(const eval::PieceBonusWeights& a, const eval::PieceBonusWeights& b,
+                                   std::uint64_t base_seed, const MatchConfig& match) {
+    eval::EvalWeightsOverride override_a;
+    override_a.piece_bonuses = &a;
+    eval::EvalWeightsOverride override_b;
+    override_b.piece_bonuses = &b;
+
+    MatchConfig config = match;
+    config.eval_weights_a = &override_a;
+    config.eval_weights_b = &override_b;
+
+    const eval::MaterialWeights material = eval::default_material_weights();
+    return play_match(material, material, base_seed, config);
+}
+
+eval::PieceBonusWeights scaled_piece_bonus_weights(double scale) {
+    eval::PieceBonusWeights w = eval::default_piece_bonus_weights();
+    for (const auto& ref : kPieceBonusParameters) {
+        ref.set(w, ref.get(w) * scale);
+    }
+    return w;
+}
+
+SpsaResult run_spsa_piece_bonus(const SpsaPieceBonusConfig& config) {
+    const eval::PieceBonusWeights base = scaled_piece_bonus_weights(config.start_scale);
+    const std::vector<SpsaParam> params =
+        make_spsa_params(kPieceBonusParameters, base, config.c, config.min_value, config.max_value);
+
+    const SpsaMatchFn match_fn = [&](const std::vector<double>& plus, const std::vector<double>& minus,
+                                     std::uint64_t game_seed) {
+        const eval::PieceBonusWeights wp = apply_spsa_theta(kPieceBonusParameters, base, plus);
+        const eval::PieceBonusWeights wm = apply_spsa_theta(kPieceBonusParameters, base, minus);
+        return play_piece_bonus_match(wp, wm, game_seed, config.match).score_a();
+    };
+
+    return run_spsa(params, config.spsa, match_fn);
+}
+
 } // namespace nightwing::tuner
