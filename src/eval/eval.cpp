@@ -88,7 +88,7 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
              const ThreatsWeights* threats_weights,
              const KingSafetyWeights* king_safety_weights, const PawnsWeights* pawns_weights,
              const Score* incremental_material_psqt, const int* lazy_alpha_white,
-             const int* lazy_beta_white) noexcept {
+             const int* lazy_beta_white, const PieceBonusWeights* piece_bonus_weights) noexcept {
     // Eval cache (eval/eval_cache.h): probed first, keyed on the FULL
     // position (pos.zobrist_hash, already incrementally maintained --
     // no extra hash computation needed, unlike pawn_tt's own
@@ -123,7 +123,8 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     if ((material_weights == nullptr) && (psqt_weights == nullptr) &&
         (mobility_weights == nullptr) && (space_weights == nullptr) &&
         (threats_weights == nullptr) && (king_safety_weights == nullptr) &&
-        (pawns_weights == nullptr) && is_insufficient_material_position(pos)) {
+        (pawns_weights == nullptr) && (piece_bonus_weights == nullptr) &&
+        is_insufficient_material_position(pos)) {
         return 0;
     }
 
@@ -132,7 +133,8 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
                                     (psqt_weights == nullptr) && (mobility_weights == nullptr) &&
                                     (space_weights == nullptr) && (threats_weights == nullptr) &&
                                     (king_safety_weights == nullptr) &&
-                                    (pawns_weights == nullptr) && !lazy_eval_requested;
+                                    (pawns_weights == nullptr) &&
+                                    (piece_bonus_weights == nullptr) && !lazy_eval_requested;
     if (eval_cache_usable) {
         const auto [hit, cached] = eval_cache->probe(pos.zobrist_hash);
         if (hit) {
@@ -251,7 +253,7 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
     // Phase 6 item that adds its own consumer.
     int result = taper(score + pawn_score + mobility_value(pos, mobility_weights) +
                                   king_safety_value(pos, king_safety_weights) +
-                                  piece_bonus_value(pos) +
+                                  piece_bonus_value(pos, piece_bonus_weights) +
                                   knight_outpost_value(pos) + space_value(pos, space_weights) +
                                   threats_value(pos, threats_weights) +
                                   king_tropism_value(pos) + trapped_piece_value(pos) +
@@ -281,7 +283,7 @@ int evaluate(const board::Position& pos, PawnHashTable* pawn_tt, EvalCache* eval
         (material_weights == nullptr) && (psqt_weights == nullptr) &&
         (mobility_weights == nullptr) && (space_weights == nullptr) &&
         (threats_weights == nullptr) && (king_safety_weights == nullptr) &&
-        (pawns_weights == nullptr);
+        (pawns_weights == nullptr) && (piece_bonus_weights == nullptr);
     if (default_weights_path &&
         ((result > 0 && is_lone_minor_side(pos, board::Color::White)) ||
          (result < 0 && is_lone_minor_side(pos, board::Color::Black)))) {

@@ -78,6 +78,33 @@ inline constexpr Score kRookSemiOpenFileBonus = {12, 6};
 /// constants already follow.
 inline constexpr Score kRookOnSeventhBonus = {10, 20};
 
+/// Per-field `double` override of the four piece-bonus constants above,
+/// the piece-bonus counterpart to eval/pawns.h's PawnsWeights,
+/// eval/mobility.h's MobilityWeights and the other per-term Weights
+/// types: a tuner (SPSA, tuner/spsa_eval.h's run_spsa_piece_bonus())
+/// can play two different weight vectors in one process by passing a
+/// `const PieceBonusWeights*` instead of relying on the compiled-in
+/// `inline constexpr` values (DECISIONS.md 2026-11-03 (7)). Every field
+/// defaults to the matching compiled-in constant, so a
+/// default-constructed PieceBonusWeights reproduces piece_bonus_value()'s
+/// built-in result exactly. Fields are `double` (so an optimizer can move
+/// them continuously) and are rounded with round_to_int() when applied,
+/// the same convention every other Weights type follows.
+struct PieceBonusWeights {
+    double bishop_pair_mg = kBishopPairBonus.mg;
+    double bishop_pair_eg = kBishopPairBonus.eg;
+    double rook_open_file_mg = kRookOpenFileBonus.mg;
+    double rook_open_file_eg = kRookOpenFileBonus.eg;
+    double rook_semi_open_file_mg = kRookSemiOpenFileBonus.mg;
+    double rook_semi_open_file_eg = kRookSemiOpenFileBonus.eg;
+    double rook_on_seventh_mg = kRookOnSeventhBonus.mg;
+    double rook_on_seventh_eg = kRookOnSeventhBonus.eg;
+};
+
+/// Returns a PieceBonusWeights holding the four compiled-in constants
+/// above (the same value a default-constructed PieceBonusWeights has).
+[[nodiscard]] PieceBonusWeights default_piece_bonus_weights() noexcept;
+
 /// Evaluates bishop pair + rook-on-open/semi-open-file + rook-on-7th-
 /// rank for BOTH sides and returns a single White-relative Score
 /// (positive favors White, matching every other eval/*.h term's sign
@@ -89,6 +116,12 @@ inline constexpr Score kRookOnSeventhBonus = {10, 20};
 /// function does NOT need board::init_magic_bitboards() -- it never
 /// calls a sliding-piece attack function, only checks static file/rank
 /// membership.
-[[nodiscard]] Score piece_bonus_value(const board::Position& pos) noexcept;
+///
+/// `weights`, if non-null, replaces the four compiled-in constants with
+/// its own (rounded) values for this call; nullptr (the default) uses the
+/// compiled-in constants, so every existing caller is unaffected. The
+/// default-weights path is bit-identical to the pre-override code.
+[[nodiscard]] Score piece_bonus_value(const board::Position& pos,
+                                      const PieceBonusWeights* weights = nullptr) noexcept;
 
 } // namespace nightwing::eval

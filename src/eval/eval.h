@@ -68,6 +68,7 @@
 #include "eval/mobility.h"
 #include "eval/pawn_tt.h"
 #include "eval/pawns.h"
+#include "eval/piece_bonuses.h"
 #include "eval/psqt.h"
 #include "eval/space.h"
 #include "eval/threats.h"
@@ -132,6 +133,10 @@ struct EvalWeightsOverride {
     const ThreatsWeights* threats = nullptr;
     const KingSafetyWeights* king_safety = nullptr;
     const PawnsWeights* pawns = nullptr;
+    /// Piece-bonus (bishop pair, rook file, rook on 7th) override,
+    /// appended after `pawns` (DECISIONS.md 2026-11-03 (7)); nullptr means
+    /// the compiled-in constants. Unpacked by search.cpp/quiescence.cpp.
+    const PieceBonusWeights* piece_bonuses = nullptr;
 };
 
 /// Evaluates `pos` and returns a centipawn score from White's
@@ -373,6 +378,19 @@ struct EvalWeightsOverride {
 /// quiescence.cpp's own stand-pat call, ROADMAP.md's own item scope for
 /// this session) is entirely unaffected.
 ///
+/// `piece_bonus_weights`, if non-null, is forwarded to piece_bonus_value()
+/// INSTEAD OF its compiled-in constants (eval/piece_bonuses.h's
+/// PieceBonusWeights): the piece-bonus counterpart to `pawns_weights` and
+/// the other per-term overrides, added for the SPSA piece-bonus leg
+/// (DECISIONS.md 2026-11-03 (7)). It is the LAST parameter so no existing
+/// positional call site changes. Like the other overrides it disables
+/// `eval_cache`, the insufficient-material shortcut and the lone-minor
+/// unwinnable scaling for that call (those belong to the default-weights
+/// path). The lazy-evaluation window is NOT disabled by it, exactly as
+/// for `pawns_weights`: the lazy early return uses material+PSQT only and
+/// is applied identically to both sides of an in-process match. Defaults
+/// to nullptr, meaning "use the compiled-in constants".
+///
 /// Precondition: board::init_masks() AND board::init_magic_bitboards()
 /// have both been called. Before eval/mobility.h's mobility_value() term
 /// existed, evaluate() only needed init_masks() (material/PSQT/pawn
@@ -393,6 +411,7 @@ struct EvalWeightsOverride {
                             const PawnsWeights* pawns_weights = nullptr,
                             const Score* incremental_material_psqt = nullptr,
                             const int* lazy_alpha_white = nullptr,
-                            const int* lazy_beta_white = nullptr) noexcept;
+                            const int* lazy_beta_white = nullptr,
+                            const PieceBonusWeights* piece_bonus_weights = nullptr) noexcept;
 
 } // namespace nightwing::eval

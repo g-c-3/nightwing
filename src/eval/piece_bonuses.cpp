@@ -6,6 +6,7 @@
 
 #include "board/bitboard.h"
 #include "board/masks.h"
+#include "eval/psqt.h" // round_to_int()
 
 namespace nightwing::eval {
 namespace {
@@ -25,7 +26,30 @@ using board::Square;
 
 } // namespace
 
-Score piece_bonus_value(const Position& pos) noexcept {
+PieceBonusWeights default_piece_bonus_weights() noexcept {
+    return PieceBonusWeights{};
+}
+
+Score piece_bonus_value(const Position& pos, const PieceBonusWeights* weights) noexcept {
+    // Resolve the four bonuses once per call: the compiled-in constants by
+    // default, or the caller's rounded override (DECISIONS.md 2026-11-03 (7)).
+    const Score bishop_pair = (weights == nullptr)
+                                  ? kBishopPairBonus
+                                  : Score{round_to_int(weights->bishop_pair_mg),
+                                          round_to_int(weights->bishop_pair_eg)};
+    const Score rook_open = (weights == nullptr)
+                                ? kRookOpenFileBonus
+                                : Score{round_to_int(weights->rook_open_file_mg),
+                                        round_to_int(weights->rook_open_file_eg)};
+    const Score rook_semi_open = (weights == nullptr)
+                                     ? kRookSemiOpenFileBonus
+                                     : Score{round_to_int(weights->rook_semi_open_file_mg),
+                                             round_to_int(weights->rook_semi_open_file_eg)};
+    const Score rook_seventh = (weights == nullptr)
+                                   ? kRookOnSeventhBonus
+                                   : Score{round_to_int(weights->rook_on_seventh_mg),
+                                           round_to_int(weights->rook_on_seventh_eg)};
+
     Score score;
 
     for (const Color c : {Color::White, Color::Black}) {
@@ -33,7 +57,7 @@ Score piece_bonus_value(const Position& pos) noexcept {
 
         // Bishop pair.
         if (board::popcount(pos.pieces(c, PieceType::Bishop)) >= 2) {
-            side_score += kBishopPairBonus;
+            side_score += bishop_pair;
         }
 
         // Rooks: open/semi-open file and 7th rank.
@@ -50,14 +74,14 @@ Score piece_bonus_value(const Position& pos) noexcept {
 
             if ((own_pawns & file_bb) == 0) {
                 if ((enemy_pawns & file_bb) == 0) {
-                    side_score += kRookOpenFileBonus;
+                    side_score += rook_open;
                 } else {
-                    side_score += kRookSemiOpenFileBonus;
+                    side_score += rook_semi_open;
                 }
             }
 
             if (board::rank_of(sq) == seventh_rank) {
-                side_score += kRookOnSeventhBonus;
+                side_score += rook_seventh;
             }
         }
 
