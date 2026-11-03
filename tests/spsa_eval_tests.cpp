@@ -180,3 +180,62 @@ TEST_CASE("run_spsa_material: tied mode tunes 4 parameters and returns tied-comp
         REQUIRE(v <= cfg.max_value);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Piece-bonus leg (DECISIONS.md 2026-11-03 (7)): PieceBonusWeights override,
+// kPieceBonusParameters table and the in-process SPSA binding.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("kPieceBonusParameters: eight entries, get/set round-trip the compiled-in constants",
+          "[tuner][spsa][piece_bonuses]") {
+    REQUIRE(tuner::kPieceBonusParameters.size() == 8);
+    eval::PieceBonusWeights w = eval::default_piece_bonus_weights();
+    REQUIRE(w.bishop_pair_mg == eval::kBishopPairBonus.mg);
+    REQUIRE(w.bishop_pair_eg == eval::kBishopPairBonus.eg);
+    REQUIRE(w.rook_open_file_mg == eval::kRookOpenFileBonus.mg);
+    REQUIRE(w.rook_semi_open_file_eg == eval::kRookSemiOpenFileBonus.eg);
+    REQUIRE(w.rook_on_seventh_eg == eval::kRookOnSeventhBonus.eg);
+    for (const auto& ref : tuner::kPieceBonusParameters) {
+        const double before = ref.get(w);
+        ref.set(w, before + 3.0);
+        REQUIRE(ref.get(w) == before + 3.0);
+        ref.set(w, before);
+    }
+    const eval::PieceBonusWeights d = eval::default_piece_bonus_weights();
+    REQUIRE(w.bishop_pair_mg == d.bishop_pair_mg);
+}
+
+TEST_CASE("scaled_piece_bonus_weights: scale 1 is the defaults, scale 2 doubles every field",
+          "[tuner][spsa][piece_bonuses]") {
+    const eval::PieceBonusWeights d = eval::default_piece_bonus_weights();
+    const eval::PieceBonusWeights one = tuner::scaled_piece_bonus_weights(1.0);
+    const eval::PieceBonusWeights two = tuner::scaled_piece_bonus_weights(2.0);
+    for (const auto& ref : tuner::kPieceBonusParameters) {
+        REQUIRE(ref.get(one) == ref.get(d));
+        REQUIRE(ref.get(two) == 2.0 * ref.get(d));
+    }
+}
+
+TEST_CASE("play_piece_bonus_match: identical vectors play a complete, consistent match",
+          "[tuner][spsa][piece_bonuses]") {
+    init_tables();
+    const eval::PieceBonusWeights d = eval::default_piece_bonus_weights();
+    const tuner::MatchResult r = tuner::play_piece_bonus_match(d, d, 7, tiny_match());
+    REQUIRE(r.games_played == 2);
+    REQUIRE(r.wins_a + r.wins_b + r.draws == r.games_played);
+}
+
+TEST_CASE("run_spsa_piece_bonus: returns one theta entry per parameter, inside the bounds",
+          "[tuner][spsa][piece_bonuses]") {
+    init_tables();
+    tuner::SpsaPieceBonusConfig cfg;
+    cfg.spsa.iterations = 1;
+    cfg.spsa.seed = 3;
+    cfg.match = tiny_match();
+    const tuner::SpsaResult r = tuner::run_spsa_piece_bonus(cfg);
+    REQUIRE(r.theta.size() == tuner::kPieceBonusParameters.size());
+    for (const double v : r.theta) {
+        REQUIRE(v >= cfg.min_value);
+        REQUIRE(v <= cfg.max_value);
+    }
+}

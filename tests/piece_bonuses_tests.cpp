@@ -10,8 +10,13 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "board/attacks.h"
 #include "board/board.h"
+#include "board/fen.h"
 #include "board/masks.h"
+#include "board/zobrist.h"
+#include "eval/eval.h"
+#include "eval/eval_cache.h"
 #include "eval/piece_bonuses.h"
 #include "eval/score.h"
 
@@ -147,4 +152,126 @@ TEST_CASE("piece_bonus_value: open-file and 7th-rank bonuses stack additively fo
     const Score expected = open_only_score + kRookOnSeventhBonus;
 
     REQUIRE(both_score == expected);
+}
+
+// ---------------------------------------------------------------------------
+// PieceBonusWeights override (DECISIONS.md 2026-11-03 (7)).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+void init_full() {
+    init_masks();
+    init_magic_bitboards();
+    init_zobrist_keys();
+}
+
+/// Positions exercising every bonus: bishop pairs, open / semi-open / closed
+/// files, 7th-rank rooks for both colors, plus ordinary middlegames.
+const char* const kOverrideFens[] = {
+    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+    "6k1/R5pp/8/8/8/8/5PPP/6K1 w - - 0 1",
+    "6k1/5ppp/8/8/8/8/r5PP/6K1 b - - 0 1",
+    "4k3/8/8/8/8/8/PPP2PPP/R3KB1R w KQ - 0 1",
+    "2r3k1/5ppp/8/8/8/8/1B3PPP/1B4K1 w - - 0 1",
+    "8/5pk1/4b3/8/3B4/8/5PK1/8 b - - 0 1",
+};
+
+} // namespace
+
+TEST_CASE("piece_bonus_value: default PieceBonusWeights equals the compiled-in result",
+          "[eval][piece_bonuses]") {
+    init_full();
+    const PieceBonusWeights defaults = default_piece_bonus_weights();
+    for (const char* fen : kOverrideFens) {
+        const Position pos = parse_fen(fen);
+        REQUIRE(piece_bonus_value(pos, &defaults) == piece_bonus_value(pos));
+    }
+}
+
+TEST_CASE("piece_bonus_value: a changed weight moves the score by exactly that amount",
+          "[eval][piece_bonuses]") {
+    init_full();
+    // White rook on a7 (open a-file AND 7th rank): +7 mg on the 7th-rank
+    // bonus must raise mg by 7 and leave eg untouched.
+    const Position pos = parse_fen("6k1/R5pp/8/8/8/8/5PPP/6K1 w - - 0 1");
+    PieceBonusWeights w = default_piece_bonus_weights();
+    const Score base = piece_bonus_value(pos, &w);
+    w.rook_on_seventh_mg += 7.0;
+    const Score changed = piece_bonus_value(pos, &w);
+    REQUIRE(changed.mg == base.mg + 7);
+    REQUIRE(changed.eg == base.eg);
+
+    // Black bishop pair: raising the bishop-pair eg bonus lowers the
+    // White-relative eg score by the same amount.
+    const Position pair = parse_fen("4k3/8/8/8/8/8/8/2bbK3 w - - 0 1");
+    PieceBonusWeights v = default_piece_bonus_weights();
+    const Score before = piece_bonus_value(pair, &v);
+    v.bishop_pair_eg += 5.0;
+    const Score after = piece_bonus_value(pair, &v);
+    REQUIRE(after.eg == before.eg - 5);
+    REQUIRE(after.mg == before.mg);
+}
+
+TEST_CASE("evaluate: default piece-bonus override equals the compiled-in evaluation",
+          "[eval][piece_bonuses]") {
+    init_full();
+    const PieceBonusWeights defaults = default_piece_bonus_weights();
+    // Compare only positions the default-path shortcuts do not touch
+    // (no insufficient material, no lone-minor scaling): there the override
+    // must reproduce the default evaluation exactly.
+    for (const char* fen : kOverrideFens) {
+        const Position pos = parse_fen(fen);
+        const int plain = evaluate(pos);
+        const int overridden = evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &defaults);
+        INFO(fen);
+        REQUIRE(overridden == plain);
+    }
+}
+
+TEST_CASE("evaluate: a changed piece-bonus weight changes the tapered score by the expected amount",
+          "[eval][piece_bonuses]") {
+    init_full();
+    // White has the bishop pair, Black does not. Adding +10 to BOTH halves
+    // of the bishop-pair bonus adds 10 after tapering whatever the phase
+    // (integer taper rounding allows at most 1 centipawn of slack).
+    const Position pos = parse_fen("rn1qkbnr/ppp2ppp/8/3pp3/8/2N2N2/PPPPBPPP/R1BQK2R w KQkq - 0 1");
+    PieceBonusWeights w = default_piece_bonus_weights();
+    const int base = evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                              nullptr, nullptr, nullptr, nullptr, nullptr, &w);
+    w.bishop_pair_mg += 10.0;
+    w.bishop_pair_eg += 10.0;
+    const int changed = evaluate(pos, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                 nullptr, nullptr, nullptr, nullptr, nullptr, &w);
+    REQUIRE(changed - base >= 9);
+    REQUIRE(changed - base <= 11);
+}
+
+TEST_CASE("evaluate: a piece-bonus override bypasses the eval cache and the insufficient-material shortcut",
+          "[eval][piece_bonuses]") {
+    init_full();
+    const Position pos = parse_fen("6k1/R5pp/8/8/8/8/5PPP/6K1 w - - 0 1");
+
+    // Cache bypass, both directions: a default call fills the cache, an
+    // override call must NOT return that cached value, and must not store
+    // its own value for a later default call to pick up.
+    EvalCache cache(1024);
+    const int cached_default = evaluate(pos, nullptr, &cache);
+    PieceBonusWeights w = default_piece_bonus_weights();
+    w.rook_on_seventh_mg += 40.0;
+    w.rook_on_seventh_eg += 40.0;
+    const int with_override = evaluate(pos, nullptr, &cache, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                       nullptr, nullptr, nullptr, nullptr, nullptr, &w);
+    REQUIRE(with_override != cached_default);
+    REQUIRE(evaluate(pos, nullptr, &cache) == cached_default);
+
+    // Insufficient-material shortcut: K+B vs K is 0 on the default path but
+    // an override call evaluates it fully.
+    const Position kbk = parse_fen("4k3/8/8/8/8/8/8/2B1K3 w - - 0 1");
+    REQUIRE(evaluate(kbk) == 0);
+    const PieceBonusWeights defaults = default_piece_bonus_weights();
+    REQUIRE(evaluate(kbk, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                     nullptr, nullptr, nullptr, nullptr, &defaults) != 0);
 }
