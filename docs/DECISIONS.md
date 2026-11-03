@@ -4,6 +4,16 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-11-03 (8) — Piece-bonus SPSA leg plumbing implemented; lazy-evaluation exit left enabled under the override
+
+**Context:** DECISIONS 2026-11-03 (7) planned an override for the piece-bonus constants so SPSA can play two weight vectors in one process. The plan said the override disables the eval cache, the lazy-evaluation exit and any other shortcut "exactly as `pawns_weights != nullptr` does". In the code, `pawns_weights != nullptr` disables the eval cache, the insufficient-material shortcut, the pawn hash and the lone-minor scaling, but not the lazy-evaluation exit.
+
+**Decision:** The leg was implemented as planned in steps (1) to (6), with the one clarification that the piece-bonus override follows what `pawns_weights` actually does: it disables the eval cache, the insufficient-material shortcut and the lone-minor scaling, and leaves the lazy-evaluation exit enabled. The lazy exit uses material and PSQT only, with a margin of 650 against bonuses of at most a few tens of centipawns, and it applies identically to both sides of an in-process match; disabling it for override calls only would give an override-versus-default comparison a different search tree on each side. The override parameter is the last parameter of `eval::evaluate()`, so no existing positional call site changed. `nightwing_spsa` target 4 runs SPSA over the eight constants (default `c` 2, bounds 0 to 80). Acceptance: 864 of 864 tests pass (855 before, 9 added), `bench 6` 61223 and `bench 10` 2698145 unchanged. A tuned vector is never committed directly; it is built as a `candidate/` branch and decided by the `uci-match` adoption rule.
+
+**Alternatives considered:** disabling the lazy exit under the override as written in (7) (rejected: asymmetric trees, and no stale-value risk since the exit ignores the piece bonuses); a global override (rejected in (7)).
+
+---
+
 ### 2026-11-03 (7) — SPSA over the piece-bonus constants: plan and scope
 
 **Context:** The Texel route cannot separate the piece-bonus terms from material (DECISIONS 2026-11-03 (6)), so game-result tuning is the remaining option. SPSA infrastructure exists (`src/tuner/spsa.h/.cpp`, in-process targets over mobility and material in `spsa_eval.h/.cpp`, node-limited search targets); earlier runs showed the optimizer responds to a large signal (material, DECISIONS 2026-10-05 (8)) but gave a null result for mobility at fixed depth (2026-10-05 (5)), and the ROADMAP paused further runs until a term shows a strong signal. The piece bonuses are compile-time constants in `piece_bonus_value()` with no weight override, unlike the mobility, space, threats, king-safety and pawn groups.

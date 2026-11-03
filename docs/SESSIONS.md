@@ -4,6 +4,22 @@ Newest entry at top.
 
 ---
 
+### Session 291 — 2026-11-03 — SPSA piece-bonus leg: plumbing, tuner target 4 and tests
+
+**Built:** baseline `main` `def5b76320242567a136caa8eb61e4d5fdcef966`. `PieceBonusWeights` (eight double fields), `default_piece_bonus_weights()` and an optional weights parameter of `piece_bonus_value()`; `EvalWeightsOverride::piece_bonuses` and a trailing optional parameter of `eval::evaluate()`; forwarding at four `evaluate()` sites in `search.cpp` and two in `quiescence.cpp`; `kPieceBonusParameters` in `tune.h`; `play_piece_bonus_match()`, `scaled_piece_bonus_weights()`, `run_spsa_piece_bonus()` and `nightwing_spsa` target 4. Nine tests added (five in `piece_bonuses_tests.cpp`, four in `spsa_eval_tests.cpp`) covering default-override equality for `piece_bonus_value()` and `evaluate()`, expected score change from a changed weight, eval-cache and insufficient-material bypass, table round-trip and the SPSA binding.
+
+**Measured:** Release build, GCC 13.3: baseline 855 of 855 tests, `bench 6` 61223, `bench 10` 2698145; after the change 864 of 864 tests, identical node counts, zero compiler warnings. A two-iteration target 4 run completed and printed eight values. Not checked: CI, other platforms, sanitizers, a real SPSA run.
+
+**Bugs fixed:** none in the engine. Two new tests initially failed because a test FEN had the side not to move in check; the FEN was corrected.
+
+**Decisions made:** DECISIONS.md 2026-11-03 (8) (lazy-evaluation exit stays enabled under the override, as for `pawns_weights`).
+
+**Open:** the `search.h` comment on `eval_weights` still says six overrides (comment only, not changed to avoid a full rebuild); no SPSA run over the piece bonuses has been made; CI status of `main` HEAD was not confirmed (API rate limit).
+
+**Next session start point:** after the twelve files are committed to `main` and CI is green, run `nightwing_spsa` target 4 through a CI job (for example 100 iterations, 8 games per iteration, `c` 2, validation games 200), and if the tuned vector shows a signal against the defaults, build it as `candidate/piece-bonus-spsa` for the two `uci-match` runs; if the result is null, record it and close the leg.
+
+---
+
 ### Session 290 — 2026-11-03 — SPSA piece-bonus leg scoped; no code written
 
 **Built:** nothing was committed. Baseline: `main` `715251ee18c8943e66bb5c43ce20582afa3aa8a2`. The code paths for the piece-bonus SPSA leg were read: `piece_bonus_value()` takes no weight override; `EvalWeightsOverride` carries six weight groups; `eval::evaluate()` takes them as separate trailing pointers; `search.cpp` unpacks them once and passes them at four `evaluate()` sites (and `quiescence.cpp` at two); the tuner holds a `ParameterRef` table per group; `nightwing_spsa` targets 0 to 3 exist. The change touches about fourteen files, two of them very large (`search.cpp`, 4780 lines; `tune.h`, 1325 lines), each to be delivered whole.
