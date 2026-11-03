@@ -1782,6 +1782,8 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
     const eval::KingSafetyWeights* const ew_king_safety =
         eval_weights ? eval_weights->king_safety : nullptr;
     const eval::PawnsWeights* const ew_pawns = eval_weights ? eval_weights->pawns : nullptr;
+    const eval::PieceBonusWeights* const ew_piece_bonuses =
+        eval_weights ? eval_weights->piece_bonuses : nullptr;
 
     if (depth <= 0) {
         // Quiescence search (search/quiescence.h) rather than a raw
@@ -2003,7 +2005,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         const int white_relative =
             eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights,
                           ew_psqt, ew_mobility, ew_space, ew_threats, ew_king_safety, ew_pawns,
-                          mat_psqt);
+                          mat_psqt, nullptr, nullptr, ew_piece_bonuses);
         node_static_eval = (us == Color::White ? white_relative : -white_relative) +
                             correction_history.correction(us, pawn_key);
         if (ply < kMaxPly) {
@@ -2035,7 +2037,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         const int white_relative =
             eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights,
                           ew_psqt, ew_mobility, ew_space, ew_threats, ew_king_safety, ew_pawns,
-                          mat_psqt);
+                          mat_psqt, nullptr, nullptr, ew_piece_bonuses);
         // Correction history folded in here too (ROADMAP.md's
         // "Correction history" item) -- this site's own static eval is
         // computed independently of node_static_eval above (this file's
@@ -2173,7 +2175,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         const int white_relative =
             eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights,
                           ew_psqt, ew_mobility, ew_space, ew_threats, ew_king_safety, ew_pawns,
-                          mat_psqt);
+                          mat_psqt, nullptr, nullptr, ew_piece_bonuses);
         // Correction history folded in here too (ROADMAP.md's
         // "Correction history" item) -- same independent-computation
         // rationale as RFP's own site above.
@@ -2359,7 +2361,7 @@ int negamax(Position& pos, int depth, int alpha, int beta, int ply, std::uint64_
         const int white_relative =
             eval::evaluate(pos, &pawn_tt, &eval_cache, material_weights,
                           ew_psqt, ew_mobility, ew_space, ew_threats, ew_king_safety, ew_pawns,
-                          mat_psqt);
+                          mat_psqt, nullptr, nullptr, ew_piece_bonuses);
         // Correction history folded in here too (ROADMAP.md's
         // "Correction history" item) -- same independent-computation
         // rationale as RFP's/razoring's own sites above.
