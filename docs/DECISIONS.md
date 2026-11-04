@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-11-04 (2) — Candidate `candidate/rook-behind-enemy-passer` (Tarrasch restraint half in every position): REJECTED
+
+**Context:** Strength plan item 6. `rook_endgame.h` applies both halves of Tarrasch's rule (CPW, "Rook Endings") only inside pure rook endgames; the own-rook-behind-own-passer half in every position was rejected (2026-10-31 (2)). The candidate added `rook_behind_enemy_passer_value()`: `{3, 10}` per enemy passed pawn with one of the side's own rooks behind it on the same file, zero in pure rook endgames to avoid double counting. Baseline `8012dc1e174043e8ac8219d8305020f2781134d7`; candidate commit `6ec2e422c340a2fd594cc932155e39ac981d0162`.
+
+**Evidence:** 868 of 868 tests passed; `bench 6` 61223 and `bench 10` 2698145 unchanged (the bench positions do not carry the pattern). Fixed-node run (`go nodes 20000`, seed 1, bounds `0 5 0.05 0.05`): 14000 of 14000 games, 5831 W / 2445 D / 5724 L, about +2.7 Elo (95% interval about -2.6 to +7.9, computed from the tallies), LLR 0.109, no verdict within the game cap, no illegal moves. Clock run (`10000 100`, seed 10001): stopped by a termination request after 1142 of 1334 games, 409 W / 288 D / 445 L, about -11.0 Elo (95% interval about -28.4 to +6.5, computed from the tallies), no verdict, no illegal moves, no time forfeits. Values were taken from the pasted result summaries, not from the full log archives.
+
+**Decision:** Rejected under the adoption rule of 2026-10-24 (4): the clock run is negative and neither run passed the SPRT. The candidate branch is not merged and is deleted. No revert file is needed. Evaluation weights are unchanged.
+
+**Alternatives considered:** a path-blocking refinement or a rank-gated bonus (untried; the fixed-node result of about +2.7 Elo does not suggest a gain worth a further candidate).
+
+---
+
 ### 2026-11-04 (1) — Piece-bonus SPSA leg closed as null; no candidate built
 
 **Context:** The piece-bonus override and `nightwing_spsa` target 4 (DECISIONS 2026-11-03 (8)) were run in CI as three simultaneous SPSA runs of 100 iterations, 8 games per iteration, depth 6, `c` 2, `r0` 8, each validated over 200 games against the compiled-in defaults: one control started at half scale, two started at the current values.
