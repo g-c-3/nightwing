@@ -4,6 +4,38 @@ Newest entry at top.
 
 ---
 
+### Session 293 — 2026-11-04 — Speed plan item 3: endgame signature confirmed closed; king safety and mobility profiled
+
+**Built:** nothing in `src/` or `tests/`. The endgame-signature sub-part of speed plan item 3 was confirmed already closed as negligible (Sessions 269 and 270; `classify_endgame` about 0.3% of samples), so nothing was built for it. A profile of `bench 10` was taken instead (gprof, GCC 13.3, `-pg`): one build with small-function inlining disabled, one with all inlining disabled.
+
+**Measured:** both builds searched 2698145 nodes. Inlining kept: `evaluate` 32.7%, `order_moves` 21.9%, `generate_legal_moves` 6.8%. Inclusive time per term with all inlining disabled: `king_safety_value` 1.01 s, `space_value` 0.62 s, `psqt_value` 0.52 s, `threats_value` 0.33 s, `classify_endgame` 0.33 s, `piece_bonus_value` 0.31 s, `pawn_structure_value` 0.29 s, `mobility_value` 0.21 s. King safety is the largest evaluation term (about 28% of evaluation time, an estimated 8 to 10% of total run time); mobility is about 6% of evaluation time and is not worth optimizing. Limits: the no-inline build inflates tiny-function-heavy code, sampling is 0.01 s, the sandbox is noisy; shares are indicative only.
+
+**Bugs fixed:** none.
+
+**Decisions made:** none.
+
+**Open:** the `search.h` comment on `eval_weights` still says six overrides (comment only); the order of the two full-scale piece-bonus runs by seed was not recorded.
+
+**Next session start point:** read `src/eval/king_safety.cpp` in full and look for an early-out or cheaper computation in `king_safety_value()` that leaves `bench 6` (61223) and `bench 10` (2698145) node counts identical (same method as the overloaded-piece early-out of Session 268); measure the user-time change over alternating runs, and discard it if the gain is within noise.
+
+---
+
+### Session 292 — 2026-11-04 — Piece-bonus SPSA leg closed as null
+
+**Built:** nothing in `src/` or `tests/`. Three simultaneous CI `spsa` runs over the piece bonuses (target 4; 100 iterations, 8 games per iteration, depth 6, `c` 2, `r0` 8, 200 validation games): one control at start scale 0.5 and two at start scale 1. The CI of the Session 291 commit was green.
+
+**Measured:** validation against the compiled-in defaults: control -13.9 Elo at the start and +10.4 after tuning, with values still near half scale; full-scale runs -15.6 and +33.1 Elo, with differing tuned vectors. Draw rate about 41 percent, one standard error about 19 Elo, so every result is within two standard errors of zero. Details in DECISIONS.md 2026-11-04 (1).
+
+**Bugs fixed:** none.
+
+**Decisions made:** DECISIONS.md 2026-11-04 (1): leg closed as null, no candidate branch, plumbing kept in `main`.
+
+**Open:** the `search.h` comment on `eval_weights` still says six overrides (comment only); the order of the two full-scale runs by seed was not recorded.
+
+**Next session start point:** after the three docs files are committed, take the next incomplete ROADMAP.md item (strength plan item 6, later and tuning-heavy ideas, or the endgame-signature sub-part of speed plan item 3) and confirm the choice before starting.
+
+---
+
 ### Session 291 — 2026-11-03 — SPSA piece-bonus leg: plumbing, tuner target 4 and tests
 
 **Built:** baseline `main` `def5b76320242567a136caa8eb61e4d5fdcef966`. `PieceBonusWeights` (eight double fields), `default_piece_bonus_weights()` and an optional weights parameter of `piece_bonus_value()`; `EvalWeightsOverride::piece_bonuses` and a trailing optional parameter of `eval::evaluate()`; forwarding at four `evaluate()` sites in `search.cpp` and two in `quiescence.cpp`; `kPieceBonusParameters` in `tune.h`; `play_piece_bonus_match()`, `scaled_piece_bonus_weights()`, `run_spsa_piece_bonus()` and `nightwing_spsa` target 4. Nine tests added (five in `piece_bonuses_tests.cpp`, four in `spsa_eval_tests.cpp`) covering default-override equality for `piece_bonus_value()` and `evaluate()`, expected score change from a changed weight, eval-cache and insufficient-material bypass, table round-trip and the SPSA binding.

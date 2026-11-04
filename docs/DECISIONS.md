@@ -4,6 +4,18 @@ Architectural decisions, newest first. Each entry: date, decision, rationale, al
 
 ---
 
+### 2026-11-04 (1) — Piece-bonus SPSA leg closed as null; no candidate built
+
+**Context:** The piece-bonus override and `nightwing_spsa` target 4 (DECISIONS 2026-11-03 (8)) were run in CI as three simultaneous SPSA runs of 100 iterations, 8 games per iteration, depth 6, `c` 2, `r0` 8, each validated over 200 games against the compiled-in defaults: one control started at half scale, two started at the current values.
+
+**Result:** The half-scale start scored -13.9 Elo against the defaults (52 wins, 60 losses, 88 draws); after tuning it stayed near half scale (bishop pair 12.0/18.1, rook open file 13.3/6.3, semi-open 6.6/4.7, 7th rank 6.3/11.4) and validated at +10.4 Elo (59 wins, 53 losses, 88 draws). The two full-scale runs validated at -15.6 Elo (52 wins, 61 losses, 87 draws) and +33.1 Elo (68 wins, 49 losses, 83 draws), with bishop pair mg ending at 23.9 and 15.8 and 7th-rank mg at 13.4 and 8.8, so the tuned vectors disagreed in direction. With 41 percent draws, one standard error of a 200-game validation is about 19 Elo; every result lies within two standard errors of zero.
+
+**Decision:** The leg is null and closed. SPSA at this budget could not recover from a halved start and the replications disagreed, so the signal is below what the method can resolve. No `candidate/` branch was built and no `uci-match` run was made. The plumbing (`PieceBonusWeights`, `kPieceBonusParameters`, target 4) stays in `main`, since it is tested and costs nothing on the default path (`bench 6` 61223 and `bench 10` 2698145 unchanged). Reopening would need a much larger game budget or a different signal.
+
+**Alternatives considered:** building the +33.1 vector as a candidate (rejected: contradicted by the replication runs and within two standard errors of zero); longer SPSA runs (deferred: no evidence of a signal to justify the cost).
+
+---
+
 ### 2026-11-03 (8) — Piece-bonus SPSA leg plumbing implemented; lazy-evaluation exit left enabled under the override
 
 **Context:** DECISIONS 2026-11-03 (7) planned an override for the piece-bonus constants so SPSA can play two weight vectors in one process. The plan said the override disables the eval cache, the lazy-evaluation exit and any other shortcut "exactly as `pawns_weights != nullptr` does". In the code, `pawns_weights != nullptr` disables the eval cache, the insufficient-material shortcut, the pawn hash and the lone-minor scaling, but not the lazy-evaluation exit.
