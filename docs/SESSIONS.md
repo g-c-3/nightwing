@@ -4,6 +4,24 @@ Newest entry at top.
 
 ---
 
+### Session 294 — 2026-11-04 — Speed plan item 3: king-safety micro-optimization measured within noise and discarded; strength plan item 3 and speed plan items 3 and 8 closed; `space_value()` measured within noise
+
+**Built:** nothing kept in `src/` or `tests/`. A change to `src/eval/king_safety.cpp` was built and measured: a compile-time table of pawn-shield zones indexed by colour and king square, and a single bit scan (highest or lowest square on the file) in place of the per-pawn loop that finds the most advanced storming pawn on each of the three files near the king. Unused `relative_rank()` helper removed in the experiment.
+
+**Measured:** baseline reproduced in the sandbox first (GCC, Release, LTO on): 864 of 864 tests pass, `bench 6` 61223, `bench 10` 2698145. With the change: identical node counts, 864 of 864 tests pass, `bench 10` user time over nine alternating runs median 3.142 s (baseline) to 3.070 s (change), about -2.3%, inside the sandbox noise of about 3%. Discarded under the standing rule that a gain within noise is not shipped. The `attack_units_on()` slider lookups (up to three per attacker type per side) were left unchanged because any early-out there alters scores or needs a different formulation.
+
+**Space value:** `space_value()` was rebuilt set-wise (compile-time zone masks per colour, enemy pawn-attack set from two shifts, one popcount) and measured: identical node counts (`bench 6` 61223, `bench 10` 2698145), 864 of 864 tests pass, `bench 10` user time median of nine alternating runs 3.138 s to 3.057 s (about -2.6%), within sandbox noise of about 3%; discarded.
+
+**Bugs fixed:** none.
+
+**Decisions made:** every other open ROADMAP.md item except strength plan item 6 (pondering protocol check, wasm line, match-infrastructure in-process option, SPSA tuner, the Session 234 and Session 245 external-review lists, NUMA, cluster search, self-generated tablebases) was closed by approval, with the open leftovers named in each closing note; strength plan item 3 (evaluation tuning at scale) speed plan item 3 (king-safety and space sub-parts, within noise) and speed plan item 8 (lazy evaluation) were closed by approval, recorded in ROADMAP.md. The lazy-evaluation margin remains `kLazyEvalMargin` 650: margin 400 was compared by games in Session 284 and rejected under the adoption rule, and no exception was granted. No DECISIONS.md entry was needed (the discard follows the existing rule; ROADMAP.md speed plan item 3 records the result).
+
+**Open:** the `search.h` comment on `eval_weights` still says six overrides (comment only); the order of the two full-scale piece-bonus runs by seed was not recorded; no regression test was needed since no code was kept.
+
+**Next session start point:** read ROADMAP.md and take the next incomplete item: strength plan item 6 (later, tuning-heavy ideas: dynamic piece values, plan-aware evaluation terms, several evaluation sets by pawn structure, a narrow mate-search helper), starting with a scoping read of the relevant source files and a one-idea candidate on branch `candidate/<short-name>`.
+
+---
+
 ### Session 293 — 2026-11-04 — Speed plan item 3: endgame signature confirmed closed; king safety and mobility profiled
 
 **Built:** nothing in `src/` or `tests/`. The endgame-signature sub-part of speed plan item 3 was confirmed already closed as negligible (Sessions 269 and 270; `classify_endgame` about 0.3% of samples), so nothing was built for it. A profile of `bench 10` was taken instead (gprof, GCC 13.3, `-pg`): one build with small-function inlining disabled, one with all inlining disabled.
